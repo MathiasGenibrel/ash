@@ -21,7 +21,7 @@ class FakeBackend implements PtyBridge {
     open(_size: TerminalSize, cwd: string | null, onFrame: (frame: PtyFrame) => void) {
         const tabId = `T${this.next++}`;
         this.opened.push({ tabId, cwd });
-        this.order.push({ tabId, startDir: cwd ?? "/Users/me" });
+        this.order.push({ tabId, cwd: cwd ?? "/Users/me" });
         this.frames.set(tabId, onFrame);
         return Promise.resolve(tabId);
     }
@@ -159,7 +159,7 @@ describe("un seul terminal visible", () => {
 });
 
 describe("l'origine d'un nouvel onglet", () => {
-    it("Given the active tab started in a worktree, when Cmd+N opens a tab, then the new shell starts in that same directory", async () => {
+    it("Given the active tab sits in a worktree, when Cmd+N opens a tab, then the new shell starts in that same directory", async () => {
         // Given
         const app = bench();
         await app.workbench.openTab("home");
@@ -168,7 +168,7 @@ describe("l'origine d'un nouvel onglet", () => {
         // When
         await app.workbench.openTab("current-worktree");
 
-        // Then — le répertoire de *lancement*, faute de sonde `cwd` (ADR-0005)
+        // Then — le répertoire *courant* de l'onglet actif, que la sonde d'ADR-0005 suit
         expect(app.backend.opened[0]?.cwd).toBe("/Users/me");
     });
 

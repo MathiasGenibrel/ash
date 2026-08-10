@@ -31,7 +31,7 @@ class TabsBuilder {
     }
 }
 
-const tab = (tabId: string): TabInfo => ({ tabId, startDir: `/dev/${tabId}` });
+const tab = (tabId: string): TabInfo => ({ tabId, cwd: `/dev/${tabId}` });
 const order = (state: TabsState): string[] => state.tabs.map((each) => each.tabId);
 
 describe("l'ordre des onglets", () => {

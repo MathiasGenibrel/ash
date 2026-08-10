@@ -18,13 +18,16 @@ export interface TerminalSize {
 /**
  * Un onglet, tel que le backend le décrit. Miroir de `TabInfo` côté Rust.
  *
- * `startDir` est le répertoire **de lancement** du shell, pas son `cwd` vivant — la
- * sonde d'ADR-0005 n'existe pas encore. C'est lui que « nouvel onglet dans le worktree
- * courant » (spec §4.4) reprend, faute de mieux.
+ * `cwd` est le répertoire **courant** de l'onglet : la sonde d'ADR-0005 le suit à
+ * travers les `cd`, et même pendant qu'un programme tourne. C'est lui que « nouvel
+ * onglet dans le worktree courant » (spec §4.4) reprend.
+ *
+ * Le frontend ne le calcule pas et ne le mémorise pas : il le relit du backend, qui seul
+ * le détient ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 export interface TabInfo {
     tabId: TabId;
-    startDir: string;
+    cwd: string;
 }
 
 /** Ce que le PTY envoie. Miroir de `PtyFrame` côté Rust. */

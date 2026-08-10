@@ -72,7 +72,7 @@ class FakeBridge implements PtyBridge {
         return Promise.resolve("01JTAB");
     }
     tabs(): Promise<TabInfo[]> {
-        return Promise.resolve([{ tabId: "01JTAB", startDir: this.openedAt ?? "/Users/me" }]);
+        return Promise.resolve([{ tabId: "01JTAB", cwd: this.openedAt ?? "/Users/me" }]);
     }
     hasForegroundProcess(): Promise<boolean> {
         return Promise.resolve(false);

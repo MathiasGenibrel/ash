@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use super::error::PtyError;
 use super::flow::Credits;
 use super::session::{PtySession, PtySpawner, PtySpec};
+use crate::features::probe::{Probe, TabWatch};
 
 /// Identifiant d'onglet — un ulid, posé dans `ASH_TAB_ID` au lancement du shell.
 ///
@@ -29,6 +30,8 @@ const WINDOW: usize = 8;
 /// onglets.
 pub struct PtyRegistry {
     spawner: Box<dyn PtySpawner>,
+    /// La sonde d'ADR-0005, injectée : c'est elle qui donne son `cwd` vivant à un onglet.
+    probe: Arc<dyn Probe>,
     tabs: Mutex<Vec<Tab>>,
 }
 
@@ -36,15 +39,17 @@ struct Tab {
     id: TabId,
     session: Box<dyn PtySession>,
     credits: Arc<Credits>,
-    /// Répertoire **de départ** du shell, retenu à l'ouverture.
+    /// Répertoire de départ du shell, retenu à l'ouverture.
     ///
-    /// Ce n'est pas le `cwd` vivant de l'onglet : rien ici ne suit les `cd` de
-    /// l'utilisateur. C'est le travail de la sonde `libproc`
-    /// ([ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md)), qui n'existe pas
-    /// encore. **Quand elle arrivera, c'est ce champ que `tabs()` devra cesser de rendre
-    /// au profit du `cwd` réel** — le « nouvel onglet dans le worktree courant » de la
-    /// spec §4.4 s'entend du répertoire courant, pas du répertoire de lancement.
+    /// Ce n'est plus ce que l'onglet montre : c'est le repli quand la sonde ne sait pas
+    /// répondre. Un onglet doit toujours avoir un répertoire à afficher, même sur un
+    /// système qui refuse de parler.
     start_dir: PathBuf,
+    /// La sonde de cet onglet, quand le système le rend observable.
+    ///
+    /// Elle est rangée **ici**, à côté de la session : le descripteur qu'elle interroge
+    /// appartient au master du PTY, et les deux disparaissent donc ensemble.
+    watch: Option<TabWatch>,
 }
 
 /// Ce qu'un onglet montre de lui-même au frontend.
@@ -52,8 +57,11 @@ struct Tab {
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
     pub tab_id: TabId,
-    /// Répertoire de départ du shell — voir [`Tab::start_dir`].
-    pub start_dir: String,
+    /// Le répertoire **courant** de l'onglet, sondé à la demande.
+    ///
+    /// C'est lui que « nouvel onglet dans le worktree courant » (spec §4.4) reprend : le
+    /// répertoire où l'onglet en est, pas celui d'où il est parti.
+    pub cwd: String,
 }
 
 /// Ce qu'`open` rend au-delà de l'identifiant : de quoi lancer le lecteur.
@@ -64,9 +72,10 @@ pub struct Opened {
 }
 
 impl PtyRegistry {
-    pub fn new(spawner: Box<dyn PtySpawner>) -> Self {
+    pub fn new(spawner: Box<dyn PtySpawner>, probe: Arc<dyn Probe>) -> Self {
         Self {
             spawner,
+            probe,
             tabs: Mutex::new(Vec::new()),
         }
     }
@@ -77,6 +86,10 @@ impl PtyRegistry {
         let (session, reader) = self.spawner.spawn(&spec)?;
         let credits = Arc::new(Credits::new(WINDOW));
 
+        let watch = session
+            .terminal()
+            .map(|terminal| TabWatch::new(terminal.master_fd, terminal.shell_pid));
+
         // Un onglet neuf va à la fin : c'est l'ordre que la barre d'onglets montre, et
         // celui que `Cmd+1..9` numérote.
         self.lock()?.push(Tab {
@@ -84,6 +97,7 @@ impl PtyRegistry {
             session,
             credits: Arc::clone(&credits),
             start_dir: spec.cwd.clone(),
+            watch,
         });
 
         Ok(Opened {
@@ -93,14 +107,20 @@ impl PtyRegistry {
         })
     }
 
-    /// Les onglets vivants, dans leur ordre d'affichage.
+    /// Les onglets vivants, dans leur ordre d'affichage, avec leur répertoire courant.
+    ///
+    /// Le `cwd` est sondé ici, à la demande, et non par une boucle de fond : tant que
+    /// personne n'écoute en continu — la sidebar d'ADR-0006 n'existe pas encore — une
+    /// boucle de ~300 ms sonderait pour rien. La sonde, elle, est déjà taillée pour cette
+    /// boucle (voir `TabWatch::poll`).
     pub fn tabs(&self) -> Result<Vec<TabInfo>, PtyError> {
+        let probe = Arc::clone(&self.probe);
         Ok(self
             .lock()?
-            .iter()
+            .iter_mut()
             .map(|tab| TabInfo {
                 tab_id: tab.id.clone(),
-                start_dir: tab.start_dir.display().to_string(),
+                cwd: tab.cwd(probe.as_ref()).display().to_string(),
             })
             .collect())
     }
@@ -179,11 +199,72 @@ impl PtyRegistry {
     }
 }
 
+impl Tab {
+    /// Le répertoire courant de l'onglet, ou son répertoire de départ si la sonde se tait.
+    ///
+    /// Se taire n'est pas une erreur à remonter : un onglet dont le shell vient de mourir
+    /// est encore affiché le temps que le frontend l'apprenne, et le faire disparaître de
+    /// la liste pour cette raison serait pire que de montrer un répertoire un peu vieux.
+    fn cwd(&mut self, probe: &dyn Probe) -> PathBuf {
+        self.watch
+            .as_mut()
+            .and_then(|watch| watch.observe(probe).ok())
+            .map_or_else(|| self.start_dir.clone(), |seen| seen.cwd)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::session::OpenPty;
+    use super::super::session::{OpenPty, Terminal};
     use super::*;
+    use crate::features::probe::{Pid, ProbeError, ProcessInfo};
+    use std::os::fd::RawFd;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// Le terminal que les faux onglets annoncent. Aucun appel système ne le touche : le
+    /// `FakeProbe` répond sans regarder.
+    const TERMINAL: Terminal = Terminal {
+        master_fd: 7,
+        shell_pid: 100,
+    };
+
+    /// Une sonde qui répond ce qu'on lui a dit, ou qui se tait.
+    #[derive(Default)]
+    struct FakeProbe {
+        cwd: Option<PathBuf>,
+    }
+
+    impl FakeProbe {
+        fn silent() -> Self {
+            Self::default()
+        }
+
+        fn reporting(cwd: &str) -> Self {
+            Self {
+                cwd: Some(PathBuf::from(cwd)),
+            }
+        }
+    }
+
+    impl Probe for FakeProbe {
+        fn foreground_pgid(&self, terminal: RawFd) -> Result<Pid, ProbeError> {
+            self.cwd
+                .as_ref()
+                .map(|_| TERMINAL.shell_pid)
+                .ok_or(ProbeError::NoForeground(terminal))
+        }
+
+        fn inspect(&self, pid: Pid) -> Result<ProcessInfo, ProbeError> {
+            self.cwd
+                .as_ref()
+                .map(|cwd| ProcessInfo {
+                    pid,
+                    name: "bash".to_owned(),
+                    cwd: cwd.clone(),
+                })
+                .ok_or(ProbeError::Vanished(pid))
+        }
+    }
 
     #[derive(Default)]
     struct FakeSession {
@@ -191,6 +272,7 @@ mod tests {
         written: Arc<Mutex<Vec<u8>>>,
         resized: Arc<Mutex<Vec<(u16, u16)>>>,
         foreground: Arc<AtomicBool>,
+        observable: bool,
     }
 
     impl PtySession for FakeSession {
@@ -209,6 +291,9 @@ mod tests {
         fn has_foreground_process(&mut self) -> Result<bool, PtyError> {
             Ok(self.foreground.load(Ordering::SeqCst))
         }
+        fn terminal(&self) -> Option<Terminal> {
+            self.observable.then_some(TERMINAL)
+        }
     }
 
     #[derive(Default)]
@@ -219,6 +304,8 @@ mod tests {
         spawns: Arc<AtomicUsize>,
         last_env: Arc<Mutex<Vec<(String, String)>>>,
         foreground: Arc<AtomicBool>,
+        /// Les onglets ouverts par ce spawner sont-ils sondables ?
+        observable: bool,
     }
 
     impl PtySpawner for FakeSpawner {
@@ -230,6 +317,7 @@ mod tests {
                 written: Arc::clone(&self.written),
                 resized: Arc::clone(&self.resized),
                 foreground: Arc::clone(&self.foreground),
+                observable: self.observable,
             };
             Ok((Box::new(session), Box::new(std::io::empty())))
         }
@@ -266,6 +354,12 @@ mod tests {
         SpecBuilder::new().build()
     }
 
+    /// Un registre dont les onglets ne sont pas sondables : la plupart des règles du
+    /// registre — ordre, fermeture, crédits — n'ont rien à voir avec la sonde.
+    fn registry(spawner: FakeSpawner) -> PtyRegistry {
+        PtyRegistry::new(Box::new(spawner), Arc::new(FakeProbe::silent()))
+    }
+
     fn ids(registry: &PtyRegistry) -> Vec<TabId> {
         registry
             .tabs()
@@ -280,7 +374,7 @@ mod tests {
         // Given
         let spawner = FakeSpawner::default();
         let env = Arc::clone(&spawner.last_env);
-        let registry = PtyRegistry::new(Box::new(spawner));
+        let registry = registry(spawner);
 
         // When
         let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
@@ -297,7 +391,7 @@ mod tests {
         // Given
         let spawner = FakeSpawner::default();
         let killed = Arc::clone(&spawner.killed);
-        let registry = PtyRegistry::new(Box::new(spawner));
+        let registry = registry(spawner);
         let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
 
         // When
@@ -314,7 +408,7 @@ mod tests {
     #[test]
     fn given_a_closed_tab_when_it_is_closed_again_then_it_is_not_an_error() {
         // Given
-        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        let registry = registry(FakeSpawner::default());
         let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
         registry.close(&opened.tab_id).unwrap();
 
@@ -328,7 +422,7 @@ mod tests {
     #[test]
     fn given_a_tab_that_no_longer_exists_when_writing_to_it_then_it_fails_without_panicking() {
         // Given
-        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        let registry = registry(FakeSpawner::default());
         let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
         registry.close(&opened.tab_id).unwrap();
 
@@ -344,7 +438,7 @@ mod tests {
     {
         // Given — l'ordre est ce que `Cmd+1..9` numérote : il ne doit pas se réarranger
         // à la fermeture d'un onglet.
-        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        let registry = registry(FakeSpawner::default());
         for id in ["A", "B", "C"] {
             registry.open(spec(), id.to_owned()).unwrap();
         }
@@ -359,7 +453,7 @@ mod tests {
     #[test]
     fn given_a_tab_closed_in_the_middle_when_a_new_one_is_opened_then_it_lands_last() {
         // Given
-        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        let registry = registry(FakeSpawner::default());
         for id in ["A", "B", "C"] {
             registry.open(spec(), id.to_owned()).unwrap();
         }
@@ -376,11 +470,44 @@ mod tests {
     }
 
     #[test]
-    fn given_a_tab_opened_in_a_worktree_when_the_frontend_lists_the_tabs_then_it_learns_where_that_shell_started(
+    fn given_a_tab_whose_shell_has_moved_when_the_frontend_lists_the_tabs_then_it_learns_the_current_directory(
     ) {
-        // Given — c'est ce répertoire que « nouvel onglet dans le worktree courant »
-        // reprendra, faute de sonde `cwd`.
-        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        // Given — l'onglet est parti de /dev/ash, la sonde le voit dans un worktree
+        let registry = PtyRegistry::new(
+            Box::new(FakeSpawner {
+                observable: true,
+                ..FakeSpawner::default()
+            }),
+            Arc::new(FakeProbe::reporting("/dev/ash/worktrees/probe")),
+        );
+
+        // When
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+
+        // Then — c'est ce répertoire-là que « nouvel onglet dans le worktree courant »
+        // (spec §4.4) reprend, pas celui de lancement
+        assert_eq!(
+            registry.tabs().unwrap(),
+            vec![TabInfo {
+                tab_id: "A".to_owned(),
+                cwd: "/dev/ash/worktrees/probe".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn given_a_tab_the_probe_cannot_observe_when_the_frontend_lists_the_tabs_then_it_falls_back_to_the_start_directory(
+    ) {
+        // Given — un système qui ne répond pas ne doit pas produire un onglet sans nom
+        let registry = registry(FakeSpawner {
+            observable: true,
+            ..FakeSpawner::default()
+        });
 
         // When
         registry
@@ -395,7 +522,7 @@ mod tests {
             registry.tabs().unwrap(),
             vec![TabInfo {
                 tab_id: "A".to_owned(),
-                start_dir: "/dev/ash".to_owned(),
+                cwd: "/dev/ash".to_owned(),
             }]
         );
     }
@@ -406,7 +533,7 @@ mod tests {
         // Given
         let spawner = FakeSpawner::default();
         let foreground = Arc::clone(&spawner.foreground);
-        let registry = PtyRegistry::new(Box::new(spawner));
+        let registry = registry(spawner);
         registry.open(spec(), "A".to_owned()).unwrap();
 
         // When
@@ -419,7 +546,7 @@ mod tests {
     #[test]
     fn given_an_open_tab_when_the_webview_acks_then_the_reader_gets_a_credit_back() {
         // Given — la fenêtre est vidée, le lecteur serait bloqué
-        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        let registry = registry(FakeSpawner::default());
         let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
         for _ in 0..WINDOW {
             assert!(opened.credits.acquire());

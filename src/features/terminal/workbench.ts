@@ -53,7 +53,7 @@ export class TerminalWorkbench {
                 this.ports.createView(),
                 this.ports.bridge,
                 {
-                    cwd: from?.startDir ?? null,
+                    cwd: from?.cwd ?? null,
                     onExit: () => {
                         const gone = pane.session;
                         if (gone !== undefined) void this.forget(gone.tabId);

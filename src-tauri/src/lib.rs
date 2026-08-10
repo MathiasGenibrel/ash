@@ -15,15 +15,19 @@ pub mod spike;
 
 use std::sync::Arc;
 
+use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, SystemPtySpawner};
 
 /// Assemble et démarre l'application.
 ///
 /// Composition root : c'est le seul endroit du crate où les implémentations concrètes
-/// des effets système sont choisies et injectées. `SystemPtySpawner` n'apparaît qu'ici ;
-/// partout ailleurs la feature ne connaît que son trait.
+/// des effets système sont choisies et injectées. `SystemPtySpawner` et `SystemProbe`
+/// n'apparaissent qu'ici ; partout ailleurs les features ne connaissent que leurs traits.
 pub fn run() -> tauri::Result<()> {
-    let ptys = Arc::new(PtyRegistry::new(Box::new(SystemPtySpawner)));
+    let ptys = Arc::new(PtyRegistry::new(
+        Box::new(SystemPtySpawner),
+        Arc::new(SystemProbe),
+    ));
 
     tauri::Builder::default()
         .manage(ptys)

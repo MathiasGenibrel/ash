@@ -48,11 +48,11 @@ export class TabBar {
         label.className = "terminal-tab-label";
         label.setAttribute("role", "tab");
         label.setAttribute("aria-selected", String(active));
-        // Le titre montre le répertoire de lancement : c'est tout ce qu'on sait de
-        // l'onglet tant que la sonde `cwd` (ADR-0005) n'existe pas.
-        label.title = tab.startDir;
+        // Le titre montre le répertoire *courant* de l'onglet, sondé par le backend
+        // (ADR-0005) : il suit les `cd` de l'utilisateur.
+        label.title = tab.cwd;
         label.textContent =
-            position <= 9 ? `⌘${position} ${basename(tab.startDir)}` : basename(tab.startDir);
+            position <= 9 ? `⌘${position} ${basename(tab.cwd)}` : basename(tab.cwd);
         label.addEventListener("click", () => {
             this.actions.select(tab.tabId);
         });
@@ -61,7 +61,7 @@ export class TabBar {
         close.type = "button";
         close.className = "terminal-tab-close";
         close.title = "Fermer l'onglet (⌘W)";
-        close.setAttribute("aria-label", `Fermer ${basename(tab.startDir)}`);
+        close.setAttribute("aria-label", `Fermer ${basename(tab.cwd)}`);
         close.textContent = "×";
         close.addEventListener("click", (event) => {
             // Sans ça, le clic sélectionnerait l'onglet avant de le fermer, et la
