@@ -9,10 +9,20 @@
 //! au fur et à mesure. Aucune n'est déclarée d'avance : un module vide ne documente
 //! rien qu'`.claude/docs/architecture.md` ne dise déjà mieux.
 
+/// Banc de mesure du spike xterm.js — jetable, retiré avec le spike.
+pub mod spike;
+
 /// Assemble et démarre l'application.
 ///
 /// Composition root : c'est le seul endroit du crate où les implémentations concrètes
 /// des effets système sont choisies et injectées.
 pub fn run() -> tauri::Result<()> {
-    tauri::Builder::default().run(tauri::generate_context!())
+    tauri::Builder::default()
+        .manage(spike::Flow::default())
+        .invoke_handler(tauri::generate_handler![
+            spike::spike_stream,
+            spike::spike_ack,
+            spike::spike_report
+        ])
+        .run(tauri::generate_context!())
 }

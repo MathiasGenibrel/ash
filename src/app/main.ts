@@ -1,4 +1,5 @@
 import "./styles.css";
+import { runBench } from "@/spike/bench";
 
 /**
  * Composition root du frontend.
@@ -7,13 +8,26 @@ import "./styles.css";
  * entre elles. Une feature ne va pas chercher sa voisine : elle reçoit ce dont elle a
  * besoin. Voir `.claude/docs/architecture.md`.
  *
- * Il n'y a encore aucune feature à câbler. Ce fichier existe pour que la première
- * n'ait pas à inventer où se brancher.
+ * Il n'y a encore aucune feature à câbler. Pendant la durée du spike, ce fichier monte
+ * le banc de mesure ; il repart avec lui.
  */
 function mount(root: HTMLElement): void {
-    const placeholder = document.createElement("p");
-    placeholder.textContent = "ash";
-    root.append(placeholder);
+    const output = document.createElement("pre");
+    output.className = "spike-log";
+    output.textContent = "spike xterm.js — mesure en cours…\n";
+
+    const host = document.createElement("div");
+    host.className = "spike-host";
+
+    root.append(output, host);
+
+    const log = (line: string): void => {
+        output.textContent += `${line}\n`;
+    };
+
+    runBench(host, log).catch((error: unknown) => {
+        log(`ÉCHEC : ${error instanceof Error ? error.message : String(error)}`);
+    });
 }
 
 const root = document.querySelector<HTMLElement>("#root");
