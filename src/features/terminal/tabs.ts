@@ -1,4 +1,4 @@
-import type { TabId, TabInfo } from "./ports";
+import type { TabChange, TabId, TabInfo } from "./ports";
 
 /**
  * Les règles d'onglets, sans DOM ni IPC.
@@ -49,6 +49,30 @@ export function adopt(state: TabsState, tabs: readonly TabInfo[]): TabsState {
     }
 
     return { tabs, activeTabId: tabs[0]?.tabId ?? null };
+}
+
+/**
+ * Reprend les répertoires que la boucle de sonde du backend annonce.
+ *
+ * Rien n'est calculé ni deviné ici : le `cwd` vient du backend, qui seul le détient
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). L'ordre et la
+ * sélection, eux, ne bougent pas — un `cd` n'est pas une ouverture d'onglet.
+ *
+ * Rend l'état **inchangé**, à l'identique, quand rien ne s'applique : un changement qui
+ * ne concerne que des onglets déjà fermés ne doit pas provoquer de rendu.
+ */
+export function withCwd(state: TabsState, changes: readonly TabChange[]): TabsState {
+    const moved = new Map(changes.map((change) => [change.tabId, change.cwd]));
+
+    let touched = false;
+    const tabs = state.tabs.map((tab) => {
+        const cwd = moved.get(tab.tabId);
+        if (cwd === undefined || cwd === tab.cwd) return tab;
+        touched = true;
+        return { ...tab, cwd };
+    });
+
+    return touched ? { tabs, activeTabId: state.activeTabId } : state;
 }
 
 /** Sélectionne un onglet nommé. Un identifiant inconnu ne change rien. */

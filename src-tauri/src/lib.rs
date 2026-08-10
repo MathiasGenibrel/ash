@@ -29,8 +29,8 @@ pub fn run() -> tauri::Result<()> {
         Arc::new(SystemProbe),
     ));
 
-    tauri::Builder::default()
-        .manage(ptys)
+    let app = tauri::Builder::default()
+        .manage(Arc::clone(&ptys))
         .manage(spike::Flow::default())
         .menu(menu::build)
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
@@ -46,5 +46,19 @@ pub fn run() -> tauri::Result<()> {
             spike::spike_ack,
             spike::spike_report
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?;
+
+    // La boucle de sonde d'ADR-0005 démarre ici, et pas dans une commande : elle observe
+    // les onglets pour toute la durée de l'application, pas pour la durée d'un appel du
+    // frontend. C'est aussi ici qu'on lui donne son ordre d'arrêt — quitter l'application
+    // doit éteindre les sondes, pas laisser le système le faire à notre place.
+    let stop = features::pty::commands::watch_tabs(app.handle().clone(), &ptys);
+
+    app.run(move |_app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            stop.ask();
+        }
+    });
+
+    Ok(())
 }

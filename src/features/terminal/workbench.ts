@@ -1,6 +1,6 @@
-import type { PtyBridge, TabId, TabInfo, TerminalViewFactory } from "./ports";
+import type { PtyBridge, TabChange, TabId, TabInfo, TerminalViewFactory } from "./ports";
 import { TerminalSession } from "./session";
-import { activeTab, adopt, noTabs, select, selectAt, type TabsState } from "./tabs";
+import { activeTab, adopt, noTabs, select, selectAt, withCwd, type TabsState } from "./tabs";
 
 /**
  * Ce dont l'atelier a besoin, et rien de plus.
@@ -37,12 +37,32 @@ export class TerminalWorkbench {
     private readonly panes = new Map<TabId, TerminalSession>();
     private queue: Promise<void> = Promise.resolve();
 
-    constructor(private readonly ports: WorkbenchPorts) {}
+    constructor(private readonly ports: WorkbenchPorts) {
+        // L'abonnement est pris ici, et pas par l'appelant : un atelier qu'on aurait pu
+        // oublier de brancher est exactement ce qui a laissé les titres d'onglet figés.
+        // Il n'y a rien à désabonner — l'atelier vit aussi longtemps que la fenêtre.
+        void this.ports.bridge
+            .onTabsChanged((changes) => {
+                this.applyChanges(changes);
+            })
+            .catch(() => {
+                // Pas d'abonnement possible : les titres ne suivront pas les `cd`. C'est
+                // une dégradation visible, pas une raison d'empêcher la fenêtre d'ouvrir.
+            });
+    }
 
     /** Ouvre un onglet et le sélectionne. `Cmd+N` / `Cmd+Shift+N`, et le bouton `+`. */
     openTab(origin: Origin): Promise<void> {
         return this.serialize(async () => {
-            const from = origin === "current-worktree" ? activeTab(this.state) : null;
+            // `Cmd+N` part du répertoire **courant** de l'onglet actif, pas de celui
+            // qu'il avait à sa dernière ouverture d'onglet : le `cwd` bouge à chaque `cd`
+            // et vit dans le backend, donc on le lui redemande maintenant
+            // ([ADR-0005](../../../docs/adr/0005-sonde-cwd-libproc.md)).
+            let from: TabInfo | null = null;
+            if (origin === "current-worktree") {
+                await this.reload();
+                from = activeTab(this.state);
+            }
 
             // Le shell peut sortir avant même que `start` ait rendu la main — un `cwd`
             // qui n'existe plus, un `~/.zshrc` qui appelle `exit`. La session est donc
@@ -139,6 +159,22 @@ export class TerminalWorkbench {
      */
     settled(): Promise<void> {
         return this.queue;
+    }
+
+    /**
+     * La boucle de sonde du backend annonce des répertoires qui ont bougé.
+     *
+     * Volontairement **hors** de la file d'actions : une confirmation de fermeture peut
+     * la retenir aussi longtemps que l'utilisateur hésite, et les titres d'onglet
+     * n'auraient aucune raison de se figer pendant ce temps. Rien n'est perdu pour
+     * autant — c'est le backend qui détient le `cwd`, et la relecture suivante rendra la
+     * même valeur.
+     */
+    private applyChanges(changes: readonly TabChange[]): void {
+        const updated = withCwd(this.state, changes);
+        if (updated === this.state) return;
+        this.state = updated;
+        this.render();
     }
 
     /** Le shell d'un onglet est sorti tout seul : sa surface part avec lui. */

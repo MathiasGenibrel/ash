@@ -30,6 +30,22 @@ export interface TabInfo {
     cwd: string;
 }
 
+/**
+ * Ce que la boucle de sonde du backend annonce d'un onglet qui a bougé. Miroir de
+ * `TabChange` côté Rust.
+ *
+ * Le backend pousse, le frontend ne demande rien : c'est lui qui détient les PTY, donc
+ * lui qui sait quand un `cd` a eu lieu. Seuls les onglets qui ont **changé** traversent
+ * la frontière — un onglet posé à son invite ne réveille pas la webview.
+ */
+export interface TabChange {
+    tabId: TabId;
+    cwd: string;
+}
+
+/** De quoi arrêter d'écouter un flux d'events. */
+export type Unsubscribe = () => void;
+
 /** Ce que le PTY envoie. Miroir de `PtyFrame` côté Rust. */
 export type PtyFrame = { kind: "chunk"; data: string } | { kind: "exit"; code: number | null };
 
@@ -75,4 +91,12 @@ export interface PtyBridge {
     tabs(): Promise<TabInfo[]>;
     /** Vrai si quelque chose tourne dans l'onglet : `Cmd+W` demandera confirmation. */
     hasForegroundProcess(tabId: TabId): Promise<boolean>;
+    /**
+     * S'abonne à la boucle de sonde du backend
+     * ([ADR-0005](../../../docs/adr/0005-sonde-cwd-libproc.md)).
+     *
+     * C'est par là, et par nulle part ailleurs, qu'un titre d'onglet apprend un `cd` :
+     * rien ici ne scrute, ne minute, ni ne relit la liste à intervalle régulier.
+     */
+    onTabsChanged(handler: (changes: TabChange[]) => void): Promise<Unsubscribe>;
 }

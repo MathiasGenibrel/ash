@@ -77,6 +77,11 @@ class FakeBridge implements PtyBridge {
     hasForegroundProcess(): Promise<boolean> {
         return Promise.resolve(false);
     }
+    onTabsChanged(): Promise<() => void> {
+        // Une session ne s'intéresse pas au répertoire de son onglet : c'est l'atelier
+        // qui rend la barre, et lui seul écoute la boucle de sonde.
+        return Promise.resolve(() => {});
+    }
     write(_tabId: TabId, data: string): Promise<void> {
         this.writes.push(data);
         return Promise.resolve();

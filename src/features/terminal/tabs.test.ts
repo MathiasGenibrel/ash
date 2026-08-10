@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { TabInfo } from "./ports";
-import { activeTab, adopt, noTabs, select, selectAt, type TabsState } from "./tabs";
+import { activeTab, adopt, noTabs, select, selectAt, withCwd, type TabsState } from "./tabs";
 
 /**
  * Test Data Builder : un état d'onglets décrit par l'ordre que le backend rendrait, et
@@ -129,5 +129,31 @@ describe("Cmd+1..9", () => {
 
         // Then
         expect(selected.activeTabId).toBe("A");
+    });
+});
+
+describe("les répertoires que la sonde annonce", () => {
+    it("Given a tab whose shell moved, when the probe announces it, then that tab shows the new directory and the others are untouched", () => {
+        // Given
+        const state = TabsBuilder.create().inOrder("A", "B").looking("A").build();
+
+        // When
+        const moved = withCwd(state, [{ tabId: "A", cwd: "/tmp" }]);
+
+        // Then — un `cd` change un répertoire, pas l'ordre ni la sélection
+        expect(moved.tabs.map((each) => each.cwd)).toEqual(["/tmp", "/dev/B"]);
+        expect(order(moved)).toEqual(["A", "B"]);
+        expect(moved.activeTabId).toBe("A");
+    });
+
+    it("Given a tab that has already closed, when a change still names it, then nothing is rendered again", () => {
+        // Given — la passe de sonde et la fermeture d'un onglet se croisent
+        const state = TabsBuilder.create().inOrder("A").looking("A").build();
+
+        // When
+        const applied = withCwd(state, [{ tabId: "Z", cwd: "/tmp" }]);
+
+        // Then — l'état est rendu tel quel : rien à réafficher
+        expect(applied).toBe(state);
     });
 });

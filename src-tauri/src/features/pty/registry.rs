@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use super::error::PtyError;
 use super::flow::Credits;
 use super::session::{PtySession, PtySpawner, PtySpec};
-use crate::features::probe::{Probe, TabWatch};
+use crate::features::probe::{Probe, TabObservation, TabWatch};
 
 /// Identifiant d'onglet — un ulid, posé dans `ASH_TAB_ID` au lancement du shell.
 ///
@@ -46,10 +46,32 @@ struct Tab {
     /// système qui refuse de parler.
     start_dir: PathBuf,
     /// La sonde de cet onglet, quand le système le rend observable.
-    ///
-    /// Elle est rangée **ici**, à côté de la session : le descripteur qu'elle interroge
-    /// appartient au master du PTY, et les deux disparaissent donc ensemble.
-    watch: Option<TabWatch>,
+    watch: SharedWatch,
+}
+
+/// La sonde d'un onglet, tenue à part du verrou du registre.
+///
+/// Deux raisons, et les deux comptent :
+///
+/// - **elle se prend hors du registre.** Une passe de sonde fait deux appels système par
+///   onglet, trois fois par seconde ([ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md)).
+///   Sous le verrou global, chaque frappe clavier attendrait derrière elle — `write`,
+///   `resize` et `ack` prennent ce verrou-là. Le registre n'est donc verrouillé que le
+///   temps de recopier les poignées, et la sonde tourne dehors.
+/// - **`None` veut dire « onglet fermé ».** Le descripteur du master part avec la
+///   session ; un `fd` recyclé se relit sans erreur, et une sonde qui survit à son onglet
+///   ne se tromperait pas bruyamment, elle se tromperait en silence.
+type SharedWatch = Arc<Mutex<Option<TabWatch>>>;
+
+/// Ce qu'une passe de la boucle de sonde a trouvé de neuf sur un onglet.
+///
+/// Seuls les onglets qui ont **bougé** en produisent un : un onglet posé à son invite
+/// serait sinon annoncé trois fois par seconde, et réveillerait la webview pour rien.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabChange {
+    pub tab_id: TabId,
+    pub cwd: String,
 }
 
 /// Ce qu'un onglet montre de lui-même au frontend.
@@ -86,9 +108,10 @@ impl PtyRegistry {
         let (session, reader) = self.spawner.spawn(&spec)?;
         let credits = Arc::new(Credits::new(WINDOW));
 
-        let watch = session
-            .terminal()
-            .map(|terminal| TabWatch::new(terminal.master_fd, terminal.shell_pid));
+        let watch =
+            Arc::new(Mutex::new(session.terminal().map(|terminal| {
+                TabWatch::new(terminal.master_fd, terminal.shell_pid)
+            })));
 
         // Un onglet neuf va à la fin : c'est l'ordre que la barre d'onglets montre, et
         // celui que `Cmd+1..9` numérote.
@@ -109,18 +132,39 @@ impl PtyRegistry {
 
     /// Les onglets vivants, dans leur ordre d'affichage, avec leur répertoire courant.
     ///
-    /// Le `cwd` est sondé ici, à la demande, et non par une boucle de fond : tant que
-    /// personne n'écoute en continu — la sidebar d'ADR-0006 n'existe pas encore — une
-    /// boucle de ~300 ms sonderait pour rien. La sonde, elle, est déjà taillée pour cette
-    /// boucle (voir `TabWatch::observe_change`).
+    /// Le `cwd` est sondé à l'appel, et non recopié d'une passe précédente : c'est ce qui
+    /// fait que « nouvel onglet dans le worktree courant » part du répertoire où l'onglet
+    /// en est, et non de celui de la dernière ouverture.
     pub fn tabs(&self) -> Result<Vec<TabInfo>, PtyError> {
-        let probe = self.probe.as_ref();
         Ok(self
-            .lock()?
-            .iter_mut()
+            .snapshot()?
+            .into_iter()
             .map(|tab| TabInfo {
-                tab_id: tab.id.clone(),
-                cwd: tab.cwd(probe).display().to_string(),
+                cwd: self
+                    .observe(&tab.watch)
+                    .map_or(tab.start_dir, |seen| seen.cwd)
+                    .display()
+                    .to_string(),
+                tab_id: tab.id,
+            })
+            .collect())
+    }
+
+    /// Une passe de la boucle d'ADR-0005 : ce qui a **changé** depuis la précédente.
+    ///
+    /// Rien pour un onglet immobile, rien pour un onglet que le système ne sait plus
+    /// décrire. C'est ce que la boucle émet vers le frontend, et c'est ce qui fait suivre
+    /// le titre d'un onglet à travers les `cd` — y compris pendant qu'un programme tourne,
+    /// là où OSC 7 se tairait.
+    pub fn changes(&self) -> Result<Vec<TabChange>, PtyError> {
+        Ok(self
+            .snapshot()?
+            .into_iter()
+            .filter_map(|tab| {
+                self.observe_change(&tab.watch).map(|seen| TabChange {
+                    tab_id: tab.id,
+                    cwd: seen.cwd.display().to_string(),
+                })
             })
             .collect())
     }
@@ -171,12 +215,54 @@ impl PtyRegistry {
         }
     }
 
-    fn take(&self, tab_id: &str) -> Result<Option<Tab>, PtyError> {
-        let mut tabs = self.lock()?;
-        Ok(tabs
+    /// Les poignées des onglets, recopiées sous le verrou et rendues **dehors**.
+    ///
+    /// C'est tout ce que le registre garde de verrouillé pendant une passe de sonde :
+    /// trois `clone` par onglet, et le verrou est rendu avant le premier appel système.
+    fn snapshot(&self) -> Result<Vec<TabHandle>, PtyError> {
+        Ok(self
+            .lock()?
             .iter()
-            .position(|tab| tab.id == tab_id)
-            .map(|at| tabs.remove(at)))
+            .map(|tab| TabHandle {
+                id: tab.id.clone(),
+                start_dir: tab.start_dir.clone(),
+                watch: Arc::clone(&tab.watch),
+            })
+            .collect())
+    }
+
+    /// Le répertoire courant d'un onglet, sondé hors du verrou du registre.
+    fn observe(&self, watch: &SharedWatch) -> Option<TabObservation> {
+        let mut watch = watch.lock().ok()?;
+        watch.as_mut()?.observe(self.probe.as_ref()).ok()
+    }
+
+    /// Idem, mais silencieux tant que rien n'a bougé — la passe de la boucle de fond.
+    fn observe_change(&self, watch: &SharedWatch) -> Option<TabObservation> {
+        let mut watch = watch.lock().ok()?;
+        watch.as_mut()?.observe_change(self.probe.as_ref())
+    }
+
+    fn take(&self, tab_id: &str) -> Result<Option<Tab>, PtyError> {
+        let removed = {
+            let mut tabs = self.lock()?;
+            tabs.iter()
+                .position(|tab| tab.id == tab_id)
+                .map(|at| tabs.remove(at))
+        };
+
+        // La sonde s'éteint **avant** que la session — donc le descripteur du master — ne
+        // parte. Prendre le verrou ici attend qu'une passe en vol se termine : après ce
+        // point, aucune sonde ne peut plus lire un `fd` que le système est libre de
+        // recycler. Le verrou du registre, lui, est déjà rendu : les deux ne sont jamais
+        // tenus ensemble.
+        if let Some(tab) = removed.as_ref() {
+            if let Ok(mut watch) = tab.watch.lock() {
+                *watch = None;
+            }
+        }
+
+        Ok(removed)
     }
 
     fn with_tab<T>(
@@ -199,166 +285,28 @@ impl PtyRegistry {
     }
 }
 
-impl Tab {
-    /// Le répertoire courant de l'onglet, ou son répertoire de départ si la sonde se tait.
-    ///
-    /// Se taire n'est pas une erreur à remonter : un onglet dont le shell vient de mourir
-    /// est encore affiché le temps que le frontend l'apprenne, et le faire disparaître de
-    /// la liste pour cette raison serait pire que de montrer un répertoire un peu vieux.
-    fn cwd(&mut self, probe: &dyn Probe) -> PathBuf {
-        self.watch
-            .as_mut()
-            .and_then(|watch| watch.observe(probe).ok())
-            .map_or_else(|| self.start_dir.clone(), |seen| seen.cwd)
-    }
+/// De quoi décrire un onglet sans tenir le verrou du registre.
+///
+/// `start_dir` voyage avec la sonde parce que se taire n'est pas une erreur à remonter :
+/// un onglet dont le shell vient de mourir est encore affiché le temps que le frontend
+/// l'apprenne, et le faire disparaître de la liste pour cette raison serait pire que de
+/// montrer un répertoire un peu vieux.
+struct TabHandle {
+    id: TabId,
+    start_dir: PathBuf,
+    watch: SharedWatch,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::session::{OpenPty, Terminal};
     use super::*;
     use crate::features::probe::{Pid, ProbeError, ProcessInfo};
-    use std::os::fd::RawFd;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-    /// Le terminal que les faux onglets annoncent. Aucun appel système ne le touche : le
-    /// `FakeProbe` répond sans regarder.
-    const TERMINAL: Terminal = Terminal {
-        master_fd: 7,
-        shell_pid: 100,
+    use crate::features::pty::fakes::{
+        observed_registry, registry, spec, FakeSpawner, SpecBuilder,
     };
-
-    /// Une sonde qui répond ce qu'on lui a dit, ou qui se tait.
-    #[derive(Default)]
-    struct FakeProbe {
-        cwd: Option<PathBuf>,
-    }
-
-    impl FakeProbe {
-        fn silent() -> Self {
-            Self::default()
-        }
-
-        fn reporting(cwd: &str) -> Self {
-            Self {
-                cwd: Some(PathBuf::from(cwd)),
-            }
-        }
-    }
-
-    impl Probe for FakeProbe {
-        fn foreground_pgid(&self, terminal: RawFd) -> Result<Pid, ProbeError> {
-            self.cwd
-                .as_ref()
-                .map(|_| TERMINAL.shell_pid)
-                .ok_or(ProbeError::NoForeground(terminal))
-        }
-
-        fn inspect(&self, pid: Pid) -> Result<ProcessInfo, ProbeError> {
-            self.cwd
-                .as_ref()
-                .map(|cwd| ProcessInfo {
-                    pid,
-                    name: "bash".to_owned(),
-                    cwd: cwd.clone(),
-                })
-                .ok_or(ProbeError::Vanished(pid))
-        }
-    }
-
-    #[derive(Default)]
-    struct FakeSession {
-        killed: Arc<AtomicBool>,
-        written: Arc<Mutex<Vec<u8>>>,
-        resized: Arc<Mutex<Vec<(u16, u16)>>>,
-        foreground: Arc<AtomicBool>,
-        observable: bool,
-    }
-
-    impl PtySession for FakeSession {
-        fn write(&mut self, bytes: &[u8]) -> Result<(), PtyError> {
-            self.written.lock().unwrap().extend_from_slice(bytes);
-            Ok(())
-        }
-        fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
-            self.resized.lock().unwrap().push((cols, rows));
-            Ok(())
-        }
-        fn kill(&mut self) -> Result<(), PtyError> {
-            self.killed.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-        fn has_foreground_process(&mut self) -> Result<bool, PtyError> {
-            Ok(self.foreground.load(Ordering::SeqCst))
-        }
-        fn terminal(&self) -> Option<Terminal> {
-            self.observable.then_some(TERMINAL)
-        }
-    }
-
-    #[derive(Default)]
-    struct FakeSpawner {
-        killed: Arc<AtomicBool>,
-        written: Arc<Mutex<Vec<u8>>>,
-        resized: Arc<Mutex<Vec<(u16, u16)>>>,
-        spawns: Arc<AtomicUsize>,
-        last_env: Arc<Mutex<Vec<(String, String)>>>,
-        foreground: Arc<AtomicBool>,
-        /// Les onglets ouverts par ce spawner sont-ils sondables ?
-        observable: bool,
-    }
-
-    impl PtySpawner for FakeSpawner {
-        fn spawn(&self, spec: &PtySpec) -> Result<OpenPty, PtyError> {
-            self.spawns.fetch_add(1, Ordering::SeqCst);
-            *self.last_env.lock().unwrap() = spec.env.clone();
-            let session = FakeSession {
-                killed: Arc::clone(&self.killed),
-                written: Arc::clone(&self.written),
-                resized: Arc::clone(&self.resized),
-                foreground: Arc::clone(&self.foreground),
-                observable: self.observable,
-            };
-            Ok((Box::new(session), Box::new(std::io::empty())))
-        }
-    }
-
-    /// Test Data Builder : un `PtySpec` valide et déterministe, dont on ne surcharge que
-    /// ce que le scénario regarde.
-    struct SpecBuilder {
-        cwd: PathBuf,
-    }
-
-    impl SpecBuilder {
-        fn new() -> Self {
-            Self { cwd: "/tmp".into() }
-        }
-
-        fn starting_in(mut self, cwd: &str) -> Self {
-            self.cwd = cwd.into();
-            self
-        }
-
-        fn build(self) -> PtySpec {
-            PtySpec {
-                shell: "/bin/bash".into(),
-                cwd: self.cwd,
-                cols: 80,
-                rows: 24,
-                env: vec![("ASH_SOCK".to_owned(), "/tmp/ash.sock".to_owned())],
-            }
-        }
-    }
-
-    fn spec() -> PtySpec {
-        SpecBuilder::new().build()
-    }
-
-    /// Un registre dont les onglets ne sont pas sondables : la plupart des règles du
-    /// registre — ordre, fermeture, crédits — n'ont rien à voir avec la sonde.
-    fn registry(spawner: FakeSpawner) -> PtyRegistry {
-        PtyRegistry::new(Box::new(spawner), Arc::new(FakeProbe::silent()))
-    }
+    use std::os::fd::RawFd;
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
 
     fn ids(registry: &PtyRegistry) -> Vec<TabId> {
         registry
@@ -473,13 +421,7 @@ mod tests {
     fn given_a_tab_whose_shell_has_moved_when_the_frontend_lists_the_tabs_then_it_learns_the_current_directory(
     ) {
         // Given — l'onglet est parti de /dev/ash, la sonde le voit dans un worktree
-        let registry = PtyRegistry::new(
-            Box::new(FakeSpawner {
-                observable: true,
-                ..FakeSpawner::default()
-            }),
-            Arc::new(FakeProbe::reporting("/dev/ash/worktrees/probe")),
-        );
+        let (registry, _probe) = observed_registry("/dev/ash/worktrees/probe");
 
         // When
         registry
@@ -504,10 +446,7 @@ mod tests {
     fn given_a_tab_the_probe_cannot_observe_when_the_frontend_lists_the_tabs_then_it_falls_back_to_the_start_directory(
     ) {
         // Given — un système qui ne répond pas ne doit pas produire un onglet sans nom
-        let registry = registry(FakeSpawner {
-            observable: true,
-            ..FakeSpawner::default()
-        });
+        let registry = registry(FakeSpawner::observable());
 
         // When
         registry
@@ -560,5 +499,126 @@ mod tests {
             opened.credits.acquire(),
             "l'acquittement doit débloquer une émission"
         );
+    }
+
+    #[test]
+    fn given_a_tab_that_moved_since_the_last_listing_when_the_tabs_are_listed_again_then_the_new_directory_is_reported(
+    ) {
+        // Given — un `cd` après une première lecture de la liste
+        let (registry, probe) = observed_registry("/dev/ash");
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(registry.tabs().unwrap()[0].cwd, "/dev/ash");
+        probe.move_to("/tmp");
+
+        // When
+        let listed = registry.tabs().unwrap();
+
+        // Then — chaque lecture sonde à nouveau. Rendre la valeur de la lecture
+        // précédente ferait partir `Cmd+N` du répertoire d'il y a une ouverture d'onglet.
+        assert_eq!(listed[0].cwd, "/tmp");
+    }
+
+    #[test]
+    fn given_a_tab_that_moved_when_the_loop_sweeps_then_the_change_is_reported_once_and_not_again()
+    {
+        // Given
+        let (registry, probe) = observed_registry("/dev/ash");
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+        registry.changes().unwrap(); // la passe qui découvre l'onglet
+        probe.move_to("/tmp");
+
+        // When
+        let moved = registry.changes().unwrap();
+        let settled = registry.changes().unwrap();
+
+        // Then — c'est ce qui fait suivre le titre de l'onglet, sans réveiller la webview
+        // trois fois par seconde pour un onglet posé à son invite
+        assert_eq!(
+            moved,
+            vec![TabChange {
+                tab_id: "A".to_owned(),
+                cwd: "/tmp".to_owned(),
+            }]
+        );
+        assert_eq!(settled, vec![]);
+    }
+
+    #[test]
+    fn given_a_probe_pass_in_flight_when_a_keystroke_arrives_then_it_does_not_wait_behind_the_probe(
+    ) {
+        // Given — une sonde qui bloque, comme un `proc_pidinfo` sur un système chargé.
+        // À 3 Hz par onglet, une passe qui tient le verrou du registre met chaque frappe
+        // de l'utilisateur derrière elle.
+        let (entered, has_entered) = mpsc::channel();
+        let (release, wait_for_release) = mpsc::channel::<()>();
+        let registry = Arc::new(PtyRegistry::new(
+            Box::new(FakeSpawner::observable()),
+            Arc::new(BlockingProbe {
+                entered,
+                release: Mutex::new(wait_for_release),
+            }),
+        ));
+        registry.open(spec(), "A".to_owned()).unwrap();
+
+        let sweeping = {
+            let registry = Arc::clone(&registry);
+            std::thread::spawn(move || registry.changes())
+        };
+        has_entered.recv().unwrap();
+
+        // When — la frappe part pendant que la passe de sonde est bloquée
+        let (typed, keystroke) = mpsc::channel();
+        let typing = {
+            let registry = Arc::clone(&registry);
+            std::thread::spawn(move || {
+                let written = registry.write("A", b"ls\n");
+                typed.send(written).unwrap();
+            })
+        };
+
+        // Then — elle aboutit sans attendre la fin de la passe
+        let written = keystroke.recv_timeout(std::time::Duration::from_secs(5));
+        release.send(()).unwrap();
+        sweeping.join().unwrap().unwrap();
+        typing.join().unwrap();
+        assert!(
+            matches!(written, Ok(Ok(()))),
+            "la frappe a attendu la fin de la sonde : {written:?}"
+        );
+    }
+
+    /// Une sonde qui prévient qu'elle est entrée, puis attend qu'on la libère.
+    ///
+    /// Elle ne décrit aucun système réel : ce qu'elle rend visible, c'est la durée d'une
+    /// passe, et ce qui reste bloqué pendant.
+    struct BlockingProbe {
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl Probe for BlockingProbe {
+        fn foreground_pgid(&self, _terminal: RawFd) -> Result<Pid, ProbeError> {
+            self.entered.send(()).unwrap();
+            let _ = self.release.lock().unwrap().recv();
+            Ok(100)
+        }
+
+        fn inspect(&self, pid: Pid) -> Result<ProcessInfo, ProbeError> {
+            Ok(ProcessInfo {
+                pid,
+                name: "bash".to_owned(),
+                cwd: PathBuf::from("/dev/ash"),
+            })
+        }
     }
 }
