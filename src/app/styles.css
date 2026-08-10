@@ -1,14 +1,42 @@
 @import "../assets/fonts/fonts.css";
 
-/* Le thème complet — clair, sombre, système, et les cinq états d'agent — appartient à
- * la tâche « ligne de statut et thème ». Ici, le strict nécessaire pour qu'une fenêtre
- * vide ne soit pas aveuglante en mode sombre. */
+/* Les tokens des deux thèmes.
+ *
+ * Le thème suit `prefers-color-scheme` : pas de sélecteur, pas de préférence stockée.
+ * Le thème clair n'est **pas** une inversion calculée du sombre — chaque valeur est
+ * choisie, et notamment l'accent, qui passe du corail à la terracotta pour tenir le
+ * contraste sur fond papier. Aucune mesure ne change entre les deux.
+ *
+ * Ils vivent ici, dans le composition root, et pas dans une feature : la sidebar, la
+ * barre d'onglets et la ligne de statut les partagent. Les features posent la mise en
+ * forme, l'application pose la palette. */
 
 :root {
     color-scheme: light dark;
 
-    --ash-bg: #ffffff;
-    --ash-fg: #1a1a1a;
+    --ash-bg: #fcfcfb;
+    --ash-bg-chrome: #ececea;
+    --ash-bg-sidebar: #f2f2f0;
+    --ash-bg-selected: #e6e6e3;
+    --ash-border: #dedcd8;
+    --ash-border-soft: #e4e3df;
+    --ash-border-strong: #b6b4ae;
+    --ash-fg: #24262a;
+    --ash-fg-strong: #1b1d20;
+    --ash-fg-muted: #7a7d83;
+    --ash-fg-done: #3b3e43;
+    --ash-fg-meta: #66696f;
+    --ash-fg-dim: #94979d;
+    --ash-fg-faint: #a9abaf;
+    --ash-rule: #c9c7c2;
+    --ash-select-rail: #6f7278;
+    --ash-accent: #c8481f;
+    --ash-accent-bg: rgb(200 72 31 / 10%);
+    --ash-accent-fg: #5c2a16;
+    --ash-working: #2a7ea8;
+    --ash-done: #2f7d5c;
+    --ash-error: #b03a30;
+    --ash-idle: #a9abaf;
 
     font-family: "JetBrains Mono", ui-monospace, monospace;
     font-size: 13px;
@@ -21,8 +49,29 @@
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --ash-bg: #16181d;
-        --ash-fg: #d4d7dd;
+        --ash-bg: #0c0d0f;
+        --ash-bg-chrome: #16171a;
+        --ash-bg-sidebar: #121316;
+        --ash-bg-selected: #1c1e23;
+        --ash-border: #24262b;
+        --ash-border-soft: #1d1f24;
+        --ash-border-strong: #3a3d45;
+        --ash-fg: #e8eaee;
+        --ash-fg-strong: #e8eaee;
+        --ash-fg-muted: #9aa0a8;
+        --ash-fg-done: #c3c6cc;
+        --ash-fg-meta: #8b9099;
+        --ash-fg-dim: #5a5e66;
+        --ash-fg-faint: #4a4e56;
+        --ash-rule: #3a3d45;
+        --ash-select-rail: #8b9099;
+        --ash-accent: #ff8a5c;
+        --ash-accent-bg: rgb(255 138 92 / 9%);
+        --ash-accent-fg: #f2ded6;
+        --ash-working: #6fb2d2;
+        --ash-done: #63b995;
+        --ash-error: #cf4f4f;
+        --ash-idle: #565a62;
     }
 }
 
@@ -44,6 +93,18 @@ body {
     place-items: stretch;
 }
 
+/* La fenêtre est en deux colonnes : la sidebar, et tout le reste.
+ *
+ * `auto 1fr`, et pas une largeur fixe : la colonne annonce elle-même sa largeur (240 px,
+ * ou 46 px repliée), et le terminal prend systématiquement ce qui reste. `⌘B` n'a donc
+ * rien à recalculer ici. `min-width: 0` sur la seconde colonne est ce qui empêche le
+ * terminal de pousser la grille au lieu de se laisser réduire. */
+.ash-layout {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    min-height: 0;
+}
+
 /* Le terminal occupe toute la fenêtre. La barre de titre est en overlay : sans cette
  * réserve en haut, les premières lignes passeraient sous les boutons de fenêtre.
  *
@@ -52,6 +113,7 @@ body {
  * de défilement de la webview par-dessus celles du terminal. */
 .terminal-host {
     min-height: 0;
+    min-width: 0;
     padding: 30px 8px 8px;
     background: var(--ash-bg);
     overflow: hidden;

@@ -7,6 +7,7 @@
 
 import "./terminal.css";
 
+import type { TabId, TabInfo } from "./ports";
 import { askToClose } from "./confirm-dialog";
 import { tauriPty } from "./pty-bridge";
 import { TabBar } from "./tab-bar";
@@ -16,12 +17,31 @@ import { TerminalWorkbench, type Origin } from "./workbench";
 export type { PtyFrame, TabId, TabInfo, TerminalSize } from "./ports";
 export type { Origin } from "./workbench";
 
+/** Ce que la feature annonce de ses onglets à qui les affiche autrement — la sidebar. */
+export type TabsListener = (tabs: readonly TabInfo[], activeTabId: TabId | null) => void;
+
 /** Les actions d'onglet, telles que le menu applicatif et la barre les déclenchent. */
 export interface Terminals {
     openTab(origin: Origin): Promise<void>;
     closeActiveTab(): Promise<void>;
+    selectTab(tabId: TabId): Promise<void>;
     selectTabAt(position: number): Promise<void>;
     clearActiveScrollback(): Promise<void>;
+    /**
+     * S'abonne à l'état des onglets.
+     *
+     * La feature ne connaît pas la sidebar : c'est le composition root qui relie les deux.
+     * Et il n'y a **qu'un** abonnement à la boucle de sonde — deux features qui écouteraient
+     * le même event afficheraient deux vérités qui se croisent
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    onTabs(listener: TabsListener): void;
+    /**
+     * Les titres d'onglet portent-ils leur workspace ?
+     *
+     * `⌘B` replie la sidebar : le contexte qu'elle portait doit passer dans la barre.
+     */
+    showWorkspaceInTitles(show: boolean): void;
 }
 
 /**
@@ -42,12 +62,15 @@ export function mountTerminals(host: HTMLElement): Terminals {
     const stack = document.createElement("div");
     stack.className = "terminal-stack";
 
+    const listeners: TabsListener[] = [];
+
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
         createView: () => new XtermView(stack),
         confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
             bar.render(state);
+            for (const listener of listeners) listener(state.tabs, state.activeTabId);
         },
     });
 
@@ -65,7 +88,17 @@ export function mountTerminals(host: HTMLElement): Terminals {
     return {
         openTab: (origin) => workbench.openTab(origin),
         closeActiveTab: () => workbench.closeActive(),
+        selectTab: (tabId) => workbench.select(tabId),
         selectTabAt: (position) => workbench.selectAt(position),
         clearActiveScrollback: () => workbench.clearActive(),
+        onTabs: (listener) => {
+            listeners.push(listener);
+            // L'abonné arrive après le premier rendu : lui donner l'état courant tout de
+            // suite lui évite d'attendre le prochain `cd` pour afficher quoi que ce soit.
+            listener(workbench.tabs.tabs, workbench.tabs.activeTabId);
+        },
+        showWorkspaceInTitles: (show) => {
+            if (bar.showWorkspaceInTitles(show)) bar.render(workbench.tabs);
+        },
     };
 }

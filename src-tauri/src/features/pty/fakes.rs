@@ -8,11 +8,12 @@
 //! implémentations sur un vrai shell (`tests/pty_real_shell.rs`, `tests/probe_real_shell.rs`).
 
 use std::os::fd::RawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::error::PtyError;
+use super::locate::{RepoRef, TabLocation, WorktreeLocator};
 use super::registry::PtyRegistry;
 use super::session::{OpenPty, PtySession, PtySpawner, PtySpec, Terminal};
 use crate::features::probe::{Pid, Probe, ProbeError, ProcessInfo};
@@ -33,7 +34,12 @@ pub const TERMINAL: Terminal = Terminal {
 #[derive(Default)]
 pub struct FakeProbe {
     cwd: Mutex<Option<PathBuf>>,
+    /// Le programme à qui le shell a donné l'avant-plan, quand il y en a un.
+    foreground: Mutex<Option<String>>,
 }
+
+/// Le pid du programme lancé depuis le shell, quand le scénario en demande un.
+const LAUNCHED: Pid = 200;
 
 impl FakeProbe {
     /// Un système qui ne répond rien : ni avant-plan, ni processus.
@@ -44,6 +50,7 @@ impl FakeProbe {
     pub fn reporting(cwd: &str) -> Self {
         Self {
             cwd: Mutex::new(Some(PathBuf::from(cwd))),
+            foreground: Mutex::new(None),
         }
     }
 
@@ -53,15 +60,27 @@ impl FakeProbe {
         *self.cwd.lock().unwrap() = Some(PathBuf::from(cwd));
     }
 
+    /// Le shell a donné le terminal à un programme : l'onglet n'est plus à son invite.
+    pub fn hand_over_to(&self, program: &str) {
+        *self.foreground.lock().unwrap() = Some(program.to_owned());
+    }
+
     fn seen(&self) -> Option<PathBuf> {
         self.cwd.lock().unwrap().clone()
+    }
+
+    fn leader(&self) -> Option<String> {
+        self.foreground.lock().unwrap().clone()
     }
 }
 
 impl Probe for FakeProbe {
     fn foreground_pgid(&self, terminal: RawFd) -> Result<Pid, ProbeError> {
         self.seen()
-            .map(|_| TERMINAL.shell_pid)
+            .map(|_| match self.leader() {
+                Some(_) => LAUNCHED,
+                None => TERMINAL.shell_pid,
+            })
             .ok_or(ProbeError::NoForeground(terminal))
     }
 
@@ -69,10 +88,54 @@ impl Probe for FakeProbe {
         self.seen()
             .map(|cwd| ProcessInfo {
                 pid,
-                name: "bash".to_owned(),
+                name: match self.leader() {
+                    Some(program) if pid == LAUNCHED => program,
+                    _ => "bash".to_owned(),
+                },
                 cwd,
             })
             .ok_or(ProbeError::Vanished(pid))
+    }
+}
+
+/// Une résolution de worktree qui répond sans disque, et qui **compte** ses appels.
+///
+/// Le compteur n'est pas décoratif : la règle qui compte ici est qu'un onglet immobile ne
+/// relance pas la résolution, et elle ne se vérifie pas autrement.
+#[derive(Default)]
+pub struct CountingLocator {
+    calls: AtomicUsize,
+}
+
+impl CountingLocator {
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl WorktreeLocator for CountingLocator {
+    fn locate(&self, cwd: &Path) -> Option<TabLocation> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+
+        // Un dossier sous `/dev/<projet>/…` est situé dans le dépôt `<projet>` ; ailleurs,
+        // il est son propre worktree, à plat. Assez pour que « l'onglet a changé de
+        // dépôt » soit observable, sans rejouer la résolution réelle — elle a ses tests.
+        let name = cwd.file_name()?.to_string_lossy().into_owned();
+        let repo = cwd
+            .strip_prefix("/dev")
+            .ok()
+            .and_then(|under| under.components().next())
+            .map(|repo| repo.as_os_str().to_string_lossy().into_owned())
+            .map(|repo| RepoRef {
+                id: format!("/dev/{repo}/.git"),
+                name: repo,
+            });
+
+        Some(TabLocation {
+            worktree_root: cwd.display().to_string(),
+            worktree_name: name,
+            repo,
+        })
     }
 }
 
@@ -178,15 +241,27 @@ pub fn spec() -> PtySpec {
 /// Un registre dont les onglets ne sont pas sondables : la plupart des règles du registre
 /// — ordre, fermeture, crédits — n'ont rien à voir avec la sonde.
 pub fn registry(spawner: FakeSpawner) -> PtyRegistry {
-    PtyRegistry::new(Box::new(spawner), Arc::new(FakeProbe::silent()))
+    PtyRegistry::new(
+        Box::new(spawner),
+        Arc::new(FakeProbe::silent()),
+        Arc::new(CountingLocator::default()),
+    )
 }
 
 /// Un registre sondable, et la sonde qu'on garde en main pour la faire bouger.
 pub fn observed_registry(cwd: &str) -> (PtyRegistry, Arc<FakeProbe>) {
+    let (registry, probe, _) = located_registry(cwd);
+    (registry, probe)
+}
+
+/// Idem, plus la résolution de worktree — pour ce qui se joue à la frontière d'ADR-0012.
+pub fn located_registry(cwd: &str) -> (PtyRegistry, Arc<FakeProbe>, Arc<CountingLocator>) {
     let probe = Arc::new(FakeProbe::reporting(cwd));
+    let locator = Arc::new(CountingLocator::default());
     let registry = PtyRegistry::new(
         Box::new(FakeSpawner::observable()),
         Arc::clone(&probe) as Arc<dyn Probe>,
+        Arc::clone(&locator) as Arc<dyn WorktreeLocator>,
     );
-    (registry, probe)
+    (registry, probe, locator)
 }

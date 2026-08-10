@@ -1,4 +1,5 @@
 import "./styles.css";
+import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { onMenuAction, type MenuAction } from "./menu";
 
@@ -14,11 +15,26 @@ import { onMenuAction, type MenuAction } from "./menu";
  * feature.
  */
 function mount(root: HTMLElement): void {
+    root.classList.add("ash-layout");
+
     const host = document.createElement("div");
     host.className = "terminal-host";
-    root.append(host);
 
     const terminals = mountTerminals(host);
+
+    // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
+    // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
+    // s'abonne à rien côté Tauri — elle reçoit les onglets **déjà situés** par le backend
+    // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+    const sidebar = mountSidebar({
+        selectTab: (tabId) => void terminals.selectTab(tabId),
+        newTab: () => void terminals.openTab("current-worktree"),
+    });
+    terminals.onTabs((tabs, activeTabId) => {
+        sidebar.render(tabs, activeTabId);
+    });
+
+    root.append(sidebar.element, host);
 
     const fail = (error: unknown): void => {
         // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
@@ -35,11 +51,11 @@ function mount(root: HTMLElement): void {
     terminals.openTab("home").catch(fail);
 
     onMenuAction((action) => {
-        dispatch(terminals, action).catch(fail);
+        dispatch(terminals, sidebar, action).catch(fail);
     }).catch(fail);
 }
 
-function dispatch(terminals: Terminals, action: MenuAction): Promise<void> {
+function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): Promise<void> {
     switch (action.kind) {
         case "new-tab":
             return terminals.openTab("current-worktree");
@@ -51,6 +67,11 @@ function dispatch(terminals: Terminals, action: MenuAction): Promise<void> {
             return terminals.clearActiveScrollback();
         case "select-tab":
             return terminals.selectTabAt(action.position);
+        case "toggle-sidebar":
+            // Repliée, la sidebar ne porte plus le contexte : la barre d'onglets le
+            // reprend, et un onglet s'intitule `omelette-web/claude`.
+            terminals.showWorkspaceInTitles(sidebar.toggleCollapsed());
+            return Promise.resolve();
     }
 }
 

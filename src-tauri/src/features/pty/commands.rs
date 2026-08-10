@@ -14,7 +14,7 @@ use super::sweep::{self, Shutdown, SystemTicker};
 /// Taille d'une lecture. Un master PTY macOS ne rend guère plus par appel.
 const READ_BUFFER: usize = 64 * 1024;
 
-/// Nom de l'event qui porte les répertoires qui ont bougé.
+/// Nom de l'event qui porte les onglets qui ont bougé.
 ///
 /// Contrat avec `src/features/terminal/pty-bridge.ts` : une chaîne que rien ne vérifie à
 /// la compilation, comme celle du menu. Le frontend ne connaît de la feature que ses

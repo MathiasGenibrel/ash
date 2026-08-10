@@ -1,6 +1,6 @@
-import type { PtyBridge, TabChange, TabId, TabInfo, TerminalViewFactory } from "./ports";
+import type { PtyBridge, TabId, TabInfo, TerminalViewFactory } from "./ports";
 import { TerminalSession } from "./session";
-import { activeTab, adopt, noTabs, select, selectAt, withCwd, type TabsState } from "./tabs";
+import { activeTab, adopt, noTabs, select, selectAt, withUpdates, type TabsState } from "./tabs";
 
 /**
  * Ce dont l'atelier a besoin, et rien de plus.
@@ -42,8 +42,8 @@ export class TerminalWorkbench {
         // oublier de brancher est exactement ce qui a laissé les titres d'onglet figés.
         // Il n'y a rien à désabonner — l'atelier vit aussi longtemps que la fenêtre.
         void this.ports.bridge
-            .onTabsChanged((changes) => {
-                this.applyChanges(changes);
+            .onTabsChanged((changed) => {
+                this.applyChanges(changed);
             })
             .catch(() => {
                 // Pas d'abonnement possible : les titres ne suivront pas les `cd`. C'est
@@ -170,8 +170,8 @@ export class TerminalWorkbench {
      * autant — c'est le backend qui détient le `cwd`, et la relecture suivante rendra la
      * même valeur.
      */
-    private applyChanges(changes: readonly TabChange[]): void {
-        const updated = withCwd(this.state, changes);
+    private applyChanges(changed: readonly TabInfo[]): void {
+        const updated = withUpdates(this.state, changed);
         if (updated === this.state) return;
         this.state = updated;
         this.render();

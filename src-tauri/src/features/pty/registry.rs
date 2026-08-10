@@ -1,9 +1,10 @@
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::error::PtyError;
 use super::flow::Credits;
+use super::locate::{TabLocation, WorktreeLocator};
 use super::session::{PtySession, PtySpawner, PtySpec};
 use crate::features::probe::{Probe, TabObservation, TabWatch};
 
@@ -32,6 +33,8 @@ pub struct PtyRegistry {
     spawner: Box<dyn PtySpawner>,
     /// La sonde d'ADR-0005, injectée : c'est elle qui donne son `cwd` vivant à un onglet.
     probe: Arc<dyn Probe>,
+    /// La résolution `cwd` → worktree + dépôt, injectée elle aussi (voir [`super::locate`]).
+    locator: Arc<dyn WorktreeLocator>,
     tabs: Mutex<Vec<Tab>>,
 }
 
@@ -45,8 +48,15 @@ struct Tab {
     /// répondre. Un onglet doit toujours avoir un répertoire à afficher, même sur un
     /// système qui refuse de parler.
     start_dir: PathBuf,
+    /// Le nom du shell de l'onglet, retenu à l'ouverture.
+    ///
+    /// C'est ce que la sidebar affiche tant que la sonde n'a rien dit : un onglet sans
+    /// nom serait pire qu'un onglet nommé d'après son shell.
+    shell_name: String,
     /// La sonde de cet onglet, quand le système le rend observable.
     watch: SharedWatch,
+    /// La dernière localisation résolue, et le répertoire pour lequel elle l'a été.
+    place: SharedPlace,
 }
 
 /// La sonde d'un onglet, tenue à part du verrou du registre.
@@ -63,18 +73,46 @@ struct Tab {
 ///   ne se tromperait pas bruyamment, elle se tromperait en silence.
 type SharedWatch = Arc<Mutex<Option<TabWatch>>>;
 
-/// Ce qu'une passe de la boucle de sonde a trouvé de neuf sur un onglet.
+/// La localisation d'un onglet, retenue avec le répertoire qui l'a produite.
 ///
-/// Seuls les onglets qui ont **bougé** en produisent un : un onglet posé à son invite
-/// serait sinon annoncé trois fois par seconde, et réveillerait la webview pour rien.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TabChange {
-    pub tab_id: TabId,
-    pub cwd: String,
+/// C'est le dédoublonnage de la résolution : elle lit des fichiers de contrôle git, et le
+/// `cwd` d'un onglet ne change pas trois fois par seconde. Tant qu'il n'a pas bougé, la
+/// réponse retenue est la bonne — donc on ne redemande rien au disque.
+///
+/// Tenue à part du verrou du registre, pour la même raison que la sonde : une frappe
+/// clavier n'a pas à attendre derrière une lecture de fichier.
+type SharedPlace = Arc<Mutex<Option<Located>>>;
+
+struct Located {
+    cwd: PathBuf,
+    location: Option<TabLocation>,
+}
+
+/// L'état d'un onglet, tel que la sidebar le rend.
+///
+/// Les cinq états d'une ligne d'agent sont déclarés ici parce que c'est **le backend** qui
+/// les détient ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Seuls
+/// `Idle` et `Working` ont un producteur à ce jalon : la sonde d'ADR-0005 sait si le shell
+/// est à son invite ou si autre chose tient l'avant-plan. `Waiting`, `Done` et `Error`
+/// viendront des **hooks** ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)), qui
+/// interdit de les déduire de la sortie du PTY. Rien ne les produit aujourd'hui, et c'est
+/// le comportement correct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabState {
+    Idle,
+    Working,
+    Waiting,
+    Done,
+    Error,
 }
 
 /// Ce qu'un onglet montre de lui-même au frontend.
+///
+/// C'est aussi ce que la boucle de sonde annonce quand un onglet a **bougé** : un même
+/// type pour la liste et pour l'event, parce que rien ne justifie que le frontend
+/// apprenne un onglet de deux façons différentes. Un onglet posé à son invite ne traverse
+/// pas la frontière — voir [`PtyRegistry::changes`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
@@ -84,6 +122,12 @@ pub struct TabInfo {
     /// C'est lui que « nouvel onglet dans le worktree courant » (spec §4.4) reprend : le
     /// répertoire où l'onglet en est, pas celui d'où il est parti.
     pub cwd: String,
+    /// Le programme qui tient l'avant-plan — le nom que la sidebar et la barre affichent.
+    pub process: String,
+    pub state: TabState,
+    /// Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
+    /// n'a pas pu être situé.
+    pub location: Option<TabLocation>,
 }
 
 /// Ce qu'`open` rend au-delà de l'identifiant : de quoi lancer le lecteur.
@@ -94,10 +138,15 @@ pub struct Opened {
 }
 
 impl PtyRegistry {
-    pub fn new(spawner: Box<dyn PtySpawner>, probe: Arc<dyn Probe>) -> Self {
+    pub fn new(
+        spawner: Box<dyn PtySpawner>,
+        probe: Arc<dyn Probe>,
+        locator: Arc<dyn WorktreeLocator>,
+    ) -> Self {
         Self {
             spawner,
             probe,
+            locator,
             tabs: Mutex::new(Vec::new()),
         }
     }
@@ -120,7 +169,9 @@ impl PtyRegistry {
             session,
             credits: Arc::clone(&credits),
             start_dir: spec.cwd.clone(),
+            shell_name: shell_name(&spec),
             watch,
+            place: Arc::new(Mutex::new(None)),
         });
 
         Ok(Opened {
@@ -139,13 +190,9 @@ impl PtyRegistry {
         Ok(self
             .snapshot()?
             .into_iter()
-            .map(|tab| TabInfo {
-                cwd: self
-                    .observe(&tab.watch)
-                    .map_or(tab.start_dir, |seen| seen.cwd)
-                    .display()
-                    .to_string(),
-                tab_id: tab.id,
+            .map(|tab| {
+                let seen = self.observe(&tab.watch);
+                self.describe(tab, seen)
             })
             .collect())
     }
@@ -155,16 +202,15 @@ impl PtyRegistry {
     /// Rien pour un onglet immobile, rien pour un onglet que le système ne sait plus
     /// décrire. C'est ce que la boucle émet vers le frontend, et c'est ce qui fait suivre
     /// le titre d'un onglet à travers les `cd` — y compris pendant qu'un programme tourne,
-    /// là où OSC 7 se tairait.
-    pub fn changes(&self) -> Result<Vec<TabChange>, PtyError> {
+    /// là où OSC 7 se tairait. C'est aussi ce qui fait migrer un onglet d'un dépôt à
+    /// l'autre dans la sidebar : la localisation voyage avec l'onglet.
+    pub fn changes(&self) -> Result<Vec<TabInfo>, PtyError> {
         Ok(self
             .snapshot()?
             .into_iter()
             .filter_map(|tab| {
-                self.observe_change(&tab.watch).map(|seen| TabChange {
-                    tab_id: tab.id,
-                    cwd: seen.cwd.display().to_string(),
-                })
+                let seen = self.observe_change(&tab.watch)?;
+                Some(self.describe(tab, Some(seen)))
             })
             .collect())
     }
@@ -226,9 +272,72 @@ impl PtyRegistry {
             .map(|tab| TabHandle {
                 id: tab.id.clone(),
                 start_dir: tab.start_dir.clone(),
+                shell_name: tab.shell_name.clone(),
                 watch: Arc::clone(&tab.watch),
+                place: Arc::clone(&tab.place),
             })
             .collect())
+    }
+
+    /// Ce qu'on dit d'un onglet au frontend, à partir de ce que la sonde a vu.
+    ///
+    /// Le seul endroit où un `TabInfo` est fabriqué : la liste et l'event doivent décrire
+    /// un onglet de la même façon, sans quoi une migration annoncée par la boucle
+    /// contredirait la prochaine relecture.
+    fn describe(&self, tab: TabHandle, seen: Option<TabObservation>) -> TabInfo {
+        let cwd = seen
+            .as_ref()
+            .map_or_else(|| tab.start_dir.clone(), |seen| seen.cwd.clone());
+
+        // Un onglet que la sonde ne sait pas décrire est à son invite jusqu'à preuve du
+        // contraire : rien ne permet d'affirmer qu'un programme y tourne.
+        let (process, state) = seen.map_or_else(
+            || (tab.shell_name.clone(), TabState::Idle),
+            |seen| {
+                let state = if seen.foreground.is_shell {
+                    TabState::Idle
+                } else {
+                    TabState::Working
+                };
+                (seen.foreground.name, state)
+            },
+        );
+
+        TabInfo {
+            tab_id: tab.id,
+            location: self.locate(&tab.place, &cwd),
+            cwd: cwd.display().to_string(),
+            process,
+            state,
+        }
+    }
+
+    /// La localisation d'un répertoire, **résolue seulement quand il a changé**.
+    ///
+    /// La résolution lit des fichiers sur le disque ; la boucle de sonde passe trois fois
+    /// par seconde et la liste est relue à chaque ouverture d'onglet. Sans ce
+    /// dédoublonnage, le `.git` de chaque worktree serait ouvert des milliers de fois par
+    /// heure pour rendre invariablement la même réponse.
+    ///
+    /// Le verrou pris ici est celui de l'onglet, jamais celui du registre : une frappe
+    /// clavier n'attend pas derrière une lecture de fichier.
+    fn locate(&self, place: &SharedPlace, cwd: &Path) -> Option<TabLocation> {
+        let Ok(mut place) = place.lock() else {
+            return None;
+        };
+
+        if let Some(known) = place.as_ref() {
+            if known.cwd == cwd {
+                return known.location.clone();
+            }
+        }
+
+        let location = self.locator.locate(cwd);
+        *place = Some(Located {
+            cwd: cwd.to_owned(),
+            location: location.clone(),
+        });
+        location
     }
 
     /// Le répertoire courant d'un onglet, sondé hors du verrou du registre.
@@ -294,7 +403,17 @@ impl PtyRegistry {
 struct TabHandle {
     id: TabId,
     start_dir: PathBuf,
+    shell_name: String,
     watch: SharedWatch,
+    place: SharedPlace,
+}
+
+/// Le nom du shell d'un onglet — `zsh`, `bash`. Le chemin entier pour seul repli.
+fn shell_name(spec: &PtySpec) -> String {
+    spec.shell
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| spec.shell.display().to_string())
 }
 
 #[cfg(test)]
@@ -302,7 +421,8 @@ mod tests {
     use super::*;
     use crate::features::probe::{Pid, ProbeError, ProcessInfo};
     use crate::features::pty::fakes::{
-        observed_registry, registry, spec, FakeSpawner, SpecBuilder,
+        located_registry, observed_registry, registry, spec, CountingLocator, FakeSpawner,
+        SpecBuilder,
     };
     use std::os::fd::RawFd;
     use std::sync::atomic::Ordering;
@@ -315,6 +435,11 @@ mod tests {
             .into_iter()
             .map(|tab| tab.tab_id)
             .collect()
+    }
+
+    /// Un onglet réduit à ce que le scénario regarde : qui il est, et où il est.
+    fn described(tab: TabInfo) -> (TabId, String) {
+        (tab.tab_id, tab.cwd)
     }
 
     #[test]
@@ -434,11 +559,8 @@ mod tests {
         // Then — c'est ce répertoire-là que « nouvel onglet dans le worktree courant »
         // (spec §4.4) reprend, pas celui de lancement
         assert_eq!(
-            registry.tabs().unwrap(),
-            vec![TabInfo {
-                tab_id: "A".to_owned(),
-                cwd: "/dev/ash/worktrees/probe".to_owned(),
-            }]
+            registry.tabs().unwrap().into_iter().next().map(described),
+            Some(("A".to_owned(), "/dev/ash/worktrees/probe".to_owned()))
         );
     }
 
@@ -458,11 +580,93 @@ mod tests {
 
         // Then
         assert_eq!(
-            registry.tabs().unwrap(),
-            vec![TabInfo {
-                tab_id: "A".to_owned(),
-                cwd: "/dev/ash".to_owned(),
-            }]
+            registry.tabs().unwrap().into_iter().next().map(described),
+            Some(("A".to_owned(), "/dev/ash".to_owned()))
+        );
+    }
+
+    #[test]
+    fn given_a_tab_that_changed_repository_when_the_loop_sweeps_then_the_announced_tab_carries_its_new_location(
+    ) {
+        // Given — un `cd` d'un dépôt vers un autre. C'est ce qui fait migrer l'onglet
+        // d'un groupe à l'autre dans la sidebar ([ADR-0012]), et la sidebar ne résout
+        // rien elle-même ([ADR-0009]) : la localisation doit voyager avec l'onglet.
+        let (registry, probe, _) = located_registry("/dev/ash");
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+        registry.changes().unwrap(); // la passe qui découvre l'onglet
+        probe.move_to("/dev/omelette-web/src");
+
+        // When
+        let announced = registry.changes().unwrap();
+
+        // Then
+        let location = announced
+            .into_iter()
+            .next()
+            .and_then(|tab| tab.location)
+            .expect("l'onglet annoncé doit être situé");
+        assert_eq!(
+            location.repo.map(|repo| repo.name),
+            Some("omelette-web".to_owned())
+        );
+        assert_eq!(location.worktree_name, "src");
+    }
+
+    #[test]
+    fn given_a_tab_that_has_not_moved_when_it_is_listed_again_then_its_location_is_not_resolved_again(
+    ) {
+        // Given — la résolution lit des fichiers sur le disque, et la liste est relue à
+        // chaque ouverture d'onglet pendant que la boucle passe trois fois par seconde.
+        let (registry, probe, locator) = located_registry("/dev/ash");
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+
+        // When — quatre lectures pour un onglet immobile, puis un `cd`
+        for _ in 0..4 {
+            registry.tabs().unwrap();
+        }
+        let while_still = locator.calls();
+        probe.move_to("/dev/omelette-web");
+        registry.tabs().unwrap();
+
+        // Then — une résolution par répertoire visité, et pas une par passe
+        assert_eq!(while_still, 1);
+        assert_eq!(locator.calls(), 2);
+    }
+
+    #[test]
+    fn given_a_shell_at_its_prompt_when_a_program_takes_the_foreground_then_the_tab_stops_being_idle(
+    ) {
+        // Given — les cinq états d'agent viennent des hooks ([ADR-0007]), mais l'onglet
+        // lui-même sait qui tient son avant-plan : c'est le seul état honnête à ce jalon,
+        // et la sidebar ne doit pas le déduire de son côté ([ADR-0009]).
+        let (registry, probe, _) = located_registry("/dev/ash");
+        registry.open(spec(), "A".to_owned()).unwrap();
+        let at_prompt = registry.tabs().unwrap();
+        probe.hand_over_to("claude");
+
+        // When
+        let running = registry.tabs().unwrap();
+
+        // Then
+        assert_eq!(
+            at_prompt
+                .first()
+                .map(|tab| (tab.state, tab.process.clone())),
+            Some((TabState::Idle, "bash".to_owned()))
+        );
+        assert_eq!(
+            running.first().map(|tab| (tab.state, tab.process.clone())),
+            Some((TabState::Working, "claude".to_owned()))
         );
     }
 
@@ -544,11 +748,8 @@ mod tests {
         // Then — c'est ce qui fait suivre le titre de l'onglet, sans réveiller la webview
         // trois fois par seconde pour un onglet posé à son invite
         assert_eq!(
-            moved,
-            vec![TabChange {
-                tab_id: "A".to_owned(),
-                cwd: "/tmp".to_owned(),
-            }]
+            moved.into_iter().map(described).collect::<Vec<_>>(),
+            vec![("A".to_owned(), "/tmp".to_owned())]
         );
         assert_eq!(settled, vec![]);
     }
@@ -567,6 +768,7 @@ mod tests {
                 entered,
                 release: Mutex::new(wait_for_release),
             }),
+            Arc::new(CountingLocator::default()),
         ));
         registry.open(spec(), "A".to_owned()).unwrap();
 

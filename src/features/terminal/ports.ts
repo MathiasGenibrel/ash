@@ -7,40 +7,18 @@
  * l'application.
  */
 
-/** Identifiant d'onglet : l'ulid que le backend a posé dans `ASH_TAB_ID`. */
-export type TabId = string;
+import type { TabId, TabInfo } from "@/shared/ipc";
+
+/**
+ * `TabId` et `TabInfo` sont le contrat partagé avec le backend, pas la propriété de cette
+ * feature : la sidebar les lit aussi. Ils sont réexportés ici pour que les consommateurs
+ * de la feature n'aient qu'un point d'entrée.
+ */
+export type { TabId, TabInfo } from "@/shared/ipc";
 
 export interface TerminalSize {
     cols: number;
     rows: number;
-}
-
-/**
- * Un onglet, tel que le backend le décrit. Miroir de `TabInfo` côté Rust.
- *
- * `cwd` est le répertoire **courant** de l'onglet : la sonde d'ADR-0005 le suit à
- * travers les `cd`, et même pendant qu'un programme tourne. C'est lui que « nouvel
- * onglet dans le worktree courant » (spec §4.4) reprend.
- *
- * Le frontend ne le calcule pas et ne le mémorise pas : il le relit du backend, qui seul
- * le détient ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
- */
-export interface TabInfo {
-    tabId: TabId;
-    cwd: string;
-}
-
-/**
- * Ce que la boucle de sonde du backend annonce d'un onglet qui a bougé. Miroir de
- * `TabChange` côté Rust.
- *
- * Le backend pousse, le frontend ne demande rien : c'est lui qui détient les PTY, donc
- * lui qui sait quand un `cd` a eu lieu. Seuls les onglets qui ont **changé** traversent
- * la frontière — un onglet posé à son invite ne réveille pas la webview.
- */
-export interface TabChange {
-    tabId: TabId;
-    cwd: string;
 }
 
 /** De quoi arrêter d'écouter un flux d'events. */
@@ -95,8 +73,10 @@ export interface PtyBridge {
      * S'abonne à la boucle de sonde du backend
      * ([ADR-0005](../../../docs/adr/0005-sonde-cwd-libproc.md)).
      *
-     * C'est par là, et par nulle part ailleurs, qu'un titre d'onglet apprend un `cd` :
-     * rien ici ne scrute, ne minute, ni ne relit la liste à intervalle régulier.
+     * C'est par là, et par nulle part ailleurs, qu'un onglet apprend un `cd` — donc aussi
+     * qu'il apprend avoir changé de dépôt : rien ici ne scrute, ne minute, ni ne relit la
+     * liste à intervalle régulier. Seuls les onglets qui ont **changé** traversent la
+     * frontière ; un onglet posé à son invite ne réveille pas la webview.
      */
-    onTabsChanged(handler: (changes: TabChange[]) => void): Promise<Unsubscribe>;
+    onTabsChanged(handler: (changed: TabInfo[]) => void): Promise<Unsubscribe>;
 }

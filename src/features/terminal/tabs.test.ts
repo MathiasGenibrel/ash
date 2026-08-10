@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { TabInfo } from "./ports";
-import { activeTab, adopt, noTabs, select, selectAt, withCwd, type TabsState } from "./tabs";
+import { activeTab, adopt, noTabs, select, selectAt, withUpdates, type TabsState } from "./tabs";
 
 /**
  * Test Data Builder : un état d'onglets décrit par l'ordre que le backend rendrait, et
@@ -27,11 +27,21 @@ class TabsBuilder {
     }
 
     build(): TabsState {
-        return adopt({ ...noTabs, activeTabId: this.active }, this.ids.map(tab));
+        return adopt(
+            { ...noTabs, activeTabId: this.active },
+            this.ids.map((tabId) => tab(tabId)),
+        );
     }
 }
 
-const tab = (tabId: string): TabInfo => ({ tabId, cwd: `/dev/${tabId}` });
+/** Un onglet tel que le backend le décrit — cwd, programme, état, localisation. */
+const tab = (tabId: string, cwd = `/dev/${tabId}`): TabInfo => ({
+    tabId,
+    cwd,
+    process: "zsh",
+    state: "idle",
+    location: { worktreeRoot: cwd, worktreeName: tabId, repo: null },
+});
 const order = (state: TabsState): string[] => state.tabs.map((each) => each.tabId);
 
 describe("l'ordre des onglets", () => {
@@ -132,13 +142,13 @@ describe("Cmd+1..9", () => {
     });
 });
 
-describe("les répertoires que la sonde annonce", () => {
+describe("les onglets que la sonde annonce", () => {
     it("Given a tab whose shell moved, when the probe announces it, then that tab shows the new directory and the others are untouched", () => {
         // Given
         const state = TabsBuilder.create().inOrder("A", "B").looking("A").build();
 
         // When
-        const moved = withCwd(state, [{ tabId: "A", cwd: "/tmp" }]);
+        const moved = withUpdates(state, [tab("A", "/tmp")]);
 
         // Then — un `cd` change un répertoire, pas l'ordre ni la sélection
         expect(moved.tabs.map((each) => each.cwd)).toEqual(["/tmp", "/dev/B"]);
@@ -146,12 +156,32 @@ describe("les répertoires que la sonde annonce", () => {
         expect(moved.activeTabId).toBe("A");
     });
 
+    it("Given a tab that changed repository, when the probe announces it, then the frontend adopts the location the backend resolved", () => {
+        // Given — la sidebar ne résout rien de son côté : elle range ce que le backend
+        // a situé ([ADR-0009])
+        const state = TabsBuilder.create().inOrder("A").looking("A").build();
+        const elsewhere: TabInfo = {
+            ...tab("A", "/wt/ash-toc"),
+            location: {
+                worktreeRoot: "/wt/ash-toc",
+                worktreeName: "ash-toc",
+                repo: { id: "/dev/ash/.git", name: "ash" },
+            },
+        };
+
+        // When
+        const moved = withUpdates(state, [elsewhere]);
+
+        // Then
+        expect(moved.tabs[0]?.location?.repo?.name).toBe("ash");
+    });
+
     it("Given a tab that has already closed, when a change still names it, then nothing is rendered again", () => {
         // Given — la passe de sonde et la fermeture d'un onglet se croisent
         const state = TabsBuilder.create().inOrder("A").looking("A").build();
 
         // When
-        const applied = withCwd(state, [{ tabId: "Z", cwd: "/tmp" }]);
+        const applied = withUpdates(state, [tab("Z", "/tmp")]);
 
         // Then — l'état est rendu tel quel : rien à réafficher
         expect(applied).toBe(state);
