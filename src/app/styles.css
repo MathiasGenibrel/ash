@@ -38,12 +38,27 @@ body {
     color: var(--ash-fg);
 }
 
-/* La sélection de texte est le geste de base d'un terminal ; la molette ne l'est pas
- * encore, tant qu'il n'y a rien à faire défiler. */
 #root {
     height: 100%;
     display: grid;
-    place-items: center;
+    place-items: stretch;
+}
+
+/* Le terminal occupe toute la fenêtre. La barre de titre est en overlay : sans cette
+ * réserve en haut, les premières lignes passeraient sous les boutons de fenêtre.
+ *
+ * `overflow: hidden` n'est pas cosmétique : le `FitAddon` calcule une grille entière, et
+ * le reste — quelques pixels de moins d'une ligne — suffit à faire apparaître les barres
+ * de défilement de la webview par-dessus celles du terminal. */
+.terminal-host {
+    min-height: 0;
+    padding: 30px 8px 8px;
+    background: var(--ash-bg);
+    overflow: hidden;
+}
+
+body {
+    overflow: hidden;
 }
 
 /* --- banc du spike, jetable avec lui ---------------------------------------

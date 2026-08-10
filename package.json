@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
