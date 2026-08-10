@@ -5,6 +5,8 @@
  * `workbench` ne sont des points d'entrée.
  */
 
+import "./terminal.css";
+
 import { askToClose } from "./confirm-dialog";
 import { tauriPty } from "./pty-bridge";
 import { TabBar } from "./tab-bar";

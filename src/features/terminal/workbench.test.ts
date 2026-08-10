@@ -11,7 +11,8 @@ class FakeBackend implements PtyBridge {
     readonly opened: { tabId: TabId; cwd: string | null }[] = [];
     readonly killed: TabId[] = [];
     readonly acks: TabId[] = [];
-    readonly busy = new Set<TabId>();
+    /** Les onglets dont l'avant-plan est tenu par autre chose que le shell. */
+    readonly running = new Set<TabId>();
 
     private order: TabInfo[] = [];
     private frames = new Map<TabId, (frame: PtyFrame) => void>();
@@ -44,7 +45,7 @@ class FakeBackend implements PtyBridge {
         return Promise.resolve([...this.order]);
     }
     hasForegroundProcess(tabId: TabId) {
-        return Promise.resolve(this.busy.has(tabId));
+        return Promise.resolve(this.running.has(tabId));
     }
 
     /** Le shell d'un onglet écrit. */
@@ -191,7 +192,7 @@ describe("la fermeture d'un onglet", () => {
         const app = bench({ confirm: false });
         await app.workbench.openTab("home");
         const tabId = app.backend.opened[0]?.tabId ?? "";
-        app.backend.busy.add(tabId);
+        app.backend.running.add(tabId);
 
         // When
         await app.workbench.closeActive();
@@ -209,7 +210,7 @@ describe("la fermeture d'un onglet", () => {
         const app = bench({ confirm: true });
         await app.workbench.openTab("home");
         const tabId = app.backend.opened[0]?.tabId ?? "";
-        app.backend.busy.add(tabId);
+        app.backend.running.add(tabId);
 
         // When
         await app.workbench.closeActive();

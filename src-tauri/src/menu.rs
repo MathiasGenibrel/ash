@@ -24,8 +24,8 @@
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Runtime};
 
-/// Nom de l'event qui porte l'action choisie. Contrat avec `src/shared/ipc/menu.ts`.
-pub const MENU_ACTION_EVENT: &str = "ash://menu-action";
+/// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
+const MENU_ACTION_EVENT: &str = "ash://menu-action";
 
 /// Nombre d'onglets directement adressables — `Cmd+1` … `Cmd+9` (spec §4.4).
 const DIRECT_TABS: u8 = 9;
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn given_a_menu_item_identifier_when_it_is_read_back_then_it_names_the_same_action() {
-        // Given — l'identifiant est le contrat avec `src/shared/ipc/menu.ts` ; il traverse
+        // Given — l'identifiant est le contrat avec `src/app/menu.ts` ; il traverse
         // la frontière sous forme de chaîne et rien ne le vérifie à la compilation.
         let actions = [
             Action::NewTab,

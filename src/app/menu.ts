@@ -8,6 +8,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
  * le chemin souris, et il consomme la touche avant que la webview — donc le shell — ne
  * la voie. Ce module ne fait que traduire l'identifiant reçu en action typée.
  *
+ * Il vit dans `app/`, et non dans `shared/ipc/` : un menu est un objet de fenêtre, dont
+ * le seul lecteur est le composition root — c'est lui qui relie une action à la feature
+ * qui sait la jouer. `shared/` est réservé à ce qui sert au moins deux features sans
+ * porter la règle d'aucune, et cette table ne nomme aujourd'hui que des actions
+ * d'onglet. Le pendant Rust, `src-tauri/src/menu.rs`, est posé de la même façon à côté
+ * de son composition root.
+ *
  * Les deux côtés partagent des chaînes que rien ne vérifie à la compilation : un
  * identifiant inconnu est donc ignoré ici, et un test Rust garde la table symétrique.
  */

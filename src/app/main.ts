@@ -1,6 +1,6 @@
 import "./styles.css";
 import { mountTerminals, type Terminals } from "@/features/terminal";
-import { onMenuAction, type MenuAction } from "@/shared/ipc/menu";
+import { onMenuAction, type MenuAction } from "./menu";
 
 /**
  * Composition root du frontend.
