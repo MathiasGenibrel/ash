@@ -9,6 +9,13 @@ import type { PtyBridge, PtyFrame, TabId, TerminalView } from "./ports";
  * manquant fige l'onglet au bout de quelques morceaux ; un acquittement en trop rouvre
  * la vanne et ramène la perte de données.
  */
+export interface SessionOptions {
+    /** Répertoire de lancement du shell. `null` — le défaut — vaut `~`. */
+    cwd?: string | null;
+    /** Appelé quand le shell sort de lui-même : l'onglet n'a plus lieu d'être. */
+    onExit?: () => void;
+}
+
 export class TerminalSession {
     private closed = false;
 
@@ -16,9 +23,14 @@ export class TerminalSession {
         readonly tabId: TabId,
         private readonly view: TerminalView,
         private readonly bridge: PtyBridge,
+        private readonly onExit: (() => void) | undefined,
     ) {}
 
-    static async start(view: TerminalView, bridge: PtyBridge): Promise<TerminalSession> {
+    static async start(
+        view: TerminalView,
+        bridge: PtyBridge,
+        options: SessionOptions = {},
+    ): Promise<TerminalSession> {
         // Le shell écrit dès qu'il démarre, et `open` n'a pas encore rendu l'identifiant
         // d'onglet : les premiers morceaux arrivent avant que la session existe. Les
         // mettre de côté est la seule façon de ne pas perdre l'invite de commande.
@@ -27,11 +39,11 @@ export class TerminalSession {
             early.push(frame);
         };
 
-        const tabId = await bridge.open(view.size, (frame) => {
+        const tabId = await bridge.open(view.size, options.cwd ?? null, (frame) => {
             receive(frame);
         });
 
-        const session = new TerminalSession(tabId, view, bridge);
+        const session = new TerminalSession(tabId, view, bridge, options.onExit);
         receive = (frame) => {
             session.onFrame(frame);
         };
@@ -63,9 +75,26 @@ export class TerminalSession {
         return this.closed;
     }
 
+    /** Efface le scrollback de l'onglet — `Cmd+K`. */
+    clear(): void {
+        if (this.closed) return;
+        this.view.clear();
+    }
+
+    /** Montre ou masque l'onglet. Le shell continue de tourner dans les deux cas. */
+    setVisible(visible: boolean): void {
+        if (this.closed) return;
+        this.view.setVisible(visible);
+        if (visible) this.view.focus();
+    }
+
     private onFrame(frame: PtyFrame): void {
         if (frame.kind === "exit") {
             this.closed = true;
+            // Le shell est sorti sans qu'on le lui demande : le backend a déjà retiré
+            // l'onglet de son registre, il reste à retirer sa surface.
+            this.view.dispose();
+            this.onExit?.();
             return;
         }
 

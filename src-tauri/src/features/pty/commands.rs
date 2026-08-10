@@ -6,7 +6,7 @@ use tauri::ipc::Channel;
 
 use super::decode::Utf8Stitcher;
 use super::error::PtyError;
-use super::registry::{Opened, PtyRegistry, TabId};
+use super::registry::{Opened, PtyRegistry, TabId, TabInfo};
 use super::session::PtySpec;
 
 /// Taille d'une lecture. Un master PTY macOS ne rend guère plus par appel.
@@ -24,6 +24,9 @@ pub enum PtyFrame {
 
 /// Ouvre un onglet : un PTY, un shell, un lecteur.
 ///
+/// `cwd` absent vaut `~` — c'est le `Cmd+Shift+N` de la spec §4.4. `Cmd+N`, lui, passe
+/// le répertoire de départ de l'onglet actif, que `pty_tabs` lui a rendu.
+///
 /// Rend l'identifiant d'onglet — un ulid, que le shell voit dans `ASH_TAB_ID`.
 #[tauri::command]
 pub fn pty_open(
@@ -31,13 +34,14 @@ pub fn pty_open(
     channel: Channel<PtyFrame>,
     cols: u16,
     rows: u16,
+    cwd: Option<String>,
 ) -> Result<TabId, PtyError> {
     let tab_id = ulid::Ulid::generate().to_string();
 
     let opened = registry.open(
         PtySpec {
             shell: default_shell(),
-            cwd: home_directory(),
+            cwd: cwd.map_or_else(home_directory, PathBuf::from),
             cols,
             rows,
             // `ASH_SOCK` est posé dès maintenant, même si rien ne l'écoute encore : le
@@ -84,6 +88,29 @@ pub fn pty_ack(
     tab_id: String,
 ) -> Result<(), PtyError> {
     registry.ack(&tab_id)
+}
+
+/// Les onglets vivants, dans l'ordre que le backend détient.
+///
+/// C'est cet ordre — pas celui du DOM — que `Cmd+1..9` numérote. Le frontend le relit
+/// après chaque ouverture et chaque fermeture plutôt que d'en tenir une copie qu'il
+/// ferait évoluer de son côté ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+#[tauri::command]
+pub fn pty_tabs(registry: tauri::State<'_, Arc<PtyRegistry>>) -> Result<Vec<TabInfo>, PtyError> {
+    registry.tabs()
+}
+
+/// Quelque chose tourne-t-il dans cet onglet ?
+///
+/// La question que `Cmd+W` pose avant de fermer. Elle ne dit pas *quoi* : nommer le
+/// processus est le travail de la sonde d'ADR-0005, et l'« agent » de la spec §4.4
+/// n'existera qu'au jalon J2.
+#[tauri::command]
+pub fn pty_has_foreground_process(
+    registry: tauri::State<'_, Arc<PtyRegistry>>,
+    tab_id: String,
+) -> Result<bool, PtyError> {
+    registry.has_foreground_process(&tab_id)
 }
 
 /// Ferme un onglet et termine son shell.

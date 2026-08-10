@@ -1,0 +1,139 @@
+/* Les styles de la feature terminal, à côté du code qui pose ces classes.
+ *
+ * Ils ne sont pas dans la feuille globale de `app/` : les noms de classe sont écrits en
+ * TypeScript dans `tab-bar.ts`, `xterm-view.ts`, `confirm-dialog.ts` et `index.ts`, et
+ * rien ne relie les deux à la compilation. Séparés, un renommage casse silencieusement
+ * l'affichage et le composition root porte des règles qu'il ne peut pas relire. Ensemble,
+ * la feature emporte sa mise en forme — et le jour où elle disparaît, elle l'emporte avec
+ * elle.
+ *
+ * Les variables (`--ash-bg`, `--ash-fg`) viennent de `app/styles.css` : le thème est à
+ * l'application, la mise en forme est à la feature. */
+
+/* Barre d'onglets en haut, terminaux dessous (spec §4.2). */
+.terminal-workbench {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    /* La position sert d'ancre à la confirmation de fermeture. */
+    position: relative;
+}
+
+.terminal-bar {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    /* Beaucoup d'onglets ne doivent pas pousser la pile hors de la fenêtre. */
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+}
+
+.terminal-tab {
+    display: flex;
+    align-items: center;
+    border-radius: 6px 6px 0 0;
+    background: color-mix(in srgb, var(--ash-fg) 8%, transparent);
+    /* L'onglet actif est « nettement marqué » : une bordure basse pleine largeur, pas
+     * une nuance de gris qu'on hésite à lire. */
+    border-bottom: 2px solid transparent;
+}
+
+.terminal-tab.is-active {
+    background: color-mix(in srgb, var(--ash-fg) 18%, transparent);
+    border-bottom-color: currentcolor;
+}
+
+.terminal-tab-label,
+.terminal-tab-close,
+.terminal-bar-button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+
+.terminal-tab-close {
+    padding-left: 0;
+    opacity: 0.6;
+}
+
+.terminal-tab-close:hover,
+.terminal-bar-button:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--ash-fg) 12%, transparent);
+    border-radius: 4px;
+}
+
+.terminal-bar-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-left: 4px;
+}
+
+/* Les onglets se superposent tous à la même place ; seul l'actif est visible
+ * (ADR-0003). */
+.terminal-stack {
+    position: relative;
+    min-height: 0;
+}
+
+/* `visibility` et non `display` : un onglet masqué **garde sa taille**. Avec
+ * `display: none`, le `FitAddon` mesurerait une surface nulle et proposerait une grille
+ * de deux colonnes, que le PTY recevrait en `SIGWINCH` — la TUI en cours se redessinerait
+ * à cette taille et l'onglet serait détruit avant même d'être réaffiché. */
+.terminal-pane {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+}
+
+.terminal-pane.is-active {
+    visibility: visible;
+}
+
+/* La confirmation de fermeture (`⌘W` sur un onglet où quelque chose tourne). Ancrée sur
+ * `.terminal-workbench`, pas sur la fenêtre : elle appartient à la zone terminal. */
+.ash-confirm {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--ash-bg) 70%, transparent);
+}
+
+.ash-confirm-box {
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+    max-width: 360px;
+    border-radius: 8px;
+    background: var(--ash-bg);
+    border: 1px solid color-mix(in srgb, var(--ash-fg) 25%, transparent);
+    box-shadow: 0 8px 32px rgb(0 0 0 / 35%);
+}
+
+.ash-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.ash-confirm-actions button {
+    font: inherit;
+    color: inherit;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: color-mix(in srgb, var(--ash-fg) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ash-fg) 25%, transparent);
+}
+
+.ash-confirm-actions button.is-danger {
+    background: color-mix(in srgb, #e5484d 80%, transparent);
+    border-color: #e5484d;
+    color: #fff;
+}

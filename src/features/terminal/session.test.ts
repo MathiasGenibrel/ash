@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { TerminalSession } from "./session";
-import type { PtyBridge, PtyFrame, TabId, TerminalSize, TerminalView } from "./ports";
+import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize, TerminalView } from "./ports";
 
 /**
  * Terminal de test : les écritures ne se terminent que lorsqu'on le décide, parce que
@@ -11,6 +11,8 @@ class FakeView implements TerminalView {
     size: TerminalSize = { cols: 80, rows: 24 };
     written: string[] = [];
     disposed = false;
+    visible = false;
+    cleared = 0;
 
     private pending: (() => void)[] = [];
     private inputHandler: ((data: string) => void) | undefined;
@@ -26,6 +28,13 @@ class FakeView implements TerminalView {
     onResize(handler: (size: TerminalSize) => void): void {
         this.resizeHandler = handler;
     }
+    clear(): void {
+        this.cleared += 1;
+    }
+    setVisible(visible: boolean): void {
+        this.visible = visible;
+    }
+    focus(): void {}
     dispose(): void {
         this.disposed = true;
     }
@@ -49,12 +58,24 @@ class FakeBridge implements PtyBridge {
     writes: string[] = [];
     resizes: TerminalSize[] = [];
     closes: TabId[] = [];
+    openedAt: string | null = null;
 
     private emit: ((frame: PtyFrame) => void) | undefined;
 
-    open(_size: TerminalSize, onFrame: (frame: PtyFrame) => void): Promise<TabId> {
+    open(
+        _size: TerminalSize,
+        cwd: string | null,
+        onFrame: (frame: PtyFrame) => void,
+    ): Promise<TabId> {
         this.emit = onFrame;
+        this.openedAt = cwd;
         return Promise.resolve("01JTAB");
+    }
+    tabs(): Promise<TabInfo[]> {
+        return Promise.resolve([{ tabId: "01JTAB", startDir: this.openedAt ?? "/Users/me" }]);
+    }
+    hasForegroundProcess(): Promise<boolean> {
+        return Promise.resolve(false);
     }
     write(_tabId: TabId, data: string): Promise<void> {
         this.writes.push(data);

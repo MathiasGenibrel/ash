@@ -7,6 +7,9 @@
 
 pub mod features;
 
+/// Le menu applicatif : les raccourcis de la spec §4.4, et leur chemin souris.
+mod menu;
+
 /// Banc de mesure du spike xterm.js — jetable, retiré avec le spike.
 pub mod spike;
 
@@ -25,12 +28,16 @@ pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .manage(ptys)
         .manage(spike::Flow::default())
+        .menu(menu::build)
+        .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
             features::pty::commands::pty_open,
             features::pty::commands::pty_write,
             features::pty::commands::pty_resize,
             features::pty::commands::pty_ack,
             features::pty::commands::pty_close,
+            features::pty::commands::pty_tabs,
+            features::pty::commands::pty_has_foreground_process,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report
