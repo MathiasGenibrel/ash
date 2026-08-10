@@ -1,9 +1,11 @@
 use std::io::Read;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 use super::error::PtyError;
+use crate::features::probe::Pid;
 
 /// Ce qu'il faut pour ouvrir un PTY.
 #[derive(Debug, Clone)]
@@ -14,6 +16,18 @@ pub struct PtySpec {
     pub rows: u16,
     /// Variables ajoutées à celles héritées — `ASH_TAB_ID` et `ASH_SOCK`.
     pub env: Vec<(String, String)>,
+}
+
+/// De quoi sonder un onglet : son terminal, et le shell qui y a été lancé.
+///
+/// Le descripteur est celui du master du PTY, et il n'est valide que tant que la session
+/// qui le détient l'est. Il ne doit donc pas être conservé au-delà de la vie de l'onglet
+/// — le registre range la sonde et la session dans le même objet, ce qui rend la chose
+/// mécanique.
+#[derive(Debug, Clone, Copy)]
+pub struct Terminal {
+    pub master_fd: RawFd,
+    pub shell_pid: Pid,
 }
 
 /// Un PTY vivant, vu par le reste de la feature.
@@ -30,6 +44,13 @@ pub trait PtySession: Send {
     /// Le trait est le point d'extension, pas `portable-pty` : sans lui, la règle de
     /// confirmation ne serait vérifiable qu'en lançant un vrai processus.
     fn has_foreground_process(&mut self) -> Result<bool, PtyError>;
+
+    /// De quoi sonder cet onglet, quand le système veut bien le dire.
+    ///
+    /// `None` quand le master n'expose pas de descripteur ou que le shell n'a pas de pid
+    /// connu : l'onglet reste utilisable, il n'est simplement pas observable, et le
+    /// registre s'en tient alors à son répertoire de départ.
+    fn terminal(&self) -> Option<Terminal>;
 }
 
 /// Ce qu'ouvrir un PTY produit : de quoi le piloter, et de quoi le lire.
@@ -107,6 +128,13 @@ impl PtySession for SystemSession {
         // *quoi*. Nommer le processus en avant-plan est le travail de la sonde `libproc`
         // ([ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md)), qui vit dans sa
         // propre feature — c'est aussi elle qui dira, au jalon J2, s'il s'agit d'un agent.
+        //
+        // Les deux chemins mènent au même `tcgetpgrp`, et ce n'est pas une duplication à
+        // résorber : leurs **replis sont opposés**, parce que se tromper ne coûte pas la
+        // même chose des deux côtés. Ici, un système muet doit répondre « ça tourne »,
+        // sans quoi `Cmd+W` détruirait un onglet sans confirmation ; là-bas, un système
+        // muet se rabat sur le shell, puis sur la dernière position connue, pour ne pas
+        // faire clignoter l'onglet. Les fusionner imposerait une politique à l'autre.
         let (Some(leader), Some(shell)) = (self.master.process_group_leader(), self.child_pid)
         else {
             // Le système ne sait pas répondre. Prétendre qu'il ne tourne rien ferait
@@ -116,6 +144,13 @@ impl PtySession for SystemSession {
         };
 
         Ok(leader != shell)
+    }
+
+    fn terminal(&self) -> Option<Terminal> {
+        Some(Terminal {
+            master_fd: self.master.as_raw_fd()?,
+            shell_pid: self.child_pid?,
+        })
     }
 }
 

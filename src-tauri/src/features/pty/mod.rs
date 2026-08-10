@@ -12,12 +12,17 @@
 pub mod commands;
 mod decode;
 mod error;
+#[cfg(test)]
+mod fakes;
 mod flow;
 mod registry;
 mod session;
+mod sweep;
 
 pub use error::PtyError;
 pub use registry::PtyRegistry;
+pub use registry::TabChange;
 pub use registry::TabId;
 pub use registry::TabInfo;
-pub use session::{PtySession, PtySpawner, PtySpec, SystemPtySpawner};
+pub use session::{PtySession, PtySpawner, PtySpec, SystemPtySpawner, Terminal};
+pub use sweep::Shutdown;

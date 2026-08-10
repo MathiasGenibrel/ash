@@ -45,7 +45,7 @@ export function mountTerminals(host: HTMLElement): Terminals {
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
         createView: () => new XtermView(stack),
-        confirmClose: (tab) => askToClose(host, tab.startDir),
+        confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
             bar.render(state);
         },

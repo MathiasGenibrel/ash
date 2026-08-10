@@ -1,9 +1,17 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize } from "./ports";
+import type { PtyBridge, PtyFrame, TabChange, TabId, TabInfo, TerminalSize } from "./ports";
 
 /**
- * L'implémentation réelle du pont : les sept commandes déclarées par
+ * Nom de l'event que la boucle de sonde émet. Contrat avec `TAB_CHANGED_EVENT` dans
+ * `src-tauri/src/features/pty/commands.rs` : une chaîne que rien ne vérifie à la
+ * compilation, comme celle du menu applicatif.
+ */
+const TAB_CHANGED_EVENT = "ash://tab-changed";
+
+/**
+ * L'implémentation réelle du pont : les sept commandes et l'event déclarés par
  * `src-tauri/src/features/pty/commands.rs`, et rien d'autre.
  *
  * Le frontend ne connaît que ces noms et le type `PtyFrame` — jamais la structure
@@ -26,4 +34,8 @@ export const tauriPty: PtyBridge = {
     close: (tabId) => invoke("pty_close", { tabId }),
     tabs: () => invoke<TabInfo[]>("pty_tabs"),
     hasForegroundProcess: (tabId) => invoke<boolean>("pty_has_foreground_process", { tabId }),
+    onTabsChanged: (handler) =>
+        listen<TabChange[]>(TAB_CHANGED_EVENT, (event) => {
+            handler(event.payload);
+        }),
 };
