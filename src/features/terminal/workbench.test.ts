@@ -1,11 +1,25 @@
 import { describe, expect, it } from "bun:test";
 
-import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize, TerminalView } from "./ports";
+import type {
+    PtyBridge,
+    PtyFrame,
+    TabChange,
+    TabId,
+    TabInfo,
+    TerminalSize,
+    TerminalView,
+} from "./ports";
+import type { TabsState } from "./tabs";
 import { TerminalWorkbench } from "./workbench";
 
 /**
- * Backend de test : il tient l'ordre des onglets comme le registre Rust le tient — c'est
- * le contrat qui compte ici, pas la façon dont les commandes sont appelées.
+ * Backend de test : il tient l'ordre des onglets **et leur répertoire courant** comme le
+ * registre Rust les tient.
+ *
+ * Le `cwd` qu'il rend n'est pas celui du lancement : c'est celui que sa sonde voit, et il
+ * bouge quand `cd` bouge. Un faux backend qui rendrait toujours la même valeur ne
+ * distinguerait pas « répertoire courant » de « répertoire de départ » — et laisserait
+ * passer exactement les bugs qui vivent là.
  */
 class FakeBackend implements PtyBridge {
     readonly opened: { tabId: TabId; cwd: string | null }[] = [];
@@ -16,12 +30,13 @@ class FakeBackend implements PtyBridge {
 
     private order: TabInfo[] = [];
     private frames = new Map<TabId, (frame: PtyFrame) => void>();
+    private watchers: ((changes: TabChange[]) => void)[] = [];
     private next = 1;
 
     open(_size: TerminalSize, cwd: string | null, onFrame: (frame: PtyFrame) => void) {
         const tabId = `T${this.next++}`;
         this.opened.push({ tabId, cwd });
-        this.order.push({ tabId, startDir: cwd ?? "/Users/me" });
+        this.order.push({ tabId, cwd: cwd ?? "/Users/me" });
         this.frames.set(tabId, onFrame);
         return Promise.resolve(tabId);
     }
@@ -46,6 +61,26 @@ class FakeBackend implements PtyBridge {
     }
     hasForegroundProcess(tabId: TabId) {
         return Promise.resolve(this.running.has(tabId));
+    }
+    onTabsChanged(handler: (changes: TabChange[]) => void) {
+        this.watchers.push(handler);
+        return Promise.resolve(() => {
+            this.watchers = this.watchers.filter((watcher) => watcher !== handler);
+        });
+    }
+
+    /**
+     * L'utilisateur a fait un `cd` dans cet onglet — ou un programme y a été lancé
+     * ailleurs. Le backend le sait ; personne n'en est encore prévenu.
+     */
+    moveTo(tabId: TabId, cwd: string): void {
+        this.order = this.order.map((tab) => (tab.tabId === tabId ? { ...tab, cwd } : tab));
+    }
+
+    /** Une passe de la boucle de sonde du backend annonce ce qui a bougé. */
+    probe(): void {
+        const changes = this.order.map(({ tabId, cwd }) => ({ tabId, cwd }));
+        for (const watcher of this.watchers) watcher(changes);
     }
 
     /** Le shell d'un onglet écrit. */
@@ -101,6 +136,8 @@ function bench(options: { confirm?: boolean } = {}) {
     const backend = new FakeBackend();
     const views: FakeView[] = [];
     const asked: TabInfo[] = [];
+    /** Ce que la barre d'onglets a reçu à afficher, dans l'ordre. */
+    const rendered: TabsState[] = [];
 
     const workbench = new TerminalWorkbench({
         bridge: backend,
@@ -113,13 +150,16 @@ function bench(options: { confirm?: boolean } = {}) {
             asked.push(tab);
             return Promise.resolve(options.confirm ?? false);
         },
-        onRender: () => {},
+        onRender: (state) => {
+            rendered.push(state);
+        },
     });
 
     return {
         backend,
         views,
         asked,
+        rendered,
         workbench,
         // Une surface libérée a quitté le DOM : elle ne « reste » pas visible, quoi que
         // dise son dernier `setVisible`.
@@ -159,17 +199,20 @@ describe("un seul terminal visible", () => {
 });
 
 describe("l'origine d'un nouvel onglet", () => {
-    it("Given the active tab started in a worktree, when Cmd+N opens a tab, then the new shell starts in that same directory", async () => {
-        // Given
+    it("Given the active tab has been cd'ed elsewhere since it opened, when Cmd+N opens a tab, then the new shell starts in the directory the tab is in now", async () => {
+        // Given — un `cd /tmp` dans l'onglet actif : le backend le sait, l'atelier non
         const app = bench();
         await app.workbench.openTab("home");
+        const active = app.backend.opened[0]?.tabId ?? "";
+        app.backend.moveTo(active, "/tmp");
         app.backend.opened.length = 0;
 
         // When
         await app.workbench.openTab("current-worktree");
 
-        // Then — le répertoire de *lancement*, faute de sonde `cwd` (ADR-0005)
-        expect(app.backend.opened[0]?.cwd).toBe("/Users/me");
+        // Then — le répertoire *courant* de l'onglet actif, redemandé au backend au
+        // moment du `Cmd+N` ; celui d'il y a une ouverture d'onglet n'a plus cours
+        expect(app.backend.opened[0]?.cwd).toBe("/tmp");
     });
 
     it("Given any active tab, when Cmd+Shift+N opens a tab, then the new shell starts at home", async () => {
@@ -183,6 +226,55 @@ describe("l'origine d'un nouvel onglet", () => {
 
         // Then — `null` est ce que le backend traduit en `~`
         expect(app.backend.opened[0]?.cwd).toBeNull();
+    });
+});
+
+describe("le répertoire courant d'un onglet", () => {
+    it("Given an open tab, when the backend's probe announces a cd, then the tab bar is re-rendered with the new directory without any tab being opened or closed", async () => {
+        // Given — le titre d'un onglet ne doit pas attendre le prochain `Cmd+N` pour
+        // suivre un `cd` : la boucle de sonde d'ADR-0005 est le seul mécanisme prévu
+        const app = bench();
+        await app.workbench.openTab("home");
+        const tabId = app.backend.opened[0]?.tabId ?? "";
+        const before = app.rendered.length;
+        app.backend.moveTo(tabId, "/tmp");
+
+        // When
+        app.backend.probe();
+
+        // Then
+        expect(app.workbench.tabs.tabs.map((tab) => tab.cwd)).toEqual(["/tmp"]);
+        expect(app.rendered.slice(before).at(-1)?.tabs.map((tab) => tab.cwd)).toEqual(["/tmp"]);
+    });
+
+    it("Given a tab that has not moved, when a probe pass announces its unchanged directory, then the tab bar is not re-rendered", async () => {
+        // Given — la boucle passe trois fois par seconde ; reconstruire la barre à chaque
+        // passe la ferait clignoter pour rien
+        const app = bench();
+        await app.workbench.openTab("home");
+        const before = app.rendered.length;
+
+        // When
+        app.backend.probe();
+
+        // Then
+        expect(app.rendered).toHaveLength(before);
+    });
+
+    it("Given the active tab has moved, when Cmd+N opens a tab from it, then it starts in the announced directory", async () => {
+        // Given — même chemin que `Cmd+N`, mais l'atelier a déjà appris le `cd`
+        const app = bench();
+        await app.workbench.openTab("home");
+        const tabId = app.backend.opened[0]?.tabId ?? "";
+        app.backend.moveTo(tabId, "/dev/ash/worktrees/probe");
+        app.backend.probe();
+        app.backend.opened.length = 0;
+
+        // When
+        await app.workbench.openTab("current-worktree");
+
+        // Then
+        expect(app.backend.opened[0]?.cwd).toBe("/dev/ash/worktrees/probe");
     });
 });
 

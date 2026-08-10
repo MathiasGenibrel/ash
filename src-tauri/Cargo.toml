@@ -22,6 +22,9 @@ serde_json = "1"
 tokio = { version = "1.53.1", features = ["sync"] }
 portable-pty = "0.9.0"
 ulid = "3.0.0"
+# `tcgetpgrp` et `proc_pidinfo` pour la sonde d'ADR-0005. Aucune nouvelle dépendance dans
+# l'arbre : `portable-pty` tire déjà exactement cette version de `libc`, on la nomme.
+libc = "0.2.189"
 
 [lints.rust]
 # `clippy -- -D warnings` en fait une erreur : tout `unsafe` doit donc être introduit

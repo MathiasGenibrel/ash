@@ -72,10 +72,15 @@ class FakeBridge implements PtyBridge {
         return Promise.resolve("01JTAB");
     }
     tabs(): Promise<TabInfo[]> {
-        return Promise.resolve([{ tabId: "01JTAB", startDir: this.openedAt ?? "/Users/me" }]);
+        return Promise.resolve([{ tabId: "01JTAB", cwd: this.openedAt ?? "/Users/me" }]);
     }
     hasForegroundProcess(): Promise<boolean> {
         return Promise.resolve(false);
+    }
+    onTabsChanged(): Promise<() => void> {
+        // Une session ne s'intéresse pas au répertoire de son onglet : c'est l'atelier
+        // qui rend la barre, et lui seul écoute la boucle de sonde.
+        return Promise.resolve(() => {});
     }
     write(_tabId: TabId, data: string): Promise<void> {
         this.writes.push(data);

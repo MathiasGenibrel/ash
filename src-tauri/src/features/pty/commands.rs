@@ -3,14 +3,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::ipc::Channel;
+use tauri::{AppHandle, Emitter, Runtime};
 
 use super::decode::Utf8Stitcher;
 use super::error::PtyError;
 use super::registry::{Opened, PtyRegistry, TabId, TabInfo};
 use super::session::PtySpec;
+use super::sweep::{self, Shutdown, SystemTicker};
 
 /// Taille d'une lecture. Un master PTY macOS ne rend guère plus par appel.
 const READ_BUFFER: usize = 64 * 1024;
+
+/// Nom de l'event qui porte les répertoires qui ont bougé.
+///
+/// Contrat avec `src/features/terminal/pty-bridge.ts` : une chaîne que rien ne vérifie à
+/// la compilation, comme celle du menu. Le frontend ne connaît de la feature que ses
+/// commandes, ce nom, et les types qui traversent.
+pub const TAB_CHANGED_EVENT: &str = "ash://tab-changed";
 
 /// Ce que le PTY envoie à la webview.
 #[derive(Clone, serde::Serialize)]
@@ -120,6 +129,29 @@ pub fn pty_close(
     tab_id: String,
 ) -> Result<(), PtyError> {
     registry.close(&tab_id)
+}
+
+/// Démarre la boucle de sonde d'ADR-0005, et rend de quoi l'arrêter.
+///
+/// Le frontend ne demande rien : c'est le backend qui pousse, parce que c'est lui qui
+/// détient l'état ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Un
+/// `setInterval` côté webview aurait fait vivre la cadence du côté qui ne détient rien.
+///
+/// Un seul thread pour tous les onglets, et seuls les changements traversent la frontière.
+pub fn watch_tabs<R: Runtime>(app: AppHandle<R>, registry: &Arc<PtyRegistry>) -> Arc<Shutdown> {
+    let shutdown = Arc::new(Shutdown::default());
+
+    let stop = Arc::clone(&shutdown);
+    let registry = Arc::downgrade(registry);
+    std::thread::spawn(move || {
+        sweep::run(&registry, &SystemTicker, &stop, &|changes| {
+            // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
+            // rattraper, et surtout pas de panique dans un thread de fond.
+            let _ = app.emit(TAB_CHANGED_EVENT, changes);
+        });
+    });
+
+    shutdown
 }
 
 /// Lit le PTY jusqu'à sa fin, en respectant la contre-pression de la webview.
