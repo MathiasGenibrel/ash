@@ -4,22 +4,33 @@
 //! `cargo test` de le compiler sans lier l'exécutable, et ce qui laisse la porte
 //! ouverte au démon `ashd` d'ADR-0009, qui réutiliserait la même bibliothèque sous un
 //! autre binaire.
-//!
-//! Les features (`pty`, `probe`, `agents`, `git`, `journal`, `hooks`) apparaîtront ici
-//! au fur et à mesure. Aucune n'est déclarée d'avance : un module vide ne documente
-//! rien qu'`.claude/docs/architecture.md` ne dise déjà mieux.
+
+pub mod features;
 
 /// Banc de mesure du spike xterm.js — jetable, retiré avec le spike.
 pub mod spike;
 
+use std::sync::Arc;
+
+use features::pty::{PtyRegistry, SystemPtySpawner};
+
 /// Assemble et démarre l'application.
 ///
 /// Composition root : c'est le seul endroit du crate où les implémentations concrètes
-/// des effets système sont choisies et injectées.
+/// des effets système sont choisies et injectées. `SystemPtySpawner` n'apparaît qu'ici ;
+/// partout ailleurs la feature ne connaît que son trait.
 pub fn run() -> tauri::Result<()> {
+    let ptys = Arc::new(PtyRegistry::new(Box::new(SystemPtySpawner)));
+
     tauri::Builder::default()
+        .manage(ptys)
         .manage(spike::Flow::default())
         .invoke_handler(tauri::generate_handler![
+            features::pty::commands::pty_open,
+            features::pty::commands::pty_write,
+            features::pty::commands::pty_resize,
+            features::pty::commands::pty_ack,
+            features::pty::commands::pty_close,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report
