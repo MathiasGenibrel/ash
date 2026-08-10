@@ -70,7 +70,7 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
         case "toggle-sidebar":
             // Repliée, la sidebar ne porte plus le contexte : la barre d'onglets le
             // reprend, et un onglet s'intitule `omelette-web/claude`.
-            terminals.showWorkspaceInTitles(sidebar.toggleCollapsed());
+            terminals.showLocationInTitles(sidebar.toggleCollapsed());
             return Promise.resolve();
     }
 }

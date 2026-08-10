@@ -1,8 +1,8 @@
 /**
  * API publique de la feature sidebar.
  *
- * Le reste du frontend n'importe que ce fichier : ni `tree`, ni `view`, ni `states` ne
- * sont des points d'entrée.
+ * Le reste du frontend n'importe que ce fichier : ni `tree`, ni `view`, ni `states`, ni
+ * `labels` ne sont des points d'entrée.
  *
  * La sidebar **rend** la hiérarchie d'
  * [ADR-0012](../../../docs/adr/0012-worktree-unite-de-travail.md) ; elle ne la détient pas.

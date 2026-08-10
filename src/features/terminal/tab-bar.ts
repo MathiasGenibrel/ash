@@ -25,14 +25,18 @@ export class TabBar {
     readonly element: HTMLElement;
 
     /**
-     * Le titre d'un onglet porte-t-il son workspace ?
+     * Le titre d'un onglet porte-t-il sa localisation ?
      *
      * Oui quand la sidebar est repliée : elle ne porte plus le contexte, donc l'onglet
      * doit le porter — `omelette-web/claude` au lieu de `claude`. C'est la seconde
      * conséquence de `⌘B`, et sans elle une fenêtre repliée ne dit plus dans quel dépôt
      * chaque onglet travaille.
+     *
+     * « localisation », et non « workspace » : ADR-0012 a renommé le workspace en
+     * worktree, et ce qui préfixe le titre est le `TabLocation` du contrat — le dépôt
+     * quand il y en a un, le worktree sinon.
      */
-    private withWorkspace = false;
+    private withLocation = false;
 
     constructor(private readonly actions: TabBarActions) {
         this.element = document.createElement("div");
@@ -50,9 +54,9 @@ export class TabBar {
     }
 
     /** Rend `true` si l'affichage a changé, donc s'il faut un nouveau rendu. */
-    showWorkspaceInTitles(show: boolean): boolean {
-        if (this.withWorkspace === show) return false;
-        this.withWorkspace = show;
+    showLocationInTitles(show: boolean): boolean {
+        if (this.withLocation === show) return false;
+        this.withLocation = show;
         return true;
     }
 
@@ -92,7 +96,7 @@ export class TabBar {
     }
 
     private titleOf(tab: TabInfo): string {
-        return tabTitle(tab, this.withWorkspace);
+        return tabTitle(tab, this.withLocation);
     }
 
     private controls(state: TabsState): HTMLElement {
@@ -124,12 +128,15 @@ export class TabBar {
 
 /**
  * Le titre d'un onglet : le programme qui tient son avant-plan, tel que le backend le
- * nomme — `claude`, `bun`, `zsh`. Préfixé de son workspace quand la sidebar est repliée.
+ * nomme — `claude`, `bun`, `zsh`. Préfixé de sa localisation quand la sidebar est repliée.
+ *
+ * La localisation, c'est le **dépôt** quand il y en a un, sinon le worktree, sinon le
+ * répertoire : la ligne que la sidebar montrerait tout en haut de la pile de cet onglet.
  */
-export function tabTitle(tab: TabInfo, withWorkspace: boolean): string {
-    if (!withWorkspace) return tab.process;
-    const workspace = tab.location?.repo?.name ?? tab.location?.worktreeName ?? basename(tab.cwd);
-    return `${workspace}/${tab.process}`;
+export function tabTitle(tab: TabInfo, withLocation: boolean): string {
+    if (!withLocation) return tab.process;
+    const location = tab.location?.repo?.name ?? tab.location?.worktreeName ?? basename(tab.cwd);
+    return `${location}/${tab.process}`;
 }
 
 function button(text: string, title: string, onClick: () => void): HTMLButtonElement {

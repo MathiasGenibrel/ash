@@ -1,4 +1,4 @@
-import type { AgentState, TabInfo } from "@/shared/ipc";
+import type { AgentState, TabInfo } from "./index";
 
 /**
  * Test Data Builder : un onglet tel que le backend le décrirait.
@@ -6,8 +6,13 @@ import type { AgentState, TabInfo } from "@/shared/ipc";
  * Les défauts sont valides et déterministes — un `zsh` à son invite, dans un dépôt sans
  * worktree lié, donc **à plat**. Un scénario ne surcharge que ce qu'il regarde.
  *
- * Ce fichier n'est importé que par les tests ; il n'est pas dans l'API publique de la
- * feature (`index.ts`), et rien du bundle applicatif n'y touche.
+ * Il vit à côté du contrat, et non dans une feature, pour la même raison que le contrat
+ * lui-même : la sidebar et la feature terminal décrivent toutes les deux des onglets dans
+ * leurs tests. Chacune avec sa propre fabrique, un champ ajouté à `TabInfo` se rattrape à
+ * quatre endroits — et les quatre finissent par ne plus décrire le même onglet.
+ *
+ * Ce fichier n'est pas réexporté par `index.ts` : seuls les tests l'importent, et rien du
+ * bundle applicatif n'y touche.
  */
 export class TabBuilder {
     private tabId = "T1";

@@ -1,6 +1,19 @@
 import type { AgentState } from "@/shared/ipc";
 
 /**
+ * Ce que la sidebar sait faire d'un état d'agent : le **montrer**
+ * ([`presentAgentState`]), et choisir celui qu'une ligne montre pour ses enfants
+ * ([`bubbleState`]). Les deux règles vivent ensemble parce qu'elles répondent à la même
+ * question — « qu'est-ce que cette ligne dit de ce qui se passe ? » — et parce que les
+ * lignes d'agents, de sous-agents et de worktrees épinglés à venir les demanderont
+ * toutes les deux.
+ *
+ * Aucune n'en **produit** : les états viennent du backend
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et trois d'entre eux
+ * des hooks d'[ADR-0007](../../../docs/adr/0007-etats-par-hooks.md).
+ */
+
+/**
  * La présentation des cinq états d'une ligne d'agent.
  *
  * Une fonction pure, et pas une feuille de style : le design en fait deux exigences
@@ -82,15 +95,33 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     },
 };
 
-/** Tous les états, dans l'ordre de la planche `1e`. */
-export const AGENT_STATES: readonly AgentState[] = [
-    "working",
-    "waiting",
-    "done",
-    "idle",
-    "error",
-];
+/**
+ * Tous les états, dans l'ordre de la planche `1e`.
+ *
+ * Dérivé de la table, et non recopié à côté d'elle : `PRESENTATIONS` est un
+ * `Record<AgentState, …>`, donc le compilateur en garantit l'exhaustivité. Une seconde
+ * liste écrite à la main oublierait un jour un état, et les tests qui parcourent « les
+ * cinq états » passeraient en en regardant quatre.
+ */
+export const AGENT_STATES = Object.keys(PRESENTATIONS) as readonly AgentState[];
 
 export function presentAgentState(state: AgentState): AgentPresentation {
     return PRESENTATIONS[state];
+}
+
+/**
+ * L'état qu'une ligne de dépôt ou de worktree montre pour ses enfants.
+ *
+ * L'ordre d'urgence n'est pas cosmétique : `waiting` est le seul état qui **demande**
+ * quelque chose à l'utilisateur, donc il l'emporte sur tout, y compris sur une erreur —
+ * une erreur attendra, une question bloque un agent. `idle` ne remonte jamais tant qu'il
+ * reste autre chose à dire.
+ *
+ * Rien n'est **produit** ici : la remontée choisit lequel des états que le backend détient
+ * une ligne repliée affiche à la place de ses enfants
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export function bubbleState(states: readonly AgentState[]): AgentState {
+    const urgency: readonly AgentState[] = ["waiting", "error", "working", "done", "idle"];
+    return urgency.find((state) => states.includes(state)) ?? "idle";
 }

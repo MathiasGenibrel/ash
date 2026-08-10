@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { TabBuilder } from "@/shared/ipc/builders";
 import type {
     PtyBridge,
     PtyFrame,
@@ -102,14 +103,7 @@ class FakeBackend implements PtyBridge {
 
 /** Un onglet tel que le registre Rust le décrirait : situé, avec son avant-plan. */
 function describe_tab(tabId: TabId, cwd: string): TabInfo {
-    const name = cwd.split("/").filter(Boolean).at(-1) ?? "/";
-    return {
-        tabId,
-        cwd,
-        process: "zsh",
-        state: "idle",
-        location: { worktreeRoot: cwd, worktreeName: name, repo: null },
-    };
+    return TabBuilder.create().named(tabId).inFlatWorktree(cwd).build();
 }
 
 class FakeView implements TerminalView {

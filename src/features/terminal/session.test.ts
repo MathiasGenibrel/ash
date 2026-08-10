@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { TabBuilder } from "@/shared/ipc/builders";
 import { TerminalSession } from "./session";
 import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize, TerminalView } from "./ports";
 
@@ -74,13 +75,7 @@ class FakeBridge implements PtyBridge {
     tabs(): Promise<TabInfo[]> {
         const cwd = this.openedAt ?? "/Users/me";
         return Promise.resolve([
-            {
-                tabId: "01JTAB",
-                cwd,
-                process: "zsh",
-                state: "idle",
-                location: { worktreeRoot: cwd, worktreeName: "me", repo: null },
-            },
+            TabBuilder.create().named("01JTAB").inFlatWorktree(cwd).build(),
         ]);
     }
     hasForegroundProcess(): Promise<boolean> {

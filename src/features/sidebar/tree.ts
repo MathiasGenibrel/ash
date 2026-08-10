@@ -1,18 +1,20 @@
 import type { AgentState, TabId, TabInfo } from "@/shared/ipc";
+import { basename, shortSuffix, truncate } from "./labels";
+import { bubbleState } from "./states";
 
 /**
- * Les règles d'affichage de la sidebar, sans DOM ni IPC.
+ * La hiérarchie de la sidebar, sans DOM ni IPC.
  *
- * C'est le cœur de la hiérarchie d'
- * [ADR-0012](../../../docs/adr/0012-worktree-unite-de-travail.md) : une liste plate
- * d'onglets entre, un arbre dépôt → worktree → onglets sort. **Rien n'est résolu ici** —
- * le backend a déjà dit, pour chaque onglet, quel worktree le porte et quel dépôt le
- * groupe ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Ce module range,
- * nomme et ordonne ; il ne devine pas.
+ * C'est le cœur d'[ADR-0012](../../../docs/adr/0012-worktree-unite-de-travail.md) : une
+ * liste plate d'onglets entre, un arbre dépôt → worktree → onglets sort. **Rien n'est
+ * résolu ici** — le backend a déjà dit, pour chaque onglet, quel worktree le porte et quel
+ * dépôt le groupe ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Ce
+ * module range et ordonne ; il ne devine pas.
+ *
+ * Deux règles vivent à côté plutôt qu'ici, parce qu'elles ne connaissent pas l'arbre et
+ * que d'autres lignes que ses nœuds s'en serviront : faire tenir un nom dans la colonne
+ * ([`./labels`]) et choisir l'état qu'une ligne repliée montre ([`./states`]).
  */
-
-/** Au-delà, un nom est coupé : à 240 px, la colonne ne montre pas plus. */
-export const MAX_LABEL = 26;
 
 export interface SidebarTabNode {
     readonly tabId: TabId;
@@ -114,46 +116,6 @@ export function buildSidebar(
         tabCount: tabs.length,
         waitingCount: tabs.filter((tab) => tab.state === "waiting").length,
     };
-}
-
-/**
- * L'état qu'une ligne de dépôt ou de worktree montre pour ses enfants.
- *
- * L'ordre d'urgence n'est pas cosmétique : `waiting` est le seul état qui **demande**
- * quelque chose à l'utilisateur, donc il l'emporte sur tout, y compris sur une erreur —
- * une erreur attendra, une question bloque un agent. `idle` ne remonte jamais tant qu'il
- * reste autre chose à dire.
- */
-export function bubbleState(states: readonly AgentState[]): AgentState {
-    const urgency: readonly AgentState[] = ["waiting", "error", "working", "done", "idle"];
-    return urgency.find((state) => states.includes(state)) ?? "idle";
-}
-
-/**
- * Le suffixe qui distingue deux worktrees d'un même dépôt : `omelette-web` → `·web`.
- *
- * Le design ne prend que le **dernier segment** du nom de dossier — c'est ce qui rend
- * `·sidebar` et `·toc` lisibles côte à côte là où `omelette-sidebar` et `omelette-toc` se
- * ressemblent trop pour être distingués du coin de l'œil.
- */
-export function shortSuffix(worktreeName: string): string {
-    const segments = worktreeName.split("-").filter((segment) => segment.length > 0);
-    return segments[segments.length - 1] ?? worktreeName;
-}
-
-/** Coupe un nom trop long, en gardant le début — c'est lui qui identifie. */
-export function truncate(text: string, max: number = MAX_LABEL): string {
-    return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
-
-/** Deux lettres pour le rail replié : `omelette-web` → `ow`, `ash` → `as`. */
-export function abbreviate(name: string): string {
-    const segments = name.split(/[-_. ]/).filter((segment) => segment.length > 0);
-    const initials = segments
-        .slice(0, 2)
-        .map((segment) => segment[0] ?? "")
-        .join("");
-    return (initials.length === 2 ? initials : name.slice(0, 2)).toLowerCase();
 }
 
 /** Ce que le backend a dit d'un onglet, réduit à ce dont le rangement a besoin. */
@@ -288,10 +250,4 @@ function suffixesOf(names: readonly string[], grouped: boolean): (string | null)
     const shortened = names.map(shortSuffix);
     const distinct = new Set(shortened).size === shortened.length;
     return (distinct ? shortened : names).map((suffix) => `·${suffix}`);
-}
-
-/** Dernier segment d'un chemin — `/` reste `/`. */
-function basename(path: string): string {
-    const segments = path.split("/").filter((segment) => segment.length > 0);
-    return segments[segments.length - 1] ?? "/";
 }

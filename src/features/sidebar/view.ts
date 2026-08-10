@@ -1,5 +1,7 @@
+import type { AgentState } from "@/shared/ipc";
+import { abbreviate } from "./labels";
 import { presentAgentState } from "./states";
-import { abbreviate, type SidebarGroup, type SidebarTabNode, type SidebarTree, type WorktreeNode } from "./tree";
+import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
 
 /**
  * Le rendu de la sidebar. Il ne décide rien : il reçoit l'arbre que [`buildSidebar`] a
@@ -192,7 +194,7 @@ export class SidebarView {
     }
 }
 
-function glyph(state: Parameters<typeof presentAgentState>[0]): HTMLElement {
+function glyph(state: AgentState): HTMLElement {
     const shown = presentAgentState(state);
     const element = text("span", shown.glyph, `ash-glyph ${shown.className}`);
     if (shown.spinning) element.classList.add("is-spinning");

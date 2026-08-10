@@ -1,16 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import type { TabInfo } from "@/shared/ipc";
-import { TabBuilder } from "./builders";
-import {
-    abbreviate,
-    bubbleState,
-    buildSidebar,
-    MAX_LABEL,
-    truncate,
-    type SidebarGroup,
-    type SidebarTree,
-} from "./tree";
+import { TabBuilder } from "@/shared/ipc/builders";
+import { MAX_LABEL } from "./labels";
+import { buildSidebar, type SidebarGroup, type SidebarTree } from "./tree";
 
 const build = (tabs: readonly TabInfo[], activeTabId: string | null = null): SidebarTree =>
     buildSidebar(tabs, { activeTabId, collapsed: new Set() });
@@ -217,23 +210,6 @@ describe("la remontée d'état vers la ligne du dessus", () => {
         expect(tree.groups[0]?.state).toBe("waiting");
         expect(tree.waitingCount).toBe(1);
     });
-
-    it("Given only idle shells, when the row bubbles its state, then it stays idle", () => {
-        // Given / When
-        const bubbled = bubbleState(["idle", "idle"]);
-
-        // Then
-        expect(bubbled).toBe("idle");
-    });
-
-    it("Given an error next to a done agent, when the row bubbles its state, then the error wins", () => {
-        // Given / When
-        const bubbled = bubbleState(["done", "error", "idle"]);
-
-        // Then — une ligne repliée qui montrerait `done` cacherait exactement ce qu'il
-        // faut regarder
-        expect(bubbled).toBe("error");
-    });
 });
 
 describe("la lisibilité à 240 px", () => {
@@ -259,28 +235,5 @@ describe("la lisibilité à 240 px", () => {
         );
         expect(labels).toHaveLength(15);
         expect(labels.every((label) => label.length <= MAX_LABEL)).toBe(true);
-    });
-
-    it("Given a name longer than the column, when it is truncated, then it keeps its beginning and ends with an ellipsis", () => {
-        // Given / When
-        const cut = truncate("feat/a-really-long-branch-name-here", 12);
-
-        // Then — c'est le début d'un nom qui l'identifie
-        expect(cut).toBe("feat/a-real…");
-    });
-
-    it("Given a name that fits, when it is truncated, then it is left untouched", () => {
-        // Given / When / Then
-        expect(truncate("claude", 12)).toBe("claude");
-    });
-});
-
-describe("le rail replié", () => {
-    it("Given a project name, when the collapsed rail abbreviates it, then it keeps two letters that still tell projects apart", () => {
-        // Given / When / Then — `⌘B` réduit la colonne à 46 px : deux lettres sont tout ce
-        // qui reste pour reconnaître un workspace en vision périphérique
-        expect(abbreviate("omelette-web")).toBe("ow");
-        expect(abbreviate("ash-core")).toBe("ac");
-        expect(abbreviate("ash")).toBe("as");
     });
 });

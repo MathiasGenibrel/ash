@@ -671,6 +671,45 @@ mod tests {
     }
 
     #[test]
+    fn given_the_five_tab_states_when_they_cross_the_boundary_then_they_keep_the_names_the_frontend_knows(
+    ) {
+        // Given — le même modèle est déclaré des deux côtés de la frontière : `TabState`
+        // ici, `AgentState` dans `src/shared/ipc/index.ts`. Rien ne les tient ensemble à
+        // la compilation, et un état renommé ici ferait silencieusement tomber la sidebar
+        // sur `undefined`. Le `match` est exhaustif : un état ajouté ne compile pas tant
+        // que son nom n'a pas été décidé — et donc reporté côté TypeScript.
+        let states = [
+            TabState::Idle,
+            TabState::Working,
+            TabState::Waiting,
+            TabState::Done,
+            TabState::Error,
+        ];
+        let expected = states.map(|state| match state {
+            TabState::Idle => "idle",
+            TabState::Working => "working",
+            TabState::Waiting => "waiting",
+            TabState::Done => "done",
+            TabState::Error => "error",
+        });
+
+        // When
+        let on_the_wire: Vec<String> = states
+            .iter()
+            .map(|state| serde_json::to_string(state).unwrap())
+            .collect();
+
+        // Then
+        assert_eq!(
+            on_the_wire,
+            expected
+                .iter()
+                .map(|name| format!("\"{name}\""))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn given_a_shell_that_handed_the_terminal_over_when_the_tab_is_questioned_then_it_reports_a_running_process(
     ) {
         // Given
