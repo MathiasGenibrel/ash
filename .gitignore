@@ -22,3 +22,7 @@ dist/
 
 # Rapport du spike xterm.js — régénéré à chaque mesure
 /spike-results.json
+
+# Réglages d'IDE — propres à chaque poste, jamais partagés
+.idea/
+.vscode/
