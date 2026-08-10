@@ -22,6 +22,14 @@ pub trait PtySession: Send {
     fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError>;
     /// Termine le processus. Idempotent : fermer deux fois n'est pas une erreur.
     fn kill(&mut self) -> Result<(), PtyError>;
+    /// Vrai quand autre chose que le shell tient l'avant-plan du terminal.
+    ///
+    /// C'est ce qui distingue « une invite de commande vide » de « une commande, ou un
+    /// agent, est en train de tourner » — donc de ce qu'un `Cmd+W` détruirait.
+    ///
+    /// Le trait est le point d'extension, pas `portable-pty` : sans lui, la règle de
+    /// confirmation ne serait vérifiable qu'en lançant un vrai processus.
+    fn has_foreground_process(&mut self) -> Result<bool, PtyError>;
 }
 
 /// Ce qu'ouvrir un PTY produit : de quoi le piloter, et de quoi le lire.
@@ -46,6 +54,11 @@ struct SystemSession {
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn std::io::Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// Le pid du shell, retenu au lancement.
+    ///
+    /// Retenu, et pas redemandé : une fois le fils moissonné, `process_id()` ne rend plus
+    /// rien, et c'est justement à ce moment-là qu'on compare des pids.
+    child_pid: Option<i32>,
 }
 
 impl PtySession for SystemSession {
@@ -77,6 +90,32 @@ impl PtySession for SystemSession {
             return Ok(());
         }
         self.child.kill().map_err(|e| PtyError::Io(e.to_string()))
+    }
+
+    fn has_foreground_process(&mut self) -> Result<bool, PtyError> {
+        // Un shell sorti ne tient plus rien en avant-plan, et son pid a pu être recyclé :
+        // la comparaison ci-dessous n'aurait plus de sens.
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return Ok(false);
+        }
+
+        // `process_group_leader` lit `tcgetpgrp(master)` : le groupe de processus en
+        // avant-plan du terminal. Le shell, lancé comme chef de sa propre session, a un
+        // pgid égal à son pid. Les deux diffèrent ⇒ le shell a passé la main à quelqu'un.
+        //
+        // Cette voie est volontairement pauvre : elle dit « quelque chose tourne », pas
+        // *quoi*. Nommer le processus en avant-plan est le travail de la sonde `libproc`
+        // ([ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md)), qui vit dans sa
+        // propre feature — c'est aussi elle qui dira, au jalon J2, s'il s'agit d'un agent.
+        let (Some(leader), Some(shell)) = (self.master.process_group_leader(), self.child_pid)
+        else {
+            // Le système ne sait pas répondre. Prétendre qu'il ne tourne rien ferait
+            // fermer un onglet sans confirmation ; on préfère se taire que mentir dans
+            // ce sens-là.
+            return Ok(true);
+        };
+
+        Ok(leader != shell)
     }
 }
 
@@ -116,10 +155,13 @@ impl PtySpawner for SystemPtySpawner {
         // un `exit`.
         drop(pair.slave);
 
+        let child_pid = child.process_id().and_then(|pid| i32::try_from(pid).ok());
+
         let session = SystemSession {
             master: pair.master,
             writer,
             child,
+            child_pid,
         };
 
         Ok((Box::new(session), reader))

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::error::PtyError;
@@ -19,18 +19,41 @@ pub type TabId = String;
 /// jette la sortie (voir [`super::flow`] et `docs/spike-xterm.md`).
 const WINDOW: usize = 8;
 
-/// Les PTY vivants, et rien d'autre.
+/// Les PTY vivants, **dans l'ordre**, et rien d'autre.
 ///
 /// Le registre détient l'état : le frontend l'affiche, il ne le possède pas
-/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). L'ordre en fait
+/// partie — c'est lui que `Cmd+1..9` désigne (spec §4.4), et une table de hachage n'en
+/// a pas. Un `Vec` en donne un stable et une suppression qui préserve le reste ; la
+/// recherche linéaire est sans objet à cette échelle, un utilisateur n'ouvre pas mille
+/// onglets.
 pub struct PtyRegistry {
     spawner: Box<dyn PtySpawner>,
-    tabs: Mutex<HashMap<TabId, Tab>>,
+    tabs: Mutex<Vec<Tab>>,
 }
 
 struct Tab {
+    id: TabId,
     session: Box<dyn PtySession>,
     credits: Arc<Credits>,
+    /// Répertoire **de départ** du shell, retenu à l'ouverture.
+    ///
+    /// Ce n'est pas le `cwd` vivant de l'onglet : rien ici ne suit les `cd` de
+    /// l'utilisateur. C'est le travail de la sonde `libproc`
+    /// ([ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md)), qui n'existe pas
+    /// encore. **Quand elle arrivera, c'est ce champ que `tabs()` devra cesser de rendre
+    /// au profit du `cwd` réel** — le « nouvel onglet dans le worktree courant » de la
+    /// spec §4.4 s'entend du répertoire courant, pas du répertoire de lancement.
+    start_dir: PathBuf,
+}
+
+/// Ce qu'un onglet montre de lui-même au frontend.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabInfo {
+    pub tab_id: TabId,
+    /// Répertoire de départ du shell — voir [`Tab::start_dir`].
+    pub start_dir: String,
 }
 
 /// Ce qu'`open` rend au-delà de l'identifiant : de quoi lancer le lecteur.
@@ -44,7 +67,7 @@ impl PtyRegistry {
     pub fn new(spawner: Box<dyn PtySpawner>) -> Self {
         Self {
             spawner,
-            tabs: Mutex::new(HashMap::new()),
+            tabs: Mutex::new(Vec::new()),
         }
     }
 
@@ -54,19 +77,39 @@ impl PtyRegistry {
         let (session, reader) = self.spawner.spawn(&spec)?;
         let credits = Arc::new(Credits::new(WINDOW));
 
-        self.lock()?.insert(
-            tab_id.clone(),
-            Tab {
-                session,
-                credits: Arc::clone(&credits),
-            },
-        );
+        // Un onglet neuf va à la fin : c'est l'ordre que la barre d'onglets montre, et
+        // celui que `Cmd+1..9` numérote.
+        self.lock()?.push(Tab {
+            id: tab_id.clone(),
+            session,
+            credits: Arc::clone(&credits),
+            start_dir: spec.cwd.clone(),
+        });
 
         Ok(Opened {
             tab_id,
             reader,
             credits,
         })
+    }
+
+    /// Les onglets vivants, dans leur ordre d'affichage.
+    pub fn tabs(&self) -> Result<Vec<TabInfo>, PtyError> {
+        Ok(self
+            .lock()?
+            .iter()
+            .map(|tab| TabInfo {
+                tab_id: tab.id.clone(),
+                start_dir: tab.start_dir.display().to_string(),
+            })
+            .collect())
+    }
+
+    /// Vrai si quelque chose d'autre que le shell tient l'avant-plan de l'onglet.
+    ///
+    /// C'est la question que `Cmd+W` pose avant de détruire quoi que ce soit (spec §4.4).
+    pub fn has_foreground_process(&self, tab_id: &str) -> Result<bool, PtyError> {
+        self.with_tab(tab_id, |tab| tab.session.has_foreground_process())
     }
 
     pub fn write(&self, tab_id: &str, bytes: &[u8]) -> Result<(), PtyError> {
@@ -90,7 +133,9 @@ impl PtyRegistry {
     /// Idempotent. Fermer un onglet dont le shell vient de sortir de lui-même est le cas
     /// nominal, pas une erreur à remonter à l'utilisateur.
     pub fn close(&self, tab_id: &str) -> Result<(), PtyError> {
-        let Some(mut tab) = self.lock()?.remove(tab_id) else {
+        // `remove` sur un `Vec` décale la suite : c'est exactement ce qu'on veut, l'ordre
+        // des onglets restants ne doit pas bouger quand on en ferme un au milieu.
+        let Some(mut tab) = self.take(tab_id)? else {
             return Ok(());
         };
         // Fermer les crédits d'abord : un lecteur bloqué en attente doit être réveillé
@@ -101,11 +146,17 @@ impl PtyRegistry {
 
     /// Retire l'onglet dont le shell est sorti tout seul.
     pub fn forget(&self, tab_id: &str) {
-        if let Ok(mut tabs) = self.tabs.lock() {
-            if let Some(tab) = tabs.remove(tab_id) {
-                tab.credits.close();
-            }
+        if let Ok(Some(tab)) = self.take(tab_id) {
+            tab.credits.close();
         }
+    }
+
+    fn take(&self, tab_id: &str) -> Result<Option<Tab>, PtyError> {
+        let mut tabs = self.lock()?;
+        Ok(tabs
+            .iter()
+            .position(|tab| tab.id == tab_id)
+            .map(|at| tabs.remove(at)))
     }
 
     fn with_tab<T>(
@@ -115,12 +166,13 @@ impl PtyRegistry {
     ) -> Result<T, PtyError> {
         let mut tabs = self.lock()?;
         let tab = tabs
-            .get_mut(tab_id)
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
             .ok_or_else(|| PtyError::UnknownTab(tab_id.to_owned()))?;
         action(tab)
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<TabId, Tab>>, PtyError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Vec<Tab>>, PtyError> {
         self.tabs
             .lock()
             .map_err(|_| PtyError::Io("registre de PTY empoisonné".to_owned()))
@@ -138,6 +190,7 @@ mod tests {
         killed: Arc<AtomicBool>,
         written: Arc<Mutex<Vec<u8>>>,
         resized: Arc<Mutex<Vec<(u16, u16)>>>,
+        foreground: Arc<AtomicBool>,
     }
 
     impl PtySession for FakeSession {
@@ -153,6 +206,9 @@ mod tests {
             self.killed.store(true, Ordering::SeqCst);
             Ok(())
         }
+        fn has_foreground_process(&mut self) -> Result<bool, PtyError> {
+            Ok(self.foreground.load(Ordering::SeqCst))
+        }
     }
 
     #[derive(Default)]
@@ -162,6 +218,7 @@ mod tests {
         resized: Arc<Mutex<Vec<(u16, u16)>>>,
         spawns: Arc<AtomicUsize>,
         last_env: Arc<Mutex<Vec<(String, String)>>>,
+        foreground: Arc<AtomicBool>,
     }
 
     impl PtySpawner for FakeSpawner {
@@ -172,19 +229,50 @@ mod tests {
                 killed: Arc::clone(&self.killed),
                 written: Arc::clone(&self.written),
                 resized: Arc::clone(&self.resized),
+                foreground: Arc::clone(&self.foreground),
             };
             Ok((Box::new(session), Box::new(std::io::empty())))
         }
     }
 
-    fn spec() -> PtySpec {
-        PtySpec {
-            shell: "/bin/bash".into(),
-            cwd: "/tmp".into(),
-            cols: 80,
-            rows: 24,
-            env: vec![("ASH_SOCK".to_owned(), "/tmp/ash.sock".to_owned())],
+    /// Test Data Builder : un `PtySpec` valide et déterministe, dont on ne surcharge que
+    /// ce que le scénario regarde.
+    struct SpecBuilder {
+        cwd: PathBuf,
+    }
+
+    impl SpecBuilder {
+        fn new() -> Self {
+            Self { cwd: "/tmp".into() }
         }
+
+        fn starting_in(mut self, cwd: &str) -> Self {
+            self.cwd = cwd.into();
+            self
+        }
+
+        fn build(self) -> PtySpec {
+            PtySpec {
+                shell: "/bin/bash".into(),
+                cwd: self.cwd,
+                cols: 80,
+                rows: 24,
+                env: vec![("ASH_SOCK".to_owned(), "/tmp/ash.sock".to_owned())],
+            }
+        }
+    }
+
+    fn spec() -> PtySpec {
+        SpecBuilder::new().build()
+    }
+
+    fn ids(registry: &PtyRegistry) -> Vec<TabId> {
+        registry
+            .tabs()
+            .unwrap()
+            .into_iter()
+            .map(|tab| tab.tab_id)
+            .collect()
     }
 
     #[test]
@@ -249,6 +337,83 @@ mod tests {
 
         // Then
         assert!(matches!(written, Err(PtyError::UnknownTab(_))));
+    }
+
+    #[test]
+    fn given_three_tabs_opened_in_turn_when_the_middle_one_closes_then_the_others_keep_their_order()
+    {
+        // Given — l'ordre est ce que `Cmd+1..9` numérote : il ne doit pas se réarranger
+        // à la fermeture d'un onglet.
+        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        for id in ["A", "B", "C"] {
+            registry.open(spec(), id.to_owned()).unwrap();
+        }
+
+        // When
+        registry.close("B").unwrap();
+
+        // Then
+        assert_eq!(ids(&registry), vec!["A".to_owned(), "C".to_owned()]);
+    }
+
+    #[test]
+    fn given_a_tab_closed_in_the_middle_when_a_new_one_is_opened_then_it_lands_last() {
+        // Given
+        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+        for id in ["A", "B", "C"] {
+            registry.open(spec(), id.to_owned()).unwrap();
+        }
+        registry.close("A").unwrap();
+
+        // When
+        registry.open(spec(), "D".to_owned()).unwrap();
+
+        // Then — et non pas dans le trou laissé par « A »
+        assert_eq!(
+            ids(&registry),
+            vec!["B".to_owned(), "C".to_owned(), "D".to_owned()]
+        );
+    }
+
+    #[test]
+    fn given_a_tab_opened_in_a_worktree_when_the_frontend_lists_the_tabs_then_it_learns_where_that_shell_started(
+    ) {
+        // Given — c'est ce répertoire que « nouvel onglet dans le worktree courant »
+        // reprendra, faute de sonde `cwd`.
+        let registry = PtyRegistry::new(Box::new(FakeSpawner::default()));
+
+        // When
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+
+        // Then
+        assert_eq!(
+            registry.tabs().unwrap(),
+            vec![TabInfo {
+                tab_id: "A".to_owned(),
+                start_dir: "/dev/ash".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn given_a_shell_that_handed_the_terminal_over_when_the_tab_is_questioned_then_it_reports_a_running_process(
+    ) {
+        // Given
+        let spawner = FakeSpawner::default();
+        let foreground = Arc::clone(&spawner.foreground);
+        let registry = PtyRegistry::new(Box::new(spawner));
+        registry.open(spec(), "A".to_owned()).unwrap();
+
+        // When
+        foreground.store(true, Ordering::SeqCst);
+
+        // Then — le frontend n'a plus qu'à demander confirmation avant de fermer
+        assert!(registry.has_foreground_process("A").unwrap());
     }
 
     #[test]

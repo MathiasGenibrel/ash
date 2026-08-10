@@ -1,5 +1,6 @@
 import "./styles.css";
-import { openTerminal } from "@/features/terminal";
+import { mountTerminals, type Terminals } from "@/features/terminal";
+import { onMenuAction, type MenuAction } from "@/shared/ipc/menu";
 
 /**
  * Composition root du frontend.
@@ -8,22 +9,49 @@ import { openTerminal } from "@/features/terminal";
  * entre elles. Une feature ne va pas chercher sa voisine : elle reçoit ce dont elle a
  * besoin. Voir `.claude/docs/architecture.md`.
  *
- * Un seul onglet pour l'instant, et un seul terminal visible à la fois
- * ([ADR-0003](../../docs/adr/0003-zone-terminal-unique.md)). La barre d'onglets et les
- * raccourcis viennent avec la tâche suivante.
+ * Le menu applicatif est déclaré en Rust ; c'est ici qu'on relie ses actions à la
+ * feature terminal. La feature ne connaît pas le menu, et le menu ne connaît pas la
+ * feature.
  */
 function mount(root: HTMLElement): void {
     const host = document.createElement("div");
     host.className = "terminal-host";
     root.append(host);
 
-    openTerminal(host).catch((error: unknown) => {
+    const terminals = mountTerminals(host);
+
+    const fail = (error: unknown): void => {
         // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
         // vaut mieux qu'une fenêtre noire dont l'utilisateur ne peut rien conclure.
-        host.textContent = `ash : le shell n'a pas démarré — ${
+        const banner = document.createElement("p");
+        banner.className = "ash-banner";
+        banner.textContent = `ash : le shell n'a pas démarré — ${
             error instanceof Error ? error.message : String(error)
         }`;
-    });
+        host.append(banner);
+    };
+
+    // Le premier onglet part de `~`, faute d'onglet actif dont reprendre le répertoire.
+    terminals.openTab("home").catch(fail);
+
+    onMenuAction((action) => {
+        dispatch(terminals, action).catch(fail);
+    }).catch(fail);
+}
+
+function dispatch(terminals: Terminals, action: MenuAction): Promise<void> {
+    switch (action.kind) {
+        case "new-tab":
+            return terminals.openTab("current-worktree");
+        case "new-home-tab":
+            return terminals.openTab("home");
+        case "close-tab":
+            return terminals.closeActiveTab();
+        case "clear-scrollback":
+            return terminals.clearActiveScrollback();
+        case "select-tab":
+            return terminals.selectTabAt(action.position);
+    }
 }
 
 /**

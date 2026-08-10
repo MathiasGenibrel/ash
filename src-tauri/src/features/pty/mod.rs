@@ -19,4 +19,5 @@ mod session;
 pub use error::PtyError;
 pub use registry::PtyRegistry;
 pub use registry::TabId;
+pub use registry::TabInfo;
 pub use session::{PtySession, PtySpawner, PtySpec, SystemPtySpawner};

@@ -17,8 +17,19 @@ export class XtermView implements TerminalView {
     private readonly term: Terminal;
     private readonly fit = new FitAddon();
     private readonly observer: ResizeObserver;
+    private readonly pane: HTMLElement;
 
-    constructor(host: HTMLElement) {
+    /**
+     * Crée sa propre surface dans `parent`, et la retire en se libérant.
+     *
+     * C'est la vue qui possède son élément, et pas l'appelant : plusieurs onglets
+     * partagent le même parent, et il faut bien que chacun sache retirer le sien.
+     */
+    constructor(parent: HTMLElement) {
+        this.pane = document.createElement("div");
+        this.pane.className = "terminal-pane";
+        parent.append(this.pane);
+
         this.term = new Terminal({
             fontFamily: '"JetBrains Mono", ui-monospace, monospace',
             fontSize: 13,
@@ -30,19 +41,17 @@ export class XtermView implements TerminalView {
             macOptionIsMeta: true,
         });
 
-        this.term.open(host);
+        this.term.open(this.pane);
         this.term.loadAddon(this.fit);
-        this.fit.fit();
+        this.refit();
         this.loadWebgl();
 
         // Le terminal suit la fenêtre. `ResizeObserver` plutôt que l'event `resize` :
         // la sidebar et le panneau bas changeront la largeur sans que la fenêtre bouge.
         this.observer = new ResizeObserver(() => {
-            this.fit.fit();
+            this.refit();
         });
-        this.observer.observe(host);
-
-        this.term.focus();
+        this.observer.observe(this.pane);
     }
 
     get size(): TerminalSize {
@@ -63,9 +72,41 @@ export class XtermView implements TerminalView {
         });
     }
 
+    clear(): void {
+        this.term.clear();
+    }
+
+    setVisible(visible: boolean): void {
+        this.pane.classList.toggle("is-active", visible);
+    }
+
+    focus(): void {
+        this.term.focus();
+    }
+
     dispose(): void {
         this.observer.disconnect();
         this.term.dispose();
+        this.pane.remove();
+    }
+
+    /**
+     * Recalcule la grille — sauf quand la surface n'a pas de taille.
+     *
+     * C'est le piège des onglets masqués : le `FitAddon` divise la place disponible par
+     * la taille d'un caractère et borne le résultat à son minimum, donc une surface de
+     * hauteur nulle lui fait proposer une grille de deux colonnes. Le PTY reçoit alors un
+     * `SIGWINCH` à 2×1, la TUI qui y tourne se redessine à cette taille, et le retour sur
+     * l'onglet montre un affichage détruit.
+     *
+     * Les onglets inactifs sont pour cette raison masqués par `visibility`, et non par
+     * `display` : ils gardent leur taille. Ce garde-fou couvre le reste — fenêtre
+     * réduite, panneau replié à zéro, onglet retiré du DOM.
+     */
+    private refit(): void {
+        const { width, height } = this.pane.getBoundingClientRect();
+        if (width < 1 || height < 1) return;
+        this.fit.fit();
     }
 
     private loadWebgl(): void {
