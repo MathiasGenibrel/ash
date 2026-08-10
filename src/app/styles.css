@@ -57,6 +57,15 @@ body {
     overflow: hidden;
 }
 
+/* La bannière d'échec de démarrage : posée par `main.ts`, elle reste ici. La mise en
+ * forme de la zone terminal, elle, est partie avec sa feature — voir
+ * `src/features/terminal/terminal.css`. */
+.ash-banner {
+    grid-row: 1 / -1;
+    align-self: start;
+    padding: 8px;
+}
+
 body {
     overflow: hidden;
 }

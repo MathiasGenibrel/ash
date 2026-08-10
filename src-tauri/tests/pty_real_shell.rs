@@ -10,7 +10,7 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use ash_lib::features::pty::{PtySpawner, PtySpec, SystemPtySpawner};
+use ash_lib::features::pty::{PtySession, PtySpawner, PtySpec, SystemPtySpawner};
 
 /// Au-delà, on considère que le shell ne répondra pas. Assez large pour une machine
 /// chargée, assez court pour ne pas figer la suite.
@@ -113,6 +113,55 @@ fn given_a_shell_waiting_in_the_foreground_when_the_pty_is_resized_then_it_recei
     // Then
     let seen = read_until(reader, "WINCH").expect("bash doit recevoir le SIGWINCH");
     assert!(seen.contains("WINCH"), "sortie :\n{seen}");
+}
+
+/// Attend que l'avant-plan du terminal change de main, avec une échéance franche.
+///
+/// Sonder plutôt que dormir : on n'a aucun moyen de savoir *quand* bash aura appelé
+/// `tcsetpgrp`, et un `sleep` calibré à la louche transformerait ce test en pile ou face
+/// sur une machine chargée.
+fn wait_for_foreground(session: &mut dyn PtySession, expected: bool) -> bool {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while std::time::Instant::now() < deadline {
+        if matches!(session.has_foreground_process(), Ok(seen) if seen == expected) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+#[test]
+fn given_a_shell_that_launched_a_command_when_the_tab_is_questioned_then_it_reports_a_running_process(
+) {
+    // Given — un bash sans argument sur un PTY est *interactif*, donc son contrôle de
+    // tâches est actif : c'est ce qui lui fait donner l'avant-plan à ses fils. Sans ça,
+    // le fils resterait dans le groupe du shell et rien ne serait détectable.
+    let (mut session, reader) = SystemPtySpawner
+        .spawn(&bash(Vec::new()))
+        .expect("bash doit démarrer");
+    // Le marqueur est recomposé par `printf` : l'écho du PTY ne contient que « DLE ».
+    session
+        .write(b"printf 'I%s\\n' DLE\n")
+        .expect("l'écriture dans le PTY doit aboutir");
+    read_until(reader, "IDLE").expect("bash doit répondre");
+    assert!(
+        !session
+            .has_foreground_process()
+            .expect("le PTY doit savoir répondre"),
+        "un shell à son invite ne tient rien d'autre en avant-plan"
+    );
+
+    // When
+    session
+        .write(b"sleep 5\n")
+        .expect("l'écriture dans le PTY doit aboutir");
+
+    // Then — c'est cette réponse-là qui déclenche la confirmation de `Cmd+W` (spec §4.4)
+    assert!(
+        wait_for_foreground(session.as_mut(), true),
+        "le PTY doit signaler que quelque chose tourne dans l'onglet"
+    );
 }
 
 #[test]
