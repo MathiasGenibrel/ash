@@ -1,0 +1,6 @@
+# La convention interdit `unwrap()` et `expect()` dans le code de production, pas dans
+# les tests : un `unwrap` qui panique dans un test est un test qui échoue, ce qui est le
+# comportement voulu. Sans ces deux lignes, `unwrap_used` transformerait chaque
+# assertion en faute de lint et pousserait à écrire des tests illisibles.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

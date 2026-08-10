@@ -1,0 +1,40 @@
+/* JetBrains Mono — SIL Open Font License 1.1, voir OFL.txt à côté de ce fichier.
+ *
+ * Les quatre graisses dont un terminal a besoin, et pas une de plus : xterm.js
+ * n'utilise que regular, bold, italic et bold-italic. Chaque graisse ajoutée est du
+ * poids dans le bundle que personne ne rend.
+ *
+ * `url()` relatif : Vite résout, hache et émet ces fichiers dans le bundle. Aucune
+ * requête réseau au lancement — c'est un critère de la tâche, pas une préférence. */
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("./JetBrainsMono-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: block;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("./JetBrainsMono-Italic.woff2") format("woff2");
+    font-weight: 400;
+    font-style: italic;
+    font-display: block;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("./JetBrainsMono-Bold.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+    font-display: block;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("./JetBrainsMono-BoldItalic.woff2") format("woff2");
+    font-weight: 700;
+    font-style: italic;
+    font-display: block;
+}

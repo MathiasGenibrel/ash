@@ -6,8 +6,9 @@ Ash est une application macOS qui entoure un shell plutôt que de le remplacer :
 supervise les agents de code lancés dans de vrais PTY, et apporte un git conscient de
 ces agents. Voir [`docs/spec.md`](./docs/spec.md) et [`docs/adr/`](./docs/adr/).
 
-**Le projet n'est pas encore implémenté.** La spec et les 15 ADR sont écrites, le code
-ne l'est pas. La première tâche est le jalon J1.
+**Le squelette est en place, le produit ne l'est pas.** La fenêtre Tauri s'ouvre et les
+six commandes de vérification passent ; aucune feature n'existe encore. Le jalon J0 se
+termine par le spike xterm.js, qui peut encore invalider [ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md).
 
 ## Stack
 
