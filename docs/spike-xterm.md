@@ -109,8 +109,12 @@ Ces trous sont la partie honnête du verdict.
 
 ```bash
 bun install
-bun run tauri dev        # le banc démarre seul et écrit spike-results.json
+VITE_SPIKE=1 bun run tauri dev    # écrit spike-results.json à la racine
 ```
+
+Le banc est derrière un drapeau, éteint par défaut : une application qui démarre sur un
+banc de mesure est une application cassée. Sans `VITE_SPIKE`, ni le banc ni xterm.js
+n'entrent dans le bundle — l'import est dynamique.
 
 Le rapport est écrit sur disque plutôt qu'affiché : un chiffre lu sur une capture
 d'écran n'est pas une mesure.

@@ -43,10 +43,19 @@ body {
 #root {
     height: 100%;
     display: grid;
-    grid-template-rows: auto 1fr;
+    place-items: center;
 }
 
-/* --- banc du spike, jetable avec lui --------------------------------------- */
+/* --- banc du spike, jetable avec lui ---------------------------------------
+ *
+ * Tout est porté par `#root.spike` : la première version changeait la grille de `#root`
+ * pour tout le monde, ce qui poussait le contenu de l'application sous les boutons de
+ * fenêtre. Un banc de mesure ne doit rien changer à ce qu'il ne mesure pas. */
+
+#root.spike {
+    grid-template-rows: auto 1fr;
+    place-items: stretch;
+}
 
 .spike-log {
     padding: 8px 12px;
