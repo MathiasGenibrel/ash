@@ -37,11 +37,11 @@ export interface Terminals {
      */
     onTabs(listener: TabsListener): void;
     /**
-     * Les titres d'onglet portent-ils leur workspace ?
+     * Les titres d'onglet portent-ils leur localisation — dépôt, ou worktree à défaut ?
      *
      * `⌘B` replie la sidebar : le contexte qu'elle portait doit passer dans la barre.
      */
-    showWorkspaceInTitles(show: boolean): void;
+    showLocationInTitles(show: boolean): void;
 }
 
 /**
@@ -97,8 +97,8 @@ export function mountTerminals(host: HTMLElement): Terminals {
             // suite lui évite d'attendre le prochain `cd` pour afficher quoi que ce soit.
             listener(workbench.tabs.tabs, workbench.tabs.activeTabId);
         },
-        showWorkspaceInTitles: (show) => {
-            if (bar.showWorkspaceInTitles(show)) bar.render(workbench.tabs);
+        showLocationInTitles: (show) => {
+            if (bar.showLocationInTitles(show)) bar.render(workbench.tabs);
         },
     };
 }

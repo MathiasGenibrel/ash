@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { TabBuilder } from "@/shared/ipc/builders";
 import type { TabInfo } from "./ports";
 import { activeTab, adopt, noTabs, select, selectAt, withUpdates, type TabsState } from "./tabs";
 
@@ -35,13 +36,8 @@ class TabsBuilder {
 }
 
 /** Un onglet tel que le backend le décrit — cwd, programme, état, localisation. */
-const tab = (tabId: string, cwd = `/dev/${tabId}`): TabInfo => ({
-    tabId,
-    cwd,
-    process: "zsh",
-    state: "idle",
-    location: { worktreeRoot: cwd, worktreeName: tabId, repo: null },
-});
+const tab = (tabId: string, cwd = `/dev/${tabId}`): TabInfo =>
+    TabBuilder.create().named(tabId).inFlatWorktree(cwd).build();
 const order = (state: TabsState): string[] => state.tabs.map((each) => each.tabId);
 
 describe("l'ordre des onglets", () => {
@@ -160,14 +156,7 @@ describe("les onglets que la sonde annonce", () => {
         // Given — la sidebar ne résout rien de son côté : elle range ce que le backend
         // a situé ([ADR-0009])
         const state = TabsBuilder.create().inOrder("A").looking("A").build();
-        const elsewhere: TabInfo = {
-            ...tab("A", "/wt/ash-toc"),
-            location: {
-                worktreeRoot: "/wt/ash-toc",
-                worktreeName: "ash-toc",
-                repo: { id: "/dev/ash/.git", name: "ash" },
-            },
-        };
+        const elsewhere = TabBuilder.create().named("A").inWorktree("/wt/ash-toc", "ash").build();
 
         // When
         const moved = withUpdates(state, [elsewhere]);
