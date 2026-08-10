@@ -1,4 +1,4 @@
-import type { TabChange, TabId, TabInfo } from "./ports";
+import type { TabId, TabInfo } from "./ports";
 
 /**
  * Les règles d'onglets, sans DOM ni IPC.
@@ -52,27 +52,40 @@ export function adopt(state: TabsState, tabs: readonly TabInfo[]): TabsState {
 }
 
 /**
- * Reprend les répertoires que la boucle de sonde du backend annonce.
+ * Reprend les onglets que la boucle de sonde du backend annonce.
  *
- * Rien n'est calculé ni deviné ici : le `cwd` vient du backend, qui seul le détient
+ * Rien n'est calculé ni deviné ici : le répertoire, l'état et la **localisation** viennent
+ * du backend, qui seul les détient
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). L'ordre et la
- * sélection, eux, ne bougent pas — un `cd` n'est pas une ouverture d'onglet.
+ * sélection, eux, ne bougent pas — un `cd` n'est pas une ouverture d'onglet, même quand il
+ * fait changer l'onglet de dépôt.
  *
  * Rend l'état **inchangé**, à l'identique, quand rien ne s'applique : un changement qui
  * ne concerne que des onglets déjà fermés ne doit pas provoquer de rendu.
  */
-export function withCwd(state: TabsState, changes: readonly TabChange[]): TabsState {
-    const moved = new Map(changes.map((change) => [change.tabId, change.cwd]));
+export function withUpdates(state: TabsState, changed: readonly TabInfo[]): TabsState {
+    const announced = new Map(changed.map((tab) => [tab.tabId, tab]));
 
     let touched = false;
     const tabs = state.tabs.map((tab) => {
-        const cwd = moved.get(tab.tabId);
-        if (cwd === undefined || cwd === tab.cwd) return tab;
+        const update = announced.get(tab.tabId);
+        if (update === undefined || sameTab(update, tab)) return tab;
         touched = true;
-        return { ...tab, cwd };
+        return update;
     });
 
     return touched ? { tabs, activeTabId: state.activeTabId } : state;
+}
+
+/** Deux descriptions d'un même onglet qui ne changeraient rien à l'affichage. */
+function sameTab(one: TabInfo, other: TabInfo): boolean {
+    return (
+        one.cwd === other.cwd &&
+        one.process === other.process &&
+        one.state === other.state &&
+        one.location?.worktreeRoot === other.location?.worktreeRoot &&
+        one.location?.repo?.id === other.location?.repo?.id
+    );
 }
 
 /** Sélectionne un onglet nommé. Un identifiant inconnu ne change rien. */

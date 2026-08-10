@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Weak;
 use std::time::Duration;
 
-use super::registry::{PtyRegistry, TabChange};
+use super::registry::{PtyRegistry, TabInfo};
 
 /// Cadence de la boucle. L'ADR dit « ~300 ms », et le critère d'acceptation de l'issue
 /// laisse 400 ms à l'utilisateur : la marge sert à la passe elle-même, pas à dormir plus.
@@ -63,7 +63,7 @@ pub fn run(
     registry: &Weak<PtyRegistry>,
     ticker: &dyn Ticker,
     shutdown: &Shutdown,
-    announce: &dyn Fn(Vec<TabChange>),
+    announce: &dyn Fn(Vec<TabInfo>),
 ) {
     while !shutdown.asked() {
         let Some(registry) = registry.upgrade() else {
@@ -90,6 +90,7 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::features::pty::fakes::{observed_registry, registry, FakeSpawner, SpecBuilder};
+    use crate::features::pty::TabId;
     use std::sync::{Arc, Mutex};
 
     /// Une horloge qui ne dort pas, et qui décide quand la boucle s'arrête.
@@ -128,10 +129,10 @@ mod tests {
 
     /// Ce que la boucle a poussé vers le frontend.
     #[derive(Default)]
-    struct Announced(Mutex<Vec<Vec<TabChange>>>);
+    struct Announced(Mutex<Vec<Vec<TabInfo>>>);
 
     impl Announced {
-        fn batches(&self) -> Vec<Vec<TabChange>> {
+        fn batches(&self) -> Vec<Vec<TabInfo>> {
             self.0.lock().unwrap().clone()
         }
     }
@@ -160,13 +161,12 @@ mod tests {
 
         // Then — le titre de l'onglet suit le `cd` sans qu'aucun onglet ne soit ouvert ni
         // fermé, et un onglet immobile ne réveille pas la webview pour rien
-        assert_eq!(
-            announced.batches(),
-            vec![vec![TabChange {
-                tab_id: "A".to_owned(),
-                cwd: "/tmp".to_owned(),
-            }]]
-        );
+        let pushed: Vec<Vec<(TabId, String)>> = announced
+            .batches()
+            .into_iter()
+            .map(|batch| batch.into_iter().map(|tab| (tab.tab_id, tab.cwd)).collect())
+            .collect();
+        assert_eq!(pushed, vec![vec![("A".to_owned(), "/tmp".to_owned())]]);
     }
 
     #[test]

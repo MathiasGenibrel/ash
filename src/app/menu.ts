@@ -27,7 +27,9 @@ export type MenuAction =
     | { kind: "close-tab" }
     | { kind: "clear-scrollback" }
     /** `Cmd+1` … `Cmd+9`, à partir de 1. */
-    | { kind: "select-tab"; position: number };
+    | { kind: "select-tab"; position: number }
+    /** `Cmd+B` : replie ou déplie la colonne. */
+    | { kind: "toggle-sidebar" };
 
 /** S'abonne aux actions de menu. Rend de quoi se désabonner. */
 export function onMenuAction(handle: (action: MenuAction) => void): Promise<UnlistenFn> {
@@ -47,6 +49,8 @@ export function parseMenuAction(id: string): MenuAction | null {
             return { kind: "close-tab" };
         case "tab:clear":
             return { kind: "clear-scrollback" };
+        case "view:toggle-sidebar":
+            return { kind: "toggle-sidebar" };
         default:
             break;
     }

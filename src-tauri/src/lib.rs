@@ -13,10 +13,39 @@ mod menu;
 /// Banc de mesure du spike xterm.js — jetable, retiré avec le spike.
 pub mod spike;
 
+use std::path::Path;
 use std::sync::Arc;
 
+use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
-use features::pty::{PtyRegistry, SystemPtySpawner};
+use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
+
+/// Relie le port de `pty` à la résolution de `features::git`.
+///
+/// C'est ici, et seulement ici, que les deux features se rencontrent : `pty` ne connaît
+/// que son trait, `git` ne sait rien des onglets. L'adaptateur ne fait que traduire — la
+/// règle « un dépôt sans worktree lié s'affiche à plat »
+/// ([ADR-0012](../../docs/adr/0012-worktree-unite-de-travail.md)) est déjà tranchée par
+/// `resolve_worktree`, qui rend alors un worktree sans dépôt.
+struct GitWorktrees;
+
+impl WorktreeLocator for GitWorktrees {
+    fn locate(&self, cwd: &Path) -> Option<TabLocation> {
+        // Un `cwd` qu'on ne sait pas situer — chemin illisible, `.git` cassé, dépôt
+        // disparu — n'est pas une erreur à remonter à l'utilisateur au milieu d'une passe
+        // de sonde : l'onglet reste affiché, sans localisation.
+        let located = resolve_worktree(&SystemFileSystem, cwd).ok()?;
+
+        Some(TabLocation {
+            worktree_root: located.worktree.root.display().to_string(),
+            worktree_name: located.worktree.name,
+            repo: located.repo.map(|repo| RepoRef {
+                id: repo.git_dir.display().to_string(),
+                name: repo.name,
+            }),
+        })
+    }
+}
 
 /// Assemble et démarre l'application.
 ///
@@ -27,6 +56,7 @@ pub fn run() -> tauri::Result<()> {
     let ptys = Arc::new(PtyRegistry::new(
         Box::new(SystemPtySpawner),
         Arc::new(SystemProbe),
+        Arc::new(GitWorktrees),
     ));
 
     let app = tauri::Builder::default()

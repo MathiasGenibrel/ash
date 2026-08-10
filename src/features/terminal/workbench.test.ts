@@ -3,7 +3,6 @@ import { describe, expect, it } from "bun:test";
 import type {
     PtyBridge,
     PtyFrame,
-    TabChange,
     TabId,
     TabInfo,
     TerminalSize,
@@ -30,13 +29,13 @@ class FakeBackend implements PtyBridge {
 
     private order: TabInfo[] = [];
     private frames = new Map<TabId, (frame: PtyFrame) => void>();
-    private watchers: ((changes: TabChange[]) => void)[] = [];
+    private watchers: ((changed: TabInfo[]) => void)[] = [];
     private next = 1;
 
     open(_size: TerminalSize, cwd: string | null, onFrame: (frame: PtyFrame) => void) {
         const tabId = `T${this.next++}`;
         this.opened.push({ tabId, cwd });
-        this.order.push({ tabId, cwd: cwd ?? "/Users/me" });
+        this.order.push(describe_tab(tabId, cwd ?? "/Users/me"));
         this.frames.set(tabId, onFrame);
         return Promise.resolve(tabId);
     }
@@ -62,7 +61,7 @@ class FakeBackend implements PtyBridge {
     hasForegroundProcess(tabId: TabId) {
         return Promise.resolve(this.running.has(tabId));
     }
-    onTabsChanged(handler: (changes: TabChange[]) => void) {
+    onTabsChanged(handler: (changed: TabInfo[]) => void) {
         this.watchers.push(handler);
         return Promise.resolve(() => {
             this.watchers = this.watchers.filter((watcher) => watcher !== handler);
@@ -74,13 +73,15 @@ class FakeBackend implements PtyBridge {
      * ailleurs. Le backend le sait ; personne n'en est encore prévenu.
      */
     moveTo(tabId: TabId, cwd: string): void {
-        this.order = this.order.map((tab) => (tab.tabId === tabId ? { ...tab, cwd } : tab));
+        this.order = this.order.map((tab) =>
+            tab.tabId === tabId ? describe_tab(tabId, cwd) : tab,
+        );
     }
 
     /** Une passe de la boucle de sonde du backend annonce ce qui a bougé. */
     probe(): void {
-        const changes = this.order.map(({ tabId, cwd }) => ({ tabId, cwd }));
-        for (const watcher of this.watchers) watcher(changes);
+        const changed = this.order.map((tab) => ({ ...tab }));
+        for (const watcher of this.watchers) watcher(changed);
     }
 
     /** Le shell d'un onglet écrit. */
@@ -97,6 +98,18 @@ class FakeBackend implements PtyBridge {
     private forget(tabId: TabId): void {
         this.order = this.order.filter((tab) => tab.tabId !== tabId);
     }
+}
+
+/** Un onglet tel que le registre Rust le décrirait : situé, avec son avant-plan. */
+function describe_tab(tabId: TabId, cwd: string): TabInfo {
+    const name = cwd.split("/").filter(Boolean).at(-1) ?? "/";
+    return {
+        tabId,
+        cwd,
+        process: "zsh",
+        state: "idle",
+        location: { worktreeRoot: cwd, worktreeName: name, repo: null },
+    };
 }
 
 class FakeView implements TerminalView {

@@ -1,7 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { PtyBridge, PtyFrame, TabChange, TabId, TabInfo, TerminalSize } from "./ports";
+import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize } from "./ports";
 
 /**
  * Nom de l'event que la boucle de sonde émet. Contrat avec `TAB_CHANGED_EVENT` dans
@@ -35,7 +35,7 @@ export const tauriPty: PtyBridge = {
     tabs: () => invoke<TabInfo[]>("pty_tabs"),
     hasForegroundProcess: (tabId) => invoke<boolean>("pty_has_foreground_process", { tabId }),
     onTabsChanged: (handler) =>
-        listen<TabChange[]>(TAB_CHANGED_EVENT, (event) => {
+        listen<TabInfo[]>(TAB_CHANGED_EVENT, (event) => {
             handler(event.payload);
         }),
 };

@@ -1,0 +1,345 @@
+/* La mise en forme de la sidebar, à côté du code qui pose ces classes.
+ *
+ * Les **tokens** (`--ash-bg-sidebar`, `--ash-accent`…) viennent de `app/styles.css` : le
+ * thème est à l'application, la mise en forme est à la feature. Les deux palettes sont
+ * choisies valeur par valeur, pas dérivées l'une de l'autre.
+ *
+ * Les mesures suivent les écrans de design : colonne de 240 px, rail replié de 46 px. */
+
+.ash-sidebar {
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--ash-bg-sidebar);
+    border-right: 1px solid var(--ash-border-strong);
+    /* La barre de titre est en overlay : sans cette réserve, l'en-tête passerait sous les
+     * boutons de fenêtre. */
+    padding-top: 30px;
+    overflow: hidden;
+    transition: width 90ms;
+}
+
+.ash-sidebar.is-collapsed {
+    width: 46px;
+}
+
+.ash-sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 9px 10px 8px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--ash-fg-dim);
+    border-bottom: 1px solid var(--ash-border-soft);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.ash-sidebar-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.ash-sidebar.is-collapsed .ash-sidebar-head,
+.ash-sidebar.is-collapsed .ash-sidebar-hint {
+    display: none;
+}
+
+.ash-sidebar-body {
+    flex: 1;
+    min-height: 0;
+    padding: 6px 0;
+    /* Quinze agents dépassent la hauteur d'une petite fenêtre : la colonne défile, elle ne
+     * comprime pas ses lignes. */
+    overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.ash-sidebar-foot {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-top: 1px solid var(--ash-border-soft);
+    font-size: 10px;
+    color: var(--ash-fg-faint);
+}
+
+.ash-sidebar-add {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+.ash-sidebar-add:hover {
+    color: var(--ash-fg-muted);
+}
+
+.ash-sidebar-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 24px 16px;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--ash-fg-dim);
+}
+
+/* --- les trois niveaux ------------------------------------------------------ */
+
+.ash-repo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px 4px 8px;
+    font-size: 11.5px;
+    color: var(--ash-fg);
+}
+
+.ash-repo-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ash-repo-count {
+    font-size: 9.5px;
+    color: var(--ash-fg-dim);
+}
+
+.ash-worktree,
+.ash-agent {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    font: inherit;
+    text-align: left;
+    background: none;
+    border: 0;
+    /* Tout ce qui n'est pas sélectionné porte le filet transparent : sans lui, la ligne
+     * sélectionnée décalerait le texte de deux pixels. */
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    transition: background 90ms;
+}
+
+.ash-worktree {
+    padding: 3px 10px 3px 6px;
+    font-size: 10.5px;
+    color: var(--ash-fg-muted);
+}
+
+.ash-worktree.is-grouped {
+    padding-left: 14px;
+    border-left-color: var(--ash-border);
+}
+
+.ash-worktree-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ash-worktree-suffix {
+    font-size: 9px;
+    color: var(--ash-fg-faint);
+}
+
+.ash-chevron {
+    font-size: 8px;
+    color: var(--ash-fg-dim);
+}
+
+.ash-spacer {
+    flex: 1;
+}
+
+/* Le retrait dit à quel niveau la ligne appartient : un cran sous son worktree à plat,
+ * deux crans quand ce worktree est lui-même sous un dépôt. */
+.ash-agent {
+    padding: 3px 10px 3px 16px;
+    font-size: 11.5px;
+    color: var(--ash-fg-muted);
+}
+
+.ash-agent.is-grouped {
+    padding-left: 24px;
+}
+
+.ash-agent-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ash-agent-name.is-struck {
+    text-decoration: line-through;
+}
+
+.ash-agent-state {
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+    /* Sans ça, les chiffres d'une durée dansent à chaque seconde. */
+    font-variant-numeric: tabular-nums;
+}
+
+.ash-worktree:hover,
+.ash-agent:hover {
+    background: color-mix(in srgb, var(--ash-fg) 6%, transparent);
+}
+
+.ash-agent.is-selected {
+    background: var(--ash-bg-selected);
+    border-left-color: var(--ash-select-rail);
+    color: var(--ash-fg-strong);
+}
+
+/* --- les cinq états --------------------------------------------------------- */
+
+.ash-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    flex: none;
+    font-size: 11px;
+}
+
+/* Les classes d'état sont préfixées : dans une feuille chargée globalement, un `.is-idle`
+ * nu finirait par teindre quelque chose qui n'a rien à voir. */
+.ash-glyph.is-idle {
+    color: var(--ash-idle);
+}
+.ash-glyph.is-working {
+    color: var(--ash-working);
+}
+.ash-glyph.is-done {
+    color: var(--ash-done);
+}
+.ash-glyph.is-error {
+    color: var(--ash-error);
+}
+.ash-glyph.is-waiting {
+    color: var(--ash-accent);
+}
+
+.ash-agent.is-working .ash-agent-name,
+.ash-agent.is-idle .ash-agent-name {
+    color: var(--ash-fg-muted);
+}
+.ash-agent.is-done .ash-agent-name {
+    color: var(--ash-fg-done);
+}
+.ash-agent.is-error .ash-agent-name {
+    color: var(--ash-error);
+}
+
+/* `waiting` est le **seul** état à prendre un fond. C'est ce qui le laisse identifiable
+ * en vision périphérique et sous flou ; un second fond teinté ferait perdre ce test. */
+.ash-agent.is-tinted {
+    background: var(--ash-accent-bg);
+    color: var(--ash-accent-fg);
+}
+.ash-agent.is-tinted .ash-agent-name,
+.ash-agent.is-tinted .ash-agent-state {
+    color: var(--ash-accent-fg);
+}
+.ash-agent.has-accent-rail {
+    border-left-color: var(--ash-accent);
+}
+.ash-agent.has-error-rail {
+    border-left-color: var(--ash-error);
+}
+
+.ash-accent {
+    color: var(--ash-accent);
+}
+.ash-rule {
+    color: var(--ash-rule);
+}
+
+/* Le mouvement seul distingue `working` de `done` — rotation continue, pas clignotement. */
+.ash-glyph.is-spinning {
+    animation: ash-spin 0.9s linear infinite;
+}
+
+@keyframes ash-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Respiration, pas clignotement : c'est ce que le design demande explicitement. */
+.ash-agent.is-waiting .ash-glyph {
+    animation: ash-breathe 1.9s ease-in-out infinite;
+}
+
+@keyframes ash-breathe {
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* Un utilisateur qui a demandé moins d'animations n'a pas demandé moins d'information :
+ * les glyphes restent, seul le mouvement s'arrête. */
+@media (prefers-reduced-motion: reduce) {
+    .ash-glyph.is-spinning,
+    .ash-agent.is-waiting .ash-glyph {
+        animation: none;
+    }
+}
+
+/* --- le rail replié (⌘B) ---------------------------------------------------- */
+
+.ash-sidebar.is-collapsed .ash-sidebar-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0;
+}
+
+.ash-rail-entry {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    border-radius: 4px;
+}
+
+.ash-rail-entry + .ash-rail-entry {
+    border-top: 1px solid var(--ash-border);
+    padding-top: 12px;
+}
+
+.ash-rail-entry.is-tinted {
+    background: var(--ash-accent-bg);
+}
+
+.ash-rail-initials {
+    font-size: 10px;
+    color: var(--ash-fg-muted);
+}
+
+.ash-sidebar.is-collapsed .ash-sidebar-foot {
+    justify-content: center;
+}

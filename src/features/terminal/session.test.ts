@@ -72,7 +72,16 @@ class FakeBridge implements PtyBridge {
         return Promise.resolve("01JTAB");
     }
     tabs(): Promise<TabInfo[]> {
-        return Promise.resolve([{ tabId: "01JTAB", cwd: this.openedAt ?? "/Users/me" }]);
+        const cwd = this.openedAt ?? "/Users/me";
+        return Promise.resolve([
+            {
+                tabId: "01JTAB",
+                cwd,
+                process: "zsh",
+                state: "idle",
+                location: { worktreeRoot: cwd, worktreeName: "me", repo: null },
+            },
+        ]);
     }
     hasForegroundProcess(): Promise<boolean> {
         return Promise.resolve(false);

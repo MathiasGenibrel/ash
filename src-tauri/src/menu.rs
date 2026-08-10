@@ -116,6 +116,18 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let terminal = Submenu::with_items(app, "Terminal", true, &terminal_items)?;
 
+    // `Cmd+B` est un raccourci de **fenêtre**, pas d'onglet : il vit dans « View », à côté
+    // de ce qui touchera à l'affichage. Comme les autres, il passe par le menu natif pour
+    // ne pas partir dans le shell.
+    let toggle_sidebar = MenuItem::with_id(
+        app,
+        Action::ToggleSidebar.id(),
+        "Toggle Sidebar",
+        true,
+        Some("Cmd+B"),
+    )?;
+    let view = Submenu::with_items(app, "View", true, &[&toggle_sidebar])?;
+
     // Pas de « Close Window » ici : son `Cmd+W` prendrait le pas sur celui des onglets.
     let window = Submenu::with_items(
         app,
@@ -127,7 +139,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         ],
     )?;
 
-    Menu::with_items(app, &[&application, &edit, &terminal, &window])
+    Menu::with_items(app, &[&application, &edit, &view, &terminal, &window])
 }
 
 /// Traduit un item de menu en action et la donne à la webview.
@@ -151,6 +163,8 @@ enum Action {
     ClearScrollback,
     /// Sélectionne le n-ième onglet, à partir de 1.
     SelectTab(u8),
+    /// Replie ou déplie la sidebar — `Cmd+B`.
+    ToggleSidebar,
 }
 
 impl Action {
@@ -161,6 +175,7 @@ impl Action {
             Action::CloseTab => "tab:close".to_owned(),
             Action::ClearScrollback => "tab:clear".to_owned(),
             Action::SelectTab(position) => format!("tab:select:{position}"),
+            Action::ToggleSidebar => "view:toggle-sidebar".to_owned(),
         }
     }
 
@@ -170,6 +185,7 @@ impl Action {
             "tab:new-home" => Some(Action::NewHomeTab),
             "tab:close" => Some(Action::CloseTab),
             "tab:clear" => Some(Action::ClearScrollback),
+            "view:toggle-sidebar" => Some(Action::ToggleSidebar),
             other => other
                 .strip_prefix("tab:select:")
                 .and_then(|position| position.parse().ok())
@@ -194,6 +210,7 @@ mod tests {
             Action::ClearScrollback,
             Action::SelectTab(1),
             Action::SelectTab(9),
+            Action::ToggleSidebar,
         ];
 
         // When

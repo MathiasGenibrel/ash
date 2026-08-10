@@ -15,14 +15,16 @@ mod error;
 #[cfg(test)]
 mod fakes;
 mod flow;
+mod locate;
 mod registry;
 mod session;
 mod sweep;
 
 pub use error::PtyError;
+pub use locate::{RepoRef, TabLocation, WorktreeLocator};
 pub use registry::PtyRegistry;
-pub use registry::TabChange;
 pub use registry::TabId;
 pub use registry::TabInfo;
+pub use registry::TabState;
 pub use session::{PtySession, PtySpawner, PtySpec, SystemPtySpawner, Terminal};
 pub use sweep::Shutdown;
