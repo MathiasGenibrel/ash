@@ -13,7 +13,11 @@ mod ports;
 mod system_fs;
 mod worktree;
 
+/// L'arbre en mémoire qui double le port `FileSystem` dans les tests de la feature.
+#[cfg(test)]
+mod fake_fs;
+
 pub use error::GitError;
 pub use ports::{Entry, FileSystem};
 pub use system_fs::SystemFileSystem;
-pub use worktree::{resolve_workspace, Repo, Workspace, Worktree};
+pub use worktree::{resolve_worktree, Repo, Worktree, WorktreeLocation};

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ash_lib::features::git::{resolve_workspace, GitError, SystemFileSystem, Workspace};
+use ash_lib::features::git::{resolve_worktree, GitError, SystemFileSystem, WorktreeLocation};
 
 /// Un dossier temporaire qui se supprime à la fin du test, réussi ou non.
 struct Sandbox {
@@ -77,11 +77,11 @@ fn repository_at(path: &Path) {
     git(path, &["commit", "--allow-empty", "--quiet", "-m", "init"]);
 }
 
-fn resolve(cwd: &Path) -> Result<Workspace, GitError> {
-    resolve_workspace(&SystemFileSystem, cwd)
+fn resolve(cwd: &Path) -> Result<WorktreeLocation, GitError> {
+    resolve_worktree(&SystemFileSystem, cwd)
 }
 
-fn resolved(cwd: &Path) -> Workspace {
+fn resolved(cwd: &Path) -> WorktreeLocation {
     resolve(cwd).expect("la résolution doit aboutir")
 }
 
@@ -112,16 +112,16 @@ fn given_a_real_linked_worktree_when_resolving_from_a_deep_subdirectory_then_it_
     );
 
     // When
-    let workspace = resolved(&deep);
+    let location = resolved(&deep);
 
     // Then
-    assert_eq!(workspace.worktree.root, sandbox.real("ash-sidebar"));
-    assert_eq!(workspace.worktree.name, "ash-sidebar");
+    assert_eq!(location.worktree.root, sandbox.real("ash-sidebar"));
+    assert_eq!(location.worktree.name, "ash-sidebar");
     assert_eq!(
-        workspace.worktree.git_dir,
+        location.worktree.git_dir,
         Some(sandbox.real("ash/.git/worktrees/ash-sidebar"))
     );
-    let repo = workspace
+    let repo = location
         .repo
         .expect("un worktree lié appartient toujours à un dépôt");
     assert_eq!(repo.git_dir, sandbox.real("ash/.git"));
@@ -139,12 +139,12 @@ fn given_a_real_repository_without_linked_worktrees_when_resolving_then_it_stays
     std::fs::create_dir_all(&deep).expect("le sous-dossier doit pouvoir être créé");
 
     // When
-    let workspace = resolved(&deep);
+    let location = resolved(&deep);
 
     // Then — un seul niveau : rien à grouper au-dessus.
-    assert_eq!(workspace.repo, None);
-    assert_eq!(workspace.worktree.root, sandbox.real("solo"));
-    assert_eq!(workspace.worktree.git_dir, Some(sandbox.real("solo/.git")));
+    assert_eq!(location.repo, None);
+    assert_eq!(location.worktree.root, sandbox.real("solo"));
+    assert_eq!(location.worktree.git_dir, Some(sandbox.real("solo/.git")));
 }
 
 #[test]
@@ -161,16 +161,16 @@ fn given_the_main_worktree_of_a_real_repository_that_hosts_a_linked_worktree_whe
     );
 
     // When
-    let workspace = resolved(&main);
+    let location = resolved(&main);
     let sibling = resolved(&sandbox.path("ash-toc"));
 
     // Then — les deux se rangent sous le même dépôt, et c'est tout l'objet d'ADR-0012.
     assert_eq!(
-        workspace.repo.as_ref().map(|repo| &repo.git_dir),
+        location.repo.as_ref().map(|repo| &repo.git_dir),
         Some(&sandbox.real("ash/.git"))
     );
-    assert_eq!(workspace.repo, sibling.repo);
-    assert_ne!(workspace.worktree, sibling.worktree);
+    assert_eq!(location.repo, sibling.repo);
+    assert_ne!(location.worktree, sibling.worktree);
 }
 
 #[test]
@@ -182,13 +182,13 @@ fn given_a_real_directory_outside_any_repository_when_resolving_then_it_is_a_wor
     std::fs::create_dir_all(&notes).expect("le dossier doit pouvoir être créé");
 
     // When
-    let workspace = resolved(&notes);
+    let location = resolved(&notes);
 
     // Then
-    assert_eq!(workspace.repo, None);
-    assert_eq!(workspace.worktree.git_dir, None);
-    assert_eq!(workspace.worktree.root, sandbox.real("notes/drafts"));
-    assert_eq!(workspace.worktree.name, "drafts");
+    assert_eq!(location.repo, None);
+    assert_eq!(location.worktree.git_dir, None);
+    assert_eq!(location.worktree.root, sandbox.real("notes/drafts"));
+    assert_eq!(location.worktree.name, "drafts");
 }
 
 #[test]

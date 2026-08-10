@@ -41,9 +41,15 @@ pub struct Repo {
     pub name: String,
 }
 
-/// Ce qu'un `cwd` désigne dans la hiérarchie d'ADR-0012.
+/// Où un `cwd` se situe dans la hiérarchie d'ADR-0012 : le worktree qui le porte, et le
+/// dépôt sous lequel ce worktree se range — quand il y en a un.
+///
+/// Le mot `Workspace` est délibérément **évité** ici : ADR-0012 l'a retiré du vocabulaire
+/// en renommant en « worktree » le workspace d'ADR-0004. Le réutiliser pour le couple
+/// worktree + dépôt lui donnerait un troisième sens, dans le module même qui applique ce
+/// renommage.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Workspace {
+pub struct WorktreeLocation {
     /// Toujours présent : même hors de tout dépôt, un `cwd` est un worktree.
     pub worktree: Worktree,
     /// Le dépôt commun, **seulement quand il groupe réellement**.
@@ -51,6 +57,11 @@ pub struct Workspace {
     /// `None` veut dire « affiche ce worktree à plat » : c'est le cas d'un dépôt sans
     /// worktree lié, et celui d'un dossier hors dépôt. Le frontend n'a donc rien à
     /// deviner — il rend un niveau ou deux selon que ce champ est là.
+    ///
+    /// Un dépôt qui a hébergé un worktree lié reste groupé — donc affiché sur deux
+    /// niveaux, avec un seul enfant — jusqu'au prochain `git worktree prune` : git garde
+    /// l'entrée dans `worktrees/` tant qu'on ne l'élague pas. C'est visible, et c'est le
+    /// prix de ne rien inventer par-dessus ce que le dépôt déclare.
     pub repo: Option<Repo>,
 }
 
@@ -62,7 +73,10 @@ pub struct Workspace {
 ///    plus : dans un worktree lié, c'est un fichier ;
 /// 2. en tirer le dossier git propre au worktree (`gitdir: …` s'il s'agit d'un fichier) ;
 /// 3. remonter au `commondir` pour trouver le **dépôt**.
-pub fn resolve_workspace(fs: &dyn FileSystem, cwd: &Path) -> Result<Workspace, GitError> {
+///
+/// Échoue plutôt que de deviner : un `cwd` illisible, un fichier de contrôle sans chemin
+/// ou pointant dans le vide donnent une [`GitError`], jamais un worktree sans dépôt.
+pub fn resolve_worktree(fs: &dyn FileSystem, cwd: &Path) -> Result<WorktreeLocation, GitError> {
     // Canonicaliser une fois, au départ : tout ce qui suit est comparé et groupé par
     // chemin, et deux chemins qui désignent le même dossier doivent donner le même dépôt.
     let from = fs
@@ -72,7 +86,7 @@ pub fn resolve_workspace(fs: &dyn FileSystem, cwd: &Path) -> Result<Workspace, G
     let Some((root, entry)) = nearest_git_entry(fs, &from) else {
         // Hors de tout dépôt : le dossier est son propre worktree, et il n'a rien
         // au-dessus de lui.
-        return Ok(Workspace {
+        return Ok(WorktreeLocation {
             worktree: Worktree {
                 name: folder_name(&from),
                 root: from,
@@ -85,7 +99,7 @@ pub fn resolve_workspace(fs: &dyn FileSystem, cwd: &Path) -> Result<Workspace, G
     let git_dir = git_dir_of(fs, &root, entry)?;
     let common_dir = common_dir_of(fs, &git_dir)?;
 
-    Ok(Workspace {
+    Ok(WorktreeLocation {
         worktree: Worktree {
             name: folder_name(&root),
             root,
@@ -114,11 +128,8 @@ fn git_dir_of(fs: &dyn FileSystem, root: &Path, entry: Entry) -> Result<PathBuf,
         Entry::Directory => Ok(git_path),
         // Worktree lié : le `.git` est un fichier qui pointe ailleurs.
         Entry::File => {
-            let content = read_control_file(fs, &git_path)?;
-            let target = content
-                .lines()
-                .next()
-                .unwrap_or_default()
+            let line = control_line(fs, &git_path)?;
+            let target = line
                 .strip_prefix("gitdir:")
                 .map(str::trim)
                 .filter(|target| !target.is_empty())
@@ -140,13 +151,9 @@ fn common_dir_of(fs: &dyn FileSystem, git_dir: &Path) -> Result<PathBuf, GitErro
         return Ok(git_dir.to_owned());
     }
 
-    let content = read_control_file(fs, &marker)?;
-    let target = content.lines().next().unwrap_or_default().trim();
-    if target.is_empty() {
-        return Err(GitError::Malformed(marker));
-    }
+    let target = control_line(fs, &marker)?;
     // Git y écrit un chemin relatif au dossier git du worktree — le plus souvent `../..`.
-    resolve_against(fs, git_dir, target, &marker)
+    resolve_against(fs, git_dir, &target, &marker)
 }
 
 /// Ce dépôt commun forme-t-il un groupe, ou s'affiche-t-il à plat ?
@@ -201,11 +208,23 @@ fn resolve_against(
     })
 }
 
-fn read_control_file(fs: &dyn FileSystem, path: &Path) -> Result<String, GitError> {
-    fs.read_to_string(path).map_err(|why| GitError::Io {
+/// La ligne utile d'un fichier de contrôle git — `.git` d'un worktree lié, `commondir`.
+///
+/// Ces fichiers portent tous la même forme : **une** ligne, un chemin, parfois un
+/// préfixe. La règle est ici une fois pour toutes — première ligne, espaces retirés,
+/// jamais vide — plutôt qu'une fois par fichier lu : c'est ce qui garantit que le
+/// prochain (`worktrees/<nom>/gitdir`, `rebase-merge/head-name`) sera lu à l'identique,
+/// et échouera de la même manière.
+fn control_line(fs: &dyn FileSystem, path: &Path) -> Result<String, GitError> {
+    let content = fs.read_to_string(path).map_err(|why| GitError::Io {
         path: path.to_owned(),
         why,
-    })
+    })?;
+    let line = content.lines().next().unwrap_or_default().trim();
+    if line.is_empty() {
+        return Err(GitError::Malformed(path.to_owned()));
+    }
+    Ok(line.to_owned())
 }
 
 /// Le nom du dossier, avec le chemin entier pour seul repli — un dossier sans nom est la
@@ -219,113 +238,10 @@ fn folder_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::path::Component;
+    use crate::features::git::fake_fs::FakeFs;
 
-    /// Test Data Builder : un arbre de fichiers en mémoire, monté par cas d'usage git
-    /// plutôt que dossier par dossier — c'est ce qui rend le `Given` lisible.
-    #[derive(Default)]
-    struct FakeFs {
-        dirs: BTreeSet<PathBuf>,
-        files: BTreeMap<PathBuf, String>,
-    }
-
-    impl FakeFs {
-        fn new() -> Self {
-            Self::default()
-        }
-
-        fn dir(mut self, path: &str) -> Self {
-            self.add_dir(Path::new(path));
-            self
-        }
-
-        fn file(mut self, path: &str, content: &str) -> Self {
-            let path = PathBuf::from(path);
-            if let Some(parent) = path.parent() {
-                self.add_dir(parent);
-            }
-            self.files.insert(path, content.to_owned());
-            self
-        }
-
-        /// Un dépôt sans le moindre worktree lié : `.git` est un dossier.
-        fn plain_repo(self, root: &str) -> Self {
-            self.dir(&format!("{root}/.git/refs"))
-        }
-
-        /// Un dépôt qui héberge des worktrees liés : le `.git/worktrees/<nom>` de chacun,
-        /// avec le `commondir` que git y écrit.
-        fn repo_hosting(self, root: &str, worktrees: &[&str]) -> Self {
-            worktrees.iter().fold(self.plain_repo(root), |fs, name| {
-                fs.dir(&format!("{root}/.git/worktrees/{name}")).file(
-                    &format!("{root}/.git/worktrees/{name}/commondir"),
-                    "../..\n",
-                )
-            })
-        }
-
-        /// Un worktree lié : `.git` y est un **fichier**.
-        fn linked_worktree(self, root: &str, git_file: &str) -> Self {
-            self.dir(root).file(&format!("{root}/.git"), git_file)
-        }
-
-        fn add_dir(&mut self, path: &Path) {
-            for ancestor in path.ancestors() {
-                self.dirs.insert(ancestor.to_owned());
-            }
-        }
-
-        /// Le `canonicalize` d'un arbre sans lien symbolique : `.` et `..` réduits.
-        fn normalize(path: &Path) -> PathBuf {
-            path.components()
-                .fold(PathBuf::new(), |mut out, component| {
-                    match component {
-                        Component::ParentDir => {
-                            out.pop();
-                        }
-                        Component::CurDir => {}
-                        other => out.push(other.as_os_str()),
-                    }
-                    out
-                })
-        }
-    }
-
-    impl FileSystem for FakeFs {
-        fn entry(&self, path: &Path) -> Option<Entry> {
-            let path = Self::normalize(path);
-            if self.files.contains_key(&path) {
-                Some(Entry::File)
-            } else if self.dirs.contains(&path) {
-                Some(Entry::Directory)
-            } else {
-                None
-            }
-        }
-
-        fn read_to_string(&self, path: &Path) -> Result<String, String> {
-            self.files
-                .get(&Self::normalize(path))
-                .cloned()
-                .ok_or_else(|| "aucun fichier".to_owned())
-        }
-
-        fn has_entries(&self, path: &Path) -> bool {
-            let path = Self::normalize(path);
-            let child_of = |candidate: &PathBuf| candidate.parent() == Some(path.as_path());
-            self.dirs.contains(&path)
-                && (self.dirs.iter().any(child_of) || self.files.keys().any(child_of))
-        }
-
-        fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
-            let path = Self::normalize(path);
-            self.entry(&path).map(|_| path)
-        }
-    }
-
-    fn resolve(fs: &FakeFs, cwd: &str) -> Result<Workspace, GitError> {
-        resolve_workspace(fs, Path::new(cwd))
+    fn resolve(fs: &FakeFs, cwd: &str) -> Result<WorktreeLocation, GitError> {
+        resolve_worktree(fs, Path::new(cwd))
     }
 
     #[test]
@@ -341,16 +257,16 @@ mod tests {
             .dir("/wt/ash-sidebar/src");
 
         // When
-        let workspace = resolve(&tree, "/wt/ash-sidebar/src").unwrap();
+        let location = resolve(&tree, "/wt/ash-sidebar/src").unwrap();
 
         // Then
-        assert_eq!(workspace.worktree.root, Path::new("/wt/ash-sidebar"));
-        assert_eq!(workspace.worktree.name, "ash-sidebar");
+        assert_eq!(location.worktree.root, Path::new("/wt/ash-sidebar"));
+        assert_eq!(location.worktree.name, "ash-sidebar");
         assert_eq!(
-            workspace.worktree.git_dir.as_deref(),
+            location.worktree.git_dir.as_deref(),
             Some(Path::new("/dev/ash/.git/worktrees/sidebar"))
         );
-        let repo = workspace
+        let repo = location
             .repo
             .expect("un worktree lié appartient à un dépôt");
         assert_eq!(repo.git_dir, Path::new("/dev/ash/.git"));
@@ -366,14 +282,14 @@ mod tests {
             .dir("/dev/solo/src/deep");
 
         // When
-        let workspace = resolve(&tree, "/dev/solo/src/deep").unwrap();
+        let location = resolve(&tree, "/dev/solo/src/deep").unwrap();
 
         // Then — un seul niveau visible : pas de groupe à afficher au-dessus.
-        assert_eq!(workspace.repo, None);
-        assert_eq!(workspace.worktree.root, Path::new("/dev/solo"));
-        assert_eq!(workspace.worktree.name, "solo");
+        assert_eq!(location.repo, None);
+        assert_eq!(location.worktree.root, Path::new("/dev/solo"));
+        assert_eq!(location.worktree.name, "solo");
         assert_eq!(
-            workspace.worktree.git_dir.as_deref(),
+            location.worktree.git_dir.as_deref(),
             Some(Path::new("/dev/solo/.git"))
         );
     }
@@ -386,12 +302,12 @@ mod tests {
         let tree = FakeFs::new().repo_hosting("/dev/ash", &["sidebar", "toc"]);
 
         // When
-        let workspace = resolve(&tree, "/dev/ash").unwrap();
+        let location = resolve(&tree, "/dev/ash").unwrap();
 
         // Then
-        let repo = workspace.repo.expect("le worktree principal a des frères");
+        let repo = location.repo.expect("le worktree principal a des frères");
         assert_eq!(repo.git_dir, Path::new("/dev/ash/.git"));
-        assert_eq!(workspace.worktree.root, Path::new("/dev/ash"));
+        assert_eq!(location.worktree.root, Path::new("/dev/ash"));
     }
 
     #[test]
@@ -419,13 +335,13 @@ mod tests {
         let tree = FakeFs::new().dir("/dev/notes/drafts");
 
         // When
-        let workspace = resolve(&tree, "/dev/notes/drafts").unwrap();
+        let location = resolve(&tree, "/dev/notes/drafts").unwrap();
 
         // Then — le dossier est son propre worktree, et il n'a rien au-dessus.
-        assert_eq!(workspace.repo, None);
-        assert_eq!(workspace.worktree.root, Path::new("/dev/notes/drafts"));
-        assert_eq!(workspace.worktree.name, "drafts");
-        assert_eq!(workspace.worktree.git_dir, None);
+        assert_eq!(location.repo, None);
+        assert_eq!(location.worktree.root, Path::new("/dev/notes/drafts"));
+        assert_eq!(location.worktree.name, "drafts");
+        assert_eq!(location.worktree.git_dir, None);
     }
 
     #[test]
@@ -440,15 +356,15 @@ mod tests {
             );
 
         // When
-        let workspace = resolve(&tree, "/dev/wt/ash-sidebar").unwrap();
+        let location = resolve(&tree, "/dev/wt/ash-sidebar").unwrap();
 
         // Then
         assert_eq!(
-            workspace.worktree.git_dir.as_deref(),
+            location.worktree.git_dir.as_deref(),
             Some(Path::new("/dev/ash/.git/worktrees/sidebar"))
         );
         assert_eq!(
-            workspace.repo.map(|repo| repo.git_dir),
+            location.repo.map(|repo| repo.git_dir),
             Some(PathBuf::from("/dev/ash/.git"))
         );
     }
@@ -497,10 +413,10 @@ mod tests {
             .dir("/dev/ash/vendor/lib/src");
 
         // When
-        let workspace = resolve(&tree, "/dev/ash/vendor/lib/src").unwrap();
+        let location = resolve(&tree, "/dev/ash/vendor/lib/src").unwrap();
 
         // Then
-        assert_eq!(workspace.worktree.root, Path::new("/dev/ash/vendor/lib"));
+        assert_eq!(location.worktree.root, Path::new("/dev/ash/vendor/lib"));
     }
 
     #[test]
@@ -529,10 +445,10 @@ mod tests {
             .linked_worktree("/dev/wt/sidebar", "gitdir: /dev/ash.git/worktrees/sidebar");
 
         // When
-        let workspace = resolve(&tree, "/dev/wt/sidebar").unwrap();
+        let location = resolve(&tree, "/dev/wt/sidebar").unwrap();
 
         // Then
-        let repo = workspace
+        let repo = location
             .repo
             .expect("un worktree lié appartient à un dépôt");
         assert_eq!(repo.git_dir, Path::new("/dev/ash.git"));
