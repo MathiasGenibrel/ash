@@ -1,4 +1,5 @@
 import "./styles.css";
+import { openTerminal } from "@/features/terminal";
 
 /**
  * Composition root du frontend.
@@ -7,13 +8,22 @@ import "./styles.css";
  * entre elles. Une feature ne va pas chercher sa voisine : elle reçoit ce dont elle a
  * besoin. Voir `.claude/docs/architecture.md`.
  *
- * Il n'y a encore aucune feature à câbler. Ce fichier existe pour que la première
- * n'ait pas à inventer où se brancher.
+ * Un seul onglet pour l'instant, et un seul terminal visible à la fois
+ * ([ADR-0003](../../docs/adr/0003-zone-terminal-unique.md)). La barre d'onglets et les
+ * raccourcis viennent avec la tâche suivante.
  */
 function mount(root: HTMLElement): void {
-    const placeholder = document.createElement("p");
-    placeholder.textContent = "ash";
-    root.append(placeholder);
+    const host = document.createElement("div");
+    host.className = "terminal-host";
+    root.append(host);
+
+    openTerminal(host).catch((error: unknown) => {
+        // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
+        // vaut mieux qu'une fenêtre noire dont l'utilisateur ne peut rien conclure.
+        host.textContent = `ash : le shell n'a pas démarré — ${
+            error instanceof Error ? error.message : String(error)
+        }`;
+    });
 }
 
 /**
@@ -21,8 +31,8 @@ function mount(root: HTMLElement): void {
  *
  * Derrière un drapeau, et éteint par défaut : l'application ne doit pas démarrer sur un
  * banc de mesure. Se relance avec `VITE_SPIKE=1 bun run tauri dev` — voir
- * `docs/spike-xterm.md`. L'import est dynamique pour que le banc et xterm.js ne pèsent
- * pas dans le bundle quand le drapeau est absent.
+ * `docs/spike-xterm.md`. L'import est dynamique pour que le banc ne pèse pas dans le
+ * bundle quand le drapeau est absent.
  */
 async function mountSpike(root: HTMLElement): Promise<void> {
     const output = document.createElement("pre");
