@@ -1,0 +1,47 @@
+@import "../assets/fonts/fonts.css";
+
+/* Le thème complet — clair, sombre, système, et les cinq états d'agent — appartient à
+ * la tâche « ligne de statut et thème ». Ici, le strict nécessaire pour qu'une fenêtre
+ * vide ne soit pas aveuglante en mode sombre. */
+
+:root {
+    color-scheme: light dark;
+
+    --ash-bg: #ffffff;
+    --ash-fg: #1a1a1a;
+
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+
+    /* Un terminal se lit caractère par caractère : le lissage sous-pixel d'AppKit
+     * épaissit les glyphes et déforme la grille. */
+    -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --ash-bg: #16181d;
+        --ash-fg: #d4d7dd;
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    height: 100vh;
+    background: var(--ash-bg);
+    color: var(--ash-fg);
+}
+
+/* La sélection de texte est le geste de base d'un terminal ; la molette ne l'est pas
+ * encore, tant qu'il n'y a rien à faire défiler. */
+#root {
+    height: 100%;
+    display: grid;
+    place-items: center;
+}

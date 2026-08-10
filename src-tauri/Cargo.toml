@@ -1,0 +1,40 @@
+[package]
+name = "ash"
+version = "0.0.0"
+description = "Un shell entouré, qui supervise les agents de code et rend git conscient d'eux"
+edition = "2021"
+rust-version = "1.97"
+publish = false
+
+[lib]
+# Nom distinct du binaire : sur macOS, une bibliothèque et un exécutable qui portent le
+# même nom entrent en conflit à l'édition de liens.
+name = "ash_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.rust]
+# `clippy -- -D warnings` en fait une erreur : tout `unsafe` doit donc être introduit
+# par un `#![allow(unsafe_code)]` explicite et local. La sonde d'ADR-0005 en aura besoin,
+# et c'est précisément le point — cet `allow` sera la trace visible de sa frontière.
+unsafe_code = "warn"
+
+[lints.clippy]
+# `unwrap` et `expect` sont interdits hors tests et composition root — la convention du
+# dépôt, rendue mécanique. Le composition root les lève localement avec `#[allow]`.
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
