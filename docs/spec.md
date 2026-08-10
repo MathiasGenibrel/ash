@@ -1,0 +1,589 @@
+# Ash — Spécification
+
+> Statut : brouillon issu de la session de cadrage du 2026-08-07,
+> **révisé le 2026-08-10 après la direction visuelle**.
+> Les décisions structurantes sont tracées séparément dans [`docs/adr/`](./adr/).
+
+---
+
+## 1. Objet
+
+Ash est une application macOS qui **entoure** un shell plutôt que de le remplacer.
+L'utilisateur lance ses agents de code (`claude`, `claude-perso`, `codex`, `kimi`,
+`opencode`, …) exactement comme il le fait aujourd'hui, dans un vrai bash. Ash
+apporte trois choses par-dessus :
+
+1. une **navigation** : dépôts, worktrees et onglets, pilotables au clavier comme à
+   la souris ;
+2. une **supervision** : savoir en permanence, pour chaque agent en cours, s'il
+   travaille, s'il attend une réponse, ou s'il a terminé ;
+3. un **git conscient des agents** : les opérations git dont la présence d'un agent
+   change ce qu'il faut en dire ou en faire
+   ([ADR-0011](./adr/0011-git-domaine-de-premier-plan.md)).
+
+### Non-objectifs
+
+- Ash n'est **pas** un client d'API ni une UI de chat. Il n'envoie pas de prompts,
+  ne gère pas de conversation, ne connaît pas les modèles.
+- Ash n'est **pas** un multiplexeur de sessions distantes. Pas de detach, pas de SSH,
+  pas de partage de session (voir [ADR-0009](./adr/0009-cycle-de-vie-des-agents.md)).
+- Ash n'est **pas** un gestionnaire de configuration des outils. Il lit leurs
+  configs pour y poser ses hooks, il ne les administre pas.
+- Ash n'est **pas** un client git complet. Zone de préparation, écriture d'un commit,
+  remotes, tags, `stash` et configuration restent dans le terminal : un agent qui
+  tourne n'y change rien ([ADR-0011](./adr/0011-git-domaine-de-premier-plan.md)).
+- Ash ne **valide rien** à la place de l'utilisateur. Il peut rédiger un texte dans un
+  terminal ; il ne presse jamais `⏎`
+  ([ADR-0010](./adr/0010-sidebar-informe-terminal-agit.md),
+  [ADR-0015](./adr/0015-ash-compose-l-utilisateur-envoie.md)).
+
+---
+
+## 2. Vocabulaire
+
+| Terme | Définition |
+|---|---|
+| **Onglet** | Une surface sélectionnable dans la barre d'onglets. Un onglet **shell** porte un PTY ; un onglet **outil** (merge) n'en a pas. |
+| **Worktree** | Un arbre de travail git — le dossier dans lequel on est. Unité de rattachement des onglets. Émergent, pas déclaré. |
+| **Dépôt** | Le groupe qui réunit les worktrees d'un même projet. Nœud d'affichage, sans onglets en propre. |
+| **Agent** | Un onglet shell dont le processus en avant-plan est un outil reconnu. Un onglet devient un agent, puis redevient un shell. |
+| **Subagent** | Une tâche déléguée *à l'intérieur* d'un agent. N'a pas de PTY propre. |
+| **Adaptateur** | Le composant qui sait traduire l'activité d'un outil donné en états Ash. Un adaptateur par outil. |
+| **Commande reconnue** | Un nom d'exécutable déclaré dans la configuration, associé à un adaptateur et à un dossier de configuration. |
+| **Fiche de branche** | `.ash/worktree.md` — l'intention d'un worktree, versionnée avec sa branche. |
+
+Note : les deux abonnements Claude de l'utilisateur sont déjà séparés en amont par
+deux commandes distinctes dans le `PATH` (`claude` et `claude-perso`). Ash n'a donc
+**pas** de notion de profil : il a une liste de commandes reconnues, chacune avec
+son propre dossier de configuration.
+
+Le mot « workspace » de la version précédente est abandonné : il désigne désormais un
+worktree ([ADR-0012](./adr/0012-worktree-unite-de-travail.md)).
+
+---
+
+## 3. Modèle de données
+
+```
+Session (runtime)
+├── Repo*                 clé = chemin du répertoire git commun
+│   ├── name              "omelette-web"
+│   ├── path              /Users/mathias/dev/omelette-web/.git
+│   └── worktrees → Worktree*
+│
+├── Worktree*             clé = chemin absolu de la racine de l'arbre de travail
+│   ├── path              /Users/mathias/dev/wt/omelette-web-sidebar
+│   ├── suffix            "sidebar"       (affiché ·sidebar)
+│   ├── is_main           bool
+│   ├── vcs               Vcs | null
+│   ├── pinned            bool            (persisté)
+│   ├── collapsed         bool            (persisté)
+│   └── tabs → Tab*
+│
+└── Tab*                  clé = ASH_TAB_ID (ulid)
+    ├── kind              Shell { … } | Merge { … }
+    ├── title             nom affiché
+    └── scrollback        buffer xterm.js       (Shell uniquement)
+
+Tab::Shell
+├── pty                   handle portable-pty
+├── shell_pid             pid du bash
+├── fg_pid                pid du process en avant-plan (sondé)
+├── cwd                   sondé (libproc)
+└── agent                 Agent | null
+
+Tab::Merge                (pas de PTY — ADR-0003)
+├── operation             rebase | merge | cherry-pick
+├── files → ConflictFile* { path, hunks, resolved }
+└── orig_head             sha de secours
+
+Vcs
+├── branch                "feat/agent-sidebar" | détaché
+├── upstream              { ahead, behind } | null
+├── tree                  { added, modified, untracked }
+└── operation             Rebase { onto, step, total } | Merge { … } | null
+
+Agent
+├── command               "claude" | "claude-perso" | "codex" | …
+├── adapter               id de l'adaptateur résolu
+├── state                 idle | working | waiting | done | error
+├── since                 instant du dernier changement d'état
+├── detail                texte court optionnel ("2 options", "build failed")
+└── subagents → Subagent* { label, state, since }
+```
+
+### 3.1 Ce qui est persisté
+
+| Où | Quoi | Décision |
+|---|---|---|
+| `~/.ash/state.json` | worktrees épinglés, état replié | — |
+| `~/.ash/journal/<repo>.jsonl` | attribution commit → agent → prompt | [ADR-0014](./adr/0014-attribution-locale-des-commits.md) |
+| `<worktree>/.ash/worktree.md` | la fiche de branche, dans le dépôt | [ADR-0013](./adr/0013-fiche-de-branche-dans-le-depot.md) |
+
+La règle : **Ash persiste ce que les agents ont fait, jamais ce qu'ils étaient en train
+de faire.** Aucune session, aucun scrollback, aucun état d'agent en cours ne survit à
+la fermeture ([ADR-0009](./adr/0009-cycle-de-vie-des-agents.md)).
+
+---
+
+## 4. Interface
+
+Fenêtre unique, deux colonnes, **pas de splits de terminaux**
+([ADR-0003](./adr/0003-zone-terminal-unique.md)).
+
+```
+┌─ sidebar (≈240px) ──┬─ onglets ──────────────────────────────┐
+│ workspaces          │  claude │ bun dev │ merge · 2 │ +      │
+│ 1 waiting / 7 agents├────────────────────────────────────────┤
+│                     │ $ claude                               │
+│ ▾ omelette-web      │ > implémente la sonde cwd              │
+│   3 worktrees       │ ⁘ Baking… (15m22s · esc to interrupt)  │
+│   ▾ feat/agent-side…│                                        │
+│      ·sidebar       │                                        │
+│     ● claude 15m22s │                                        │
+│     ○ bun dev  idle │                                        │
+│   ▸ main      ·web  │                                        │
+│   ▸ fix/toc   ·toc  │                                        │
+│                     │                                        │
+│ ▾ ash-core     main ├─ panneau bas (repliable) ──────────────┤
+│   ◉ codex  waiting  │ graph │ worktrees · 4 │ conflicts      │
+│                     │ …                                      │
+├─────────────────────┴────────────────────────────────────────┤
+│ ~/dev/wt/…-sidebar │ feat/agent-sidebar +3 ~1 ⌘⌃B │ claude · │
+│                                              working 15m22s  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 4.1 Sidebar
+
+- En-tête : un **compteur agrégé** — `1 waiting / 7 agents` — qui reste visible quand
+  la sidebar est repliée.
+- Liste de dépôts, chacun repliable. Un dépôt sans worktree lié s'affiche **à plat**,
+  sans niveau intermédiaire.
+- Sous un dépôt : ses worktrees, chacun portant sa branche et le suffixe de son
+  dossier (`·sidebar`, `·toc`), plus l'état de l'arbre (`+3 ~1`, `↑2 ↓1`) ou
+  l'opération en cours (`rebasing onto main · 2/5`).
+- Dépliés : les onglets du worktree, avec pastille d'état, libellé court, durée.
+- Sous un agent : ses subagents, en retrait, plus discrets, **non cliquables**
+  ([ADR-0008](./adr/0008-abstraction-adapter.md) pour leur provenance).
+- **Remontée d'état** : une ligne repliée porte l'état le plus urgent de ses enfants.
+  `waiting` l'emporte sur tout le reste, puis `error`, puis `working`. Une ligne
+  repliée ne doit jamais cacher un agent qui attend.
+- Un worktree épinglé reste affiché même sans onglet ; le clic y ouvre un onglet.
+- Repliable entièrement (la colonne disparaît, le terminal prend toute la largeur).
+
+### 4.2 Zone terminal
+
+- Affiche l'onglet sélectionné, et lui seul.
+- Barre d'onglets en haut, onglet actif nettement marqué, bouton `+`. Un onglet outil
+  (merge) y figure comme les autres, avec son compte restant (`merge · 2`).
+- Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent. La
+  branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
+- Le rendu est délégué à xterm.js. Le terminal doit rester pleinement fonctionnel
+  pour les TUI plein écran (c'est le cas de tous les outils visés).
+- **Police par défaut : JetBrains Mono**, embarquée avec l'application — pas chargée
+  depuis un CDN, et pas supposée présente sur la machine. L'utilisateur peut en choisir
+  une autre parmi les monospace installées (§9). Le design system livré avec la
+  direction visuelle embarque Geist Mono ; c'est JetBrains Mono qui est retenue.
+
+### 4.3 Panneau bas
+
+Un panneau repliable sous la zone terminal, à hauteur réglable, qui **ne contient
+jamais de terminal** ([ADR-0003](./adr/0003-zone-terminal-unique.md)). Trois vues :
+`graph`, `worktrees`, `conflicts` — plus la fiche de branche.
+
+Il rend sa hauteur au terminal en se repliant. Le redimensionnement à chaud d'un PTY
+sous une TUI plein écran est un point à vérifier au jalon J5.
+
+### 4.4 Raccourcis
+
+| Raccourci | Effet |
+|---|---|
+| `Cmd+1` … `Cmd+9` | Sélectionne le n-ième onglet (ordre d'affichage de la sidebar) |
+| `Cmd+N` | Nouvel onglet dans le worktree courant |
+| `Cmd+Shift+N` | Nouvel onglet à `~` (donc, jusqu'au premier `cd`, un worktree `~`) |
+| `Cmd+W` | Ferme l'onglet (confirmation si un agent y tourne) |
+| `Cmd+B` | Replie / déplie la sidebar |
+| `Cmd+K` | Efface le scrollback de l'onglet courant |
+| `Cmd+Ctrl+B` | Popup de branches |
+| `Cmd+Ctrl+G` | Affiche / masque le graphe |
+| `Cmd+Ctrl+W` | Worktrees |
+| `Cmd+Ctrl+M` | Onglet de merge — seulement pendant un rebase ou un merge arrêté |
+| `Cmd+Ctrl+I` | Fiche de branche |
+
+Le groupe git utilise `Cmd+Ctrl` parce que ces cinq lettres sont libres sur macOS et
+ne sont pas interceptées par le terminal, contrairement à `Ctrl+B` seul que tmux
+réclame. Mnémonique : **B**ranches, **G**raph, **W**orktrees, **M**erge, **I**nfo.
+Attention en cas de rebinding : `Cmd+Ctrl+F`, `Cmd+Ctrl+D` et `Cmd+Ctrl+Space` sont,
+eux, pris par le système.
+
+Toutes ces actions doivent être également atteignables à la souris.
+
+---
+
+## 5. Dépôts et worktrees
+
+### 5.1 Résolution
+
+Pour chaque onglet shell, à chaque cycle de sonde :
+
+1. lire le `cwd` du processus en avant-plan du PTY ;
+2. remonter jusqu'à trouver un `.git` → c'est la racine du **worktree** ;
+3. si ce `.git` est un **fichier**, lire son `gitdir:` puis le `commondir` associé →
+   c'est le **dépôt** ; si c'est un dossier, le dépôt est le worktree lui-même ;
+4. à défaut de `.git`, le worktree est le `cwd` lui-même, sans dépôt.
+
+L'onglet est rattaché au worktree ainsi résolu, et **migre** si le `cwd` en change
+([ADR-0004](./adr/0004-workspace-racine-git.md),
+[ADR-0012](./adr/0012-worktree-unite-de-travail.md)).
+
+### 5.2 Cycle de vie
+
+- Un worktree existe dans la sidebar tant qu'il a au moins un onglet, **ou** qu'il est
+  épinglé, **ou** que `git worktree list` le déclare pour un dépôt déjà affiché.
+- Un dépôt existe tant qu'il a au moins un worktree affiché.
+- Épingler / désépingler est une action manuelle, au niveau du worktree.
+- Les worktrees épinglés (et leur état replié) survivent au redémarrage.
+- Aucun historique automatique des dossiers visités.
+
+### 5.3 Métadonnées git
+
+`branch`, `tree`, `upstream` et `operation` sont rafraîchies :
+
+- au rattachement d'un onglet à un worktree,
+- sur `focus` de la fenêtre,
+- sur modification de `.git/HEAD`, `.git/refs`, `.git/rebase-merge` ou
+  `.git/MERGE_HEAD` (surveillance de fichiers, pas de sondage),
+- au plus une fois toutes les 5 s par worktree.
+
+Un `git status` par cycle de sonde est exclu : le coût est trop élevé sur `n` dépôts.
+
+### 5.4 Worktree obsolète
+
+Un worktree sans agent depuis plus de 3 jours **et** portant des fichiers modifiés est
+signalé `stale` dans le tableau. Ash le **signale**, ne le supprime jamais.
+
+La suppression d'un worktree est une action explicite, qui doit énoncer ce qu'elle
+emporte (fichiers modifiés, agent en cours) avant de le faire.
+
+---
+
+## 6. Détection des agents
+
+### 6.1 Découverte
+
+Ash ne demande pas à l'utilisateur de déclarer ce qu'il lance
+([ADR-0006](./adr/0006-decouverte-automatique-des-agents.md)).
+
+Boucle de sonde, ~300 ms par onglet shell :
+
+```
+fg_pgid   = tcgetpgrp(pty_master)
+fg_proc   = nom de l'exécutable de fg_pgid
+cwd       = proc_pidinfo(fg_pgid, PROC_PIDVNODEPATHINFO)   # macOS libproc
+```
+
+- `fg_proc` figure dans les commandes reconnues → l'onglet **devient** un agent.
+- `fg_proc` redevient le shell → l'agent passe en `done` puis la ligne redevient
+  un simple onglet shell après un délai d'affichage (voir §6.4).
+
+### 6.2 États
+
+```
+        ┌──────────────────────────────────────────┐
+        │                                          │
+   idle ──lancement──▶ working ──question──▶ waiting
+                          │  ▲                  │
+                     fin  │  └──réponse─────────┘
+                          ▼
+                        done ──▶ (retour shell)
+                          │
+                       échec
+                          ▼
+                        error
+```
+
+| État | Sens | Source |
+|---|---|---|
+| `idle` | shell sans agent | sonde |
+| `working` | l'agent travaille | hook |
+| `waiting` | l'agent attend une réponse de l'utilisateur | hook |
+| `done` | l'agent a rendu la main | hook, confirmé par la sonde |
+| `error` | l'agent s'est terminé anormalement | code de sortie |
+
+`waiting` est l'état qui compte : c'est le seul qui justifie d'interrompre
+l'utilisateur.
+
+### 6.3 Provenance des états
+
+Les états viennent des **hooks de l'outil**, pas d'une analyse de la sortie
+([ADR-0007](./adr/0007-etats-par-hooks.md)).
+
+- Ash écrit un bloc délimité dans le `settings.json` de chaque commande reconnue.
+- Les hooks appellent un petit binaire `ash-event` qui poste sur `$ASH_SOCK`.
+- La corrélation hook → onglet se fait par `ASH_TAB_ID`, variable d'environnement
+  posée par Ash à la création du bash et héritée par toute la descendance.
+
+```
+Ash ──spawn──▶ bash(ASH_TAB_ID=01J..., ASH_SOCK=/tmp/ash-<uid>.sock)
+                 └─▶ claude
+                       └─▶ hook: ash-event working --tab $ASH_TAB_ID
+                                    │
+Ash ◀──unix socket──────────────────┘
+```
+
+### 6.4 Règles de transition
+
+- Un événement de hook fait autorité sur la sonde.
+- Un agent sans événement depuis > 60 s en `working` reste `working` : Ash ne
+  devine pas. La sonde ne sert qu'à détecter la **disparition** du processus.
+- Quand le processus disparaît sans événement `done` : `done` si code 0, `error` sinon.
+- Une ligne `done`/`error` reste visible 30 s dans la sidebar, puis l'onglet
+  redevient une ligne shell `idle`. Elle reste visible indéfiniment si la fenêtre
+  Ash n'a pas eu le focus depuis le passage en `done`.
+
+### 6.5 Subagents
+
+Un subagent est une tâche déléguée dans le processus de l'agent parent. Il n'a ni
+PTY ni sortie séparable. Ash l'affiche comme une ligne fille informative — libellé,
+état, durée — et **rien de plus** : la ligne n'est pas cliquable, le clic sélectionne
+le parent. Pour lire ce qu'a fait un subagent, on scrolle le terminal du parent.
+
+---
+
+## 7. Git
+
+Périmètre et justification : [ADR-0011](./adr/0011-git-domaine-de-premier-plan.md).
+Ash n'intègre une opération que si la présence d'agents change ce qu'il faut en dire
+ou en faire.
+
+### 7.1 Popup de branches — `⌘⌃B`
+
+Ancré sur la branche du pied de fenêtre. Une seule liste, filtrée en tapant, groupée
+`current` / `recent` / `local` / `remote` — la branche courante en tête, pas rangée
+dans l'ordre alphabétique.
+
+Deux ajouts par rapport à un popup de branches classique :
+
+- une colonne de droite qui nomme le **worktree** quand la branche vit ailleurs ;
+- un avertissement nommant **l'agent qui travaille** dans ce worktree, parce qu'un
+  checkout déplacerait des fichiers sous ses pieds.
+
+`⌘⏎` ouvre le sous-menu d'actions sans quitter le clavier. Les actions y nomment leurs
+deux côtés — « Rebase feat/agent-sidebar onto main », jamais « Rebase » — y compris
+dans les messages d'erreur. Les actions qui touchent l'arbre de travail pendant qu'un
+agent écrit sont marquées, et déclenchent une confirmation qui propose de mettre
+l'agent en pause ([ADR-0015](./adr/0015-ash-compose-l-utilisateur-envoie.md) pour ce
+que « pause » veut dire exactement).
+
+### 7.2 Graphe — `⌘⌃G`
+
+Vue du panneau bas. Couloirs calculés côté Rust ; quatre suffisent à la plupart des
+dépôts, au-delà Ash replie les branches inactives depuis plus de 30 jours.
+
+La colonne `by` est la raison d'être de l'écran : elle nomme **l'agent** qui a écrit le
+commit, et le panneau de détail garde le **prompt** qui l'a produit
+([ADR-0014](./adr/0014-attribution-locale-des-commits.md)). Un commit sans attribution
+connue affiche simplement son auteur git.
+
+### 7.3 Worktrees — `⌘⌃W`
+
+Tableau : worktree, branche, `agents now`, `last worked by`, état de l'arbre, fiche.
+Les deux colonnes du milieu sont celles que `git worktree list` ne donne pas ; Ash les
+connaît parce qu'il connaît le `cwd` de chaque onglet.
+
+L'état le plus utile du tableau est `done · waiting for your review` : un agent a fini,
+personne n'a regardé.
+
+### 7.4 Conflits — `⌘⌃M`
+
+Quand un rebase ou un merge s'arrête, Ash affiche l'opération, les fichiers en conflit,
+le `ORIG_HEAD` de secours, et **ne touche à rien de lui-même**. Deux routes, non
+exclusives :
+
+- **Passer à l'agent** — Ash rédige dans l'onglet de l'agent un prompt portant les
+  chemins, le commit d'arrêt et la commande de test. Il ne l'envoie pas
+  ([ADR-0015](./adr/0015-ash-compose-l-utilisateur-envoie.md)).
+- **Résoudre dans Ash** — un onglet de merge à trois panneaux, hunk par hunk. Les côtés
+  portent le **nom de leur branche**, pas le jargon `ours`/`theirs` de git, qui
+  s'inverse en rebase. Le panneau central reste éditable. `continue` reste visible mais
+  éteint tant qu'il reste des conflits, avec le compte à sa droite.
+
+L'onglet de merge se ferme sans rien perdre : l'état vit dans l'index git, pas dans
+Ash. `abort` et `skip` restent visibles avant d'entrer.
+
+### 7.5 Fiche de branche — `⌘⌃I`
+
+`.ash/worktree.md`, rendu à gauche et source à droite, markdown standard
+([ADR-0013](./adr/0013-fiche-de-branche-dans-le-depot.md)). Front matter pour les
+métadonnées, `- [ ]` pour la progression, tableaux, clôtures `mermaid`.
+
+Ash n'écrit que dans le bloc `<!-- ash:log -->` — même régime que les hooks : bloc
+délimité, sauvegarde avant écriture, refus d'écrire si le bloc a été modifié à la main.
+
+---
+
+## 8. Notifications
+
+- **Toujours** : la ligne change d'état dans la sidebar, et le compteur agrégé de
+  l'en-tête est visible même sidebar repliée.
+- **Si Ash n'est pas au premier plan** : notification macOS pour `waiting` et
+  `error`. Le clic sélectionne l'agent concerné.
+- **Jamais** : sélection automatique d'un onglet, ni vol de focus clavier
+  ([ADR-0010](./adr/0010-sidebar-informe-terminal-agit.md)).
+- `done` ne notifie pas en v1 (à rediscuter à l'usage).
+- L'écran de réglages doit exposer l'état « permission macOS non accordée », avec le
+  chemin pour l'accorder.
+
+---
+
+## 9. Configuration
+
+`~/.ash/config.toml`, éditable à la main **et** par l'écran de réglages.
+
+```toml
+[ui]
+sidebar_width   = 240
+sidebar_density = "comfortable"   # comfortable | compact
+poll_interval_ms = 300
+
+[appearance]
+theme     = "system"              # system | light | dark
+font      = "JetBrains Mono"      # défaut ; liste des monospace installées
+font_size = 13
+
+[[command]]
+match   = "claude"
+label   = "Pro"                   # libellé d'affichage, optionnel
+adapter = "claude-code"
+config  = "~/.claude"
+
+[[command]]
+match   = "claude-perso"
+label   = "Perso"
+adapter = "claude-code"
+config  = "~/.claude-perso"
+
+[[command]]
+match   = "codex"
+adapter = "codex"
+
+[[command]]
+match   = "kimi"
+adapter = "generic"        # aucun état fin, seulement idle/done/error
+
+[notifications]
+waiting = true
+error   = true
+done    = false
+```
+
+### 9.1 Vérification d'une entrée
+
+Toute entrée est vérifiée avant qu'Ash n'écrive quoi que ce soit. Quatre tests, dans
+cet ordre :
+
+| # | Test | Coût |
+|---|---|---|
+| 1 | le dossier existe et est lisible | instantané |
+| 2 | il porte la signature de l'adaptateur (`settings.json`, `projects/`, …) | instantané |
+| 3 | la commande existe dans le `PATH` et répond | instantané |
+| 4 | la commande, lancée avec ce dossier, l'utilise réellement | lance la commande |
+
+Le résultat arrive donc **en deux temps** : les tests 1 à 3 immédiatement, le test 4
+ensuite. Cinq états possibles : *non vérifié*, *vérification en cours*, *valide*,
+*valide avec réserve*, *invalide*. Un état invalide dit **quel** test a échoué, ce qui
+était attendu, ce qui a été trouvé, et propose la correction qui a une chance.
+
+La vérification se relance automatiquement 400 ms après la dernière frappe, ou
+immédiatement sur `⏎`, et à chaque changement de chemin ou d'adaptateur.
+
+Le test 4 mérite une précision : c'est **à l'utilisateur** d'avoir une commande liée à
+son dossier de configuration (`claude-perso` pointant sur `~/.claude-perso`). Ash ne
+lance pas l'outil en usage normal et ne peut pas lui passer de variable
+([ADR-0006](./adr/0006-decouverte-automatique-des-agents.md)) : le test ne fait que
+vérifier que le couple tient.
+
+Seuls *valide* et *valide avec réserve* autorisent l'écriture des hooks. Le bouton
+d'installation reste alors **visible et éteint, avec sa raison** — jamais masqué.
+
+Deux entrées pointant sur le même dossier ne sont pas une erreur système, mais l'une
+des deux ne servira à rien. Le doublon est signalé **sur les deux lignes**.
+
+### 9.2 Fichiers écrits par Ash
+
+`~/.ash/state.json` (worktrees épinglés, état replié) et
+`~/.ash/journal/<repo>.jsonl` (attribution, cf. §3.1).
+
+---
+
+## 10. Empreinte sur le système
+
+Ash est retirable **de la machine** sans laisser de traces. Il laisse en revanche des
+fiches de branche dans les dépôts où il a servi — c'est assumé, et c'est le seul cas.
+
+| Ce qu'Ash touche | Pourquoi | Réversible |
+|---|---|---|
+| `settings.json` de chaque commande reconnue | poser les hooks | Oui — bloc délimité `ash:begin` / `ash:end`, versionné (`ash block v3`), sauvegarde `.bak` avant écriture, désinstallation en un geste |
+| `<worktree>/.ash/worktree.md` | la fiche de branche, committée avec la branche | Oui — suppression du fichier, mais **elle est passée dans l'historique git** ([ADR-0013](./adr/0013-fiche-de-branche-dans-le-depot.md)) |
+| Environnement des bash qu'il crée | `ASH_TAB_ID`, `ASH_SOCK` | Oui — n'existe que dans les process enfants d'Ash |
+| `~/.ash/` | config, état, journal d'attribution | Oui — suppression du dossier |
+| **Rien d'autre** | pas de `.zshrc`, pas de `PATH`, pas de shim, pas de hook git dans le dépôt | — |
+
+Le suivi du `cwd` se fait par sonde système précisément pour éviter de toucher à la
+configuration du shell ([ADR-0005](./adr/0005-sonde-cwd-libproc.md)).
+
+Le journal d'attribution contient des **prompts**. Il n'est ni synchronisé ni envoyé
+nulle part, et doit être purgeable explicitement.
+
+Conflit d'édition : si un bloc géré a été modifié à la main entre deux lancements,
+Ash ne réécrit pas silencieusement — il signale, propose le diff, et demande. Cette
+règle vaut pour les `settings.json` comme pour `<!-- ash:log -->`.
+
+---
+
+## 11. Jalons
+
+| Jalon | Contenu | Critère de sortie |
+|---|---|---|
+| **J1 — Terminal** | Tauri + portable-pty + xterm.js, onglets, `Cmd+N`/`Cmd+Shift+N`/`Cmd+1..9`, sidebar groupée par dépôt et worktree, sonde cwd | Ash remplace le terminal quotidien de l'utilisateur. Aucun état d'agent. |
+| **J2 — États** | Socket + `ash-event` + trait `Adapter` + adaptateur `claude-code` + installation des hooks + écran de réglages « Outils » | `working` / `waiting` / `done` fiables sur `claude` et `claude-perso` |
+| **J3 — Attention** | Notifications macOS, subagents, compteur agrégé, remontée d'état | Un agent en `waiting` est vu en < 10 s même hors d'Ash |
+| **J4 — Ouverture** | Épinglage, second adaptateur (codex ou kimi), désinstallation propre, reste des réglages | Un deuxième outil supporté sans toucher au cœur |
+| **J5 — Git** | Panneau bas, popup de branches, graphe + journal d'attribution, tableau des worktrees, onglet de merge, fiche de branche | Un rebase en conflit se traite sans quitter Ash, et l'historique dit quel agent a écrit quoi |
+
+J5 pèse à lui seul autant que J1 à J4 réunis. Il vient **après** que la supervision
+soit fiable : c'est elle qui donne sa valeur à la colonne `by` et à l'avertissement de
+checkout, pas l'inverse.
+
+**Risque à lever dès J1** : la performance de xterm.js sous WKWebView sur une sortie
+verbeuse. À mesurer avant que le reste soit construit dessus.
+
+---
+
+## 12. Questions ouvertes
+
+1. **Ce que codex, kimi et opencode exposent réellement.** Toute la conception des
+   états repose sur des hooks, qui existent pour Claude Code. Pour les autres, on ne
+   sait pas encore s'il y a un hook, un fichier de session exploitable, ou seulement
+   de la sortie à parser. Si aucun n'existe, il faudra un adaptateur heuristique —
+   explicitement écarté pour l'instant — et donc un second moteur d'état.
+   *Nuance apportée par le design* : l'attribution des commits (§7.2) ne dépend que de
+   la sonde, donc elle fonctionne pour tous les outils, y compris en `generic`.
+2. **Performance du rendu** sous WKWebView (addon WebGL pas garanti), et
+   redimensionnement à chaud d'un PTY quand le panneau bas s'ouvre sous une TUI.
+3. **Durée d'affichage de `done`** : les 30 s de §6.4 sont un choix arbitraire.
+4. **Onglets ouverts à `~`** : ils créent un worktree `~` jusqu'au premier `cd`.
+   À valider à l'usage que ça ne pollue pas la sidebar.
+5. **Ordre des onglets pour `Cmd+1..9`** : ordre d'affichage sidebar (qui bouge quand
+   un onglet migre, et désormais sur trois niveaux) ou ordre de création (stable mais
+   désaligné du visuel). Le niveau dépôt rend la question plus épineuse qu'avant.
+6. **Le suffixe du worktree principal.** Deux worktrees ne peuvent pas être sur la même
+   branche, donc la branche suffit à les distinguer — sauf pour le principal, à qui le
+   design donne un suffixe tiré de son dossier (`·web`). Convention à valider.
+7. **Le mode local de la fiche de branche.** Que fait Ash quand l'équipe ne veut pas de
+   `.ash/` dans le dépôt ? Repli dans `~/.ash/worktrees/`, mais la fiche perd alors ce
+   qui la justifie.
+8. **Conflit sur `<!-- ash:log -->`.** La règle est qu'Ash ne le résout jamais seul,
+   mais il faut vérifier à l'usage que ça n'arrive pas assez souvent pour être
+   pénible.
