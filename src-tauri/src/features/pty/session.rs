@@ -128,6 +128,13 @@ impl PtySession for SystemSession {
         // *quoi*. Nommer le processus en avant-plan est le travail de la sonde `libproc`
         // ([ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md)), qui vit dans sa
         // propre feature — c'est aussi elle qui dira, au jalon J2, s'il s'agit d'un agent.
+        //
+        // Les deux chemins mènent au même `tcgetpgrp`, et ce n'est pas une duplication à
+        // résorber : leurs **replis sont opposés**, parce que se tromper ne coûte pas la
+        // même chose des deux côtés. Ici, un système muet doit répondre « ça tourne »,
+        // sans quoi `Cmd+W` détruirait un onglet sans confirmation ; là-bas, un système
+        // muet se rabat sur le shell, puis sur la dernière position connue, pour ne pas
+        // faire clignoter l'onglet. Les fusionner imposerait une politique à l'autre.
         let (Some(leader), Some(shell)) = (self.master.process_group_leader(), self.child_pid)
         else {
             // Le système ne sait pas répondre. Prétendre qu'il ne tourne rien ferait

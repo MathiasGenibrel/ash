@@ -91,12 +91,12 @@ impl TabWatch {
         }
     }
 
-    /// Une passe de la boucle des ~300 ms — mais qui ne rend quelque chose que si
-    /// l'onglet a **changé**.
+    /// Une passe de la boucle des ~300 ms, qui ne rend **que ce qui a changé**.
     ///
-    /// Un onglet posé à son invite serait sinon annoncé trois fois par seconde à qui
-    /// l'écoute, pour rien.
-    pub fn poll(&mut self, probe: &dyn Probe) -> Option<TabObservation> {
+    /// `None` veut dire « rien de neuf à annoncer » — que l'onglet n'ait pas bougé ou
+    /// que le système se soit tu, l'appelant n'a rien à émettre dans les deux cas. Un
+    /// onglet posé à son invite serait sinon annoncé trois fois par seconde, pour rien.
+    pub fn observe_change(&mut self, probe: &dyn Probe) -> Option<TabObservation> {
         let before = self.last.clone();
         let now = self.observe(probe).ok()?;
         (before.as_ref() != Some(&now)).then_some(now)
@@ -291,12 +291,12 @@ mod tests {
         let system = SystemBuilder::new().build();
         let mut watch = watch();
         assert!(
-            watch.poll(&system).is_some(),
+            watch.observe_change(&system).is_some(),
             "la première passe découvre l'onglet"
         );
 
         // When
-        let again = watch.poll(&system);
+        let again = watch.observe_change(&system);
 
         // Then — sans ça, un onglet immobile serait annoncé trois fois par seconde
         assert!(again.is_none());
@@ -307,14 +307,14 @@ mod tests {
     ) {
         // Given
         let mut watch = watch();
-        watch.poll(&SystemBuilder::new().build());
+        watch.observe_change(&SystemBuilder::new().build());
 
         // When
         let running = SystemBuilder::new()
             .with_process(AGENT, "claude", "/dev/ash/worktrees/probe")
             .handed_over_to(AGENT)
             .build();
-        let announced = watch.poll(&running);
+        let announced = watch.observe_change(&running);
 
         // Then
         assert_eq!(

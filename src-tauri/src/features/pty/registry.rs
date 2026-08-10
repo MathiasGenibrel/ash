@@ -112,15 +112,15 @@ impl PtyRegistry {
     /// Le `cwd` est sondé ici, à la demande, et non par une boucle de fond : tant que
     /// personne n'écoute en continu — la sidebar d'ADR-0006 n'existe pas encore — une
     /// boucle de ~300 ms sonderait pour rien. La sonde, elle, est déjà taillée pour cette
-    /// boucle (voir `TabWatch::poll`).
+    /// boucle (voir `TabWatch::observe_change`).
     pub fn tabs(&self) -> Result<Vec<TabInfo>, PtyError> {
-        let probe = Arc::clone(&self.probe);
+        let probe = self.probe.as_ref();
         Ok(self
             .lock()?
             .iter_mut()
             .map(|tab| TabInfo {
                 tab_id: tab.id.clone(),
-                cwd: tab.cwd(probe.as_ref()).display().to_string(),
+                cwd: tab.cwd(probe).display().to_string(),
             })
             .collect())
     }
