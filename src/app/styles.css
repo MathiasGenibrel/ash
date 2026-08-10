@@ -45,3 +45,32 @@ body {
     display: grid;
     place-items: center;
 }
+
+/* --- banc du spike, jetable avec lui ---------------------------------------
+ *
+ * Tout est porté par `#root.spike` : la première version changeait la grille de `#root`
+ * pour tout le monde, ce qui poussait le contenu de l'application sous les boutons de
+ * fenêtre. Un banc de mesure ne doit rien changer à ce qu'il ne mesure pas. */
+
+#root.spike {
+    grid-template-rows: auto 1fr;
+    place-items: stretch;
+}
+
+.spike-log {
+    padding: 8px 12px;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    border-bottom: 1px solid color-mix(in srgb, var(--ash-fg) 20%, transparent);
+    /* Le journal ne doit pas manger la surface qu'on mesure. */
+    height: 120px;
+    overflow-y: auto;
+}
+
+/* Le terminal doit occuper une surface réaliste : mesurer sur 20 colonnes ne dirait
+ * rien du coût de rendu d'une fenêtre de travail. */
+.spike-host {
+    min-height: 0;
+    padding: 4px;
+}

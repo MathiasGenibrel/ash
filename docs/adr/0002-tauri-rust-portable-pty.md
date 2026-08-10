@@ -73,6 +73,46 @@ Trois ajustements :
   jalon J1. Rien dans le design ne le réduit ; le panneau bas le rend légèrement plus
   aigu, puisque le terminal est alors redimensionné à chaud.
 
+## Amendement du 2026-08-10 — le risque xterm.js est levé
+
+Le spike du jalon J0 a mesuré xterm.js 6.0.0 sous WKWebView, sur un million de lignes
+par charge, dans une grille de 326 × 75 (24 450 cellules), la sortie venant du backend
+Rust par un `Channel` Tauri. Protocole et chiffres complets :
+[`docs/spike-xterm.md`](../spike-xterm.md).
+
+**xterm.js tient, à deux conditions.** Aucune trame au-delà de 34 ms sur les six
+combinaisons, latence de frappe **sous charge** à 22–30 ms au p95, et un débit compris
+entre 24 et 37 Mo/s selon la charge. Le pire cas — sortie saturée de couleurs — plafonne
+à 156 000 lignes/s, ce qui reste au-dessus de tout ce qu'un agent produit.
+
+Les deux conditions ne sont pas négociables :
+
+1. **Le contrôle de flux est obligatoire.** Au-delà de 50 Mo de données non consommées,
+   `Terminal.write()` lève « write data discarded, use flow control to avoid losing
+   data » et **jette la sortie**. Le premier jet du banc, qui poussait sans attendre,
+   s'est bloqué sur exactement cette erreur. La lecture du PTY devra donc être
+   acquittée par le rappel de `write()`, pas par le simple retour de `read()`.
+   C'est une contrainte de conception pour la feature `pty`, pas un réglage.
+2. **L'addon WebGL est retenu.** Il fonctionne dans WKWebView — le repli sur perte de
+   contexte n'a jamais été déclenché — et donne 35–37 Mo/s contre 23–26 pour le
+   rendu DOM sur les charges textuelles, soit environ 50 % de mieux. Sur la charge
+   colorée les deux moteurs se rejoignent : elle est limitée par l'analyseur ANSI, pas
+   par le rendu.
+
+**Ce que le spike n'a pas mesuré**, et qui reste à vérifier :
+
+- l'écran de mesure avait un `devicePixelRatio` de **1**. Sur un écran Retina, le coût
+  de rendu par cellule est de l'ordre de quatre fois supérieur ; c'est le trou le plus
+  important de cette mesure ;
+- le redimensionnement à chaud sous une TUI plein écran, que le panneau bas rend aigu
+  ([ADR-0003](./0003-zone-terminal-unique.md)). Il n'y avait pas encore de PTY à
+  redimensionner ;
+- le coût d'un `scrollback` long en usage prolongé — la mesure utilisait 10 000 lignes
+  sur un seul terminal, pas quinze onglets ouverts une journée.
+
+La décision d'origine est **confirmée** : Tauri v2, Rust, xterm.js. Rien n'est
+renégocié.
+
 ## Alternatives écartées
 
 - **Electron + node-pty** : le chemin le plus balisé (c'est VS Code), DevTools

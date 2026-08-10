@@ -19,3 +19,6 @@ dist/
 
 # Bundle Vite
 /dist/
+
+# Rapport du spike xterm.js — régénéré à chaque mesure
+/spike-results.json
