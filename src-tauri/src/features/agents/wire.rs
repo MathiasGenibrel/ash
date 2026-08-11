@@ -21,9 +21,9 @@ use std::path::PathBuf;
 /// **C'est une frontière de sécurité, pas un réglage.** Le serveur lit sur un socket que
 /// n'importe quel processus du même utilisateur peut ouvrir ; sans borne, un client
 /// hostile ou simplement cassé ferait grossir un tampon jusqu'à épuiser la mémoire d'Ash
-/// en envoyant une ligne sans fin. 8 Kio laissent trois ordres de grandeur au-dessus d'une
-/// trame réelle — un ulid et un mot — et une trame plus longue est rejetée sans être
-/// accumulée.
+/// en envoyant une ligne sans fin. Une trame réelle — un ulid et un mot — pèse une
+/// cinquantaine d'octets ; 8 Kio laissent donc deux ordres de grandeur de marge, et une
+/// trame plus longue est rejetée sans être accumulée.
 pub const MAX_FRAME_BYTES: usize = 8 * 1024;
 
 /// Ce qu'un hook envoie à Ash, tel qu'il passe sur le fil.

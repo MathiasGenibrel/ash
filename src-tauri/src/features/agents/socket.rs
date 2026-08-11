@@ -52,6 +52,15 @@ use super::wire::{EventFrame, MAX_FRAME_BYTES};
 /// un blocage.
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Le répit qu'on prend quand `accept` refuse une connexion.
+///
+/// Une erreur d'`accept` est le plus souvent passagère — mais pas toujours : à court de
+/// descripteurs de fichier, ce dont un terminal qui ouvre des PTY est parfaitement capable,
+/// elle se répète à chaque tour et sans rien attendre. La boucle tournerait alors à plein
+/// régime sur un cœur, en silence, jusqu'à ce que quelque chose se libère. C'est la même
+/// borne que [`MAX_FRAME_BYTES`], posée sur une autre ressource.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+
 /// Le port de livraison : ce que le transport fait d'un événement une fois arrivé.
 ///
 /// Le trait appartient à `agents`, et le composition root le branche sur le registre de
@@ -181,8 +190,10 @@ fn serve(listener: &UnixListener, sink: &dyn EventSink, stopped: &AtomicBool) {
         match connection {
             Ok(stream) => receive(stream, sink),
             // Un `accept` en erreur ne dit rien sur le suivant — sauf si le socket a
-            // disparu sous nos pieds, et l'ordre d'arrêt le dira à la passe suivante.
-            Err(_) => continue,
+            // disparu sous nos pieds, et l'ordre d'arrêt le dira à la passe suivante. Le
+            // répit est ce qui empêche une erreur *durable* de faire tourner la boucle à
+            // vide sur un cœur ; voir [`ACCEPT_BACKOFF`].
+            Err(_) => std::thread::sleep(ACCEPT_BACKOFF),
         }
     }
 }

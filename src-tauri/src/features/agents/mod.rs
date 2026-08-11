@@ -19,13 +19,25 @@
 //! [`AgentEvent`] posé sur la machine. La machine reçoit des événements déjà traduits et
 //! ne sait pas comment ils sont arrivés — c'est ce qui permet de prouver toutes les règles
 //! de la spec §6.4 sans lancer ni processus, ni socket, ni minuteur.
+//!
+//! **Les effets système de la feature**, chacun avec ses deux adaptateurs — celui du
+//! système, et celui des tests :
+//!
+//! | Port | Système | Tests |
+//! |---|---|---|
+//! | `EventSink` (`socket.rs`) | `HookEvents` (`lib.rs`) | `FakeSink` (`socket.rs`) |
+//!
+//! Le port n'est **pas** le socket : celui-ci est l'effet que la feature exerce elle-même,
+//! et ses tests l'exercent pour de vrai. Ce que `EventSink` abstrait, c'est la **livraison**
+//! — savoir qu'un onglet existe, et prévenir la webview. C'est ce qui laisse `agents` et
+//! `pty` s'ignorer, et ce qui rend l'écoute vérifiable sans lancer un seul PTY.
 
 mod adapter;
 mod adapters;
-// `commands` est public : `tauri::generate_handler!` a besoin des macros que
-// `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte
-// pas. C'est aussi cohérent avec l'architecture — `commands.rs` *est* la surface
-// publique de la feature vers le frontend.
+// `commands` est public pour la même raison que dans les autres features : `commands.rs`
+// *est* la surface publique de la feature vers le frontend, et les macros de
+// `#[tauri::command]` ne survivent pas à un `pub use`. La feature n'expose encore aucune
+// commande — à ce jalon, rien ne se demande, tout se pousse.
 pub mod commands;
 /// Privé et `#[cfg(test)]` : la suite contractuelle sert les implémentations de cette
 /// feature, et personne d'autre. L'ouvrir au reste du crate inviterait une autre feature à
