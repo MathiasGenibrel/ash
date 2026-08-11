@@ -11,8 +11,11 @@
 
 mod adapter;
 mod adapters;
+/// Privé et `#[cfg(test)]` : la suite contractuelle sert les implémentations de cette
+/// feature, et personne d'autre. L'ouvrir au reste du crate inviterait une autre feature à
+/// vérifier un adaptateur qu'elle n'a pas écrit — donc à connaître le trait par l'intérieur.
 #[cfg(test)]
-pub(crate) mod contract;
+mod contract;
 mod state;
 
 pub use adapter::{Adapter, Instrumentation, RawEvent, SubagentSupport};

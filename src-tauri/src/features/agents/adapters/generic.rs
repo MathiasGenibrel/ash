@@ -59,7 +59,7 @@ mod tests {
         let report = check_adapter_contract(&adapter, &[]);
 
         // Then
-        assert_eq!(report.violations, Vec::<String>::new());
+        assert!(report.is_satisfied(), "violations :\n{report}");
     }
 
     #[test]

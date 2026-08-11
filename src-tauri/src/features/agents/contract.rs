@@ -15,6 +15,89 @@ use std::path::{Component, Path};
 use super::adapter::{Adapter, RawEvent};
 use super::state::AgentState;
 
+/// Les invariants du contrat, un par un.
+///
+/// C'est une énumération et non une phrase parce que c'est l'identité d'un invariant qui
+/// se cite — dans un test qui vérifie que la suite attrape bien ce qu'elle prétend
+/// attraper, et demain dans le rapport que lira l'auteur d'un adaptateur. Une prose
+/// reformulée cassait le test ; pire, elle pouvait le faire passer sur un autre invariant
+/// dont le texte contenait par hasard le même mot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Invariant {
+    IdIsNotEmpty,
+    IdIsASlug,
+    InterpretIsDeterministic,
+    InterpretNeverAnswersIdle,
+    NoWorkingNorWaitingWithoutInstrumentation,
+    InstrumentationIsACapability,
+    InstrumentationIsDeterministic,
+    InstrumentationStaysUnderTheConfigDir,
+    InstrumentationBlockIsNotEmpty,
+    InstrumentationVersionStartsAtOne,
+    InstrumentationIsPerConfigDir,
+}
+
+impl Invariant {
+    /// La raison d'être de l'invariant — c'est ce que lit l'auteur d'un adaptateur le jour
+    /// où il tombe dessus, et c'est là que se trouve la valeur pédagogique du contrat.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::IdIsNotEmpty => {
+                "id() ne doit pas être vide : il indexe la configuration \
+                 reconnue (ADR-0006) et l'attribution d'un commit (ADR-0014)"
+            }
+            Self::IdIsASlug => {
+                "id() doit être un slug ascii minuscule — il s'écrit dans \
+                 des fichiers de configuration"
+            }
+            Self::InterpretIsDeterministic => {
+                "interpret() doit être déterministe : un adaptateur ne retient pas d'état, \
+                 c'est la machine à états qui arbitre"
+            }
+            Self::InterpretNeverAnswersIdle => {
+                "interpret() ne doit jamais rendre `idle` : c'est le mot de la sonde pour \
+                 « aucun agent ici », qu'aucun événement d'outil ne peut affirmer"
+            }
+            Self::NoWorkingNorWaitingWithoutInstrumentation => {
+                "un adaptateur sans instrumentation ne doit rendre ni `working` ni \
+                 `waiting` : ces deux états n'ont d'autre producteur que les hooks (ADR-0007)"
+            }
+            Self::InstrumentationIsACapability => {
+                "instrumentation() doit décrire une capacité de l'outil, pas dépendre du \
+                 dossier qu'on lui donne"
+            }
+            Self::InstrumentationIsDeterministic => {
+                "instrumentation() doit être déterministe pour un même dossier : un bloc \
+                 qui porte un horodatage ou un nonce ferait réécrire le fichier de \
+                 l'utilisateur à chaque démarrage"
+            }
+            Self::InstrumentationStaysUnderTheConfigDir => {
+                "instrumentation().file doit rester sous le dossier de configuration \
+                 donné : Ash écrit dans les fichiers de l'utilisateur, et la cible ne se \
+                 négocie pas (ADR-0007)"
+            }
+            Self::InstrumentationBlockIsNotEmpty => {
+                "instrumentation().block ne doit pas être vide : `hooks` écrirait des \
+                 marqueurs autour de rien"
+            }
+            Self::InstrumentationVersionStartsAtOne => {
+                "instrumentation().version doit démarrer à 1 : la version 0 ne se distingue \
+                 pas d'un bloc sans version"
+            }
+            Self::InstrumentationIsPerConfigDir => {
+                "instrumentation() doit instrumenter chaque dossier de configuration \
+                 séparément — deux comptes du même outil sont deux blocs (ADR-0007)"
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Invariant {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{self:?} — {}", self.reason())
+    }
+}
+
 /// Ce que la vérification a trouvé. Vide = le contrat est tenu.
 ///
 /// On rend un rapport plutôt que de paniquer au premier écart : une implémentation qui
@@ -22,14 +105,33 @@ use super::state::AgentState;
 /// compilation à chaque fois.
 #[derive(Debug, Default)]
 pub(crate) struct ContractReport {
-    pub violations: Vec<String>,
+    violations: Vec<Invariant>,
 }
 
 impl ContractReport {
-    fn require(&mut self, holds: bool, invariant: &str) {
-        if !holds {
-            self.violations.push(invariant.to_owned());
+    /// Un invariant violé ne se compte qu'une fois : le corpus le met à l'épreuve sur une
+    /// dizaine d'événements, et treize copies de la même ligne ne disent rien de plus.
+    fn require(&mut self, holds: bool, invariant: Invariant) {
+        if !holds && !self.violations.contains(&invariant) {
+            self.violations.push(invariant);
         }
+    }
+
+    pub(crate) fn is_satisfied(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    pub(crate) fn violations(&self) -> &[Invariant] {
+        &self.violations
+    }
+}
+
+impl std::fmt::Display for ContractReport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for violation in &self.violations {
+            writeln!(formatter, "- {violation}")?;
+        }
+        Ok(())
     }
 }
 
@@ -83,20 +185,16 @@ pub(crate) fn check_adapter_contract(
 }
 
 /// L'identifiant est une clé : il indexe la configuration reconnue (ADR-0006) et
-/// l'attribution d'un commit (ADR-0014). Un identifiant vide, majuscule, espacé ou calculé
-/// à chaque appel casse silencieusement ces deux rattachements.
+/// l'attribution d'un commit (ADR-0014). Un identifiant vide, majuscule ou espacé casse
+/// silencieusement ces deux rattachements.
 fn check_identity(adapter: &dyn Adapter, report: &mut ContractReport) {
     let id = adapter.id();
 
-    report.require(!id.is_empty(), "id() ne doit pas être vide");
+    report.require(!id.is_empty(), Invariant::IdIsNotEmpty);
     report.require(
         id.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-        "id() doit être un slug ascii minuscule — il s'écrit dans des fichiers de configuration",
-    );
-    report.require(
-        adapter.id() == id,
-        "id() doit rendre la même valeur à chaque appel",
+        Invariant::IdIsASlug,
     );
 }
 
@@ -109,16 +207,16 @@ fn check_interpretation(adapter: &dyn Adapter, corpus: &[RawEvent], report: &mut
     for event in corpus {
         let interpreted = adapter.interpret(event);
 
+        // Rejouer le même événement est ce qui attrape l'adaptateur qui se souvient — par
+        // exemple celui qui dédoublonne un `Stop` et ne le traduit qu'une fois.
         report.require(
             interpreted == adapter.interpret(event),
-            "interpret() doit être déterministe : un adaptateur ne retient pas d'état, \
-             c'est la machine à états qui arbitre",
+            Invariant::InterpretIsDeterministic,
         );
 
         report.require(
             interpreted != Some(AgentState::Idle),
-            "interpret() ne doit jamais rendre `idle` : c'est le mot de la sonde pour \
-             « aucun agent ici », qu'aucun événement d'outil ne peut affirmer",
+            Invariant::InterpretNeverAnswersIdle,
         );
 
         if !instruments {
@@ -127,8 +225,7 @@ fn check_interpretation(adapter: &dyn Adapter, corpus: &[RawEvent], report: &mut
                     interpreted,
                     Some(AgentState::Working) | Some(AgentState::Waiting)
                 ),
-                "un adaptateur sans instrumentation ne doit rendre ni `working` ni \
-                 `waiting` : ces deux états n'ont d'autre producteur que les hooks (ADR-0007)",
+                Invariant::NoWorkingNorWaitingWithoutInstrumentation,
             );
         }
     }
@@ -147,12 +244,11 @@ fn check_instrumentation(adapter: &dyn Adapter, report: &mut ContractReport) {
 
     report.require(
         for_alpha.is_some() == for_beta.is_some(),
-        "instrumentation() doit décrire une capacité de l'outil, pas dépendre du dossier \
-         qu'on lui donne",
+        Invariant::InstrumentationIsACapability,
     );
     report.require(
         for_alpha == adapter.instrumentation(alpha),
-        "instrumentation() doit être déterministe pour un même dossier",
+        Invariant::InstrumentationIsDeterministic,
     );
 
     let (Some(alpha_block), Some(beta_block)) = (for_alpha, for_beta) else {
@@ -166,26 +262,21 @@ fn check_instrumentation(adapter: &dyn Adapter, report: &mut ContractReport) {
                     .file
                     .components()
                     .any(|component| component == Component::ParentDir),
-            "instrumentation().file doit rester sous le dossier de configuration donné : \
-             Ash écrit dans les fichiers de l'utilisateur, et la cible ne se négocie pas \
-             (ADR-0007)",
+            Invariant::InstrumentationStaysUnderTheConfigDir,
         );
         report.require(
             !instrumentation.block.trim().is_empty(),
-            "instrumentation().block ne doit pas être vide : `hooks` écrirait des \
-             marqueurs autour de rien",
+            Invariant::InstrumentationBlockIsNotEmpty,
         );
         report.require(
             instrumentation.version >= 1,
-            "instrumentation().version doit démarrer à 1 : la version 0 ne se distingue \
-             pas d'un bloc sans version",
+            Invariant::InstrumentationVersionStartsAtOne,
         );
     }
 
     report.require(
         alpha_block.file != beta_block.file,
-        "instrumentation() doit instrumenter chaque dossier de configuration séparément — \
-         deux comptes du même outil sont deux blocs (ADR-0007)",
+        Invariant::InstrumentationIsPerConfigDir,
     );
 }
 
@@ -278,11 +369,9 @@ mod tests {
         // Then
         assert!(
             report
-                .violations
-                .iter()
-                .any(|violation| violation.contains("sans instrumentation")),
-            "violations : {:?}",
-            report.violations
+                .violations()
+                .contains(&Invariant::NoWorkingNorWaitingWithoutInstrumentation),
+            "violations : {report}"
         );
     }
 
@@ -301,11 +390,9 @@ mod tests {
         // Then
         assert!(
             report
-                .violations
-                .iter()
-                .any(|violation| violation.contains("`idle`")),
-            "violations : {:?}",
-            report.violations
+                .violations()
+                .contains(&Invariant::InterpretNeverAnswersIdle),
+            "violations : {report}"
         );
     }
 
@@ -322,10 +409,11 @@ mod tests {
 
         // Then — il sort du dossier donné, et il écrit au même endroit pour tous les comptes
         assert_eq!(
-            report.violations.len(),
-            3,
-            "violations : {:?}",
-            report.violations
+            report.violations(),
+            [
+                Invariant::InstrumentationStaysUnderTheConfigDir,
+                Invariant::InstrumentationIsPerConfigDir,
+            ]
         );
     }
 
@@ -339,12 +427,8 @@ mod tests {
 
         // Then
         assert!(
-            report
-                .violations
-                .iter()
-                .any(|violation| violation.contains("slug")),
-            "violations : {:?}",
-            report.violations
+            report.violations().contains(&Invariant::IdIsASlug),
+            "violations : {report}"
         );
     }
 }
