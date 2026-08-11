@@ -14,8 +14,8 @@ use super::metadata::WorktreeMetadata;
 use super::metadata_watch::{Listeners, MetadataWatch};
 use super::system_fs::SystemFileSystem;
 use super::throttle::MIN_INTERVAL;
-use super::time::{SystemClock, ThreadScheduler};
 use super::watcher::SystemWatcher;
+use crate::shared::time::{SystemClock, ThreadScheduler};
 
 /// Nom de l'event qui porte l'état git d'un worktree.
 ///

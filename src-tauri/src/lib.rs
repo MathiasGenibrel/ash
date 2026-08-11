@@ -7,6 +7,9 @@
 
 pub mod features;
 
+/// Ce que plusieurs features partagent sans qu'aucune ne le possède.
+pub mod shared;
+
 /// Le menu applicatif : les raccourcis de la spec §4.4, et leur chemin souris.
 mod menu;
 
