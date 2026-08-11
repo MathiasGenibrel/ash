@@ -60,6 +60,17 @@ Les trois premières couvrent le TypeScript, les trois dernières le Rust. Les c
 `cargo` se lancent depuis `src-tauri/`, ou avec
 `cargo --manifest-path src-tauri/Cargo.toml`.
 
+Il y en a une septième, à lancer dès qu'on touche à l'assemblage de l'application :
+
+```bash
+bun run smoke
+```
+
+Elle compile, lance réellement Ash, et vérifie qu'il survit à son démarrage et qu'il a
+ouvert son shell. Une fenêtre apparaît quelques secondes. Les six autres peuvent être
+vertes pendant que l'application ne s'ouvre pas — c'est arrivé, et c'est pour ça qu'elle
+existe.
+
 Pour produire un bundle `.app` :
 
 ```bash

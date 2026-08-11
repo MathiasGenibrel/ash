@@ -16,7 +16,7 @@ pub mod spike;
 use std::path::Path;
 use std::sync::Arc;
 
-use features::git::{resolve_worktree, MetadataWatch, SystemFileSystem};
+use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
@@ -71,15 +71,6 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(spike::Flow::default())
-        // La surveillance git a besoin du handle de l'application pour émettre, et
-        // l'application a besoin d'elle pour répondre à `git_metadata` : `setup` est le
-        // seul point où les deux existent.
-        .setup(|app| {
-            use tauri::Manager;
-            let watch = features::git::commands::watch_metadata(app.handle().clone());
-            app.manage(watch);
-            Ok(())
-        })
         .menu(move |app| menu::build(app, theme_mode))
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
@@ -98,14 +89,24 @@ pub fn run() -> tauri::Result<()> {
         ])
         .build(tauri::generate_context!())?;
 
-    // La surveillance git, posée par `setup`. Elle est reprise ici pour être reliée aux
-    // deux autres moments de la spec §5.3 : le rattachement d'un onglet, et le focus de
-    // la fenêtre. Le troisième — la modification d'un fichier de contrôle — n'a besoin de
-    // personne, c'est elle qui l'observe.
-    let git_watch: Arc<MetadataWatch> = {
+    // La surveillance git naît **après** `build` et **avant** `run` : elle a besoin du
+    // handle de l'application pour émettre, et l'application a besoin d'elle pour répondre
+    // à `git_metadata`. Ce créneau est le seul où les deux existent.
+    //
+    // Elle ne peut pas être posée depuis `setup` : dans Tauri 2, ce hook ne tourne pas
+    // pendant `build()` mais au démarrage de `run()`. Un `state()` juste après `build()`
+    // paniquait donc — « state() called before manage() » — et l'application ne s'ouvrait
+    // pas du tout. Rien ne le voyait : le composition root n'a pas de test, et le seul
+    // moment où ça se manifeste est le lancement réel.
+    //
+    // La surveillance est ensuite reliée aux deux autres moments de la spec §5.3 : le
+    // rattachement d'un onglet, et le focus de la fenêtre. Le troisième — la modification
+    // d'un fichier de contrôle — n'a besoin de personne, c'est elle qui l'observe.
+    let git_watch = features::git::commands::watch_metadata(app.handle().clone());
+    {
         use tauri::Manager;
-        Arc::clone(app.state::<Arc<MetadataWatch>>().inner())
-    };
+        app.manage(Arc::clone(&git_watch));
+    }
 
     // La boucle de sonde d'ADR-0005 démarre ici, et pas dans une commande : elle observe
     // les onglets pour toute la durée de l'application, pas pour la durée d'un appel du
