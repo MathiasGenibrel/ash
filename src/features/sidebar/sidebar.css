@@ -205,34 +205,11 @@
     color: var(--ash-fg-strong);
 }
 
-/* --- les cinq états --------------------------------------------------------- */
-
-.ash-glyph {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    flex: none;
-    font-size: 11px;
-}
-
-/* Les classes d'état sont préfixées : dans une feuille chargée globalement, un `.is-idle`
- * nu finirait par teindre quelque chose qui n'a rien à voir. */
-.ash-glyph.is-idle {
-    color: var(--ash-idle);
-}
-.ash-glyph.is-working {
-    color: var(--ash-working);
-}
-.ash-glyph.is-done {
-    color: var(--ash-done);
-}
-.ash-glyph.is-error {
-    color: var(--ash-error);
-}
-.ash-glyph.is-waiting {
-    color: var(--ash-accent);
-}
+/* --- les cinq états ---------------------------------------------------------
+ *
+ * Le glyphe lui-même — sa forme, sa couleur, son mouvement — est peint par
+ * `app/styles.css`, à côté des deux palettes : la sidebar et la ligne de statut posent le
+ * même `.ash-glyph`. Ce qui suit est ce qu'un état fait à une **ligne de sidebar**. */
 
 .ash-agent.is-working .ash-agent-name,
 .ash-agent.is-idle .ash-agent-name {
@@ -267,44 +244,6 @@
 }
 .ash-rule {
     color: var(--ash-rule);
-}
-
-/* Le mouvement seul distingue `working` de `done` — rotation continue, pas clignotement. */
-.ash-glyph.is-spinning {
-    animation: ash-spin 0.9s linear infinite;
-}
-
-@keyframes ash-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-/* Respiration, pas clignotement : c'est ce que le design demande explicitement. */
-.ash-agent.is-waiting .ash-glyph {
-    animation: ash-breathe 1.9s ease-in-out infinite;
-}
-
-@keyframes ash-breathe {
-    0%,
-    100% {
-        opacity: 0.5;
-    }
-    50% {
-        opacity: 1;
-    }
-}
-
-/* Un utilisateur qui a demandé moins d'animations n'a pas demandé moins d'information :
- * les glyphes restent, seul le mouvement s'arrête. */
-@media (prefers-reduced-motion: reduce) {
-    .ash-glyph.is-spinning,
-    .ash-agent.is-waiting .ash-glyph {
-        animation: none;
-    }
 }
 
 /* --- le rail replié (⌘B) ---------------------------------------------------- */

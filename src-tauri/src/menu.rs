@@ -21,8 +21,10 @@
 //! des raccourcis côté webview — aurait donné deux chemins différents pour la souris et
 //! pour le clavier.
 
-use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Runtime};
+
+use crate::features::theme::{commands as theme, ThemeMode};
 
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
 const MENU_ACTION_EVENT: &str = "ash://menu-action";
@@ -31,7 +33,10 @@ const MENU_ACTION_EVENT: &str = "ash://menu-action";
 const DIRECT_TABS: u8 = 9;
 
 /// Construit le menu de l'application.
-pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+///
+/// `theme` est le mode retenu de la session précédente : le menu est construit avant que
+/// la webview n'existe, et une coche posée après coup serait une seconde source de vérité.
+pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Result<Menu<R>> {
     let application = Submenu::with_items(
         app,
         "Ash",
@@ -126,7 +131,34 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         true,
         Some("Cmd+B"),
     )?;
-    let view = Submenu::with_items(app, "View", true, &[&toggle_sidebar])?;
+    // Les trois thèmes, en coches exclusives. C'est le **seul** point d'entrée du choix à
+    // ce jalon : la fenêtre de réglages est l'issue #14, son écran d'apparence l'issue #22.
+    // Pas d'accélérateur — un thème se change une fois par saison, pas une fois par heure,
+    // et chaque raccourci pris ici est un raccourci perdu pour le shell.
+    let themes: Vec<CheckMenuItem<R>> = ThemeMode::ALL
+        .into_iter()
+        .map(|mode| {
+            CheckMenuItem::with_id(
+                app,
+                theme::item_id(mode),
+                mode.label(),
+                true,
+                mode == theme_mode,
+                None::<&str>,
+            )
+        })
+        .collect::<tauri::Result<_>>()?;
+    let theme_menu = Submenu::with_items(
+        app,
+        "Theme",
+        true,
+        &themes
+            .iter()
+            .map(|item| item as &dyn tauri::menu::IsMenuItem<R>)
+            .collect::<Vec<_>>(),
+    )?;
+
+    let view = Submenu::with_items(app, "View", true, &[&toggle_sidebar, &theme_menu])?;
 
     // Pas de « Close Window » ici : son `Cmd+W` prendrait le pas sur celui des onglets.
     let window = Submenu::with_items(
@@ -142,11 +174,22 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Menu::with_items(app, &[&application, &edit, &view, &terminal, &window])
 }
 
-/// Traduit un item de menu en action et la donne à la webview.
+/// Traduit un item de menu en action et la donne à qui sait la jouer.
+///
+/// Deux chemins, et la différence n'est pas un détail : les actions d'onglet partent vers
+/// la webview, qui détient les surfaces de rendu ; le thème, lui, est un **état**, et il
+/// est retenu ici avant d'être annoncé
+/// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)). Une bascule de thème qui
+/// ne vivrait que dans la webview serait perdue à la première seconde fenêtre.
 ///
 /// Un identifiant inconnu est ignoré : les items prédéfinis (copier, quitter…) sont
 /// traités par le système et ne passent pas par ici.
 pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    if let Some(mode) = theme::mode_of(id) {
+        theme::choose(app, mode);
+        return;
+    }
+
     if let Some(action) = Action::from_id(id) {
         // L'échec d'émission signifie qu'il n'y a plus de webview à prévenir : rien à
         // rattraper, et surtout pas de panique dans un gestionnaire d'event.

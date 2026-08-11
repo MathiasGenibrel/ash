@@ -19,6 +19,7 @@ use std::sync::Arc;
 use features::git::{resolve_worktree, MetadataWatch, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
+use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
 ///
@@ -59,8 +60,16 @@ pub fn run() -> tauri::Result<()> {
         Arc::new(GitWorktrees),
     ));
 
+    // Le thème est relu **avant** la construction du menu : ses trois coches disent le
+    // mode en cours, et le menu est bâti une seule fois, avant que la webview n'existe.
+    let theme = Arc::new(ThemeState::restore(
+        Arc::new(FileThemeStore::in_home()) as Arc<dyn ThemeStore>
+    ));
+    let theme_mode = theme.mode();
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
+        .manage(Arc::clone(&theme))
         .manage(spike::Flow::default())
         // La surveillance git a besoin du handle de l'application pour émettre, et
         // l'application a besoin d'elle pour répondre à `git_metadata` : `setup` est le
@@ -71,7 +80,7 @@ pub fn run() -> tauri::Result<()> {
             app.manage(watch);
             Ok(())
         })
-        .menu(menu::build)
+        .menu(move |app| menu::build(app, theme_mode))
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
             features::pty::commands::pty_open,
@@ -82,6 +91,7 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_tabs,
             features::pty::commands::pty_has_foreground_process,
             features::git::commands::git_metadata,
+            features::theme::commands::theme_mode,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report

@@ -17,7 +17,6 @@ import type { TabId, TabInfo } from "@/shared/ipc";
 import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
 
-export type { AgentPresentation } from "./states";
 export type { SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
 
 /** Ce que la sidebar sait demander, et qu'elle ne sait pas faire elle-même. */

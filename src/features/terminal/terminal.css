@@ -10,10 +10,10 @@
  * Les variables (`--ash-bg`, `--ash-fg`) viennent de `app/styles.css` : le thème est à
  * l'application, la mise en forme est à la feature. */
 
-/* Barre d'onglets en haut, terminaux dessous (spec §4.2). */
+/* Barre d'onglets en haut, terminaux au milieu, ligne de statut en bas (spec §4.2). */
 .terminal-workbench {
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto 1fr auto;
     /* La position sert d'ancre à la confirmation de fermeture. */
     position: relative;
 }
@@ -25,7 +25,7 @@
     /* Beaucoup d'onglets ne doivent pas pousser la pile hors de la fenêtre. */
     overflow-x: auto;
     scrollbar-width: none;
-    padding-bottom: 4px;
+    padding: 0 8px 4px;
 }
 
 .terminal-tab {
@@ -79,6 +79,79 @@
 .terminal-stack {
     position: relative;
     min-height: 0;
+    margin: 0 8px 8px;
+}
+
+/* --- la ligne de statut (spec §4.2) -----------------------------------------
+ *
+ * `cwd` · branche et état de l'arbre · état de l'agent, sur 25 px. Les mesures sont celles
+ * du design ; la palette vient de `app/styles.css`.
+ *
+ * `flex: none` : elle ne se comprime jamais. C'est la dernière ligne qui reste lisible
+ * quand la fenêtre est petite, et une ligne de statut écrasée à 12 px ne dit plus rien. */
+.terminal-status {
+    height: 25px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 14px;
+    background: var(--ash-bg-status);
+    border-top: 1px solid var(--ash-border);
+    font-size: 10.5px;
+    color: var(--ash-fg-meta);
+    white-space: nowrap;
+    overflow: hidden;
+    /* Sans ça, les compteurs et les étapes d'un rebase dansent à chaque rafraîchissement. */
+    font-variant-numeric: tabular-nums;
+}
+
+/* Le `flex: 1` de la maquette : c'est lui qui pousse le rappel tout à droite, et c'est
+ * aussi lui qui donne à l'opération en cours la place que la maquette n'avait pas prévue. */
+.terminal-status .status-spacer {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Le `cwd` est plus clair que le reste de la ligne — c'est le repère, pas l'information. */
+.terminal-status .status-path {
+    color: var(--ash-fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.terminal-status .status-text {
+    color: inherit;
+}
+
+.terminal-status .status-strong {
+    color: var(--ash-fg);
+}
+
+.terminal-status .status-faint {
+    color: var(--ash-fg-faint);
+}
+
+.terminal-status .status-added {
+    color: var(--ash-done);
+}
+
+.terminal-status .status-changed {
+    color: var(--ash-error);
+}
+
+.terminal-status .status-accent {
+    color: var(--ash-accent);
+}
+
+.terminal-status .status-rule {
+    color: var(--ash-rule);
+}
+
+/* Le glyphe d'état n'a pas les 14 px de gap qui séparent les segments : il appartient au
+ * mot qui le suit. */
+.terminal-status .ash-glyph {
+    margin-right: -8px;
 }
 
 /* `visibility` et non `display` : un onglet masqué **garde sa taille**. Avec

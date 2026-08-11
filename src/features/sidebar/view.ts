@@ -1,6 +1,6 @@
 import type { AgentState } from "@/shared/ipc";
+import { presentAgentState } from "@/shared/agent-state";
 import { abbreviate } from "./labels";
-import { presentAgentState } from "./states";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
 
 /**

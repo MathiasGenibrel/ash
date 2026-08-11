@@ -9,8 +9,12 @@ import "./terminal.css";
 
 import type { TabId, TabInfo } from "./ports";
 import { askToClose } from "./confirm-dialog";
+import { tauriGit } from "./git-bridge";
+import { WorktreeMetadataStore } from "./metadata-store";
 import { tauriPty } from "./pty-bridge";
+import { StatusLine, composeStatusLine } from "./status-line";
 import { TabBar } from "./tab-bar";
+import { noTabs, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
 
@@ -37,11 +41,14 @@ export interface Terminals {
      */
     onTabs(listener: TabsListener): void;
     /**
-     * Les titres d'onglet portent-ils leur localisation — dépôt, ou worktree à défaut ?
+     * `⌘B` a replié ou déplié la sidebar.
      *
-     * `⌘B` replie la sidebar : le contexte qu'elle portait doit passer dans la barre.
+     * Repliée, elle ne porte plus le contexte, et la zone terminal le reprend à deux
+     * endroits : le titre d'un onglet devient `omelette-web/claude`, et la ligne de statut
+     * gagne le rappel de l'agent qui attend. Les deux sont la même information déplacée,
+     * d'où un seul appel — deux réglages séparés finiraient par se contredire.
      */
-    showLocationInTitles(show: boolean): void;
+    setSidebarCollapsed(collapsed: boolean): void;
 }
 
 /**
@@ -64,12 +71,31 @@ export function mountTerminals(host: HTMLElement): Terminals {
 
     const listeners: TabsListener[] = [];
 
+    // La ligne de statut parle de l'onglet **actif** et du worktree qui le porte
+    // (ADR-0012). Elle ne détient rien : le `cwd` vient de la sonde, l'état git de la
+    // surveillance, l'état d'agent du backend.
+    const status = new StatusLine();
+    let shown: TabsState = noTabs;
+    let sidebarCollapsed = false;
+
+    // Déclaration de fonction, et non `const` : le cache l'appelle depuis un rappel posé
+    // dans son constructeur, donc avant la fin de ce bloc.
+    function drawStatus(): void {
+        const active = shown.tabs.find((tab) => tab.tabId === shown.activeTabId) ?? null;
+        const worktreeRoot = active?.location?.worktreeRoot ?? null;
+        status.render(composeStatusLine(shown, metadata.of(worktreeRoot), sidebarCollapsed));
+    }
+
+    const metadata = new WorktreeMetadataStore(tauriGit, drawStatus);
+
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
         createView: () => new XtermView(stack),
         confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
             bar.render(state);
+            shown = state;
+            drawStatus();
             for (const listener of listeners) listener(state.tabs, state.activeTabId);
         },
     });
@@ -83,7 +109,8 @@ export function mountTerminals(host: HTMLElement): Terminals {
     });
 
     bar.render(workbench.tabs);
-    host.append(bar.element, stack);
+    drawStatus();
+    host.append(bar.element, stack, status.element);
 
     return {
         openTab: (origin) => workbench.openTab(origin),
@@ -97,8 +124,10 @@ export function mountTerminals(host: HTMLElement): Terminals {
             // suite lui évite d'attendre le prochain `cd` pour afficher quoi que ce soit.
             listener(workbench.tabs.tabs, workbench.tabs.activeTabId);
         },
-        showLocationInTitles: (show) => {
-            if (bar.showLocationInTitles(show)) bar.render(workbench.tabs);
+        setSidebarCollapsed: (collapsed) => {
+            sidebarCollapsed = collapsed;
+            if (bar.showLocationInTitles(collapsed)) bar.render(workbench.tabs);
+            drawStatus();
         },
     };
 }
