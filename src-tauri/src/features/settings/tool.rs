@@ -1,4 +1,5 @@
 use super::error::SettingsError;
+use super::verification::Verification;
 
 /// Une commande reconnue, telle que la spec §9 et
 /// [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) la décrivent.
@@ -29,14 +30,33 @@ pub struct ToolDeclaration {
     /// Le dossier de configuration. `None` veut dire « celui de l'adaptateur », que
     /// l'adaptateur est seul à connaître — pas un dossier vide.
     pub config: Option<String>,
-    /// L'entrée a-t-elle passé les quatre tests de la spec §9.1 ?
+    /// L'entrée a-t-elle prouvé assez pour qu'on écrive chez l'utilisateur ?
     ///
-    /// Toujours `false` à ce jalon : la vérification est l'issue #15. Le champ n'est pas
-    /// pour autant décoratif — c'est **lui** qui décide de l'écriture dans
-    /// `~/.ash/config.toml`, qu'Ash ne fait qu'une fois l'entrée vérifiée. Tant qu'il est
-    /// faux, l'entrée vit en mémoire, et l'interface le dit (pastille « modifié, non
-    /// enregistré »).
+    /// **Dérivé, jamais posé à la main** : c'est exactement
+    /// [`Verification::allows_hooks`], recopié pour que les lecteurs qui ne veulent que ce
+    /// oui/non — l'écriture dans `~/.ash/config.toml`, le compteur de l'en-tête — n'aient
+    /// pas à traverser la structure entière. [`ToolDeclaration::verified_by`] est le seul
+    /// endroit où les deux sont écrits, donc le seul endroit où ils pourraient diverger.
     pub verified: bool,
+
+    /// Ce que les quatre tests de la spec §9.1 ont dit de cette entrée.
+    ///
+    /// Elle vit **avec** la déclaration et non à côté : une entrée dont le chemin change
+    /// change de vérification au même instant, et deux tables séparées laisseraient un
+    /// intervalle où l'écran montrerait le résultat de l'ancien chemin sous le nouveau.
+    pub verification: Verification,
+}
+
+impl ToolDeclaration {
+    /// Attache un résultat de vérification à une entrée.
+    ///
+    /// Le seul chemin par lequel [`ToolDeclaration::verified`] change de valeur.
+    #[must_use]
+    pub fn verified_by(mut self, verification: Verification) -> Self {
+        self.verified = verification.allows_hooks;
+        self.verification = verification;
+        self
+    }
 }
 
 /// Ce que le formulaire d'ajout envoie — du texte brut, pas encore une déclaration.
@@ -93,8 +113,11 @@ impl NewTool {
             adapter: adapter.to_owned(),
             config: optional(self.config.as_deref()),
             // Une entrée neuve n'a rien prouvé. C'est la seule valeur possible ici, et
-            // c'est ce qui garantit qu'Ash n'écrit dans aucun fichier au moment de l'ajout.
+            // c'est ce qui garantit qu'Ash n'écrit dans aucun fichier au moment de
+            // l'ajout : c'est le registre qui lance ensuite la séquence, avec les ports
+            // qu'elle exige — `declare` ne juge que la **saisie**.
             verified: false,
+            verification: Verification::unverified(),
         })
     }
 }

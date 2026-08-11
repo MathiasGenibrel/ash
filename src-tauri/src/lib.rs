@@ -24,7 +24,9 @@ use features::agents::{Adapter, EventFrame, EventSink, GenericAdapter};
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
-use features::settings::ToolRegistry;
+use features::settings::{
+    AdapterProfile, SystemCommands, SystemConfigFiles, ToolRegistry, Verifier,
+};
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
@@ -102,7 +104,28 @@ pub fn run() -> tauri::Result<()> {
     // connaître leurs implémentations
     // ([ADR-0008](../../docs/adr/0008-abstraction-adapter.md)). Un adaptateur de plus est
     // une ligne de plus ici, et rien à changer dans les réglages.
-    let tools = Arc::new(ToolRegistry::new(vec![GenericAdapter.id().to_owned()]));
+    //
+    // **Le profil est la traduction d'un adaptateur en ce que la vérification sait
+    // regarder** : de la donnée, et non le trait lui-même. C'est ce qui laisse `settings`
+    // ignorer `GenericAdapter` comme il ignorera les autres — et c'est ici, au seul endroit
+    // qui connaît les deux, que la traduction se fait.
+    //
+    // `generic` ne signe rien et n'impose aucun dossier, et ce n'est pas un manque : il est
+    // l'adaptateur de l'outil dont on ne sait rien. La séquence en tire une **réserve** —
+    // le dossier est accepté, mais rien ne prouve que la commande le lit — au lieu de
+    // lancer un programme pour une question à laquelle il ne saurait pas répondre.
+    let profiles = vec![AdapterProfile {
+        id: GenericAdapter.id().to_owned(),
+        default_config: None,
+        signature: Vec::new(),
+        config_env: None,
+        probe_args: vec!["--version".to_owned()],
+    }];
+    let tools = Arc::new(ToolRegistry::new(Arc::new(Verifier::new(
+        Arc::new(SystemConfigFiles),
+        Arc::new(SystemCommands),
+        profiles,
+    ))));
 
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
@@ -124,6 +147,10 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::settings_tools,
             features::settings::commands::settings_declare_tool,
             features::settings::commands::settings_forget_tool,
+            features::settings::commands::settings_retarget_tool,
+            features::settings::commands::settings_verify_tool,
+            features::settings::commands::settings_verify_all,
+            features::settings::commands::settings_verify_draft,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report

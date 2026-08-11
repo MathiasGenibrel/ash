@@ -1,38 +1,67 @@
-//! La surface de la feature vers le frontend : trois commandes, et l'ouverture de sa
-//! fenêtre.
+//! La surface de la feature vers le frontend : sept commandes, un event, et l'ouverture de
+//! sa fenêtre.
 //!
 //! Le frontend ne connaît de `settings` que ces noms et la forme de [`SettingsSnapshot`].
-//! Il **rend** la liste ; il ne la détient pas
+//! Il **rend** la liste et ce qu'elle a prouvé ; il ne les détient pas
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+//!
+//! **Le résultat en deux temps traverse la frontière tel quel** : une commande de
+//! vérification répond dès que les tests 1 à 3 ont parlé, et le test 4 arrive plus tard par
+//! [`SETTINGS_VERIFIED`]. C'est ce qui permet au bouton d'installation de s'allumer sans
+//! attendre le démarrage d'un programme, sans que la fenêtre ait à connaître la règle.
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::error::SettingsError;
-use super::registry::ToolRegistry;
+use super::registry::{Changed, SecondPass, ToolRegistry};
 use super::tool::{NewTool, ToolDeclaration};
+use super::verification::{ToolTest, Verification};
 
 /// Le label de la seconde fenêtre. Contrat avec `src-tauri/capabilities/settings.json`,
 /// qui lui accorde ses permissions par ce nom.
 pub const SETTINGS_WINDOW: &str = "settings";
+
+/// L'event du **second temps** : le test 4 a répondu pour une entrée.
+pub const SETTINGS_VERIFIED: &str = "ash://settings-verified";
 
 /// La page de la webview. Contrat avec `settings.html` et l'entrée du même nom dans
 /// `vite.config.ts` : une seconde fenêtre est une seconde page, pas un second état de la
 /// première.
 const SETTINGS_PAGE: &str = "settings.html";
 
+/// Un des quatre tests, tel que la fenêtre l'annonce.
+///
+/// Les libellés voyagent **du backend vers l'écran**, et ne sont pas écrits des deux côtés :
+/// c'est ici que les tests existent, donc c'est ici qu'ils se nomment. Une liste recopiée
+/// dans la vue finirait par décrire un test que la séquence ne lance plus.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDescription {
+    pub number: u8,
+    /// Le libellé long — `the folder exists and is readable`.
+    pub label: String,
+    /// Le libellé court de la note de barème — `folder readable`.
+    pub short_label: String,
+    /// Son échec invalide-t-il l'entrée, ou la réserve-t-il seulement ?
+    pub decisive: bool,
+}
+
 /// Tout ce que la fenêtre de réglages a besoin de savoir pour se dessiner.
 ///
-/// Un seul aller-retour plutôt qu'un par question : la liste et les adaptateurs changent
-/// ensemble — un ajout ne veut rien dire sans les adaptateurs qui le rendaient possible —
-/// et deux commandes laisseraient la fenêtre afficher un instant l'une sans l'autre.
+/// Un seul aller-retour plutôt qu'un par question : la liste, les adaptateurs et les tests
+/// changent ensemble — un ajout ne veut rien dire sans les adaptateurs qui le rendaient
+/// possible — et deux commandes laisseraient la fenêtre afficher un instant l'une sans
+/// l'autre.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
     pub tools: Vec<ToolDeclaration>,
     /// Les adaptateurs que cette version d'Ash embarque, dans l'ordre où on les propose.
     pub adapters: Vec<String>,
+    /// Les quatre tests de la spec §9.1, dans l'ordre où ils se lancent.
+    pub tests: Vec<TestDescription>,
 }
 
 impl SettingsSnapshot {
@@ -48,9 +77,26 @@ impl SettingsSnapshot {
     fn around(tools: Vec<ToolDeclaration>, registry: &ToolRegistry) -> Self {
         Self {
             tools,
-            adapters: registry.adapters().to_vec(),
+            adapters: registry.adapters(),
+            tests: ToolTest::ALL
+                .iter()
+                .map(|test| TestDescription {
+                    number: test.number(),
+                    label: test.label().to_owned(),
+                    short_label: test.short_label().to_owned(),
+                    decisive: test.decisive(),
+                })
+                .collect(),
         }
     }
+}
+
+/// Ce que le second temps rapporte, pour une entrée nommée.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Verified {
+    pub command: String,
+    pub verification: Verification,
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
@@ -62,16 +108,13 @@ pub fn settings_tools(
 }
 
 /// Ajoute une entrée — le bouton `add` du formulaire.
-///
-/// L'entrée arrive **non vérifiée**, donc rien n'est écrit dans `~/.ash/config.toml` : la
-/// vérification des quatre tests de la spec §9.1 est l'issue #15, et c'est elle qui ouvrira
-/// l'écriture.
 #[tauri::command]
-pub fn settings_declare_tool(
+pub fn settings_declare_tool<R: Runtime>(
+    app: AppHandle<R>,
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     tool: NewTool,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    Ok(SettingsSnapshot::around(registry.declare(tool)?, &registry))
+    answer(app, &registry, registry.declare(tool)?)
 }
 
 /// Retire une entrée — le `✕` de l'en-tête de carte.
@@ -84,6 +127,92 @@ pub fn settings_forget_tool(
         registry.forget(&command)?,
         &registry,
     ))
+}
+
+/// Change le dossier ou l'adaptateur d'une entrée — la frappe dans le champ de chemin, le
+/// menu d'adaptateur, et le bouton `apply` d'une correction proposée.
+#[tauri::command]
+pub fn settings_retarget_tool<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+    adapter: String,
+    config: Option<String>,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.retarget(&command, &adapter, config.as_deref())?;
+    answer(app, &registry, changed)
+}
+
+/// Relance la séquence sur une entrée — le bouton `re-verify` d'une carte.
+#[tauri::command]
+pub fn settings_verify_tool<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.verify(&command)?;
+    answer(app, &registry, changed)
+}
+
+/// Relance la séquence sur toute la liste — le bouton `re-verify all`.
+#[tauri::command]
+pub fn settings_verify_all<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.verify_all()?;
+    answer(app, &registry, changed)
+}
+
+/// Vérifie une saisie du formulaire d'ajout, sans rien ajouter.
+#[tauri::command]
+pub fn settings_verify_draft<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    tool: NewTool,
+) -> Result<Verification, SettingsError> {
+    let (shown, pending) = registry.verify_draft(&tool);
+    follow_up(app, Arc::clone(&registry), pending.into_iter().collect());
+    Ok(shown)
+}
+
+/// Répond avec ce que le premier temps a produit, et met les seconds temps en route.
+fn answer<R: Runtime>(
+    app: AppHandle<R>,
+    registry: &Arc<ToolRegistry>,
+    changed: Changed,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let snapshot = SettingsSnapshot::around(changed.tools, registry);
+    follow_up(app, Arc::clone(registry), changed.pending);
+    Ok(snapshot)
+}
+
+/// Lance les seconds temps, chacun sur son fil, et annonce chaque réponse.
+///
+/// Un fil par entrée et non un fil unique qui les enchaînerait : la maquette demande une
+/// relance **en parallèle**, et une entrée dont la commande met cinq secondes à répondre
+/// retarderait sinon toutes les suivantes. Ce sont les jetons de
+/// [`super::permits`](super::permits) — et non le nombre de fils — qui bornent le nombre de
+/// programmes réellement démarrés en même temps : un fil qui attend son tour ne coûte rien,
+/// un programme qui démarre, si.
+fn follow_up<R: Runtime>(app: AppHandle<R>, registry: Arc<ToolRegistry>, pending: Vec<SecondPass>) {
+    for next in pending {
+        let app = app.clone();
+        let registry = Arc::clone(&registry);
+        std::thread::spawn(move || {
+            let verification = registry.second_pass(&next);
+            // Un registre empoisonné n'a pas à faire paniquer un fil de fond : la fenêtre
+            // garde ce que le premier temps lui a dit, ce qui reste vrai.
+            let _ = registry.settle(&next, verification.clone());
+            let _ = app.emit(
+                SETTINGS_VERIFIED,
+                Verified {
+                    command: next.command,
+                    verification,
+                },
+            );
+        });
+    }
 }
 
 /// Ouvre la fenêtre de réglages, ou la ramène devant si elle est déjà là.
