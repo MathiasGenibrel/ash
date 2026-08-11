@@ -53,10 +53,15 @@ pub fn pty_open(
             cwd: cwd.map_or_else(home_directory, PathBuf::from),
             cols,
             rows,
-            // `ASH_SOCK` est posé dès maintenant, même si rien ne l'écoute encore : le
-            // shell d'un onglet ne doit pas avoir à être relancé quand le socket
-            // d'events arrivera. `ASH_TAB_ID` est ajouté par le registre.
-            env: vec![("ASH_SOCK".to_owned(), socket_path().display().to_string())],
+            // L'adresse du socket d'events appartient à `agents`, la feature qui écoute :
+            // `pty` la lui demande plutôt que d'en garder une copie qui pourrait dériver.
+            // `ASH_TAB_ID` est ajouté par le registre, et c'est par lui — et rien d'autre —
+            // que les events seront corrélés
+            // ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+            env: vec![(
+                "ASH_SOCK".to_owned(),
+                crate::features::agents::socket_path().display().to_string(),
+            )],
         },
         tab_id,
     )?;
@@ -236,9 +241,4 @@ fn home_directory() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-/// Chemin du socket d'events. Le socket lui-même appartient à une autre tâche.
-fn socket_path() -> PathBuf {
-    home_directory().join(".ash").join("ash.sock")
 }
