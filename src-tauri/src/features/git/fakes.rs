@@ -15,7 +15,7 @@ use super::error::GitError;
 use super::fake_fs::FakeFs;
 use super::git_cli::StatusReader;
 use super::metadata::{Head, WorktreeMetadata};
-use super::metadata_watch::Announce;
+use super::metadata_watch::{Announce, Relocate};
 use super::ports::{Entry, FileSystem};
 use super::targets::WatchRoot;
 use super::time::{Clock, Scheduler};
@@ -355,5 +355,30 @@ impl RecordedAnnounces {
         if let Ok(mut announces) = self.0.lock() {
             announces.clear();
         }
+    }
+}
+
+/// Combien de fois la surveillance a dit qu'un dépôt avait changé de forme.
+///
+/// Le compteur est ce qui rend le signal observable des deux côtés : qu'il parte quand un
+/// worktree lié apparaît, et **qu'il ne parte pas** au repos.
+#[derive(Default)]
+pub struct RecordedRelocations(AtomicUsize);
+
+impl RecordedRelocations {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Le rappel à injecter dans la surveillance.
+    pub fn relocate(self: &Arc<Self>) -> Relocate {
+        let recorded = Arc::clone(self);
+        Arc::new(move || {
+            recorded.0.fetch_add(1, Ordering::Relaxed);
+        })
+    }
+
+    pub fn count(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
     }
 }

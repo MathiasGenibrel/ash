@@ -7,6 +7,7 @@
 //! Aucun processus n'est lancé ici. Les tests d'intégration, eux, utilisent les vraies
 //! implémentations sur un vrai shell (`tests/pty_real_shell.rs`, `tests/probe_real_shell.rs`).
 
+use std::collections::BTreeSet;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -105,11 +106,37 @@ impl Probe for FakeProbe {
 #[derive(Default)]
 pub struct CountingLocator {
     calls: AtomicUsize,
+    flat: Mutex<BTreeSet<PathBuf>>,
 }
 
 impl CountingLocator {
     pub fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    /// Ce répertoire est désormais dans un dépôt **sans worktree lié** : forme à plat.
+    ///
+    /// C'est l'autre moitié de ce que la résolution réelle décide en regardant
+    /// `worktrees/`, et ce que `git worktree remove` fait basculer sans qu'aucun onglet ne
+    /// bouge (ADR-0012).
+    pub fn flatten(&self, cwd: &str) {
+        if let Ok(mut flat) = self.flat.lock() {
+            flat.insert(PathBuf::from(cwd));
+        }
+    }
+
+    /// L'inverse : le dépôt héberge à nouveau des worktrees liés, et groupe donc.
+    pub fn group(&self, cwd: &str) {
+        if let Ok(mut flat) = self.flat.lock() {
+            flat.remove(Path::new(cwd));
+        }
+    }
+
+    fn is_flat(&self, cwd: &Path) -> bool {
+        self.flat
+            .lock()
+            .map(|flat| flat.contains(cwd))
+            .unwrap_or_default()
     }
 }
 
@@ -124,6 +151,7 @@ impl WorktreeLocator for CountingLocator {
         let repo = cwd
             .strip_prefix("/dev")
             .ok()
+            .filter(|_| !self.is_flat(cwd))
             .and_then(|under| under.components().next())
             .map(|repo| repo.as_os_str().to_string_lossy().into_owned())
             .map(|repo| RepoRef {

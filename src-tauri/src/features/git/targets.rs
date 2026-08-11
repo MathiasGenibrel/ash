@@ -25,11 +25,18 @@ pub struct WatchRoot {
 pub struct WatchTargets {
     git_dir: PathBuf,
     common_dir: PathBuf,
+    /// Le dossier où le dépôt déclare ses worktrees liés.
+    ///
+    /// Son **contenu** — et non ce qu'il y a dedans — décide de la forme d'affichage
+    /// d'ADR-0012 : un dépôt qui n'a rien à y montrer s'affiche à plat, les autres se
+    /// groupent. C'est la seule information d'un dépôt qui ne soit pas une métadonnée.
+    worktrees_dir: PathBuf,
     roots: Vec<WatchRoot>,
 }
 
 impl WatchTargets {
     pub fn for_worktree(git_dir: &Path, common_dir: &Path) -> Self {
+        let worktrees_dir = common_dir.join("worktrees");
         // Le dossier git du worktree est pris **récursivement** : la progression d'un
         // rebase s'écrit dans `rebase-merge/msgnum`, un cran plus bas, et ce dossier
         // n'existe pas encore au moment où l'on s'abonne — on ne peut donc pas l'ajouter
@@ -52,11 +59,25 @@ impl WatchTargets {
                 path: common_dir.join("refs"),
                 recursive: true,
             });
+            // Un **frère** qui apparaît ou disparaît s'écrit dans `worktrees/`, hors de
+            // tout ce qui précède : le dossier git de ce worktree-ci ne couvre que le sien,
+            // et la racine non récursive du dossier commun s'arrête à ses enfants directs.
+            // Non récursive elle aussi : c'est la **liste** des frères qui est surveillée,
+            // pas ce que chacun écrit chez lui.
+            //
+            // Dans un dépôt sans worktree lié, cette racine n'existe pas encore — c'est
+            // justement le dossier que `git worktree add` crée — mais elle est déjà couverte
+            // par la surveillance récursive du dossier git, qui la contient.
+            roots.push(WatchRoot {
+                path: worktrees_dir.clone(),
+                recursive: false,
+            });
         }
 
         Self {
             git_dir: git_dir.to_owned(),
             common_dir: common_dir.to_owned(),
+            worktrees_dir,
             roots,
         }
     }
@@ -87,6 +108,24 @@ impl WatchTargets {
 
         relative(&self.git_dir, changed).is_some_and(inside_git_dir)
             || relative(&self.common_dir, changed).is_some_and(inside_common_dir)
+    }
+
+    /// Ce changement peut-il avoir changé la **forme** du dépôt ?
+    ///
+    /// Un worktree lié qui apparaît ou disparaît s'écrit dans `<commun>/worktrees/<nom>`,
+    /// et rien d'autre ne le déclare. La question est distincte de [`Self::concerns`] :
+    /// gagner un frère ne change ni la branche, ni l'opération en cours, ni l'état de
+    /// l'arbre — ça change l'endroit où la sidebar range l'onglet
+    /// ([ADR-0012](../../../../docs/adr/0012-worktree-unite-de-travail.md)). Les confondre
+    /// ferait payer un `git status` à chaque écriture d'un frère.
+    ///
+    /// La profondeur 1 suffit, et c'est ce qui garde le filtre étroit : ce qui se passe
+    /// **dans** le dossier d'un frère — son `HEAD`, son index, ses journaux — ne change pas
+    /// le nombre de frères. FSEvents remonte bien les deux chemins qu'on attend ici : sur
+    /// un `git worktree add`, `worktrees/` puis `worktrees/<nom>` arrivent, en plus des
+    /// écritures plus profondes qu'on jette.
+    pub fn concerns_layout(&self, changed: &Path) -> bool {
+        changed == self.worktrees_dir || changed.parent() == Some(self.worktrees_dir.as_path())
     }
 }
 
@@ -148,8 +187,54 @@ mod tests {
                 ("/dev/ash/.git/worktrees/sidebar".to_owned(), true),
                 ("/dev/ash/.git".to_owned(), false),
                 ("/dev/ash/.git/refs".to_owned(), true),
+                ("/dev/ash/.git/worktrees".to_owned(), false),
             ]
         );
+    }
+
+    #[test]
+    fn given_a_repository_that_gains_a_linked_worktree_when_the_entry_appears_then_its_shape_is_known_to_have_changed(
+    ) {
+        // Given — un dépôt à plat : `worktrees/` n'existe pas encore, et c'est `git
+        // worktree add` qui le crée. C'est le scénario où un onglet déjà ouvert doit
+        // rejoindre un groupe sans que son `cwd` ne bouge (ADR-0012).
+        let targets = TargetsBuilder::plain();
+
+        // When / Then — le dossier lui-même, puis l'entrée du worktree qui y naît
+        assert!(targets.concerns_layout(Path::new("/dev/ash/.git/worktrees")));
+        assert!(targets.concerns_layout(Path::new("/dev/ash/.git/worktrees/toc")));
+    }
+
+    #[test]
+    fn given_a_sibling_worktree_that_writes_in_its_own_git_dir_when_it_does_then_the_shape_is_not_reconsidered(
+    ) {
+        // Given — un agent qui travaille dans un frère écrit son index et son `HEAD` sans
+        // arrêt. Reconsidérer la forme du dépôt à chaque écriture rendrait la résolution à
+        // la boucle de sonde, par la porte de derrière.
+        let targets = TargetsBuilder::linked();
+
+        // When / Then
+        assert!(!targets.concerns_layout(Path::new("/dev/ash/.git/worktrees/toc/HEAD")));
+        assert!(!targets.concerns_layout(Path::new("/dev/ash/.git/worktrees/toc/index")));
+        assert!(!targets.concerns_layout(Path::new("/dev/ash/.git/refs/heads/main")));
+    }
+
+    #[test]
+    fn given_a_linked_worktree_when_a_sibling_appears_beside_it_then_the_change_is_within_watch_reach(
+    ) {
+        // Given — vu d'un worktree lié, le dossier des frères n'est sous aucune des racines
+        // que les métadonnées demandent : sans racine à lui, l'événement n'arriverait jamais.
+        let targets = TargetsBuilder::linked();
+
+        // When
+        let watches_siblings = targets
+            .roots()
+            .iter()
+            .any(|root| root.path == Path::new("/dev/ash/.git/worktrees"));
+
+        // Then
+        assert!(watches_siblings);
+        assert!(targets.concerns_layout(Path::new("/dev/ash/.git/worktrees/toc")));
     }
 
     #[test]

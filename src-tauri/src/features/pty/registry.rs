@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::error::PtyError;
@@ -35,6 +36,8 @@ pub struct PtyRegistry {
     probe: Arc<dyn Probe>,
     /// La résolution `cwd` → worktree + dépôt, injectée elle aussi (voir [`super::locate`]).
     locator: Arc<dyn WorktreeLocator>,
+    /// L'âge des localisations retenues (voir [`Self::invalidate_locations`]).
+    revision: AtomicU64,
     tabs: Mutex<Vec<Tab>>,
 }
 
@@ -73,10 +76,10 @@ struct Tab {
 ///   ne se tromperait pas bruyamment, elle se tromperait en silence.
 type SharedWatch = Arc<Mutex<Option<TabWatch>>>;
 
-/// La localisation d'un onglet, retenue avec le répertoire qui l'a produite.
+/// La localisation d'un onglet, retenue avec ce qui l'a produite.
 ///
 /// C'est le dédoublonnage de la résolution : elle lit des fichiers de contrôle git, et le
-/// `cwd` d'un onglet ne change pas trois fois par seconde. Tant qu'il n'a pas bougé, la
+/// `cwd` d'un onglet ne change pas trois fois par seconde. Tant que rien n'a bougé, la
 /// réponse retenue est la bonne — donc on ne redemande rien au disque.
 ///
 /// Tenue à part du verrou du registre, pour la même raison que la sonde : une frappe
@@ -85,6 +88,13 @@ type SharedPlace = Arc<Mutex<Option<Located>>>;
 
 struct Located {
     cwd: PathBuf,
+    /// L'âge de cette réponse.
+    ///
+    /// Le `cwd` ne suffit pas à la mémoriser : la réponse dépend aussi de l'**état du
+    /// dépôt**, qui décide entre la forme à plat et la forme groupée d'ADR-0012. Un
+    /// `git worktree add` change donc la bonne réponse sans que le `cwd` bouge d'un
+    /// caractère — c'est le second terme de la clé.
+    revision: u64,
     location: Option<TabLocation>,
 }
 
@@ -147,8 +157,24 @@ impl PtyRegistry {
             spawner,
             probe,
             locator,
+            revision: AtomicU64::new(0),
             tabs: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Les localisations retenues ont pu vieillir : la prochaine passe les redemandera.
+    ///
+    /// Le registre ne sait pas *pourquoi* — il ne connaît de la résolution que son port. Ce
+    /// qu'il sait, c'est qu'une réponse n'est pas fonction du seul `cwd` : un dépôt qui
+    /// gagne son premier worktree lié passe de la forme à plat à la forme groupée
+    /// ([ADR-0012](../../../../docs/adr/0012-worktree-unite-de-travail.md)) alors que tous
+    /// ses onglets sont restés où ils étaient.
+    ///
+    /// Ce signal est ce qui **remplace** le sondage : il arrive d'une écriture observée dans
+    /// `.git`, jamais d'un minuteur. Entre deux signaux, un onglet immobile ne coûte
+    /// toujours aucune lecture de disque.
+    pub fn invalidate_locations(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
     }
 
     pub fn open(&self, mut spec: PtySpec, tab_id: TabId) -> Result<Opened, PtyError> {
@@ -204,15 +230,44 @@ impl PtyRegistry {
     /// le titre d'un onglet à travers les `cd` — y compris pendant qu'un programme tourne,
     /// là où OSC 7 se tairait. C'est aussi ce qui fait migrer un onglet d'un dépôt à
     /// l'autre dans la sidebar : la localisation voyage avec l'onglet.
+    ///
+    /// Un onglet peut changer de place **sans bouger** : c'est le cas quand son dépôt gagne
+    /// ou perd un worktree lié (voir [`Self::invalidate_locations`]). Ces onglets-là sont
+    /// annoncés eux aussi, et seulement si leur localisation a réellement changé.
     pub fn changes(&self) -> Result<Vec<TabInfo>, PtyError> {
         Ok(self
             .snapshot()?
             .into_iter()
-            .filter_map(|tab| {
-                let seen = self.observe_change(&tab.watch)?;
-                Some(self.describe(tab, Some(seen)))
+            .filter_map(|tab| match self.observe_change(&tab.watch) {
+                Some(seen) => Some(self.describe(tab, Some(seen))),
+                None => self.relocated(tab),
             })
             .collect())
+    }
+
+    /// Un onglet immobile dont le **dépôt** a changé de forme depuis sa dernière résolution.
+    ///
+    /// `None` tant que rien n'a été signalé : c'est ce qui garde la boucle muette et sans
+    /// disque au repos. `None` aussi quand la résolution rend la même réponse qu'avant —
+    /// une entrée écrite dans `worktrees/` ne veut pas dire que cet onglet-ci a bougé de
+    /// groupe, et réveiller la webview pour un état identique est ce que [`Self::changes`]
+    /// évite partout ailleurs.
+    fn relocated(&self, tab: TabHandle) -> Option<TabInfo> {
+        let known = self.stale_location(&tab.place)?;
+        let seen = self.observe(&tab.watch);
+        let announced = self.describe(tab, seen);
+        (announced.location != known).then_some(announced)
+    }
+
+    /// La localisation retenue d'un onglet, **si** elle date d'avant le dernier signal.
+    ///
+    /// Le `Option` extérieur dit « il y a quelque chose à redemander », l'intérieur porte la
+    /// réponse d'alors — qui peut légitimement être « je n'ai pas su le situer ».
+    fn stale_location(&self, place: &SharedPlace) -> Option<Option<TabLocation>> {
+        let place = place.lock().ok()?;
+        let located = place.as_ref()?;
+        (located.revision != self.revision.load(Ordering::Acquire))
+            .then(|| located.location.clone())
     }
 
     /// Les racines de worktree où vit au moins un onglet, sans doublon et **sans rien
@@ -334,22 +389,27 @@ impl PtyRegistry {
         }
     }
 
-    /// La localisation d'un répertoire, **résolue seulement quand il a changé**.
+    /// La localisation d'un répertoire, **résolue seulement quand la réponse a pu changer**.
     ///
     /// La résolution lit des fichiers sur le disque ; la boucle de sonde passe trois fois
     /// par seconde et la liste est relue à chaque ouverture d'onglet. Sans ce
     /// dédoublonnage, le `.git` de chaque worktree serait ouvert des milliers de fois par
     /// heure pour rendre invariablement la même réponse.
     ///
+    /// La clé est le couple `(cwd, révision)`, et pas le `cwd` seul : la réponse dépend
+    /// aussi de l'état du dépôt, qu'un `git worktree add` change sous les pieds d'un onglet
+    /// immobile. Voir [`Self::invalidate_locations`].
+    ///
     /// Le verrou pris ici est celui de l'onglet, jamais celui du registre : une frappe
     /// clavier n'attend pas derrière une lecture de fichier.
     fn locate(&self, place: &SharedPlace, cwd: &Path) -> Option<TabLocation> {
+        let revision = self.revision.load(Ordering::Acquire);
         let Ok(mut place) = place.lock() else {
             return None;
         };
 
         if let Some(known) = place.as_ref() {
-            if known.cwd == cwd {
+            if known.cwd == cwd && known.revision == revision {
                 return known.location.clone();
             }
         }
@@ -357,6 +417,7 @@ impl PtyRegistry {
         let location = self.locator.locate(cwd);
         *place = Some(Located {
             cwd: cwd.to_owned(),
+            revision,
             location: location.clone(),
         });
         location
@@ -663,6 +724,111 @@ mod tests {
         // Then — une résolution par répertoire visité, et pas une par passe
         assert_eq!(while_still, 1);
         assert_eq!(locator.calls(), 2);
+    }
+
+    /// Un onglet ouvert dans `/dev/omelette`, un dépôt **sans worktree lié** : à plat.
+    ///
+    /// Le décor des trois scénarios de regroupement, où c'est le dépôt qui change de forme
+    /// pendant que l'onglet, lui, ne bouge pas.
+    fn tab_in_a_flat_repository() -> (PtyRegistry, Arc<CountingLocator>) {
+        let (registry, _probe, locator) = located_registry("/dev/omelette");
+        locator.flatten("/dev/omelette");
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/omelette").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+        // La passe qui découvre l'onglet : c'est elle qui retient sa localisation.
+        registry.changes().unwrap();
+        (registry, locator)
+    }
+
+    fn announced_repo(announced: Vec<TabInfo>) -> Option<Option<String>> {
+        announced.into_iter().next().map(|tab| {
+            tab.location
+                .and_then(|place| place.repo)
+                .map(|repo| repo.name)
+        })
+    }
+
+    #[test]
+    fn given_a_tab_in_a_flat_repository_when_the_repository_gains_a_linked_worktree_then_the_tab_is_announced_under_its_group(
+    ) {
+        // Given — un `git worktree add` lancé depuis un autre terminal : le dépôt passe de
+        // la forme à plat à la forme groupée (ADR-0012) sans que le `cwd` de l'onglet ne
+        // bouge d'un caractère. Sans redémarrage, l'onglet doit rejoindre le groupe —
+        // sinon le même projet s'affiche deux fois, à plat d'un côté et groupé de l'autre.
+        let (registry, locator) = tab_in_a_flat_repository();
+        locator.group("/dev/omelette");
+
+        // When — la surveillance de `.git` a vu l'entrée apparaître
+        registry.invalidate_locations();
+        let announced = registry.changes().unwrap();
+
+        // Then
+        assert_eq!(announced_repo(announced), Some(Some("omelette".to_owned())));
+    }
+
+    #[test]
+    fn given_a_tab_in_a_grouped_repository_when_the_last_linked_worktree_disappears_then_the_tab_falls_back_flat(
+    ) {
+        // Given — le cas inverse, et il compte autant : un dépôt qui a perdu ses frères
+        // resterait affiché sur deux niveaux avec un seul enfant jusqu'au redémarrage.
+        let (registry, _probe, locator) = located_registry("/dev/omelette");
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/omelette").build(),
+                "A".to_owned(),
+            )
+            .unwrap();
+        registry.changes().unwrap();
+        locator.flatten("/dev/omelette");
+
+        // When
+        registry.invalidate_locations();
+        let announced = registry.changes().unwrap();
+
+        // Then — situé, mais sans dépôt au-dessus : c'est la forme à plat d'ADR-0012
+        assert_eq!(announced_repo(announced), Some(None));
+    }
+
+    #[test]
+    fn given_a_repository_whose_shape_did_not_change_when_a_write_is_signalled_then_the_tab_is_resolved_once_and_never_announced(
+    ) {
+        // Given — une écriture dans `worktrees/` ne veut pas dire que *cet* onglet-ci a
+        // changé de groupe. Deux garde-fous en un : la webview n'est pas réveillée pour un
+        // état identique, et le signal ne rouvre pas la résolution à chaque passe — ce
+        // serait le sondage que la spec §5.3 écarte, revenu par la porte de derrière.
+        let (registry, locator) = tab_in_a_flat_repository();
+        let resolutions_before = locator.calls();
+
+        // When
+        registry.invalidate_locations();
+        let announced: Vec<TabInfo> = (0..10).flat_map(|_| registry.changes().unwrap()).collect();
+
+        // Then
+        assert!(announced.is_empty());
+        assert_eq!(locator.calls(), resolutions_before + 1);
+    }
+
+    #[test]
+    fn given_tabs_that_nobody_disturbs_when_the_loop_sweeps_then_their_locations_are_never_resolved_again(
+    ) {
+        // Given — la boucle passe trois fois par seconde. Au repos, aucune de ces passes
+        // n'a le droit de toucher au disque : c'est le critère « avec 5 dépôts ouverts, la
+        // consommation CPU reste négligeable ».
+        let (registry, locator) = tab_in_a_flat_repository();
+        let resolutions_after_discovery = locator.calls();
+
+        // When — cent passes sans le moindre signal
+        for _ in 0..100 {
+            registry.changes().unwrap();
+        }
+
+        // Then
+        assert_eq!(resolutions_after_discovery, 1);
+        assert_eq!(locator.calls(), resolutions_after_discovery);
     }
 
     #[test]
