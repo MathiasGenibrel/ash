@@ -1,8 +1,15 @@
-//! Le temps, derrière deux traits que la feature possède.
+//! Le temps, derrière deux traits.
 //!
 //! Lire l'heure et attendre sont des effets système, au même titre qu'un PTY ou qu'un
 //! `libproc`. Les injecter est ce qui permet de vérifier « au plus un rafraîchissement
 //! toutes les 5 s » sans dormir cinq secondes — un test qui dort finit par être désactivé.
+//!
+//! Ces deux traits ont d'abord vécu dans `features/git/`, seule feature à limiter un
+//! débit. La machine à états des agents (spec §6.4) a besoin de la même horloge pour ses
+//! « 30 s », et une seconde déclaration du même trait ferait deux temps incompatibles dans
+//! une application qui n'en a qu'un. Ils remontent donc ici : deux features les utilisent,
+//! et ils ne portent la règle d'aucune des deux — les durées, elles, restent chez qui les
+//! décide.
 
 use std::time::{Duration, Instant};
 

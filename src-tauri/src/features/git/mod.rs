@@ -21,7 +21,7 @@
 //! |---|---|---|
 //! | `FileSystem` (`ports.rs`) | `system_fs.rs` | `fake_fs.rs`, `fakes.rs` |
 //! | `FileWatcher` (`watcher.rs`) | `watcher.rs` | `fakes.rs` |
-//! | `Clock`, `Scheduler` (`time.rs`) | `time.rs` | `fakes.rs` |
+//! | `Clock`, `Scheduler` (`shared/time.rs`) | `shared/time.rs` | `fakes.rs` |
 //! | `StatusReader` (`git_cli.rs`) | `git_cli.rs` | `fakes.rs` |
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
@@ -38,7 +38,6 @@ mod ports;
 mod system_fs;
 mod targets;
 mod throttle;
-mod time;
 mod watcher;
 mod worktree;
 

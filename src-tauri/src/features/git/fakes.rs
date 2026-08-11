@@ -18,8 +18,8 @@ use super::metadata::{Head, WorktreeMetadata};
 use super::metadata_watch::{Announce, Relocate};
 use super::ports::{Entry, FileSystem};
 use super::targets::WatchRoot;
-use super::time::{Clock, Scheduler};
 use super::watcher::{FileWatcher, OnChange, WatchHandle};
+use crate::shared::time::{Clock, Scheduler};
 
 /// Un arbre de fichiers **surveillé** : le disque et l'observateur, ensemble.
 ///

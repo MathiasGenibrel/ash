@@ -22,9 +22,9 @@ use super::porcelain::parse_status;
 use super::ports::FileSystem;
 use super::targets::WatchTargets;
 use super::throttle::{Decision, Throttle};
-use super::time::{Clock, Scheduler};
 use super::watcher::{FileWatcher, WatchHandle};
 use super::worktree::resolve_worktree;
+use crate::shared::time::{Clock, Scheduler};
 
 /// Ce que la surveillance annonce : un worktree, et son état git à cet instant.
 pub type Announce = Arc<dyn Fn(&Path, &WorktreeMetadata) + Send + Sync>;
