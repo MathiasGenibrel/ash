@@ -7,7 +7,7 @@
  * l'application.
  */
 
-import type { TabId, TabInfo } from "@/shared/ipc";
+import type { TabId, TabInfo, WorktreeMetadata, WorktreeMetadataChanged } from "@/shared/ipc";
 
 /**
  * `TabId` et `TabInfo` sont le contrat partagé avec le backend, pas la propriété de cette
@@ -79,4 +79,29 @@ export interface PtyBridge {
      * frontière ; un onglet posé à son invite ne réveille pas la webview.
      */
     onTabsChanged(handler: (changed: TabInfo[]) => void): Promise<Unsubscribe>;
+}
+
+/**
+ * Ce que la ligne de statut attend du backend git.
+ *
+ * Le pont vit dans la feature qui **consomme** l'état git, pas dans une feature git côté
+ * frontend : la surveillance d'ADR-0011 est entièrement en Rust, et le TypeScript n'en
+ * connaît que la commande et l'event que `features/git/commands.rs` déclare — jamais sa
+ * structure interne.
+ */
+export interface GitBridge {
+    /**
+     * L'état git d'un worktree, tel que la surveillance le connaît.
+     *
+     * `null` pour un répertoire hors de tout dépôt, ou dont les fichiers de contrôle ne se
+     * lisent pas : les deux se rendent pareil, sans branche.
+     */
+    metadata(worktreeRoot: string): Promise<WorktreeMetadata | null>;
+    /**
+     * S'abonne à la surveillance des fichiers de contrôle (spec §5.3).
+     *
+     * C'est par là qu'un `git commit` fait bouger la ligne de statut : rien ici ne sonde
+     * ni ne relit à intervalle régulier.
+     */
+    onMetadataChanged(handler: (changed: WorktreeMetadataChanged) => void): Promise<Unsubscribe>;
 }

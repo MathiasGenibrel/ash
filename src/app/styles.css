@@ -2,21 +2,33 @@
 
 /* Les tokens des deux thèmes.
  *
- * Le thème suit `prefers-color-scheme` : pas de sélecteur, pas de préférence stockée.
  * Le thème clair n'est **pas** une inversion calculée du sombre — chaque valeur est
  * choisie, et notamment l'accent, qui passe du corail à la terracotta pour tenir le
  * contraste sur fond papier. Aucune mesure ne change entre les deux.
  *
  * Ils vivent ici, dans le composition root, et pas dans une feature : la sidebar, la
  * barre d'onglets et la ligne de statut les partagent. Les features posent la mise en
- * forme, l'application pose la palette. */
+ * forme, l'application pose la palette.
+ *
+ * **Trois modes, deux palettes, une définition par token.** `data-theme` est posé par
+ * `app/theme.ts`, qui reçoit le mode — clair, sombre ou système — du backend, qui le
+ * détient ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)). Le mode *système*
+ * est résolu là-bas, par `matchMedia("(prefers-color-scheme: dark)")`, et suit macOS à
+ * chaud : c'est ce qui permet de n'avoir ici que **deux** blocs de tokens au lieu de
+ * quatre. Un troisième bloc — le même palier écrit une seconde fois sous une media
+ * query — aurait divergé au premier token ajouté.
+ *
+ * La palette claire porte aussi le sélecteur nu : c'est ce qui est peint pendant les
+ * quelques millisecondes qui précèdent le premier passage de `theme.ts`. */
 
-:root {
-    color-scheme: light dark;
+:root,
+:root[data-theme="light"] {
+    color-scheme: light;
 
     --ash-bg: #fcfcfb;
     --ash-bg-chrome: #ececea;
     --ash-bg-sidebar: #f2f2f0;
+    --ash-bg-status: #f2f2f0;
     --ash-bg-selected: #e6e6e3;
     --ash-border: #dedcd8;
     --ash-border-soft: #e4e3df;
@@ -37,7 +49,38 @@
     --ash-done: #2f7d5c;
     --ash-error: #b03a30;
     --ash-idle: #a9abaf;
+}
 
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --ash-bg: #0c0d0f;
+    --ash-bg-chrome: #16171a;
+    --ash-bg-sidebar: #121316;
+    --ash-bg-status: #101114;
+    --ash-bg-selected: #1c1e23;
+    --ash-border: #24262b;
+    --ash-border-soft: #1d1f24;
+    --ash-border-strong: #3a3d45;
+    --ash-fg: #e8eaee;
+    --ash-fg-strong: #e8eaee;
+    --ash-fg-muted: #9aa0a8;
+    --ash-fg-done: #c3c6cc;
+    --ash-fg-meta: #8b9099;
+    --ash-fg-dim: #5a5e66;
+    --ash-fg-faint: #4a4e56;
+    --ash-rule: #3a3d45;
+    --ash-select-rail: #8b9099;
+    --ash-accent: #ff8a5c;
+    --ash-accent-bg: rgb(255 138 92 / 9%);
+    --ash-accent-fg: #f2ded6;
+    --ash-working: #6fb2d2;
+    --ash-done: #63b995;
+    --ash-error: #cf4f4f;
+    --ash-idle: #565a62;
+}
+
+:root {
     font-family: "JetBrains Mono", ui-monospace, monospace;
     font-size: 13px;
     line-height: 1.4;
@@ -47,38 +90,100 @@
     -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --ash-bg: #0c0d0f;
-        --ash-bg-chrome: #16171a;
-        --ash-bg-sidebar: #121316;
-        --ash-bg-selected: #1c1e23;
-        --ash-border: #24262b;
-        --ash-border-soft: #1d1f24;
-        --ash-border-strong: #3a3d45;
-        --ash-fg: #e8eaee;
-        --ash-fg-strong: #e8eaee;
-        --ash-fg-muted: #9aa0a8;
-        --ash-fg-done: #c3c6cc;
-        --ash-fg-meta: #8b9099;
-        --ash-fg-dim: #5a5e66;
-        --ash-fg-faint: #4a4e56;
-        --ash-rule: #3a3d45;
-        --ash-select-rail: #8b9099;
-        --ash-accent: #ff8a5c;
-        --ash-accent-bg: rgb(255 138 92 / 9%);
-        --ash-accent-fg: #f2ded6;
-        --ash-working: #6fb2d2;
-        --ash-done: #63b995;
-        --ash-error: #cf4f4f;
-        --ash-idle: #565a62;
-    }
-}
-
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+}
+
+/* Les contrôles de formulaire **n'héritent pas** de `font-family` : `input`, `textarea`,
+ * `select` et `button` prennent la police du système tant qu'on ne leur pose pas
+ * `font: inherit`. Le dépôt n'a pas encore de formulaire, et c'est précisément le moment
+ * de le poser : à la fenêtre de réglages, la règle serait à écrire écran par écran.
+ *
+ * `font: inherit` et non `font-family: inherit` : le raccourci reprend aussi la taille,
+ * la graisse et l'interligne, que WebKit fixe aussi de son côté sur ces éléments. La
+ * spec §4.2 demande JetBrains Mono partout — « partout » y compris là. */
+button,
+input,
+optgroup,
+select,
+textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+}
+
+/* --- les cinq états d'agent -------------------------------------------------
+ *
+ * Ici, et pas dans une feuille de feature : le glyphe est posé par
+ * `@/shared/agent-state`, que la sidebar **et** la ligne de statut appellent. Sa couleur
+ * est du thème — deux palettes, une définition — donc elle vit avec les palettes.
+ *
+ * Les classes sont préfixées : dans une feuille chargée globalement, un `.is-idle` nu
+ * finirait par teindre quelque chose qui n'a rien à voir. */
+
+.ash-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    flex: none;
+    font-size: 11px;
+}
+
+.ash-glyph.is-idle {
+    color: var(--ash-idle);
+}
+.ash-glyph.is-working {
+    color: var(--ash-working);
+}
+.ash-glyph.is-done {
+    color: var(--ash-done);
+}
+.ash-glyph.is-error {
+    color: var(--ash-error);
+}
+.ash-glyph.is-waiting {
+    color: var(--ash-accent);
+}
+
+/* Le mouvement seul distingue `working` de `done` — rotation continue, pas clignotement. */
+.ash-glyph.is-spinning {
+    animation: ash-spin 0.9s linear infinite;
+}
+
+/* Respiration, pas clignotement : c'est ce que le design demande explicitement. */
+.ash-glyph.is-waiting {
+    animation: ash-breathe 1.9s ease-in-out infinite;
+}
+
+@keyframes ash-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes ash-breathe {
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* Un utilisateur qui a demandé moins d'animations n'a pas demandé moins d'information :
+ * les glyphes restent, seul le mouvement s'arrête. */
+@media (prefers-reduced-motion: reduce) {
+    .ash-glyph.is-spinning,
+    .ash-glyph.is-waiting {
+        animation: none;
+    }
 }
 
 body {
@@ -111,10 +216,13 @@ body {
  * `overflow: hidden` n'est pas cosmétique : le `FitAddon` calcule une grille entière, et
  * le reste — quelques pixels de moins d'une ligne — suffit à faire apparaître les barres
  * de défilement de la webview par-dessus celles du terminal. */
+/* Seule la réserve du haut reste ici : la ligne de statut est collée au bas de la fenêtre
+ * comme la maquette la dessine, donc c'est la barre d'onglets et la pile de terminaux qui
+ * portent leurs marges, pas la colonne entière. */
 .terminal-host {
     min-height: 0;
     min-width: 0;
-    padding: 30px 8px 8px;
+    padding-top: 30px;
     background: var(--ash-bg);
     overflow: hidden;
 }

@@ -21,8 +21,12 @@
 //! des raccourcis côté webview — aurait donné deux chemins différents pour la souris et
 //! pour le clavier.
 
-use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{
+    AboutMetadata, CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu,
+};
 use tauri::{AppHandle, Emitter, Runtime};
+
+use crate::features::theme::{commands as theme, ThemeMode};
 
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
 const MENU_ACTION_EVENT: &str = "ash://menu-action";
@@ -31,7 +35,10 @@ const MENU_ACTION_EVENT: &str = "ash://menu-action";
 const DIRECT_TABS: u8 = 9;
 
 /// Construit le menu de l'application.
-pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+///
+/// `theme` est le mode retenu de la session précédente : le menu est construit avant que
+/// la webview n'existe, et une coche posée après coup serait une seconde source de vérité.
+pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Result<Menu<R>> {
     let application = Submenu::with_items(
         app,
         "Ash",
@@ -126,7 +133,34 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         true,
         Some("Cmd+B"),
     )?;
-    let view = Submenu::with_items(app, "View", true, &[&toggle_sidebar])?;
+    // Les trois thèmes, en coches exclusives. C'est le **seul** point d'entrée du choix à
+    // ce jalon : la fenêtre de réglages est l'issue #14, son écran d'apparence l'issue #22.
+    // Pas d'accélérateur — un thème se change une fois par saison, pas une fois par heure,
+    // et chaque raccourci pris ici est un raccourci perdu pour le shell.
+    let themes: Vec<CheckMenuItem<R>> = ThemeMode::ALL
+        .into_iter()
+        .map(|mode| {
+            CheckMenuItem::with_id(
+                app,
+                Action::ChooseTheme(mode).id(),
+                mode.label(),
+                true,
+                mode == theme_mode,
+                None::<&str>,
+            )
+        })
+        .collect::<tauri::Result<_>>()?;
+    let theme_menu = Submenu::with_items(
+        app,
+        "Theme",
+        true,
+        &themes
+            .iter()
+            .map(|item| item as &dyn tauri::menu::IsMenuItem<R>)
+            .collect::<Vec<_>>(),
+    )?;
+
+    let view = Submenu::with_items(app, "View", true, &[&toggle_sidebar, &theme_menu])?;
 
     // Pas de « Close Window » ici : son `Cmd+W` prendrait le pas sur celui des onglets.
     let window = Submenu::with_items(
@@ -142,19 +176,79 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Menu::with_items(app, &[&application, &edit, &view, &terminal, &window])
 }
 
-/// Traduit un item de menu en action et la donne à la webview.
+/// Traduit un item de menu en action et la donne à qui sait la jouer.
+///
+/// Deux chemins, et la différence n'est pas un détail : les actions d'onglet partent vers
+/// la webview, qui détient les surfaces de rendu ; le thème, lui, est un **état**, et il
+/// est retenu par `features::theme` avant d'être annoncé
+/// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)). Une bascule de thème qui
+/// ne vivrait que dans la webview serait perdue à la première seconde fenêtre.
 ///
 /// Un identifiant inconnu est ignoré : les items prédéfinis (copier, quitter…) sont
 /// traités par le système et ne passent pas par ici.
 pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
-    if let Some(action) = Action::from_id(id) {
+    let Some(action) = Action::from_id(id) else {
+        return;
+    };
+
+    match action {
+        Action::ChooseTheme(mode) => {
+            theme::choose(app, mode);
+            // **Toujours**, et pas seulement quand le mode a changé : un `CheckMenuItem`
+            // bascule sa propre coche au clic. Cliquer l'entrée déjà cochée la décocherait
+            // donc, et le menu n'aurait plus aucun mode coché.
+            check_only(app, mode);
+        }
         // L'échec d'émission signifie qu'il n'y a plus de webview à prévenir : rien à
         // rattraper, et surtout pas de panique dans un gestionnaire d'event.
-        let _ = app.emit(MENU_ACTION_EVENT, action.id());
+        other => {
+            let _ = app.emit(MENU_ACTION_EVENT, other.id());
+        }
     }
 }
 
-/// Les actions d'onglet, telles que la webview les reçoit.
+/// Coche le mode retenu, et lui seul.
+///
+/// Sans ça, un menu à trois coches les garderait toutes : `CheckMenuItem` ne sait rien de
+/// ses voisines.
+fn check_only<R: Runtime>(app: &AppHandle<R>, mode: ThemeMode) {
+    let Some(menu) = app.menu() else {
+        return;
+    };
+    for candidate in ThemeMode::ALL {
+        let id = Action::ChooseTheme(candidate).id();
+        if let Some(item) = find_check(&menu.items().unwrap_or_default(), &id) {
+            let _ = item.set_checked(candidate == mode);
+        }
+    }
+}
+
+/// Retrouve une entrée à cocher dans l'arbre du menu.
+///
+/// Un menu natif est un arbre, et `Menu::items` n'en rend que le premier niveau : les
+/// entrées de thème vivent deux niveaux plus bas, sous « View » puis « Theme ». La
+/// descente est bornée par la forme du menu, qu'on construit juste au-dessus.
+fn find_check<R: Runtime>(items: &[MenuItemKind<R>], id: &str) -> Option<CheckMenuItem<R>> {
+    for item in items {
+        match item {
+            MenuItemKind::Check(check) if check.id().as_ref() == id => return Some(check.clone()),
+            MenuItemKind::Submenu(submenu) => {
+                if let Some(found) = find_check(&submenu.items().unwrap_or_default(), id) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Les entrées de menu qu'Ash traite lui-même, et leur identifiant.
+///
+/// Une seule table pour tout l'espace des identifiants — `tab:*` et `view:*` —, parce que
+/// c'en est **un seul** : `view:theme:light` et `view:toggle-sidebar` se disputeraient le
+/// même préfixe s'ils étaient décidés à deux endroits. Toutes n'ont pas la même suite :
+/// `ChooseTheme` est retenue ici, les autres partent vers la webview. Voir [`dispatch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     NewTab,
@@ -165,6 +259,8 @@ enum Action {
     SelectTab(u8),
     /// Replie ou déplie la sidebar — `Cmd+B`.
     ToggleSidebar,
+    /// Choisit le thème de la fenêtre — la seule qui ne parte pas vers la webview.
+    ChooseTheme(ThemeMode),
 }
 
 impl Action {
@@ -176,6 +272,7 @@ impl Action {
             Action::ClearScrollback => "tab:clear".to_owned(),
             Action::SelectTab(position) => format!("tab:select:{position}"),
             Action::ToggleSidebar => "view:toggle-sidebar".to_owned(),
+            Action::ChooseTheme(mode) => format!("view:theme:{}", mode.as_id()),
         }
     }
 
@@ -186,11 +283,14 @@ impl Action {
             "tab:close" => Some(Action::CloseTab),
             "tab:clear" => Some(Action::ClearScrollback),
             "view:toggle-sidebar" => Some(Action::ToggleSidebar),
-            other => other
-                .strip_prefix("tab:select:")
-                .and_then(|position| position.parse().ok())
-                .filter(|position| (1..=DIRECT_TABS).contains(position))
-                .map(Action::SelectTab),
+            other => match other.strip_prefix("view:theme:") {
+                Some(mode) => ThemeMode::from_id(mode).map(Action::ChooseTheme),
+                None => other
+                    .strip_prefix("tab:select:")
+                    .and_then(|position| position.parse().ok())
+                    .filter(|position| (1..=DIRECT_TABS).contains(position))
+                    .map(Action::SelectTab),
+            },
         }
     }
 }
@@ -211,6 +311,9 @@ mod tests {
             Action::SelectTab(1),
             Action::SelectTab(9),
             Action::ToggleSidebar,
+            Action::ChooseTheme(ThemeMode::Light),
+            Action::ChooseTheme(ThemeMode::Dark),
+            Action::ChooseTheme(ThemeMode::System),
         ];
 
         // When
@@ -230,5 +333,16 @@ mod tests {
         // Then — la spec s'arrête à `Cmd+9` ; accepter au-delà ouvrirait une action que
         // rien ne peut déclencher, et que le frontend devrait pourtant gérer.
         assert_eq!(tenth, None);
+    }
+
+    #[test]
+    fn given_a_theme_identifier_no_mode_carries_when_it_is_read_then_it_is_not_an_action() {
+        // Given / When — `view:theme:` et `view:toggle-sidebar` partagent le même préfixe
+        // de menu : un identifiant de thème inconnu ne doit ni être joué, ni retomber sur
+        // la lecture d'une position d'onglet
+        let unknown = Action::from_id("view:theme:solarized");
+
+        // Then
+        assert_eq!(unknown, None);
     }
 }
