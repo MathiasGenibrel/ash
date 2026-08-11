@@ -57,7 +57,21 @@ bun test                          # tests TypeScript
 cargo fmt --check                 # format Rust
 cargo clippy -- -D warnings       # lint Rust
 cargo test                        # tests Rust
+
+bun run smoke                     # l'application s'ouvre-t-elle vraiment ?
 ```
+
+**La septième est obligatoire dès qu'une tâche touche `lib.rs`, `menu.rs` ou un
+`commands.rs`.** Les six autres ont toutes été vertes le jour où Ash ne démarrait plus du
+tout — un `state()` appelé avant son `manage()`, qui ne panique qu'au lancement. Le
+composition root n'a pas de test unitaire, et il n'en aura pas : assembler une
+application Tauri en demande une vraie.
+
+`bun run smoke` compile, démarre Vite au besoin, lance le binaire, et vérifie qu'il
+survit à son démarrage **et** qu'il a lancé son shell. Il ouvre une fenêtre pendant
+quelques secondes — c'est le prix, `run()` crée la fenêtre et c'est là que les pannes de
+câblage sortent. Il ne remplace pas l'agent `qa` : il ne regarde rien, il ne clique nulle
+part.
 
 Cibler un seul test pendant une itération :
 
