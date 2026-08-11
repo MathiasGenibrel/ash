@@ -1,0 +1,7 @@
+{
+    "$schema": "../gen/schemas/desktop-schema.json",
+    "identifier": "settings",
+    "description": "Permissions de la fenêtre de réglages. Elle a sa propre capacité parce que les capacités se déclarent par **label de fenêtre** : celle de la fenêtre principale ne nomme que `main`, et une seconde fenêtre absente de toute capacité n'aurait aucune permission — donc pas d'`ash://theme-mode`, et une fenêtre peinte dans un thème figé. `allow-start-dragging` est ce qui rend sa bande de titre saisissable, comme pour la principale.",
+    "windows": ["settings"],
+    "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

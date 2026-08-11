@@ -26,6 +26,7 @@ use tauri::menu::{
 };
 use tauri::{AppHandle, Emitter, Runtime};
 
+use crate::features::settings::commands as settings;
 use crate::features::theme::{commands as theme, ThemeMode};
 
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
@@ -39,12 +40,26 @@ const DIRECT_TABS: u8 = 9;
 /// `theme` est le mode retenu de la session précédente : le menu est construit avant que
 /// la webview n'existe, et une coche posée après coup serait une seconde source de vérité.
 pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Result<Menu<R>> {
+    // `Cmd+,` ouvre les réglages : c'est le raccourci que macOS attend dans le menu
+    // applicatif, et le seul endroit où un utilisateur va le chercher. Il est écrit
+    // `Cmd+Comma` parce que l'analyseur d'accélérateurs de Tauri lit des **noms** de
+    // touches, pas des caractères.
+    let settings_item = MenuItem::with_id(
+        app,
+        Action::OpenSettings.id(),
+        "Settings…",
+        true,
+        Some("Cmd+Comma"),
+    )?;
+
     let application = Submenu::with_items(
         app,
         "Ash",
         true,
         &[
             &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &settings_item,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::services(app, None)?,
             &PredefinedMenuItem::separator(app)?,
@@ -134,7 +149,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
         Some("Cmd+B"),
     )?;
     // Les trois thèmes, en coches exclusives. C'est le **seul** point d'entrée du choix à
-    // ce jalon : la fenêtre de réglages est l'issue #14, son écran d'apparence l'issue #22.
+    // ce jalon : la fenêtre de réglages existe, mais sa section `appearance` est l'issue
+    // #22 — elle n'y montre pour l'instant que d'où le thème se choisit.
     // Pas d'accélérateur — un thème se change une fois par saison, pas une fois par heure,
     // et chaque raccourci pris ici est un raccourci perdu pour le shell.
     let themes: Vec<CheckMenuItem<R>> = ThemeMode::ALL
@@ -199,6 +215,9 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
             // donc, et le menu n'aurait plus aucun mode coché.
             check_only(app, mode);
         }
+        // Une fenêtre est un objet du backend, comme le thème : l'ouvrir depuis la webview
+        // demanderait à la fenêtre principale d'exister pour que la seconde puisse naître.
+        Action::OpenSettings => settings::open(app),
         // L'échec d'émission signifie qu'il n'y a plus de webview à prévenir : rien à
         // rattraper, et surtout pas de panique dans un gestionnaire d'event.
         other => {
@@ -259,8 +278,10 @@ enum Action {
     SelectTab(u8),
     /// Replie ou déplie la sidebar — `Cmd+B`.
     ToggleSidebar,
-    /// Choisit le thème de la fenêtre — la seule qui ne parte pas vers la webview.
+    /// Choisit le thème de la fenêtre — l'une des deux qui ne partent pas vers la webview.
     ChooseTheme(ThemeMode),
+    /// Ouvre la fenêtre de réglages — `Cmd+,`. Traitée ici, comme le thème.
+    OpenSettings,
 }
 
 impl Action {
@@ -273,6 +294,7 @@ impl Action {
             Action::SelectTab(position) => format!("tab:select:{position}"),
             Action::ToggleSidebar => "view:toggle-sidebar".to_owned(),
             Action::ChooseTheme(mode) => format!("view:theme:{}", mode.as_id()),
+            Action::OpenSettings => "app:settings".to_owned(),
         }
     }
 
@@ -283,6 +305,7 @@ impl Action {
             "tab:close" => Some(Action::CloseTab),
             "tab:clear" => Some(Action::ClearScrollback),
             "view:toggle-sidebar" => Some(Action::ToggleSidebar),
+            "app:settings" => Some(Action::OpenSettings),
             other => match other.strip_prefix("view:theme:") {
                 Some(mode) => ThemeMode::from_id(mode).map(Action::ChooseTheme),
                 None => other
@@ -314,6 +337,7 @@ mod tests {
             Action::ChooseTheme(ThemeMode::Light),
             Action::ChooseTheme(ThemeMode::Dark),
             Action::ChooseTheme(ThemeMode::System),
+            Action::OpenSettings,
         ];
 
         // When

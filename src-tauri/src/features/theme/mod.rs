@@ -8,7 +8,8 @@
 //! l'apprendre à chaud quand il change.
 //!
 //! Le point d'entrée est le **menu natif** (`src-tauri/src/menu.rs`), et c'est délibéré :
-//! la fenêtre de réglages est l'issue #14, son écran d'apparence l'issue #22.
+//! la fenêtre de réglages existe désormais, mais sa section `appearance` est l'issue #22 —
+//! elle ne fait qu'y renvoyer.
 //!
 //! **L'effet système de la feature**, avec ses deux adaptateurs :
 //!
