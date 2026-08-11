@@ -2,7 +2,7 @@ import "./styles.css";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { onMenuAction, type MenuAction } from "./menu";
-import { followThemeMode } from "./theme";
+import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
 
 /**
@@ -16,7 +16,7 @@ import { createTitleBar } from "./titlebar";
  * feature terminal. La feature ne connaît pas le menu, et le menu ne connaît pas la
  * feature.
  */
-function mount(root: HTMLElement): void {
+function mount(root: HTMLElement, theme: ThemeChanges): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
     // largeur — c'est ce qui la laisse saisissable à droite des pastilles, et ce qui la
     // rend indifférente à `⌘B`.
@@ -28,7 +28,10 @@ function mount(root: HTMLElement): void {
     const host = document.createElement("div");
     host.className = "terminal-host";
 
-    const terminals = mountTerminals(host);
+    // Le thème est passé, pas cherché : la table de tokens et sa bascule appartiennent à
+    // l'application, et un terminal ne peint pas en CSS — il lui faut l'avis pour relire la
+    // palette et se repeindre, onglets déjà ouverts compris.
+    const terminals = mountTerminals(host, theme);
 
     // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
     // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
@@ -120,14 +123,15 @@ if (root === null) {
 }
 
 // Avant tout montage : la palette d'abord, pour ne pas peindre une fenêtre en clair sur
-// un macOS sombre le temps du premier aller-retour. Un échec ici laisse le thème du
-// système, ce qui est exactement le défaut — il n'y a rien à rattraper.
-followThemeMode(document.documentElement).catch(() => undefined);
+// un macOS sombre le temps du premier aller-retour. Un échec du raccordement au backend
+// laisse le thème du système, ce qui est exactement le défaut — il n'y a rien à rattraper.
+const theme = followThemeMode(document.documentElement);
+theme.ready.catch(() => undefined);
 
 if (import.meta.env.VITE_SPIKE === "1") {
     mountSpike(root).catch((error: unknown) => {
         root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
     });
 } else {
-    mount(root);
+    mount(root, theme.changes);
 }

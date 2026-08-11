@@ -7,7 +7,7 @@
 
 import "./terminal.css";
 
-import type { TabId, TabInfo } from "./ports";
+import type { TabId, TabInfo, ThemeSignal } from "./ports";
 import { askToClose } from "./confirm-dialog";
 import { tauriGit } from "./git-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
@@ -18,8 +18,16 @@ import { noTabs, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
 
-export type { PtyFrame, TabId, TabInfo, TerminalSize } from "./ports";
+export type { PtyFrame, TabId, TabInfo, TerminalSize, ThemeSignal } from "./ports";
 export type { Origin } from "./workbench";
+/**
+ * Les tokens que le terminal lit dans la table de `app/styles.css`.
+ *
+ * Publiés parce qu'ils sont le contrat entre l'application, qui détient les palettes, et
+ * la feature, qui les consomme — xterm.js peint ses cellules lui-même et ne peut pas
+ * résoudre un `var(--ash-…)`. Voir `theme.ts`.
+ */
+export { TERMINAL_THEME_TOKENS } from "./theme";
 
 /** Ce que la feature annonce de ses onglets à qui les affiche autrement — la sidebar. */
 export type TabsListener = (tabs: readonly TabInfo[], activeTabId: TabId | null) => void;
@@ -55,12 +63,13 @@ export interface Terminals {
  * Monte la barre d'onglets et la pile de terminaux dans `host`.
  *
  * Rien n'est ouvert ici : c'est au composition root de décider que l'application démarre
- * sur un onglet.
+ * sur un onglet. C'est lui, aussi, qui passe `theme` : la feature ne détecte pas les
+ * bascules de palette, elle en est prévenue.
  *
  * Un onglet porte au plus un PTY, et un seul terminal est visible à la fois
  * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)).
  */
-export function mountTerminals(host: HTMLElement): Terminals {
+export function mountTerminals(host: HTMLElement, theme: ThemeSignal): Terminals {
     host.classList.add("terminal-workbench");
 
     // La pile est un conteneur positionné : chaque onglet s'y superpose en occupant
@@ -90,7 +99,9 @@ export function mountTerminals(host: HTMLElement): Terminals {
 
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
-        createView: () => new XtermView(stack),
+        // Chaque terminal suit le thème pour son compte, et s'en désabonne en se libérant :
+        // l'atelier n'a pas à connaître la palette pour savoir qu'un onglet est ouvert.
+        createView: () => new XtermView(stack, theme),
         confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
             bar.render(state);

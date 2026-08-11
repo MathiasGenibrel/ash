@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "bun:test";
 
+import { TERMINAL_THEME_TOKENS } from "@/features/terminal";
 import { AGENT_STATES, presentAgentState } from "@/shared/agent-state";
 
 /**
@@ -111,6 +112,45 @@ describe("les deux palettes", () => {
 
         // Then
         expect(quietest).toEqual(["--ash-idle", "--ash-idle"]);
+    });
+});
+
+describe("la palette du terminal", () => {
+    it("Given the colours xterm.js asks for, when they are looked up, then both palettes define every one of them", () => {
+        // Given — xterm.js ne résout pas un `var(--ash-…)` : un token absent d'une palette
+        // ne se voit pas en CSS, il se voit dans le terminal, sous la forme d'une couleur
+        // par défaut de xterm.js au milieu de celles de l'application
+        const asked = Object.values(TERMINAL_THEME_TOKENS);
+
+        // When
+        const missing = asked.filter((token) => !LIGHT.has(token) || !DARK.has(token));
+
+        // Then
+        expect(missing).toEqual([]);
+    });
+
+    it("Given the ANSI colours an agent writes with, when they are measured against the terminal background, then they stay readable in both themes", () => {
+        // Given — `claude` colore abondamment, et les valeurs par défaut de xterm.js sont
+        // pensées pour un fond sombre : du jaune ou du cyan clair sur `--ash-bg` clair ne se
+        // lit pas. Les six teintes sont du texte (4,5:1), leurs variantes vives de
+        // l'emphase (3:1). `black` et `white` sont hors de la mesure, et ne peuvent pas ne
+        // pas l'être : une palette ANSI les place aux deux bouts de l'échelle, donc l'un des
+        // deux touche toujours le fond — c'est ce que les applications attendent d'eux.
+        const hue = /^(bright)?(red|green|yellow|blue|magenta|cyan)$/i;
+        const ansi = Object.entries(TERMINAL_THEME_TOKENS).filter(([key]) => hue.test(key));
+
+        // When
+        const failures = [LIGHT, DARK].flatMap((tokens) =>
+            ansi.filter(
+                ([key, token]) =>
+                    contrast(read(tokens, token), read(tokens, "--ash-bg")) <
+                    (key.startsWith("bright") ? 3 : 4.5),
+            ),
+        );
+
+        // Then
+        expect(failures).toEqual([]);
+        expect(ansi).toHaveLength(12);
     });
 });
 
