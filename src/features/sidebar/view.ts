@@ -1,6 +1,5 @@
-import type { AgentState } from "@/shared/ipc";
+import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
 import { abbreviate } from "./labels";
-import { presentAgentState } from "./states";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
 
 /**
@@ -192,14 +191,6 @@ export class SidebarView {
         foot.append(add, text("span", "⌘N", "ash-sidebar-hint"));
         return foot;
     }
-}
-
-function glyph(state: AgentState): HTMLElement {
-    const shown = presentAgentState(state);
-    const element = text("span", shown.glyph, `ash-glyph ${shown.className}`);
-    if (shown.spinning) element.classList.add("is-spinning");
-    element.setAttribute("aria-label", shown.label);
-    return element;
 }
 
 function emptyState(): HTMLElement {

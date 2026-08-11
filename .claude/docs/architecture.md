@@ -20,6 +20,7 @@ src-tauri/src/
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12
     journal/             attribution commit → agent → prompt       — ADR-0014
     hooks/               installation du bloc dans les settings.json
+    theme/               le mode clair / sombre / système, et sa persistance
   shared/                réellement transverse, et justifié
 src/
   app/                   composition root du frontend
@@ -30,6 +31,7 @@ src/
     settings/            la fenêtre de réglages
   shared/
     ipc/                 le contrat Rust ↔ TypeScript
+    agent-state/         la présentation des cinq états — sidebar et ligne de statut
 ```
 
 À l'intérieur d'une feature :

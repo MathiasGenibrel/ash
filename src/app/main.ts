@@ -2,6 +2,7 @@ import "./styles.css";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { onMenuAction, type MenuAction } from "./menu";
+import { followThemeMode } from "./theme";
 
 /**
  * Composition root du frontend.
@@ -68,9 +69,10 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
         case "select-tab":
             return terminals.selectTabAt(action.position);
         case "toggle-sidebar":
-            // Repliée, la sidebar ne porte plus le contexte : la barre d'onglets le
-            // reprend, et un onglet s'intitule `omelette-web/claude`.
-            terminals.showLocationInTitles(sidebar.toggleCollapsed());
+            // Repliée, la sidebar ne porte plus le contexte : la zone terminal le reprend
+            // — un onglet s'intitule `omelette-web/claude`, et la ligne de statut nomme
+            // l'agent qui attend.
+            terminals.setSidebarCollapsed(sidebar.toggleCollapsed());
             return Promise.resolve();
     }
 }
@@ -108,6 +110,11 @@ const root = document.querySelector<HTMLElement>("#root");
 if (root === null) {
     throw new Error("index.html n'expose pas #root");
 }
+
+// Avant tout montage : la palette d'abord, pour ne pas peindre une fenêtre en clair sur
+// un macOS sombre le temps du premier aller-retour. Un échec ici laisse le thème du
+// système, ce qui est exactement le défaut — il n'y a rien à rattraper.
+followThemeMode(document.documentElement).catch(() => undefined);
 
 if (import.meta.env.VITE_SPIKE === "1") {
     mountSpike(root).catch((error: unknown) => {

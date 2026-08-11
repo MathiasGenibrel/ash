@@ -6,3 +6,4 @@
 pub mod git;
 pub mod probe;
 pub mod pty;
+pub mod theme;
