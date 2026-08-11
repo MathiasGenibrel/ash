@@ -1,6 +1,6 @@
 # ADR-0007 — Les états viennent des hooks de l'outil, pas de la sortie
 
-- **Statut** : accepté (2026-08-07)
+- **Statut** : accepté (2026-08-07), précisé le 2026-08-11
 - **Complété par** : [ADR-0008](./0008-abstraction-adapter.md)
 
 ## Contexte
@@ -28,7 +28,7 @@ délimité** :
 
 → dans chaque settings.json :
   // ash:begin  (ne pas éditer)
-  hooks → ash-event --tab $ASH_TAB_ID <state>
+  hooks → ash-event <state> --tab $ASH_TAB_ID
   // ash:end
 ```
 
@@ -36,8 +36,28 @@ La **corrélation hook → onglet** se fait par `ASH_TAB_ID`, variable d'environ
 posée par Ash à la création du `bash` et héritée par toute la descendance —
 y compris par les processus de hook. Aucune devinette par `cwd` ou par horodatage.
 
-La sonde système ne sert qu'à détecter la **disparition** du processus, pas à
-inférer un état.
+La sonde système ne sert pas à inférer ce que l'agent **fait**.
+
+### Précision du 2026-08-11 — ce que la sonde a le droit de dire
+
+La rédaction initiale disait « la sonde ne sert qu'à détecter la **disparition** du
+processus ». Trop large : elle se lisait comme interdisant `working`, que
+`features/pty/registry.rs` produit depuis le jalon J1.
+
+Ce que cette ADR écarte, c'est l'**analyse de la sortie** du PTY — reconnaître un
+spinner, un « esc to interrupt », un motif de question, un silence après le prompt. C'est
+la première alternative écartée ci-dessous, et elle reste écartée. `tcgetpgrp` n'en est
+pas : il ne lit rien de ce que l'agent écrit, il répond à une question de **présence** —
+le shell tient-il encore l'avant-plan de son terminal, ou l'a-t-il cédé à autre chose.
+
+La sonde peut donc dire qu'un agent est **là** (`working`), qu'il n'y en a pas (`idle`),
+et qu'il est **parti** et comment (`done` / `error`). Elle ne peut rien dire de plus.
+
+**`waiting` n'a jamais d'autre source qu'un hook**, et c'est la partie de cette décision
+qui ne se relâche pas : c'est le seul état qui justifie d'interrompre l'utilisateur, et
+un faux positif y détruirait la confiance dans la notification.
+
+Voir l'[amendement correspondant d'ADR-0008](./0008-abstraction-adapter.md).
 
 ## Conséquences
 
@@ -54,7 +74,8 @@ inférer un état.
 - **Dépendance forte à ce que chaque outil expose.** Pour Claude Code c'est acquis.
   Pour codex, kimi et opencode, ça reste à qualifier — c'est le principal risque du
   projet, et la raison d'être de [ADR-0008](./0008-abstraction-adapter.md).
-- Un outil sans hook ne pourra fournir que `idle` / `done` / `error` via la sonde.
+- Un outil sans hook ne pourra fournir que `idle` / `working` / `done` / `error` via la
+  sonde — jamais `waiting`.
   Si ce n'est pas suffisant à l'usage, il faudra réintroduire un moteur heuristique —
   décision explicitement repoussée, pas exclue.
 
