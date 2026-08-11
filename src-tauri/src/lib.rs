@@ -101,17 +101,24 @@ pub fn run() -> tauri::Result<()> {
     // les onglets pour toute la durée de l'application, pas pour la durée d'un appel du
     // frontend. C'est aussi ici qu'on lui donne son ordre d'arrêt — quitter l'application
     // doit éteindre les sondes, pas laisser le système le faire à notre place.
-    let follow = Arc::clone(&git_watch);
-    let stop = features::pty::commands::watch_tabs(app.handle().clone(), &ptys, move |roots| {
-        follow.follow(&roots);
-    });
+    let follow = features::git::commands::follow_worktrees(&git_watch);
+    let stop = features::pty::commands::watch_tabs(app.handle().clone(), &ptys, follow);
 
     app.run(move |_app, event| match event {
         // Un dépôt peut avoir bougé pendant qu'Ash était derrière une autre fenêtre.
+        //
+        // **Sur un fil à part, et c'est indispensable** : ce rappel-ci arrive sur le fil de
+        // l'interface, et relire un worktree lance un `git status` qui peut prendre des
+        // secondes sur un dépôt de plusieurs gigaoctets. Le faire ici gèlerait la fenêtre
+        // au moment précis où l'utilisateur y revient. La surveillance, elle, ne suppose
+        // aucun fil : c'est au composition root de savoir d'où il l'appelle.
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::Focused(true),
             ..
-        } => git_watch.on_focus(),
+        } => {
+            let refreshing = Arc::clone(&git_watch);
+            std::thread::spawn(move || refreshing.on_focus());
+        }
         tauri::RunEvent::Exit => {
             stop.ask();
             git_watch.stop();

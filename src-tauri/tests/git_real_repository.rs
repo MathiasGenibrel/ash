@@ -5,16 +5,18 @@
 //! **git écrit** — le `.git` fichier d'un worktree lié, son `gitdir:`, son `commondir`,
 //! et les fichiers qu'un rebase laisse derrière lui pendant qu'il est arrêté.
 //!
-//! Ils lancent `git`, jamais pour résoudre ni pour lire quoi que ce soit : uniquement
-//! pour fabriquer le décor. Ash, lui, ne lit que des fichiers.
+//! Ils lancent `git` pour fabriquer le décor. Ash n'en lance qu'**un** de son côté, et
+//! seulement pour ce qu'aucun fichier de contrôle ne porte : l'état de l'arbre de travail
+//! et l'avance sur l'amont. C'est aussi ce que ces tests-ci vérifient de bout en bout —
+//! l'invocation réelle, sa sortie réelle, et les comptes qu'on en tire.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ash_lib::features::git::{
-    read_metadata, resolve_worktree, GitError, Head, OperationKind, Progress, SystemFileSystem,
-    WorktreeLocation, WorktreeMetadata,
+    parse_status, read_metadata, resolve_worktree, GitError, Head, OperationKind, Progress, Status,
+    StatusReader, SystemFileSystem, SystemGit, WorktreeLocation, WorktreeMetadata,
 };
 
 /// Un dossier temporaire qui se supprime à la fin du test, réussi ou non.
@@ -131,6 +133,116 @@ fn repository_with_a_conflicting_rebase(sandbox: &Sandbox) -> PathBuf {
     commit(&worktree, "feat-deux");
     commit(&main, "main-bouge");
     worktree
+}
+
+/// L'état de l'arbre, lu comme la surveillance le lit : un vrai `git`, une vraie sortie.
+fn status_of(worktree_root: &Path) -> Status {
+    let output = SystemGit::default()
+        .read(worktree_root)
+        .expect("git doit répondre pour un dépôt de test");
+    parse_status(&output)
+}
+
+#[test]
+fn given_a_real_worktree_with_local_changes_when_asking_git_then_the_counts_are_files_not_lines() {
+    // Given — un fichier ajouté à l'index, un modifié sur deux lignes, un supprimé, et
+    // deux chemins non suivis dont un dossier entier. C'est le `+3 ~1` de la maquette.
+    let sandbox = Sandbox::new("status");
+    let repo = sandbox.path("solo");
+    repository_at(&repo);
+    commit(&repo, "base");
+    std::fs::write(repo.join("second.txt"), "deux\n").expect("le fichier doit s'écrire");
+    git(&repo, &["add", "second.txt"]);
+    git(&repo, &["commit", "--quiet", "-m", "second"]);
+
+    std::fs::write(repo.join("ajoute.txt"), "neuf\n").expect("le fichier doit s'écrire");
+    git(&repo, &["add", "ajoute.txt"]);
+    std::fs::write(repo.join("f.txt"), "une\nautre\nligne\n").expect("le fichier doit s'écrire");
+    std::fs::remove_file(repo.join("second.txt")).expect("le fichier doit disparaître");
+    std::fs::write(repo.join("perdu.txt"), "x\n").expect("le fichier doit s'écrire");
+    std::fs::create_dir_all(repo.join("neuf")).expect("le dossier doit se créer");
+    std::fs::write(repo.join("neuf/dedans.txt"), "y\n").expect("le fichier doit s'écrire");
+
+    // When
+    let status = status_of(&repo);
+
+    // Then — un fichier modifié sur trois lignes reste **un** fichier ; le dossier
+    // entièrement nouveau compte pour une entrée, comme git le rend
+    assert_eq!(status.tree.modified, 1);
+    assert_eq!(status.tree.deleted, 1);
+    assert_eq!(status.tree.added, 3);
+    assert_eq!(status.tree.conflicted, 0);
+}
+
+#[test]
+fn given_a_real_branch_ahead_and_behind_its_upstream_when_asking_git_then_both_counts_are_reported()
+{
+    // Given — un clone qui a divergé de son origine : deux commits locaux, un distant
+    let sandbox = Sandbox::new("upstream");
+    let origin = sandbox.path("origin");
+    repository_at(&origin);
+    commit(&origin, "base");
+    git(&sandbox.root, &["clone", "--quiet", "origin", "clone"]);
+    let clone = sandbox.path("clone");
+    commit(&clone, "local-un");
+    commit(&clone, "local-deux");
+    commit(&origin, "distant");
+    git(&clone, &["fetch", "--quiet", "origin"]);
+
+    // When
+    let status = status_of(&clone);
+
+    // Then — `↑2 ↓1`, tiré de l'en-tête du **même** appel que l'état de l'arbre
+    let upstream = status.upstream.expect("le clone suit son origine");
+    assert_eq!((upstream.ahead, upstream.behind), (2, 1));
+}
+
+#[test]
+fn given_a_real_repository_without_an_upstream_when_asking_git_then_nothing_is_compared() {
+    // Given — une branche locale toute neuve : il n'y a rien à comparer, et inventer
+    // `↑0 ↓0` ferait croire à une synchronisation qui n'existe pas
+    let sandbox = Sandbox::new("no-upstream");
+    let repo = sandbox.path("solo");
+    repository_at(&repo);
+    commit(&repo, "base");
+
+    // When
+    let status = status_of(&repo);
+
+    // Then
+    assert_eq!(status.upstream, None);
+    assert!(status.tree.is_clean());
+}
+
+#[test]
+fn given_a_real_merge_conflict_when_asking_git_then_the_conflicted_file_is_counted_apart() {
+    // Given — pendant un rebase arrêté, la ligne de statut doit distinguer « en conflit »
+    // de « modifié » : ce ne sont pas les mêmes gestes qui suivent
+    let sandbox = Sandbox::new("conflict");
+    let worktree = repository_with_a_conflicting_rebase(&sandbox);
+    git_may_fail(&worktree, &["rebase", "main"]);
+
+    // When
+    let status = status_of(&worktree);
+
+    // Then
+    assert_eq!(status.tree.conflicted, 1);
+    assert_eq!(status.tree.modified, 0);
+}
+
+#[test]
+fn given_a_directory_outside_any_repository_when_asking_git_then_it_answers_nothing_at_all() {
+    // Given — `git status` y sort en erreur. Ash doit le lire comme « pas d'état
+    // d'arbre », pas comme un arbre propre : afficher `+0 ~0` serait un mensonge.
+    let sandbox = Sandbox::new("outside-status");
+    let notes = sandbox.path("notes");
+    std::fs::create_dir_all(&notes).expect("le dossier doit pouvoir être créé");
+
+    // When
+    let output = SystemGit::default().read(&notes);
+
+    // Then
+    assert_eq!(output, None);
 }
 
 #[test]

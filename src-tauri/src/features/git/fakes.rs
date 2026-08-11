@@ -5,6 +5,7 @@
 //! doublent des **ports** — comme [`super::fake_fs::FakeFs`], qui double le système de
 //! fichiers immobile.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use super::error::GitError;
 use super::fake_fs::FakeFs;
+use super::git_cli::StatusReader;
 use super::metadata::{Head, WorktreeMetadata};
 use super::metadata_watch::Announce;
 use super::ports::{Entry, FileSystem};
@@ -31,6 +33,13 @@ pub struct WatchedTree {
     lookups: AtomicUsize,
     subscriptions: Arc<Mutex<Vec<Subscription>>>,
     next_id: AtomicUsize,
+    /// Ce que `git status --porcelain=v2 --branch` répondrait, par racine de worktree.
+    ///
+    /// Absent veut dire « `git` n'a pas répondu » — introuvable, trop lent, en erreur.
+    /// C'est le défaut : la plupart des scénarios de la surveillance ne parlent pas de
+    /// l'arbre de travail, et aucun d'eux ne doit lancer de processus.
+    porcelain: Mutex<BTreeMap<PathBuf, String>>,
+    invocations: AtomicUsize,
 }
 
 struct Subscription {
@@ -70,6 +79,8 @@ impl WatchedTree {
             lookups: AtomicUsize::new(0),
             subscriptions: Arc::new(Mutex::new(Vec::new())),
             next_id: AtomicUsize::new(0),
+            porcelain: Mutex::new(BTreeMap::new()),
+            invocations: AtomicUsize::new(0),
         })
     }
 
@@ -101,6 +112,21 @@ impl WatchedTree {
         for listener in listeners {
             listener(&path);
         }
+    }
+
+    /// Ce que `git status` répondra pour ce worktree, la prochaine fois qu'on l'appelle.
+    pub fn set_porcelain(&self, root: &str, output: &str) {
+        if let Ok(mut porcelain) = self.porcelain.lock() {
+            porcelain.insert(PathBuf::from(root), output.to_owned());
+        }
+    }
+
+    /// Combien de fois `git` a été lancé depuis le début du scénario.
+    ///
+    /// Le compteur qui garantit le critère « aucun `git status` dans la boucle de sonde » :
+    /// au repos, il ne bouge pas.
+    pub fn invocations(&self) -> usize {
+        self.invocations.load(Ordering::Relaxed)
     }
 
     /// Combien de lectures de fichier depuis le début du scénario.
@@ -169,6 +195,13 @@ impl FileSystem for WatchedTree {
     fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
         self.lookups.fetch_add(1, Ordering::Relaxed);
         self.with_tree(|tree| tree.canonicalize(path), None)
+    }
+}
+
+impl StatusReader for WatchedTree {
+    fn read(&self, worktree_root: &Path) -> Option<String> {
+        self.invocations.fetch_add(1, Ordering::Relaxed);
+        self.porcelain.lock().ok()?.get(worktree_root).cloned()
     }
 }
 
@@ -278,7 +311,7 @@ impl Scheduler for ControlledTime {
 
 /// Ce que la surveillance a poussé vers le frontend.
 #[derive(Default)]
-pub struct RecordedAnnounces(Mutex<Vec<(String, String)>>);
+pub struct RecordedAnnounces(Mutex<Vec<(String, WorktreeMetadata)>>);
 
 impl RecordedAnnounces {
     pub fn new() -> Arc<Self> {
@@ -289,18 +322,28 @@ impl RecordedAnnounces {
     pub fn announce(self: &Arc<Self>) -> Announce {
         let recorded = Arc::clone(self);
         Arc::new(move |root: &Path, metadata: &WorktreeMetadata| {
-            let branch = match &metadata.head {
-                Head::Branch { name } => name.clone(),
-                Head::Detached { commit } => commit.clone(),
-            };
             if let Ok(mut announces) = recorded.0.lock() {
-                announces.push((root.display().to_string(), branch));
+                announces.push((root.display().to_string(), metadata.clone()));
             }
         })
     }
 
     /// Les worktrees annoncés, avec la branche annoncée pour chacun, dans l'ordre.
     pub fn branches(&self) -> Vec<(String, String)> {
+        self.announced()
+            .into_iter()
+            .map(|(root, metadata)| {
+                let branch = match metadata.head {
+                    Head::Branch { name } => name,
+                    Head::Detached { commit } => commit,
+                };
+                (root, branch)
+            })
+            .collect()
+    }
+
+    /// Les métadonnées annoncées, entières — pour ce que la branche seule ne dit pas.
+    pub fn announced(&self) -> Vec<(String, WorktreeMetadata)> {
         self.0
             .lock()
             .map(|announces| announces.clone())

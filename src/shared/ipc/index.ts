@@ -105,18 +105,56 @@ export interface GitOperation {
 }
 
 /**
- * L'état git d'un worktree, tel que le backend le lit dans `.git`.
+ * `+3 ~1` : des **nombres de fichiers**, jamais de lignes.
+ *
+ * `added` compte les fichiers ajoutés à l'index **et** les fichiers non suivis — un agent
+ * crée des fichiers avant de les ajouter. Un dossier entièrement nouveau y compte pour
+ * une entrée, comme git le rend. Un renommage compte comme une modification.
+ *
+ * `deleted` et `conflicted` ne sont pas dans la maquette ; ils viennent du même appel, et
+ * afficher `+3 ~1` sans savoir qu'un fichier est en conflit serait perdre l'information
+ * au moment où elle compte.
+ */
+export interface GitTreeStatus {
+    added: number;
+    modified: number;
+    deleted: number;
+    conflicted: number;
+}
+
+/** `↑2 ↓1` : l'avance et le retard sur la branche amont. */
+export interface GitUpstream {
+    ahead: number;
+    behind: number;
+}
+
+/**
+ * Ce que seul `git status` sait dire d'un worktree.
+ *
+ * `upstream` à `null` veut dire « cette branche ne suit rien » — une branche locale toute
+ * neuve, un `HEAD` détaché. Ce n'est pas `↑0 ↓0`, qui est une synchronisation constatée.
+ */
+export interface GitStatus {
+    tree: GitTreeStatus;
+    upstream: GitUpstream | null;
+}
+
+/**
+ * L'état git d'un worktree.
  *
  * Il est **propre au worktree**, jamais au dépôt : deux worktrees du même projet peuvent
  * avoir un rebase en cours dans l'un et rien dans l'autre
  * ([ADR-0012](../../../docs/adr/0012-worktree-unite-de-travail.md)).
  *
- * L'état de l'arbre (`+3 ~1`) et l'avance sur l'amont (`↑2 ↓1`) n'y figurent pas encore :
- * ni l'un ni l'autre ne se lit dans les fichiers de contrôle du dépôt.
+ * `head` et `operation` se lisent dans les fichiers de contrôle du dépôt et sont toujours
+ * là. `status` vient d'un appel à `git` : `null` veut dire qu'il n'a pas répondu — absent
+ * de la machine, ou dépôt trop gros pour le délai. C'est un cas **nominal**, qui se rend
+ * en n'affichant ni `+3 ~1` ni `↑2 ↓1` ; la branche, elle, reste affichée.
  */
 export interface WorktreeMetadata {
     head: GitHead;
     operation: GitOperation | null;
+    status: GitStatus | null;
 }
 
 /**

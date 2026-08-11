@@ -1,17 +1,19 @@
-//! Ce qu'un worktree dit de lui-même dans ses fichiers de contrôle.
+//! Ce qu'un worktree dit de lui-même — le modèle, et sa moitié lue dans `.git`.
 //!
-//! Tout ce que ce module rend est **lu dans `.git`** : la branche courante, et l'opération
-//! en cours avec sa progression. Rien n'est déduit de la sortie d'un processus, et le
-//! binaire `git` n'est pas invoqué — c'est la règle de la feature, et c'est aussi ce qui
-//! rend le résultat instantané là où un `git status` coûterait un `fork` par worktree
+//! Les métadonnées de la spec §5.3 viennent de **deux** sources, et la différence est
+//! structurante :
+//!
+//! - la branche et l'opération en cours se lisent dans les fichiers de contrôle du dépôt,
+//!   ici même, derrière le trait [`FileSystem`]. C'est instantané, et ça ne dépend de rien
+//!   d'installé ;
+//! - l'état de l'arbre (`+3 ~1`) et l'avance sur l'amont (`↑2 ↓1`) demandent de comparer
+//!   l'index à l'arbre de travail et de parcourir le graphe de commits. Aucun fichier de
+//!   contrôle ne les porte : ils viennent d'un appel à `git`, déclenché par la surveillance
+//!   et jamais par la boucle de sonde (voir [`super::git_cli`] et [`super::porcelain`]).
+//!
+//! De là le [`Status`] **optionnel** : son absence — `git` introuvable, dépôt trop gros
+//! pour le délai — n'empêche pas d'afficher la branche
 //! ([ADR-0011](../../../../docs/adr/0011-git-domaine-de-premier-plan.md)).
-//!
-//! Deux champs de la spec §5.3 manquent encore, et c'est délibéré : `tree` (`+3 ~1`) et
-//! `upstream` (`↑2 ↓1`) ne se lisent **pas** dans les fichiers de contrôle. Le premier
-//! demande de comparer l'index à l'arbre de travail, le second de parcourir le graphe de
-//! commits — donc de savoir décompresser des objets et lire des packfiles. Les livrer
-//! demanderait soit d'invoquer `git`, soit d'ajouter une bibliothèque git complète : une
-//! décision qui dépasse ce module.
 
 use std::path::Path;
 
@@ -37,6 +39,58 @@ pub struct WorktreeMetadata {
     /// L'opération git en cours, quand il y en a une. C'est elle qui l'emporte à
     /// l'affichage : pendant un rebase, `HEAD` est détaché et ne dit plus rien d'utile.
     pub operation: Option<Operation>,
+    /// Ce que seul `git status` sait dire, quand il a pu le dire.
+    ///
+    /// `None` n'est pas une erreur : c'est « on ne sait pas encore », et ça se rend en
+    /// n'affichant ni `+3 ~1` ni `↑2 ↓1`. Le reste de la ligne, lui, est toujours là.
+    pub status: Option<Status>,
+}
+
+/// L'état d'un worktree tel que `git status --porcelain=v2 --branch` le décrit.
+///
+/// Les deux moitiés viennent du **même** appel : les compter séparément coûterait deux
+/// processus pour une seule ligne d'affichage.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    pub tree: TreeStatus,
+    /// La comparaison avec la branche amont. `None` quand la branche n'en suit aucune —
+    /// une branche locale toute neuve, ou un `HEAD` détaché.
+    pub upstream: Option<Upstream>,
+}
+
+/// `+3 ~1` : des **nombres de fichiers**, jamais de lignes.
+///
+/// La maquette n'en affiche que deux ; les quatre sont là parce qu'ils viennent du même
+/// appel et qu'ils disent des choses différentes. Ce qui s'affiche est l'affaire de la
+/// ligne de statut, pas du backend.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeStatus {
+    /// Fichiers ajoutés à l'index, **et** fichiers non suivis : le `+` de la maquette.
+    pub added: u32,
+    /// Fichiers modifiés, renommés ou copiés : le `~`.
+    pub modified: u32,
+    /// Fichiers supprimés. Pas dans la maquette, mais dans le modèle : le savoir sans
+    /// l'afficher coûte zéro, le redemander plus tard coûterait un appel de plus.
+    pub deleted: u32,
+    /// Fichiers en conflit — un merge ou un rebase arrêté attend une décision dessus.
+    pub conflicted: u32,
+}
+
+impl TreeStatus {
+    /// Rien à signaler : l'arbre est propre.
+    pub fn is_clean(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// `↑2 ↓1` : l'avance et le retard sur la branche amont.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Upstream {
+    pub ahead: u32,
+    pub behind: u32,
 }
 
 /// Où pointe `HEAD`.
@@ -103,6 +157,8 @@ pub fn read_metadata(
     Ok(WorktreeMetadata {
         head: read_head(fs, git_dir)?,
         operation: read_operation(fs, git_dir, common_dir),
+        // Rempli par qui sait lancer `git` — la surveillance. Ce module ne lance rien.
+        status: None,
     })
 }
 

@@ -7,8 +7,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use super::git_cli::SystemGit;
 use super::metadata::WorktreeMetadata;
 use super::metadata_watch::MetadataWatch;
 use super::system_fs::SystemFileSystem;
@@ -36,11 +37,20 @@ pub struct MetadataChanged {
 /// Ce que le frontend lit en s'affichant ; ensuite, c'est l'event qui le tient à jour.
 /// `None` pour un répertoire hors de tout dépôt, ou dont les fichiers de contrôle ne se
 /// lisent pas — les deux se rendent pareil : sans métadonnées git.
+///
+/// **`async` volontairement** : Tauri exécute une commande synchrone sur le fil de
+/// l'interface. Pour un worktree déjà surveillé, la réponse est en mémoire ; pour un
+/// autre, elle coûte une résolution et un `git status`, qui n'ont rien à faire sur le fil
+/// qui dessine la fenêtre.
+/// Le handle plutôt que `tauri::State` : une commande `async` qui **emprunte** l'état est
+/// obligée de rendre un `Result`, et une erreur qui ne peut pas se produire n'a pas sa
+/// place dans le contrat.
 #[tauri::command]
-pub fn git_metadata(
-    watch: tauri::State<'_, Arc<MetadataWatch>>,
+pub async fn git_metadata<R: Runtime>(
+    app: AppHandle<R>,
     worktree_root: String,
 ) -> Option<WorktreeMetadata> {
+    let watch = app.state::<Arc<MetadataWatch>>();
     watch.metadata(Path::new(&worktree_root))
 }
 
@@ -51,6 +61,7 @@ pub fn git_metadata(
 pub fn watch_metadata<R: Runtime>(app: AppHandle<R>) -> Arc<MetadataWatch> {
     MetadataWatch::new(
         Arc::new(SystemFileSystem),
+        Arc::new(SystemGit::default()),
         Arc::new(SystemWatcher),
         Arc::new(SystemClock),
         Arc::new(ThreadScheduler),
@@ -67,4 +78,39 @@ pub fn watch_metadata<R: Runtime>(app: AppHandle<R>) -> Arc<MetadataWatch> {
             );
         }),
     )
+}
+
+/// De quoi nommer les worktrees habités **sans attendre** que la surveillance ait fini.
+///
+/// La boucle de sonde d'ADR-0005 appelle ce rappel trois fois par seconde, et son fil est
+/// celui qui suit le `cwd` des onglets. Or le rattachement d'un worktree lance un
+/// `git status`, qui peut prendre des secondes sur un gros dépôt : l'appeler directement
+/// ferait figer les titres d'onglets le temps que git réponde. Le rappel ne fait donc
+/// qu'envoyer la liste ; un fil dédié la consomme.
+///
+/// Les listes en attente sont **écrasées** plutôt que traitées l'une après l'autre :
+/// pendant un `git status`, la boucle en a peut-être empilé dix, toutes périmées sauf la
+/// dernière.
+pub fn follow_worktrees(watch: &Arc<MetadataWatch>) -> impl Fn(Vec<String>) + Send + 'static {
+    let (sender, receiver) = std::sync::mpsc::channel::<Vec<String>>();
+    // Un `Weak` : ce fil observe la surveillance, il ne doit pas être ce qui la maintient
+    // en vie après l'arrêt de l'application.
+    let watch = Arc::downgrade(watch);
+
+    std::thread::spawn(move || {
+        while let Ok(mut roots) = receiver.recv() {
+            while let Ok(fresher) = receiver.try_recv() {
+                roots = fresher;
+            }
+            let Some(watch) = watch.upgrade() else {
+                return;
+            };
+            watch.follow(&roots);
+        }
+    });
+
+    move |roots| {
+        // Échouer à envoyer signifie que le fil est parti : il n'y a plus rien à suivre.
+        let _ = sender.send(roots);
+    }
 }

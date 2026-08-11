@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use super::git_cli::StatusReader;
 use super::metadata::{read_metadata, WorktreeMetadata};
+use super::porcelain::parse_status;
 use super::ports::FileSystem;
 use super::targets::WatchTargets;
 use super::throttle::{Decision, Throttle};
@@ -63,6 +65,8 @@ struct Followed {
 /// La surveillance, pour tous les worktrees où vit au moins un onglet.
 pub struct MetadataWatch {
     fs: Arc<dyn FileSystem>,
+    /// L'appel à `git`, pour ce que les fichiers de contrôle ne disent pas.
+    status: Arc<dyn StatusReader>,
     watcher: Arc<dyn FileWatcher>,
     clock: Arc<dyn Clock>,
     scheduler: Arc<dyn Scheduler>,
@@ -74,6 +78,7 @@ pub struct MetadataWatch {
 impl MetadataWatch {
     pub fn new(
         fs: Arc<dyn FileSystem>,
+        status: Arc<dyn StatusReader>,
         watcher: Arc<dyn FileWatcher>,
         clock: Arc<dyn Clock>,
         scheduler: Arc<dyn Scheduler>,
@@ -82,6 +87,7 @@ impl MetadataWatch {
     ) -> Arc<Self> {
         Arc::new(Self {
             fs,
+            status,
             watcher,
             clock,
             scheduler,
@@ -155,7 +161,7 @@ impl MetadataWatch {
             }
         }
         let (git_dir, common_dir) = self.dirs_of(root)?;
-        read_metadata(self.fs.as_ref(), &git_dir, &common_dir).ok()
+        self.read(root, &git_dir, &common_dir)
     }
 
     /// Relâche tous les observateurs — l'application quitte.
@@ -281,9 +287,9 @@ impl MetadataWatch {
         let Some((git_dir, common_dir)) = self.dirs_of_watched(root) else {
             return;
         };
-        // Lue hors du verrou : la lecture touche au disque, et une frappe clavier n'a pas
-        // à attendre derrière elle.
-        let Ok(metadata) = read_metadata(self.fs.as_ref(), &git_dir, &common_dir) else {
+        // Lue hors du verrou : elle touche au disque et lance un processus, et une frappe
+        // clavier n'a pas à attendre derrière elle.
+        let Some(metadata) = self.read(root, &git_dir, &common_dir) else {
             return;
         };
 
@@ -307,6 +313,27 @@ impl MetadataWatch {
         }
     }
 
+    /// Les métadonnées complètes d'un worktree : les fichiers de contrôle, puis `git`.
+    ///
+    /// L'ordre compte. La branche et l'opération viennent de `.git` et ne coûtent que
+    /// quelques lectures ; l'état de l'arbre coûte un processus, qui peut être lent ou
+    /// absent. Son échec ne fait pas échouer le reste — la ligne de statut perd `+3 ~1`,
+    /// elle ne perd pas sa branche.
+    ///
+    /// **Aucun verrou n'est tenu pendant l'appel** : `self.status.read` peut attendre
+    /// plusieurs secondes sur un gros dépôt, et le verrou de [`Followed`] est pris par la
+    /// surveillance à chaque écriture observée.
+    fn read(
+        &self,
+        worktree_root: &Path,
+        git_dir: &Path,
+        common_dir: &Path,
+    ) -> Option<WorktreeMetadata> {
+        let mut metadata = read_metadata(self.fs.as_ref(), git_dir, common_dir).ok()?;
+        metadata.status = self.status.read(worktree_root).as_deref().map(parse_status);
+        Some(metadata)
+    }
+
     fn dirs_of_watched(&self, root: &Path) -> Option<(PathBuf, PathBuf)> {
         let followed = self.followed.lock().ok()?;
         let entry = followed.watched.get(root)?;
@@ -327,7 +354,7 @@ impl MetadataWatch {
 mod tests {
     use super::*;
     use crate::features::git::fakes::{ControlledTime, RecordedAnnounces, WatchedTree};
-    use crate::features::git::metadata::Head;
+    use crate::features::git::metadata::{Head, Upstream};
 
     /// Test Data Builder : une surveillance branchée sur un arbre en mémoire, une horloge
     /// qu'on avance à la main et des reports qu'on déclenche soi-même.
@@ -356,6 +383,7 @@ mod tests {
         fn build(&self) -> Arc<MetadataWatch> {
             MetadataWatch::new(
                 Arc::clone(&self.tree) as Arc<dyn FileSystem>,
+                Arc::clone(&self.tree) as Arc<dyn StatusReader>,
                 Arc::clone(&self.tree) as Arc<dyn FileWatcher>,
                 Arc::clone(&self.time) as Arc<dyn Clock>,
                 Arc::clone(&self.time) as Arc<dyn Scheduler>,
@@ -364,6 +392,16 @@ mod tests {
             )
         }
     }
+
+    /// Ce que `git status --porcelain=v2 --branch` répondrait pour un arbre où deux
+    /// fichiers sont apparus, un a changé, et l'amont a deux commits d'avance.
+    const BUSY_TREE: &str = "# branch.oid 200f7b93\n\
+                             # branch.head main\n\
+                             # branch.upstream origin/main\n\
+                             # branch.ab +2 -1\n\
+                             1 .M N... 100644 100644 100644 4bcfe98e 4bcfe98e mod.txt\n\
+                             ? un.txt\n\
+                             ? deux.txt\n";
 
     #[test]
     fn given_a_tab_attaching_to_a_worktree_when_it_starts_being_followed_then_its_state_is_announced_at_once(
@@ -429,27 +467,120 @@ mod tests {
     }
 
     #[test]
+    fn given_a_worktree_with_local_changes_when_it_is_followed_then_the_tree_and_the_upstream_travel_with_the_branch(
+    ) {
+        // Given — `+3 ~1 ↑2 ↓1` : la moitié de la ligne de statut que `.git` ne porte pas
+        let world = WatchBuilder::new();
+        world.tree.set_porcelain("/dev/ash", BUSY_TREE);
+        let watch = world.build();
+
+        // When
+        watch.follow(&["/dev/ash".to_owned()]);
+
+        // Then — un seul appel a suffi pour les deux moitiés
+        let (_, metadata) = world
+            .announces
+            .announced()
+            .pop()
+            .expect("le rattachement annonce l'état du worktree");
+        let status = metadata.status.expect("git a répondu");
+        assert_eq!(status.tree.added, 2);
+        assert_eq!(status.tree.modified, 1);
+        assert_eq!(
+            status.upstream,
+            Some(Upstream {
+                ahead: 2,
+                behind: 1
+            })
+        );
+        assert_eq!(world.tree.invocations(), 1);
+    }
+
+    #[test]
+    fn given_git_that_does_not_answer_when_a_worktree_is_followed_then_its_branch_is_still_announced(
+    ) {
+        // Given — `git` absent du `PATH`, dépôt trop gros pour le délai, sortie en
+        // erreur : le double ne répond pas. Perdre la branche pour autant serait perdre
+        // la seule information qui ne dépend d'aucun processus.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+
+        // When
+        watch.follow(&["/dev/ash".to_owned()]);
+
+        // Then — la ligne de statut perd `+3 ~1`, elle ne perd pas `main`
+        let (_, metadata) = world
+            .announces
+            .announced()
+            .pop()
+            .expect("un git muet n'empêche pas d'annoncer le worktree");
+        assert_eq!(
+            metadata.head,
+            Head::Branch {
+                name: "main".to_owned()
+            }
+        );
+        assert_eq!(metadata.status, None);
+        assert_eq!(world.tree.invocations(), 1);
+    }
+
+    #[test]
+    fn given_a_file_written_in_the_worktree_when_the_watch_reacts_then_git_is_asked_once_per_window(
+    ) {
+        // Given — un agent qui écrit produit une rafale : chaque écriture ne doit pas
+        // valoir un `fork`. C'est la même limitation que pour la lecture de `.git`.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        watch.follow(&["/dev/ash".to_owned()]);
+        let invocations_after_attach = world.tree.invocations();
+
+        // When — trois écritures surveillées dans la fenêtre de 5 s
+        for _ in 0..3 {
+            world.tree.touch("/dev/ash/.git/HEAD");
+        }
+        world.tree.set_porcelain("/dev/ash", BUSY_TREE);
+        world.time.advance(Duration::from_secs(5));
+        world.time.fire_due();
+
+        // Then — un seul appel de plus, et il a lu le dernier état
+        assert_eq!(world.tree.invocations(), invocations_after_attach + 1);
+        let (_, metadata) = world
+            .announces
+            .announced()
+            .pop()
+            .expect("le rafraîchissement différé annonce le dernier état");
+        assert_eq!(metadata.status.map(|status| status.tree.added), Some(2));
+    }
+
+    #[test]
     fn given_five_repositories_being_followed_when_nothing_writes_to_disk_then_nothing_is_read_at_all(
     ) {
         // Given — le critère « avec 5 dépôts ouverts, la consommation CPU au repos reste
         // négligeable ». Au repos, une surveillance de fichiers ne coûte rien ; un
-        // sondage, lui, coûterait cinq lectures par tour. C'est ce que ce test empêche
-        // de réintroduire.
+        // sondage, lui, coûterait cinq lectures **et cinq `git status`** par tour. C'est
+        // ce que ce test empêche de réintroduire.
         let repos = ["/dev/a", "/dev/b", "/dev/c", "/dev/d", "/dev/e"];
         let world = WatchBuilder::with_repos(&repos);
         let watch = world.build();
         let roots: Vec<String> = repos.iter().map(|repo| (*repo).to_owned()).collect();
         watch.follow(&roots);
         let reads_after_attach = world.tree.reads();
+        let invocations_after_attach = world.tree.invocations();
 
-        // When — le temps passe, la surveillance reste en place, le disque se tait
+        // When — dix minutes passent, et la boucle de sonde continue de nommer les mêmes
+        // racines trois fois par seconde
         world.time.advance(Duration::from_secs(600));
         world.time.fire_due();
-        watch.follow(&roots);
+        for _ in 0..1_800 {
+            watch.follow(&roots);
+        }
 
-        // Then — cinq abonnements, un par worktree, et aucune lecture de plus
+        // Then — cinq abonnements, un par worktree, aucune lecture de plus, et surtout
+        // **aucun `git` lancé** : un par worktree au rattachement, plus rien ensuite
         assert_eq!(world.tree.subscriptions(), 5);
         assert_eq!(world.tree.reads(), reads_after_attach);
+        assert_eq!(invocations_after_attach, 5);
+        assert_eq!(world.tree.invocations(), invocations_after_attach);
         assert_eq!(world.announces.branches().len(), 5);
     }
 
