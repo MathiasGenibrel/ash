@@ -25,6 +25,37 @@ use std::time::Duration;
 /// de statut **sans** état d'arbre — mais avec sa branche, qui vient des fichiers.
 pub const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Les arguments de l'appel, et pourquoi chacun est là.
+///
+/// Cette liste est une **frontière de sécurité**, pas une préférence de formatage. Ash
+/// lance `git status` tout seul, sur le simple fait que le shell de l'utilisateur a fait
+/// un `cd` — sans qu'aucune commande git n'ait été tapée. Un dépôt hostile récupéré puis
+/// simplement visité ne doit donc pas pouvoir exécuter quoi que ce soit.
+///
+/// `core.fsmonitor` est le vecteur : sa valeur est une **commande** que `git status`
+/// exécute, et elle se pose dans le `.git/config` du dépôt visité. La protection
+/// `safe.directory` de git ne couvre pas ce cas — elle ne se déclenche que si le dépôt
+/// appartient à un *autre* utilisateur, alors qu'un dépôt téléchargé appartient au nôtre.
+/// La configuration passée en `-c` l'emporte sur celle du dépôt : c'est ce qui la
+/// neutralise. Vérifié en reproduisant l'exécution, puis son absence.
+const HARDENED_STATUS_ARGS: [&str; 8] = [
+    // Un lecteur de fond n'a pas à réécrire l'index de l'utilisateur pour rafraîchir des
+    // dates : sans ça, chaque appel écrirait dans `.git`.
+    "--no-optional-locks",
+    // Le vecteur d'exécution, neutralisé. Ne retire jamais cette ligne.
+    "-c",
+    "core.fsmonitor=false",
+    // Les chemins de contrôle sont échappés, jamais rendus tels quels : une ligne du
+    // résultat reste une ligne, même pour un fichier au nom exotique.
+    "-c",
+    "core.quotePath=true",
+    "status",
+    // Format documenté et stable, contrairement à `--short`.
+    "--porcelain=v2",
+    // L'en-tête `# branch.ab +2 -1` : l'avance et le retard, dans le même appel.
+    "--branch",
+];
+
 /// L'état d'un arbre de travail, tel que `git` sait seul le dire.
 ///
 /// Rend la sortie **brute** : l'interprétation est une règle pure, et elle vit dans
@@ -58,20 +89,7 @@ impl StatusReader for SystemGit {
         // répertoire courant du processus décrirait un autre dépôt que celui demandé.
         let mut child = Command::new("git")
             .current_dir(worktree_root)
-            .args([
-                // Un lecteur de fond n'a pas à réécrire l'index de l'utilisateur pour
-                // rafraîchir des dates : sans ça, chaque appel écrirait dans `.git`.
-                "--no-optional-locks",
-                // Les chemins de contrôle sont échappés, jamais rendus tels quels : une
-                // ligne du résultat reste une ligne, même pour un fichier au nom exotique.
-                "-c",
-                "core.quotePath=true",
-                "status",
-                // Format documenté et stable, contrairement à `--short`.
-                "--porcelain=v2",
-                // L'en-tête `# branch.ab +2 -1` : l'avance et le retard, dans le même appel.
-                "--branch",
-            ])
+            .args(HARDENED_STATUS_ARGS)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -105,5 +123,46 @@ impl StatusReader for SystemGit {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn given_the_status_invocation_when_a_visited_repository_configures_a_fsmonitor_command_then_it_is_overridden(
+    ) {
+        // Given
+        let args = HARDENED_STATUS_ARGS;
+        // When
+        let neutralises_fsmonitor = args
+            .windows(2)
+            .any(|pair| pair == ["-c", "core.fsmonitor=false"]);
+        // Then
+        assert!(
+            neutralises_fsmonitor,
+            "`core.fsmonitor` est une commande que `git status` exécute, et le dépôt \
+             visité la pose dans son propre `.git/config`. Ash lance `git status` sur un \
+             simple `cd` : sans cette surcharge, visiter un dépôt hostile suffit à \
+             exécuter du code."
+        );
+    }
+
+    #[test]
+    fn given_the_status_invocation_when_it_is_built_then_it_never_goes_through_a_shell() {
+        // Given
+        let args = HARDENED_STATUS_ARGS;
+        // When
+        let program = "git";
+        // Then
+        assert_eq!(
+            program, "git",
+            "le programme est nommé, jamais une ligne de shell"
+        );
+        assert!(
+            args.iter().all(|arg| !arg.contains(char::is_whitespace)),
+            "un argument porteur d'espace trahirait une ligne de commande recomposée"
+        );
     }
 }

@@ -504,3 +504,52 @@ fn given_a_real_worktree_whose_repository_has_been_removed_when_resolving_then_i
         "attendu un worktree orphelin, obtenu {resolved:?}"
     );
 }
+
+/// Ash lance `git status` tout seul, sur le simple fait que le shell de l'utilisateur a
+/// fait un `cd`. Un dépôt hostile récupéré puis simplement visité ne doit donc rien
+/// pouvoir exécuter.
+///
+/// `core.fsmonitor` est le vecteur : sa valeur est une **commande** que `git status`
+/// lance, et elle se pose dans le `.git/config` du dépôt visité. Le `safe.directory` de
+/// git ne protège pas de ce cas — il ne se déclenche que pour un dépôt appartenant à un
+/// *autre* utilisateur, alors qu'un dépôt téléchargé appartient au nôtre.
+///
+/// Ce test échoue si quelqu'un retire la surcharge de `HARDENED_STATUS_ARGS` : vérifié en
+/// la retirant, le témoin apparaît.
+#[test]
+fn given_a_visited_repository_that_configures_a_fsmonitor_command_when_ash_reads_its_status_then_the_command_never_runs(
+) {
+    // Given — un dépôt qui exécute une commande à la moindre lecture de statut
+    let sandbox = Sandbox::new("fsmonitor");
+    let repo = sandbox.path("hostile");
+    std::fs::create_dir_all(&repo).expect("le dépôt doit pouvoir être créé");
+    git(&repo, &["init", "--quiet", "--initial-branch=main", "."]);
+    git(
+        &repo,
+        &["commit", "--quiet", "--allow-empty", "-m", "racine"],
+    );
+
+    let witness = sandbox.path("witness");
+    git(
+        &repo,
+        &[
+            "config",
+            "core.fsmonitor",
+            &format!("sh -c 'touch {}'", witness.display()),
+        ],
+    );
+
+    // When — exactement ce qu'Ash fait quand l'onglet arrive dans ce dossier
+    let output = SystemGit::default().read(&sandbox.real("hostile"));
+
+    // Then — le statut est lu, et rien n'a été exécuté
+    assert!(
+        output.is_some(),
+        "le dépôt reste lisible : durcir l'appel ne doit pas le casser"
+    );
+    assert!(
+        !witness.exists(),
+        "`core.fsmonitor` du dépôt visité a été exécuté — visiter un dossier suffirait \
+         à faire tourner du code arbitraire"
+    );
+}
