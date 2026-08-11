@@ -12,6 +12,15 @@ publish = false
 name = "ash_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+# Le client du socket d'événements d'ADR-0007, appelé à chaque hook d'un agent.
+#
+# Déclaré à part du binaire de l'application, et **sans dépendre de `ash_lib`** : lier
+# Tauri lui ferait charger WebKit et AppKit pour écrire une ligne sur un socket. Il partage
+# le format du fil avec la bibliothèque par inclusion de `features/agents/wire.rs`.
+name = "ash-event"
+path = "src/bin/ash-event.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

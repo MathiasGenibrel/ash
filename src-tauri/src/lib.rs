@@ -19,6 +19,8 @@ pub mod spike;
 use std::path::Path;
 use std::sync::Arc;
 
+use features::agents::commands::{AgentEvent, AGENT_EVENT};
+use features::agents::{EventFrame, EventSink};
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
@@ -48,6 +50,30 @@ impl WorktreeLocator for GitWorktrees {
                 name: repo.name,
             }),
         })
+    }
+}
+
+/// Relie le port du socket d'events au registre des onglets, et à la webview.
+///
+/// C'est ici, et seulement ici, que les deux features se rencontrent : `agents` ne connaît
+/// que son trait, `pty` ne sait rien des hooks. La corrélation, elle, est déjà tranchée par
+/// [ADR-0007](../../docs/adr/0007-etats-par-hooks.md) — `ASH_TAB_ID`, que le registre a posé
+/// sur le shell de chaque onglet, et que la descendance de ce shell hérite jusqu'au hook.
+struct HookEvents {
+    app: tauri::AppHandle,
+    ptys: Arc<PtyRegistry>,
+}
+
+impl EventSink for HookEvents {
+    fn knows(&self, tab_id: &str) -> bool {
+        self.ptys.knows(tab_id)
+    }
+
+    fn deliver(&self, event: &EventFrame) {
+        use tauri::Emitter;
+        // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
+        // rattraper, et surtout pas de panique dans un fil de fond.
+        let _ = self.app.emit(AGENT_EVENT, AgentEvent::from(event));
     }
 }
 
@@ -127,6 +153,27 @@ pub fn run() -> tauri::Result<()> {
     let follow = features::git::commands::follow_worktrees(&git_watch);
     let stop = features::pty::commands::watch_tabs(app.handle().clone(), &ptys, follow);
 
+    // Le socket d'events d'ADR-0007 s'ouvre dans le même créneau, et pour la même raison :
+    // il lui faut le handle de l'application pour émettre, et `setup` ne tourne pas pendant
+    // `build()` dans Tauri 2 mais au démarrage de `run()`.
+    //
+    // **Ne pas pouvoir l'ouvrir n'empêche pas Ash de démarrer.** Un second Ash lancé par
+    // mégarde, ou un `~/.ash/` en lecture seule, coûtent les états d'agent — pas le
+    // terminal, ni la sidebar, ni git. Refuser de s'ouvrir pour ça enlèverait à
+    // l'utilisateur bien plus que ce que ça lui rendrait ; le message sur la sortie
+    // d'erreur est ce qui rend la panne trouvable.
+    let events = features::agents::listen(Arc::new(HookEvents {
+        app: app.handle().clone(),
+        ptys: Arc::clone(&ptys),
+    }));
+    let events = match events {
+        Ok(socket) => Some(socket),
+        Err(why) => {
+            eprintln!("ash: les états d'agent n'arriveront pas : {why}");
+            None
+        }
+    };
+
     app.run(move |_app, event| match event {
         // Un dépôt peut avoir bougé pendant qu'Ash était derrière une autre fenêtre.
         //
@@ -145,6 +192,11 @@ pub fn run() -> tauri::Result<()> {
         tauri::RunEvent::Exit => {
             stop.ask();
             git_watch.stop();
+            // Le fichier du socket ne part pas avec le processus : le laisser derrière soi
+            // est ce qui empêcherait le démarrage suivant de se lier.
+            if let Some(events) = events.as_ref() {
+                events.stop();
+            }
         }
         _ => {}
     });
