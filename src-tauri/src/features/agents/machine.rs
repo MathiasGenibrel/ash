@@ -95,12 +95,12 @@ pub struct AgentMachine {
     state: AgentState,
     /// Vrai si la fenêtre Ash est au premier plan, pour autant qu'on nous l'ait dit.
     ///
-    /// Faux au départ, et c'est le défaut prudent : au pire une ligne terminale reste
-    /// affichée jusqu'au prochain focus, alors qu'un défaut à vrai la ferait disparaître
-    /// sans que personne ne l'ait vue.
+    /// Faux au départ, et c'est le défaut prudent : au pire la ligne d'un agent fini
+    /// reste affichée jusqu'au prochain focus, alors qu'un défaut à vrai la ferait
+    /// disparaître sans que personne ne l'ait vue.
     window_focused: bool,
-    /// Depuis quand la ligne terminale est **vue**, donc depuis quand elle a le droit de
-    /// s'effacer.
+    /// Depuis quand la ligne d'un agent fini est **vue**, donc depuis quand elle a le
+    /// droit de s'effacer.
     ///
     /// `None` sur un état actif, et `None` aussi sur un `done` qui n'a pas encore été
     /// regardé : c'est ce second cas qui porte le « indéfiniment » de la spec §6.4.
@@ -139,8 +139,8 @@ impl AgentMachine {
             AgentEvent::WindowFocus(focused) => {
                 self.window_focused = focused;
                 // Le focus ne change aucun état — il ne fait qu'ouvrir le compte à rebours
-                // d'une ligne terminale que personne n'avait encore pu voir.
-                if focused && is_terminal(self.state) && self.seen_since.is_none() {
+                // de la ligne d'un agent fini que personne n'avait encore pu voir.
+                if focused && has_finished(self.state) && self.seen_since.is_none() {
                     self.seen_since = Some(now);
                 }
                 None
@@ -148,7 +148,7 @@ impl AgentMachine {
         }
     }
 
-    /// Le temps a passé : la ligne terminale a-t-elle fait son temps ?
+    /// Le temps a passé : la ligne d'un agent fini a-t-elle fait le sien ?
     ///
     /// Rend `Some(Idle)` la première fois que les 30 s sont écoulées — l'onglet redevient
     /// une ligne shell. `None` partout ailleurs, et notamment :
@@ -171,9 +171,9 @@ impl AgentMachine {
     /// La sonde a vu un agent démarrer.
     ///
     /// Elle n'a le droit de parler que quand aucun hook ne tient l'état : un agent en
-    /// `waiting` reste `waiting`, même si son processus est bien là. Sur une ligne
-    /// terminale, en revanche, un agent qui démarre reprend l'onglet — c'est le cas le plus
-    /// courant, on relance `claude` dans l'onglet qu'on vient de lire.
+    /// `waiting` reste `waiting`, même si son processus est bien là. Sur la ligne d'un
+    /// agent fini, en revanche, un agent qui démarre reprend l'onglet — c'est le cas le
+    /// plus courant, on relance `claude` dans l'onglet qu'on vient de lire.
     fn started(&mut self, now: Instant) -> Option<AgentState> {
         match self.state {
             AgentState::Working | AgentState::Waiting => None,
@@ -197,8 +197,8 @@ impl AgentMachine {
                 };
                 self.enter(ended, now)
             }
-            // Un shell sans agent qui perd un processus n'a rien à annoncer, et une ligne
-            // terminale a déjà son état.
+            // Un shell sans agent qui perd un processus n'a rien à annoncer, et la ligne
+            // d'un agent déjà fini a son état.
             _ => None,
         }
     }
@@ -208,9 +208,9 @@ impl AgentMachine {
             return None;
         }
         self.state = state;
-        // Une ligne terminale obtenue pendant que l'utilisateur regarde a été vue : son
-        // compte à rebours part tout de suite. Sinon il attend le focus.
-        self.seen_since = (is_terminal(state) && self.window_focused).then_some(now);
+        // La ligne d'un agent fini obtenue pendant que l'utilisateur regarde a été vue :
+        // son compte à rebours part tout de suite. Sinon il attend le focus.
+        self.seen_since = (has_finished(state) && self.window_focused).then_some(now);
         Some(state)
     }
 }
@@ -229,7 +229,7 @@ fn state_of(declared: Declared) -> AgentState {
 ///
 /// Ce sont les seuls qui s'effacent d'eux-mêmes : ils désignent une ligne à lire, pas un
 /// travail en cours.
-fn is_terminal(state: AgentState) -> bool {
+fn has_finished(state: AgentState) -> bool {
     matches!(state, AgentState::Done | AgentState::Error)
 }
 
