@@ -1,4 +1,4 @@
-import type { ToolDeclaration, ToolDraft } from "./contract";
+import type { ToolDeclaration, ToolDraft, Verification } from "./contract";
 
 /**
  * Les règles de la liste d'outils : ce qu'une ligne dit, ce que l'en-tête compte, et ce
@@ -34,6 +34,15 @@ export interface ToolHeading {
     badge: string | null;
     /** Le dossier de configuration, ou ce que veut dire son absence. */
     config: string;
+    /**
+     * Ce que le champ de chemin contient réellement — vide quand l'entrée s'en remet à
+     * l'adaptateur.
+     *
+     * Distinct de [`ToolHeading.config`] depuis que le champ est modifiable : ce qu'on
+     * **lit** (`adapter default`) et ce qu'on **modifie** (rien) ne sont pas la même
+     * chaîne, et écrire la première dans le champ ferait d'une explication un chemin.
+     */
+    path: string;
 }
 
 /** Ce qu'on affiche d'une entrée, sans que la vue ait à connaître les `null`. */
@@ -44,17 +53,25 @@ export function describeTool(tool: ToolDeclaration): ToolHeading {
         // Le dossier absent n'est pas un dossier vide : c'est celui de l'adaptateur, que
         // l'adaptateur est seul à connaître. Le dire est plus honnête qu'un champ vide.
         config: tool.config ?? "adapter default",
+        path: tool.config ?? "",
     };
 }
 
 /**
- * Le compteur de l'en-tête de section — `3 declared · 0 verified`, ou `none`.
+ * Le compteur de l'en-tête de section — `3 declared · 0 verified`, `3 declared · 1 invalid`,
+ * ou `none`.
  *
- * Les deux formes sont normatives (maquette §3.9 pour `none`). `none` n'est pas
- * `0 declared` : l'état vide se dit d'un mot, parce qu'il n'y a rien à compter.
+ * Les trois formes sont normatives (maquette §3.9 pour `none`, §3.6 pour le décompte des
+ * invalides). `none` n'est pas `0 declared` : l'état vide se dit d'un mot, parce qu'il n'y
+ * a rien à compter.
+ *
+ * **Un problème l'emporte sur un décompte** : tant qu'une entrée est invalide, c'est elle
+ * que l'en-tête annonce. Compter les vérifiées à côté ferait chercher lesquelles manquent.
  */
 export function describeToolCount(tools: readonly ToolDeclaration[]): string {
     if (tools.length === 0) return "none";
+    const invalid = tools.filter((tool) => tool.verification.state === "invalid").length;
+    if (invalid > 0) return `${tools.length} declared · ${invalid} invalid`;
     const verified = tools.filter((tool) => tool.verified).length;
     return `${tools.length} declared · ${verified} verified`;
 }
@@ -82,17 +99,25 @@ export interface AddAction {
  * une saisie qu'on vient de corriger. Un refus du backend, lui, n'éteint pas le bouton :
  * réessayer est exactement ce qu'on veut pouvoir faire.
  *
- * Trois conditions bloquantes aujourd'hui, et une quatrième viendra : la maquette veut
- * `add` éteint **tant que les quatre tests n'ont pas répondu** (§3.8), et ces tests sont
- * l'issue #15. C'est ici qu'elle se branchera, à côté des autres — pas dans la vue, qui
- * n'est pas sous test.
+ * **La quatrième condition est la patience**, et pas un jugement : la maquette veut `add`
+ * éteint tant que les quatre tests n'ont pas **répondu** (§3.8) — pas tant qu'ils n'ont pas
+ * réussi. Une entrée invalide se déclare : la planche `3e` en montre justement une dans la
+ * liste, avec sa correction à portée. Ash n'empêche pas de déclarer, il refuse d'écrire —
+ * et ce refus-là est calculé en Rust, transporté par `verification.allowsHooks`, et jamais
+ * rejoué ici.
+ *
+ * C'est aussi pourquoi cette condition ne se double pas d'une règle dans le backend :
+ * savoir si l'écran a vu la réponse des tests est une affaire d'écran. Ce que le backend
+ * garantit, lui, est qu'une entrée déclarée porte **toujours** une vérification, et que
+ * `verified` n'est jamais vrai pour une entrée invalide.
  */
 export function describeAddAction(
     draft: ToolDraft,
     declared: readonly ToolDeclaration[],
     failure: string | null,
+    verification: Verification | null,
 ): AddAction {
-    const blocked = blockedReason(draft, declared);
+    const blocked = blockedReason(draft, declared, verification);
     return {
         reason: blocked ?? failure ?? "hooks install after adding, once the four tests pass",
         enabled: blocked === null,
@@ -100,7 +125,11 @@ export function describeAddAction(
 }
 
 /** Pourquoi l'ajout est refusé sans même appeler le backend, ou `null` s'il ne l'est pas. */
-function blockedReason(draft: ToolDraft, declared: readonly ToolDeclaration[]): string | null {
+function blockedReason(
+    draft: ToolDraft,
+    declared: readonly ToolDeclaration[],
+    verification: Verification | null,
+): string | null {
     const command = draft.command.trim();
     if (command === "") return "name the command first";
     // Les mêmes deux refus que le backend, et pour la même raison : un `match` est comparé
@@ -108,7 +137,38 @@ function blockedReason(draft: ToolDraft, declared: readonly ToolDeclaration[]): 
     // même processus.
     if (command.includes("/") || /\s/.test(command)) return `${command} is not a command name`;
     if (declared.some((tool) => tool.command === command)) return `${command} is already declared`;
+    // La patience : les tests n'ont pas fini de parler. Le bouton reste à sa place, éteint,
+    // et la phrase à gauche dit ce qu'on attend.
+    if (verification === null || verification.state === "unverified") {
+        return "waiting on the four tests";
+    }
+    if (verification.state === "verifying") return "waiting on test 4 of 4";
     return null;
+}
+
+/**
+ * Si les hooks peuvent être écrits sur cette entrée, et sinon pourquoi.
+ *
+ * **La règle n'est pas ici** : `allowsHooks` est calculé par la séquence en Rust, qui seule
+ * a lu le dossier. Ce que cette fonction fait est de lui donner sa **phrase**, celle qui
+ * reste à gauche du bouton éteint — « le masquer ferait croire que les hooks n'existent pas
+ * pour cet outil ».
+ *
+ * Elle est ici, et pas dans la vue, parce que la précédence des raisons en est une : une
+ * entrée invalide et une entrée jamais vérifiée sont éteintes toutes les deux, et ne disent
+ * pas la même chose.
+ */
+export function describeHooksAvailability(verification: Verification): AddAction {
+    if (verification.allowsHooks) {
+        return { reason: "", enabled: true };
+    }
+    return {
+        reason:
+            verification.state === "invalid"
+                ? "unavailable until the path is verified"
+                : "install unavailable",
+        enabled: false,
+    };
 }
 
 /**

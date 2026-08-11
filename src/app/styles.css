@@ -73,6 +73,29 @@
     --ash-fg-subtle: #66696f;
     --ash-fg-icon: #94979d;
 
+    /* La vérification des quatre tests (réglages §3). Deux familles :
+     *
+     * — les **bordures teintées par état** : c'est la façon dont un écran dit `valid` ou
+     *   `invalid` sans compter sur du texte coloré. Une carte en défaut change sa bordure,
+     *   et son champ de chemin la reprend en plus marqué ;
+     * — les **fonds des pastilles de test**. Leurs alphas sont mesurés, pas décoratifs :
+     *   ils tiennent le contraste du chiffre sur son fond. Ne pas les arrondir.
+     *
+     * `--ash-fg-disabled` est volontairement bas : une pastille qu'un échec antérieur a
+     * empêché de se lancer doit se lire « on n'a pas essayé », pas « ça a raté ». */
+    --ash-fg-disabled: #c2c4c7;
+    --ash-bg-inset: #f2f2f0;
+    --ash-done-border: #cfdcd4;
+    --ash-error-border: #e3c9c6;
+    --ash-error-border-strong: #d3a9a4;
+    --ash-error-rule: #e6d2cf;
+    --ash-error-ring: rgb(176 58 48 / 14%);
+    --ash-tile-passed-bg: rgb(47 125 92 / 12%);
+    --ash-tile-running-bg: rgb(42 126 168 / 14%);
+    --ash-tile-warned-bg: rgb(154 107 16 / 14%);
+    --ash-tile-failed-bg: rgb(176 58 48 / 13%);
+    --ash-tile-idle-bg: #f2f2f0;
+
     /* Le terminal. Son fond et son texte sont ceux de la fenêtre (`--ash-bg`, `--ash-fg`) ;
      * ce qui suit est ce que xterm.js peint et que le CSS ne peut pas atteindre.
      *
@@ -146,6 +169,29 @@
     --ash-control-border: #2c2f36;
     --ash-fg-subtle: #7c8089;
     --ash-fg-icon: #6b6f78;
+
+    /* La vérification des quatre tests (réglages §3). Deux familles :
+     *
+     * — les **bordures teintées par état** : c'est la façon dont un écran dit `valid` ou
+     *   `invalid` sans compter sur du texte coloré. Une carte en défaut change sa bordure,
+     *   et son champ de chemin la reprend en plus marqué ;
+     * — les **fonds des pastilles de test**. Leurs alphas sont mesurés, pas décoratifs :
+     *   ils tiennent le contraste du chiffre sur son fond. Ne pas les arrondir.
+     *
+     * `--ash-fg-disabled` est volontairement bas : une pastille qu'un échec antérieur a
+     * empêché de se lancer doit se lire « on n'a pas essayé », pas « ça a raté ». */
+    --ash-fg-disabled: #3f434a;
+    --ash-bg-inset: #141517;
+    --ash-done-border: #2c3a33;
+    --ash-error-border: #4a2b2b;
+    --ash-error-border-strong: #6b3535;
+    --ash-error-rule: #2a1d1d;
+    --ash-error-ring: rgb(207 79 79 / 18%);
+    --ash-tile-passed-bg: rgb(99 185 149 / 14%);
+    --ash-tile-running-bg: rgb(111 178 210 / 16%);
+    --ash-tile-warned-bg: rgb(217 164 65 / 16%);
+    --ash-tile-failed-bg: rgb(207 79 79 / 16%);
+    --ash-tile-idle-bg: #16171a;
 
     --ash-term-cursor: #ff8a5c;
     --ash-term-cursor-text: #0c0d0f;
@@ -257,12 +303,71 @@ textarea {
     color: var(--ash-accent);
 }
 
+/* Les cinq états de vérification des réglages (§3.4), peints ici pour la même raison que
+ * les glyphes d'agent : la couleur d'un état est du thème, pas de la mise en forme d'une
+ * feature. Ils réutilisent trois teintes existantes — le bleu qui dit « ça tourne » dans la
+ * sidebar dit « ça vérifie » ici — et n'en introduisent aucune : `--ash-warning` était le
+ * seul manque, et les réglages l'ont déjà apporté.
+ *
+ * La **forme** porte l'état à elle seule : cercle vide, arc, coche, triangle, croix. La
+ * couleur ne fait que la doubler. */
+.settings-verify-glyph.is-unverified {
+    color: var(--ash-fg-icon);
+}
+.settings-verify-glyph.is-verifying {
+    color: var(--ash-working);
+}
+.settings-verify-glyph.is-valid {
+    color: var(--ash-done);
+}
+.settings-verify-glyph.is-caveat {
+    color: var(--ash-warning);
+}
+.settings-verify-glyph.is-invalid {
+    color: var(--ash-error);
+}
+
+/* Les six états d'une pastille de test. `pending` et `skipped` partagent leur fond et pas
+ * leur chiffre : le second est plus éteint, parce que son message est « ce test n'a pas été
+ * exécuté » et non « il attend ». C'est volontairement bas en contraste. */
+.settings-tile.is-pending {
+    background: var(--ash-tile-idle-bg);
+    color: var(--ash-fg-faint);
+}
+.settings-tile.is-skipped {
+    background: var(--ash-tile-idle-bg);
+    color: var(--ash-fg-disabled);
+}
+.settings-tile.is-running {
+    background: var(--ash-tile-running-bg);
+    color: var(--ash-working);
+    animation: ash-breathe 1.4s ease-in-out infinite;
+}
+.settings-tile.is-passed {
+    background: var(--ash-tile-passed-bg);
+    color: var(--ash-done);
+}
+.settings-tile.is-warned {
+    background: var(--ash-tile-warned-bg);
+    color: var(--ash-warning);
+}
+.settings-tile.is-failed {
+    background: var(--ash-tile-failed-bg);
+    color: var(--ash-error);
+}
+
 /* Le mouvement seul distingue `working` de `done` — rotation continue, pas clignotement. */
-.ash-glyph.is-spinning {
+.ash-glyph.is-spinning,
+.settings-verify-glyph.is-spinning {
     animation: ash-spin 0.9s linear infinite;
 }
 
-/* Respiration, pas clignotement : c'est ce que le design demande explicitement. */
+/* Respiration, pas clignotement : c'est ce que le design demande explicitement.
+ *
+ * **La durée est au point d'emploi, pas dans la keyframe** : `waiting` respire en 1,9 s,
+ * la pastille du test en cours en 1,4 s. Ce sont deux phénomènes différents — une attente
+ * humaine contre une opération en cours — et 1,4 s se lit comme « ça travaille » là où
+ * 1,9 s se lit comme « ça respire ». Aligner les deux ferait perdre une des deux lectures. */
 .ash-glyph.is-waiting {
     animation: ash-breathe 1.9s ease-in-out infinite;
 }
@@ -290,7 +395,9 @@ textarea {
  * les glyphes restent, seul le mouvement s'arrête. */
 @media (prefers-reduced-motion: reduce) {
     .ash-glyph.is-spinning,
-    .ash-glyph.is-waiting {
+    .ash-glyph.is-waiting,
+    .settings-verify-glyph.is-spinning,
+    .settings-tile.is-running {
         animation: none;
     }
 }
