@@ -13,9 +13,8 @@
     min-height: 0;
     background: var(--ash-bg-sidebar);
     border-right: 1px solid var(--ash-border-strong);
-    /* La barre de titre est en overlay : sans cette réserve, l'en-tête passerait sous les
-     * boutons de fenêtre. */
-    padding-top: 30px;
+    /* Aucune réserve en haut : la bande de titre d'`app/` dégage les pastilles pour toute
+     * la largeur de la fenêtre, et la colonne commence sous elle. */
     overflow: hidden;
     transition: width 90ms;
 }
