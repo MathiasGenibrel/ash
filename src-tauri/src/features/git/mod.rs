@@ -12,6 +12,15 @@
 //! dépôt, derrière le trait [`FileSystem`]. Un `git status` par cycle de sonde coûterait
 //! un `fork` par onglet trois fois par seconde ; c'est ce que l'ADR-0011 exclut, et ce que
 //! la surveillance remplace.
+//!
+//! **Les effets système de la feature**, chacun avec ses deux adaptateurs — celui du
+//! système, et celui des tests :
+//!
+//! | Port | Système | Tests |
+//! |---|---|---|
+//! | `FileSystem` (`ports.rs`) | `system_fs.rs` | `fake_fs.rs`, `fakes.rs` |
+//! | `FileWatcher` (`watcher.rs`) | `watcher.rs` | `fakes.rs` |
+//! | `Clock`, `Scheduler` (`time.rs`) | `time.rs` | `fakes.rs` |
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.

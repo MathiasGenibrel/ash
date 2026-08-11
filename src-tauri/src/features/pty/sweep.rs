@@ -60,7 +60,7 @@ impl Shutdown {
 /// Elle s'arrête à l'arrêt demandé, et si le registre a disparu — la boucle observe les
 /// onglets, elle ne doit jamais être ce qui les maintient en vie. D'où le [`Weak`].
 ///
-/// `settle` reçoit, à **chaque** passe, les racines de worktree où vit un onglet. Deux
+/// `inhabited` reçoit, à **chaque** passe, les racines de worktree où vit un onglet. Deux
 /// raisons pour que ce ne soit pas `announce` qui s'en charge : la fermeture du dernier
 /// onglet d'un worktree ne produit aucun changement à annoncer — et c'est pourtant le
 /// moment où il faut cesser de le surveiller — et la question ne coûte rien, la réponse
@@ -70,7 +70,7 @@ pub fn run(
     ticker: &dyn Ticker,
     shutdown: &Shutdown,
     announce: &dyn Fn(Vec<TabInfo>),
-    settle: &dyn Fn(Vec<String>),
+    inhabited: &dyn Fn(Vec<String>),
 ) {
     while !shutdown.asked() {
         let Some(registry) = registry.upgrade() else {
@@ -89,7 +89,7 @@ pub fn run(
         if !changes.is_empty() {
             announce(changes);
         }
-        settle(roots);
+        inhabited(roots);
 
         ticker.wait(PROBE_PERIOD);
     }
@@ -199,7 +199,7 @@ mod tests {
             .unwrap();
         let shutdown = Arc::new(Shutdown::default());
         let ticker = FakeTicker::stopping_after(2, &shutdown);
-        let settled: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+        let inhabited: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
 
         // When — deux passes, sans le moindre `cd`
         run(
@@ -207,13 +207,13 @@ mod tests {
             &ticker,
             &shutdown,
             &|_| {},
-            &|roots| settled.lock().unwrap().push(roots),
+            &|roots| inhabited.lock().unwrap().push(roots),
         );
 
         // Then — chaque passe dit où vivent les onglets, changement ou pas
-        let settled = settled.lock().unwrap().clone();
-        assert_eq!(settled.len(), 2);
-        assert_eq!(settled[0], vec!["/dev/ash".to_owned()]);
+        let inhabited = inhabited.lock().unwrap().clone();
+        assert_eq!(inhabited.len(), 2);
+        assert_eq!(inhabited[0], vec!["/dev/ash".to_owned()]);
     }
 
     #[test]

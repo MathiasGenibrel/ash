@@ -11,7 +11,7 @@
 //! Ce module détient l'état ; le frontend le rend
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -41,6 +41,25 @@ struct Watched {
     _handle: Box<dyn WatchHandle>,
 }
 
+/// Ce qu'on fait de chaque racine que la boucle de sonde nomme : la surveiller, ou y
+/// avoir renoncé.
+///
+/// Les deux ensembles vivent sous le même verrou parce qu'ils répondent à la même
+/// question, et qu'une racine passe de l'un à l'autre.
+#[derive(Default)]
+struct Followed {
+    /// Trié : deux passes successives comparent leurs clés, et l'ordre rend la
+    /// comparaison exacte sans rien allouer de plus.
+    watched: BTreeMap<PathBuf, Watched>,
+    /// Les racines qu'on n'a **pas** su surveiller : un onglet ouvert hors de tout dépôt —
+    /// un cas nominal — ou un abonnement que le système a refusé.
+    ///
+    /// Sans elles, `follow`, appelée à chaque passe de la boucle de sonde, retenterait la
+    /// résolution trois fois par seconde et pour toute la session : le sondage que la
+    /// spec §5.3 écarte, revenu par la porte de derrière.
+    declined: BTreeSet<PathBuf>,
+}
+
 /// La surveillance, pour tous les worktrees où vit au moins un onglet.
 pub struct MetadataWatch {
     fs: Arc<dyn FileSystem>,
@@ -49,9 +68,7 @@ pub struct MetadataWatch {
     scheduler: Arc<dyn Scheduler>,
     interval: Duration,
     announce: Announce,
-    /// Trié : deux passes successives comparent leurs clés, et l'ordre rend la
-    /// comparaison exacte sans rien allouer de plus.
-    watched: Mutex<BTreeMap<PathBuf, Watched>>,
+    followed: Mutex<Followed>,
 }
 
 impl MetadataWatch {
@@ -70,7 +87,7 @@ impl MetadataWatch {
             scheduler,
             interval,
             announce,
-            watched: Mutex::new(BTreeMap::new()),
+            followed: Mutex::new(Followed::default()),
         })
     }
 
@@ -78,23 +95,25 @@ impl MetadataWatch {
     ///
     /// C'est le **rattachement** de la spec §5.3 : un worktree qui apparaît est lu tout de
     /// suite, un worktree que plus aucun onglet n'habite est relâché — et son abonnement
-    /// avec lui. Appelée souvent, elle ne touche au disque **que** si l'ensemble a changé.
+    /// avec lui. Appelée trois fois par seconde par la boucle de sonde, elle ne touche au
+    /// disque **que** pour une racine qu'elle n'a encore ni suivie ni écartée.
     pub fn follow(self: &Arc<Self>, roots: &[String]) {
-        let wanted: Vec<PathBuf> = roots.iter().map(PathBuf::from).collect();
+        let wanted: BTreeSet<PathBuf> = roots.iter().map(PathBuf::from).collect();
 
-        let arriving = {
-            let Ok(mut watched) = self.watched.lock() else {
+        let arriving: Vec<PathBuf> = {
+            let Ok(mut followed) = self.followed.lock() else {
                 return;
             };
-            if watched.len() == wanted.len() && wanted.iter().all(|root| watched.contains_key(root))
-            {
-                return;
-            }
-            watched.retain(|root, _| wanted.contains(root));
+            followed.watched.retain(|root, _| wanted.contains(root));
+            // Une racine où plus aucun onglet ne vit est oubliée, y compris quand on avait
+            // renoncé à la surveiller : la rouvrir mérite un nouvel essai.
+            followed.declined.retain(|root| wanted.contains(root));
             wanted
                 .into_iter()
-                .filter(|root| !watched.contains_key(root))
-                .collect::<Vec<_>>()
+                .filter(|root| {
+                    !followed.watched.contains_key(root) && !followed.declined.contains(root)
+                })
+                .collect()
         };
 
         for root in arriving {
@@ -109,8 +128,14 @@ impl MetadataWatch {
     /// bien été reçus, mais la limitation les a peut-être différés ; passer par elle ici
     /// aussi garantit qu'aucun focus répété ne relit plus d'une fois par fenêtre.
     pub fn on_focus(self: &Arc<Self>) {
-        let roots: Vec<PathBuf> = match self.watched.lock() {
-            Ok(watched) => watched.keys().cloned().collect(),
+        let roots: Vec<PathBuf> = match self.followed.lock() {
+            Ok(mut followed) => {
+                // Le focus est aussi le moment de reconsidérer ce qu'on avait écarté : un
+                // `git init` a pu avoir lieu pendant qu'Ash était derrière une autre
+                // fenêtre. La prochaine passe de la boucle de sonde retentera.
+                followed.declined.clear();
+                followed.watched.keys().cloned().collect()
+            }
             Err(_) => return,
         };
         for root in roots {
@@ -124,8 +149,8 @@ impl MetadataWatch {
     /// worktree qui n'est pas encore observé est lu une fois, sans être abonné : c'est au
     /// rattachement d'un onglet de décider ce qui mérite un observateur, pas à un affichage.
     pub fn metadata(&self, root: &Path) -> Option<WorktreeMetadata> {
-        if let Ok(watched) = self.watched.lock() {
-            if let Some(entry) = watched.get(root) {
+        if let Ok(followed) = self.followed.lock() {
+            if let Some(entry) = followed.watched.get(root) {
                 return entry.last.clone();
             }
         }
@@ -138,13 +163,15 @@ impl MetadataWatch {
     /// Sans ça, l'arrêt ne serait qu'un effet de bord de la fin du processus, c'est-à-dire
     /// rien du tout le jour où la même bibliothèque tournera sous le démon `ashd`.
     pub fn stop(&self) {
-        if let Ok(mut watched) = self.watched.lock() {
-            watched.clear();
+        if let Ok(mut followed) = self.followed.lock() {
+            followed.watched.clear();
+            followed.declined.clear();
         }
     }
 
     fn start_watching(self: &Arc<Self>, root: PathBuf) {
         let Some((git_dir, common_dir)) = self.dirs_of(&root) else {
+            self.decline(root);
             return;
         };
         let targets = WatchTargets::for_worktree(&git_dir, &common_dir);
@@ -161,14 +188,15 @@ impl MetadataWatch {
         });
 
         let Ok(handle) = self.watcher.watch(targets.roots(), on_change) else {
+            self.decline(root);
             return;
         };
 
         {
-            let Ok(mut watched) = self.watched.lock() else {
+            let Ok(mut followed) = self.followed.lock() else {
                 return;
             };
-            watched.insert(
+            followed.watched.insert(
                 root.clone(),
                 Watched {
                     git_dir,
@@ -184,9 +212,18 @@ impl MetadataWatch {
         self.request(&root);
     }
 
+    /// Renonce à surveiller cette racine — jusqu'au prochain focus, ou jusqu'à ce que plus
+    /// aucun onglet n'y vive.
+    fn decline(&self, root: PathBuf) {
+        if let Ok(mut followed) = self.followed.lock() {
+            followed.declined.insert(root);
+        }
+    }
+
     fn on_change(self: &Arc<Self>, root: &Path, changed: &Path) {
-        let concerns = match self.watched.lock() {
-            Ok(watched) => watched
+        let concerns = match self.followed.lock() {
+            Ok(followed) => followed
+                .watched
                 .get(root)
                 .is_some_and(|entry| entry.targets.concerns(changed)),
             Err(_) => false,
@@ -199,10 +236,10 @@ impl MetadataWatch {
     /// Une demande de relecture, passée par la limitation de débit.
     fn request(self: &Arc<Self>, root: &Path) {
         let decision = {
-            let Ok(mut watched) = self.watched.lock() else {
+            let Ok(mut followed) = self.followed.lock() else {
                 return;
             };
-            let Some(entry) = watched.get_mut(root) else {
+            let Some(entry) = followed.watched.get_mut(root) else {
                 return;
             };
             entry.throttle.request(self.clock.now())
@@ -223,10 +260,11 @@ impl MetadataWatch {
     /// Le rafraîchissement différé arrive à échéance.
     fn deferred(self: &Arc<Self>, root: &Path) {
         let due = {
-            let Ok(mut watched) = self.watched.lock() else {
+            let Ok(mut followed) = self.followed.lock() else {
                 return;
             };
-            watched
+            followed
+                .watched
                 .get_mut(root)
                 .is_some_and(|entry| entry.throttle.due(self.clock.now()))
         };
@@ -250,10 +288,10 @@ impl MetadataWatch {
         };
 
         let changed = {
-            let Ok(mut watched) = self.watched.lock() else {
+            let Ok(mut followed) = self.followed.lock() else {
                 return;
             };
-            let Some(entry) = watched.get_mut(root) else {
+            let Some(entry) = followed.watched.get_mut(root) else {
                 return;
             };
             if entry.last.as_ref() == Some(&metadata) {
@@ -270,22 +308,18 @@ impl MetadataWatch {
     }
 
     fn dirs_of_watched(&self, root: &Path) -> Option<(PathBuf, PathBuf)> {
-        let watched = self.watched.lock().ok()?;
-        let entry = watched.get(root)?;
+        let followed = self.followed.lock().ok()?;
+        let entry = followed.watched.get(root)?;
         Some((entry.git_dir.clone(), entry.common_dir.clone()))
     }
 
     /// Les deux dossiers git d'un worktree : le sien, et celui du dépôt commun.
     ///
-    /// La résolution est celle de la feature ; rien n'est re-parsé ici. Un worktree hors
-    /// de tout dépôt n'a pas de dossier git, et n'a donc rien à surveiller.
+    /// La résolution est celle de la feature, et la règle qui répartit les fichiers entre
+    /// les deux dossiers appartient à [`WorktreeLocation`] : rien n'est re-décidé ici. Un
+    /// worktree hors de tout dépôt n'a pas de dossier git, et n'a donc rien à surveiller.
     fn dirs_of(&self, root: &Path) -> Option<(PathBuf, PathBuf)> {
-        let located = resolve_worktree(self.fs.as_ref(), root).ok()?;
-        let git_dir = located.worktree.git_dir?;
-        let common_dir = located
-            .repo
-            .map_or_else(|| git_dir.clone(), |repo| repo.git_dir);
-        Some((git_dir, common_dir))
+        resolve_worktree(self.fs.as_ref(), root).ok()?.git_dirs()
     }
 }
 
@@ -308,18 +342,14 @@ mod tests {
 
     impl WatchBuilder {
         fn new() -> Self {
-            Self {
-                tree: WatchedTree::with_repos(&["/dev/ash"]),
-                time: ControlledTime::new(),
-                announces: RecordedAnnounces::new(),
-            }
+            Self::with_repos(&["/dev/ash"])
         }
 
         fn with_repos(repos: &[&str]) -> Self {
-            let builder = Self::new();
             Self {
                 tree: WatchedTree::with_repos(repos),
-                ..builder
+                time: ControlledTime::new(),
+                announces: RecordedAnnounces::new(),
             }
         }
 
@@ -332,13 +362,6 @@ mod tests {
                 Duration::from_secs(5),
                 self.announces.announce(),
             )
-        }
-    }
-
-    fn branch_of(metadata: &WorktreeMetadata) -> String {
-        match &metadata.head {
-            Head::Branch { name } => name.clone(),
-            Head::Detached { commit } => commit.clone(),
         }
     }
 
@@ -498,6 +521,53 @@ mod tests {
     }
 
     #[test]
+    fn given_a_tab_outside_any_repository_when_the_probe_loop_keeps_naming_it_then_it_is_not_resolved_again_at_every_pass(
+    ) {
+        // Given — `follow` est appelée trois fois par seconde par la boucle de sonde
+        // d'ADR-0005. Une racine qu'on ne sait pas surveiller ne doit pas y être réexaminée
+        // à chaque passe : ce serait le sondage que la spec §5.3 écarte, et le critère
+        // « au repos, la consommation CPU reste négligeable » avec lui.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        let roots = vec!["/dev/notes".to_owned()];
+        watch.follow(&roots);
+        let lookups_after_the_first_pass = world.tree.lookups();
+
+        // When — cent passes de la boucle
+        for _ in 0..100 {
+            watch.follow(&roots);
+        }
+
+        // Then — pas une question de plus au disque
+        assert_eq!(world.tree.lookups(), lookups_after_the_first_pass);
+    }
+
+    #[test]
+    fn given_a_directory_that_became_a_repository_when_the_window_regains_focus_then_it_starts_being_watched(
+    ) {
+        // Given — un `git init` dans le dossier d'un onglet déjà ouvert. Écarter une racine
+        // pour toujours transformerait l'économie du test précédent en angle mort.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        let roots = vec!["/dev/notes".to_owned()];
+        watch.follow(&roots);
+        world
+            .tree
+            .write("/dev/notes/.git/HEAD", "ref: refs/heads/main\n");
+
+        // When
+        watch.on_focus();
+        watch.follow(&roots);
+
+        // Then
+        assert_eq!(world.tree.subscriptions(), 1);
+        assert_eq!(
+            world.announces.branches(),
+            vec![("/dev/notes".to_owned(), "main".to_owned())]
+        );
+    }
+
+    #[test]
     fn given_a_followed_worktree_when_the_frontend_asks_for_its_state_then_it_gets_the_last_one_read(
     ) {
         // Given — le frontend rend un état, il ne le détient pas (ADR-0009) : ce qu'il
@@ -510,7 +580,12 @@ mod tests {
         let metadata = watch.metadata(Path::new("/dev/ash"));
 
         // Then
-        assert_eq!(metadata.as_ref().map(branch_of), Some("main".to_owned()));
+        assert_eq!(
+            metadata.map(|metadata| metadata.head),
+            Some(Head::Branch {
+                name: "main".to_owned()
+            })
+        );
     }
 
     #[test]

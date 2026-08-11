@@ -139,14 +139,14 @@ pub fn pty_close(
 ///
 /// Un seul thread pour tous les onglets, et seuls les changements traversent la frontière.
 ///
-/// `settle` reçoit à chaque passe les racines de worktree habitées par un onglet. C'est le
-/// **rattachement** de la spec §5.3 : le composition root s'en sert pour aligner la
+/// `inhabited` reçoit à chaque passe les racines de worktree habitées par un onglet. C'est
+/// le **rattachement** de la spec §5.3 : le composition root s'en sert pour aligner la
 /// surveillance git sur les worktrees réellement ouverts. La feature `pty` ne connaît pas
 /// `git` — elle passe une liste de chaînes, et ne sait pas qui la lit.
 pub fn watch_tabs<R: Runtime>(
     app: AppHandle<R>,
     registry: &Arc<PtyRegistry>,
-    settle: impl Fn(Vec<String>) + Send + 'static,
+    inhabited: impl Fn(Vec<String>) + Send + 'static,
 ) -> Arc<Shutdown> {
     let shutdown = Arc::new(Shutdown::default());
 
@@ -162,7 +162,7 @@ pub fn watch_tabs<R: Runtime>(
                 // à rattraper, et surtout pas de panique dans un thread de fond.
                 let _ = app.emit(TAB_CHANGED_EVENT, changes);
             },
-            &settle,
+            &inhabited,
         );
     });
 

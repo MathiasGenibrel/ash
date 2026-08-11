@@ -102,14 +102,9 @@ fn resolved(cwd: &Path) -> WorktreeLocation {
 /// Les métadonnées d'un worktree, lues comme la surveillance les lit : on résout d'abord,
 /// on lit ensuite dans les deux dossiers que la résolution a rendus.
 fn metadata_of(worktree_root: &Path) -> WorktreeMetadata {
-    let location = resolved(worktree_root);
-    let git_dir = location
-        .worktree
-        .git_dir
+    let (git_dir, common_dir) = resolved(worktree_root)
+        .git_dirs()
         .expect("un worktree dans un dépôt a un dossier git");
-    let common_dir = location
-        .repo
-        .map_or_else(|| git_dir.clone(), |repo| repo.git_dir);
     read_metadata(&SystemFileSystem, &git_dir, &common_dir).expect("le dépôt doit être lisible")
 }
 

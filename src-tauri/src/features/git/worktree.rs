@@ -66,6 +66,27 @@ pub struct WorktreeLocation {
     pub repo: Option<Repo>,
 }
 
+impl WorktreeLocation {
+    /// Les deux dossiers git d'un worktree : le **sien** — `HEAD`, `MERGE_HEAD`, les
+    /// dossiers de rebase — et le dossier **commun**, où vivent les refs partagées avec ses
+    /// frères. Ils sont confondus dans un dépôt sans worktree lié.
+    ///
+    /// La règle est ici plutôt que chez chaque lecteur : c'est elle qui fait que deux
+    /// worktrees du même dépôt peuvent avoir « un rebase en cours dans l'un et rien dans
+    /// l'autre » ([ADR-0012](../../../../docs/adr/0012-worktree-unite-de-travail.md)), et
+    /// la répartir en deux endroits serait la laisser diverger.
+    ///
+    /// `None` hors de tout dépôt : il n'y a alors aucun fichier de contrôle à lire.
+    pub fn git_dirs(&self) -> Option<(PathBuf, PathBuf)> {
+        let git_dir = self.worktree.git_dir.clone()?;
+        let common_dir = self
+            .repo
+            .as_ref()
+            .map_or_else(|| git_dir.clone(), |repo| repo.git_dir.clone());
+        Some((git_dir, common_dir))
+    }
+}
+
 /// Résout un `cwd` vers son worktree et, s'il en forme un groupe, son dépôt commun.
 ///
 /// La marche est en trois temps :

@@ -28,6 +28,7 @@ use super::watcher::{FileWatcher, OnChange, WatchHandle};
 pub struct WatchedTree {
     tree: Mutex<FakeFs>,
     reads: AtomicUsize,
+    lookups: AtomicUsize,
     subscriptions: Arc<Mutex<Vec<Subscription>>>,
     next_id: AtomicUsize,
 }
@@ -66,6 +67,7 @@ impl WatchedTree {
         Arc::new(Self {
             tree: Mutex::new(tree),
             reads: AtomicUsize::new(0),
+            lookups: AtomicUsize::new(0),
             subscriptions: Arc::new(Mutex::new(Vec::new())),
             next_id: AtomicUsize::new(0),
         })
@@ -106,6 +108,15 @@ impl WatchedTree {
         self.reads.load(Ordering::Relaxed)
     }
 
+    /// Combien de questions posées au disque, lectures comprises.
+    ///
+    /// Une résolution de worktree ne lit pas forcément un fichier — elle interroge des
+    /// chemins. C'est par ce compteur-là qu'on voit une racine réexaminée à chaque passe
+    /// de la boucle de sonde, ce que [`Self::reads`] laisserait passer.
+    pub fn lookups(&self) -> usize {
+        self.lookups.load(Ordering::Relaxed)
+    }
+
     /// Combien d'abonnements vivants — un par worktree observé.
     pub fn subscriptions(&self) -> usize {
         self.subscriptions
@@ -135,23 +146,28 @@ fn covers(roots: &[WatchRoot], path: &Path) -> bool {
 
 impl FileSystem for WatchedTree {
     fn entry(&self, path: &Path) -> Option<Entry> {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
         self.with_tree(|tree| tree.entry(path), None)
     }
 
     fn read_to_string(&self, path: &Path) -> Result<String, String> {
         self.reads.fetch_add(1, Ordering::Relaxed);
+        self.lookups.fetch_add(1, Ordering::Relaxed);
         self.with_tree(|tree| tree.read_to_string(path), Err("verrou".to_owned()))
     }
 
     fn has_entries(&self, path: &Path) -> bool {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
         self.with_tree(|tree| tree.has_entries(path), false)
     }
 
     fn list_dir(&self, path: &Path) -> Vec<PathBuf> {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
         self.with_tree(|tree| tree.list_dir(path), Vec::new())
     }
 
     fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
         self.with_tree(|tree| tree.canonicalize(path), None)
     }
 }
