@@ -3,7 +3,8 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
-import type { TerminalSize, TerminalView } from "./ports";
+import type { TerminalSize, TerminalView, ThemeSignal, Unsubscribe } from "./ports";
+import { readTerminalTheme } from "./theme";
 
 /**
  * xterm.js, adapté au port `TerminalView`.
@@ -18,6 +19,7 @@ export class XtermView implements TerminalView {
     private readonly fit = new FitAddon();
     private readonly observer: ResizeObserver;
     private readonly pane: HTMLElement;
+    private readonly unfollowTheme: Unsubscribe;
 
     /**
      * Crée sa propre surface dans `parent`, et la retire en se libérant.
@@ -25,7 +27,7 @@ export class XtermView implements TerminalView {
      * C'est la vue qui possède son élément, et pas l'appelant : plusieurs onglets
      * partagent le même parent, et il faut bien que chacun sache retirer le sien.
      */
-    constructor(parent: HTMLElement) {
+    constructor(parent: HTMLElement, theme: ThemeSignal) {
         this.pane = document.createElement("div");
         this.pane.className = "terminal-pane";
         parent.append(this.pane);
@@ -33,12 +35,24 @@ export class XtermView implements TerminalView {
         this.term = new Terminal({
             fontFamily: '"JetBrains Mono", ui-monospace, monospace',
             fontSize: 13,
-            // Les couleurs complètes et le thème clair/sombre appartiennent à la tâche
-            // « ligne de statut et thème ». Ici, de quoi lire du texte.
-            theme: { background: "#16181d", foreground: "#d4d7dd" },
+            // La palette du document, résolue maintenant : xterm.js ne comprend pas les
+            // `var(--ash-…)`. Un onglet ouvert après une bascule naît donc déjà à la
+            // bonne palette, sans attendre le prochain changement de thème.
+            theme: readTerminalTheme(),
             scrollback: 10_000,
             allowProposedApi: true,
             macOptionIsMeta: true,
+        });
+
+        // Repeindre à chaud, et non recréer : `options.theme` remplace les couleurs et
+        // redessine, sans toucher au tampon — le contenu et le scrollback de l'onglet
+        // survivent à la bascule. Un onglet qui reconstruirait son terminal perdrait les
+        // deux, et son PTY continuerait d'écrire dans une surface morte.
+        //
+        // L'abonnement est repris à chaque vue plutôt que porté par l'atelier : c'est ici
+        // qu'est la ressource, donc ici qu'est sa libération (voir `dispose`).
+        this.unfollowTheme = theme.subscribe(() => {
+            this.term.options.theme = readTerminalTheme();
         });
 
         this.term.open(this.pane);
@@ -85,6 +99,7 @@ export class XtermView implements TerminalView {
     }
 
     dispose(): void {
+        this.unfollowTheme();
         this.observer.disconnect();
         this.term.dispose();
         this.pane.remove();

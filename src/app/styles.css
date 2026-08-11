@@ -49,6 +49,40 @@
     --ash-done: #2f7d5c;
     --ash-error: #b03a30;
     --ash-idle: #a9abaf;
+
+    /* Le terminal. Son fond et son texte sont ceux de la fenêtre (`--ash-bg`, `--ash-fg`) ;
+     * ce qui suit est ce que xterm.js peint et que le CSS ne peut pas atteindre.
+     *
+     * Ils vivent ici quand même, avec les autres : xterm.js ne comprend pas `var(--ash-…)`,
+     * et c'est `features/terminal/theme.ts` qui les résout par `getComputedStyle` avant de
+     * les lui passer. La table reste donc la seule définition, y compris pour lui.
+     *
+     * **Les seize couleurs ANSI sont ici, et pas laissées à xterm.js** : ses valeurs par
+     * défaut sont pensées pour un fond sombre, et un `claude` qui colore abondamment
+     * écrirait en jaune pâle sur du papier. Les six teintes tiennent 4,5:1 sur `--ash-bg`,
+     * leurs variantes vives 3:1 — `styles.test.ts` le mesure. `black` et `white` en sont
+     * exclus, et ne peuvent pas ne pas l'être : une palette ANSI place l'un et l'autre aux
+     * deux bouts de l'échelle, donc l'un des deux touche toujours le fond. */
+    --ash-term-cursor: #c8481f;
+    --ash-term-cursor-text: #fcfcfb;
+    --ash-term-selection: #6f72783d;
+    --ash-term-selection-idle: #6f72781f;
+    --ash-term-black: #24262a;
+    --ash-term-red: #b8281c;
+    --ash-term-green: #1c6f47;
+    --ash-term-yellow: #8a6100;
+    --ash-term-blue: #14539d;
+    --ash-term-magenta: #8a2ca6;
+    --ash-term-cyan: #0d6b78;
+    --ash-term-white: #b6b4ae;
+    --ash-term-bright-black: #6e7178;
+    --ash-term-bright-red: #d43a2a;
+    --ash-term-bright-green: #2a8f60;
+    --ash-term-bright-yellow: #a67900;
+    --ash-term-bright-blue: #2a72d4;
+    --ash-term-bright-magenta: #a742c4;
+    --ash-term-bright-cyan: #12879b;
+    --ash-term-bright-white: #d9d7d2;
 }
 
 :root[data-theme="dark"] {
@@ -78,6 +112,27 @@
     --ash-done: #63b995;
     --ash-error: #cf4f4f;
     --ash-idle: #565a62;
+
+    --ash-term-cursor: #ff8a5c;
+    --ash-term-cursor-text: #0c0d0f;
+    --ash-term-selection: #8b909947;
+    --ash-term-selection-idle: #8b90991f;
+    --ash-term-black: #3f434b;
+    --ash-term-red: #ef6a5e;
+    --ash-term-green: #63b995;
+    --ash-term-yellow: #d9b45c;
+    --ash-term-blue: #6fb2d2;
+    --ash-term-magenta: #c98ad6;
+    --ash-term-cyan: #63c2c9;
+    --ash-term-white: #d6d9de;
+    --ash-term-bright-black: #6b7078;
+    --ash-term-bright-red: #ff8577;
+    --ash-term-bright-green: #7fd0aa;
+    --ash-term-bright-yellow: #f0cd78;
+    --ash-term-bright-blue: #8ecbe8;
+    --ash-term-bright-magenta: #dfa6ea;
+    --ash-term-bright-cyan: #82dbe1;
+    --ash-term-bright-white: #f2f4f7;
 }
 
 :root {

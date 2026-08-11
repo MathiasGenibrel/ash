@@ -53,6 +53,24 @@ export interface TerminalView {
 /** De quoi fabriquer la surface d'un nouvel onglet, sans que la feature connaisse le DOM. */
 export type TerminalViewFactory = () => TerminalView;
 
+/**
+ * Ce que la feature attend de qui détient le thème — c'est-à-dire de `app/`.
+ *
+ * Elle n'a pas besoin de savoir **quelle** palette est en place : la table de tokens est
+ * déjà posée sur le document quand l'avis arrive, et il n'y a plus qu'à la relire. Ce qui
+ * lui manque, et qu'aucune règle CSS ne peut lui donner, c'est de savoir *quand* — xterm.js
+ * peint ses cellules lui-même.
+ *
+ * Un port, et pas une écoute directe : la feature n'a **aucune** raison de savoir que le
+ * thème vient d'un menu natif et de `matchMedia`. Un second détecteur ici — un
+ * `MutationObserver` sur `data-theme`, un second `matchMedia` — ferait deux vérités là où
+ * `app/theme.ts` en tient une.
+ */
+export interface ThemeSignal {
+    /** S'abonne aux changements de palette. Rend de quoi se désabonner. */
+    subscribe(listener: () => void): Unsubscribe;
+}
+
 /** Ce que la feature attend du backend. */
 export interface PtyBridge {
     /** `cwd` à `null` vaut `~` — le `Cmd+Shift+N` de la spec §4.4. */
