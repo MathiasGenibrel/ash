@@ -1,5 +1,5 @@
 import type { AgentState, GitHead, GitOperation, GitStatus, WorktreeMetadata } from "@/shared/ipc";
-import { presentAgentState } from "@/shared/agent-state";
+import { agentGlyph, presentAgentState } from "@/shared/agent-state";
 import { tabTitle } from "./tab-bar";
 import type { TabsState } from "./tabs";
 
@@ -256,7 +256,7 @@ export class StatusLine {
     render(model: StatusLineModel): void {
         const nodes: Node[] = [chip(model.cwd), rule(), ...joinChips(model.git), rule()];
 
-        if (model.agent.state !== null) nodes.push(glyph(model.agent.state));
+        if (model.agent.state !== null) nodes.push(agentGlyph(model.agent.state));
         nodes.push(
             chip({ text: model.agent.text, tone: model.agent.tone, title: null }),
             spacer(),
@@ -279,16 +279,6 @@ function chip(piece: StatusChip): HTMLElement {
     element.className = `status-${piece.tone}`;
     element.textContent = piece.text;
     if (piece.title !== null) element.title = piece.title;
-    return element;
-}
-
-function glyph(state: AgentState): HTMLElement {
-    const shown = presentAgentState(state);
-    const element = document.createElement("span");
-    element.className = `ash-glyph ${shown.className}`;
-    element.textContent = shown.glyph;
-    element.setAttribute("aria-label", shown.label);
-    if (shown.spinning) element.classList.add("is-spinning");
     return element;
 }
 

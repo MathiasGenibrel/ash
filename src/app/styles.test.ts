@@ -35,14 +35,18 @@ const DARK = palette(':root[data-theme="dark"]');
 /** Le fond sur lequel un glyphe d'état est peint : la ligne de statut et la sidebar. */
 const SURFACES = ["--ash-bg-status", "--ash-bg-sidebar"] as const;
 
-/** La couleur de chaque état, telle que `app/styles.css` la pose sur `.ash-glyph`. */
-const STATE_TOKENS: Readonly<Record<string, string>> = {
-    "is-working": "--ash-working",
-    "is-waiting": "--ash-accent",
-    "is-done": "--ash-done",
-    "is-idle": "--ash-idle",
-    "is-error": "--ash-error",
-};
+/**
+ * La couleur de chaque état, **lue** dans `.ash-glyph.is-… { color: var(--…) }`.
+ *
+ * Elle est lue et non recopiée : une table écrite ici dirait ce que le CSS *devrait* dire,
+ * et laisserait passer exactement la faute qu'on cherche — un état repeint avec le token
+ * d'un autre, qui garde son contraste et perd son sens.
+ */
+const STATE_TOKENS = new Map(
+    [...STYLES.matchAll(/\.ash-glyph\.(is-[\w-]+)\s*\{\s*color:\s*var\((--[\w-]+)\)/g)].map(
+        (match) => [match[1] ?? "", match[2] ?? ""],
+    ),
+);
 
 describe("les deux palettes", () => {
     it("Given the light and dark palettes, when their tokens are compared, then neither defines a token the other lacks", () => {
@@ -57,24 +61,28 @@ describe("les deux palettes", () => {
         expect(light.length).toBeGreaterThan(0);
     });
 
-    it("Given the five agent states, when their colour is looked up, then both palettes define it", () => {
-        // Given
-        const tokens = AGENT_STATES.map((state) => STATE_TOKENS[presentAgentState(state).className]);
+    it("Given the five agent states, when their colour is looked up, then the stylesheet paints it in both palettes", () => {
+        // Given — un état que `styles.css` ne peint pas est un état qu'on ne distingue
+        // plus ; un état peint avec un token qu'une palette ignore aussi
+        const painted = AGENT_STATES.map((state) => STATE_TOKENS.get(presentAgentState(state).className));
 
         // When
-        const missing = tokens.filter(
+        const missing = painted.filter(
             (token) => token === undefined || !LIGHT.has(token) || !DARK.has(token),
         );
 
-        // Then — un état sans couleur dans une palette est un état qu'on ne distingue plus
+        // Then
         expect(missing).toEqual([]);
+        expect(new Set(painted).size).toBe(AGENT_STATES.length);
     });
 
     it("Given the four states that ask for attention, when they are measured against their background, then they clear the non-text contrast threshold in both themes", () => {
         // Given — WCAG 1.4.11 : un glyphe est un objet graphique, son seuil est 3:1. Il
-        // vaut pour les quatre états qui demandent quelque chose ; `idle` est traité en
-        // dessous, parce qu'il est délibérément le plus discret.
-        const loud = ["--ash-working", "--ash-accent", "--ash-done", "--ash-error"];
+        // vaut pour tous les états qui demandent quelque chose ; `idle` est traité en
+        // dessous, parce qu'il est délibérément le plus discret. La liste est dérivée, pour
+        // qu'un sixième état soit mesuré sans qu'on ait à y penser.
+        const quiet = STATE_TOKENS.get(presentAgentState("idle").className);
+        const loud = [...STATE_TOKENS.values()].filter((token) => token !== quiet);
 
         // When
         const ratios = [LIGHT, DARK].flatMap((tokens) =>
@@ -96,7 +104,7 @@ describe("les deux palettes", () => {
 
         // When
         const quietest = [LIGHT, DARK].map((tokens) =>
-            Object.values(STATE_TOKENS).reduce((a, b) =>
+            [...STATE_TOKENS.values()].reduce((a, b) =>
                 measure(tokens, a) <= measure(tokens, b) ? a : b,
             ),
         );

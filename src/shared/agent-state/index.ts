@@ -104,3 +104,26 @@ export const AGENT_STATES = Object.keys(PRESENTATIONS) as readonly AgentState[];
 export function presentAgentState(state: AgentState): AgentPresentation {
     return PRESENTATIONS[state];
 }
+
+/**
+ * Le glyphe d'un état, prêt à poser dans le DOM.
+ *
+ * Il vit ici plutôt que dans chaque feature parce que quatre décisions y tiennent
+ * ensemble : la forme, la classe qui la peint, le mot que lit un lecteur d'écran, et le
+ * mouvement qui distingue `working` de `done`. Écrit une fois par feature — c'était le
+ * cas —, il finit par ne plus dire la même chose des deux côtés : un glyphe sans
+ * `aria-label` ici, un `working` immobile là. Aucun test ne rattraperait la divergence, le
+ * dépôt ne montant pas de DOM dans `bun test`.
+ *
+ * `.ash-glyph` et les classes d'état sont peintes par `app/styles.css`, à côté des deux
+ * palettes : la couleur d'un état est du thème, pas de la mise en forme d'une feature.
+ */
+export function agentGlyph(state: AgentState): HTMLElement {
+    const shown = PRESENTATIONS[state];
+    const element = document.createElement("span");
+    element.className = `ash-glyph ${shown.className}`;
+    element.textContent = shown.glyph;
+    element.setAttribute("aria-label", shown.label);
+    if (shown.spinning) element.classList.add("is-spinning");
+    return element;
+}
