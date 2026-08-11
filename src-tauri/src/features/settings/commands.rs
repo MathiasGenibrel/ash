@@ -37,10 +37,19 @@ pub struct SettingsSnapshot {
 
 impl SettingsSnapshot {
     fn of(registry: &ToolRegistry) -> Result<Self, SettingsError> {
-        Ok(Self {
-            tools: registry.tools()?,
+        Ok(Self::around(registry.tools()?, registry))
+    }
+
+    /// L'instantané d'une liste que le registre vient de rendre.
+    ///
+    /// Une modification rend déjà la liste entière : la relire prendrait le verrou une
+    /// seconde fois, et rendrait un instantané qui n'est pas celui que la modification a
+    /// produit — la réponse décrirait un registre d'après l'appel, pas son résultat.
+    fn around(tools: Vec<ToolDeclaration>, registry: &ToolRegistry) -> Self {
+        Self {
+            tools,
             adapters: registry.adapters().to_vec(),
-        })
+        }
     }
 }
 
@@ -62,8 +71,7 @@ pub fn settings_declare_tool(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     tool: NewTool,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    registry.declare(tool)?;
-    SettingsSnapshot::of(&registry)
+    Ok(SettingsSnapshot::around(registry.declare(tool)?, &registry))
 }
 
 /// Retire une entrée — le `✕` de l'en-tête de carte.
@@ -72,8 +80,10 @@ pub fn settings_forget_tool(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    registry.forget(&command)?;
-    SettingsSnapshot::of(&registry)
+    Ok(SettingsSnapshot::around(
+        registry.forget(&command)?,
+        &registry,
+    ))
 }
 
 /// Ouvre la fenêtre de réglages, ou la ramène devant si elle est déjà là.

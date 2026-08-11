@@ -13,6 +13,7 @@
 import "./settings.css";
 
 import type { SettingsPorts, SettingsSnapshot, ToolDraft } from "./contract";
+import { GENERIC_ADAPTER } from "./model";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
 
@@ -26,7 +27,7 @@ export interface Settings {
 
 /** Une saisie vierge. `generic` est le premier adaptateur proposé, à défaut d'un autre. */
 function emptyDraft(adapters: readonly string[]): ToolDraft {
-    return { command: "", label: "", adapter: adapters[0] ?? "generic", config: "" };
+    return { command: "", label: "", adapter: adapters[0] ?? GENERIC_ADAPTER, config: "" };
 }
 
 /**

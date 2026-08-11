@@ -59,20 +59,48 @@ export function describeToolCount(tools: readonly ToolDeclaration[]): string {
     return `${tools.length} declared · ${verified} verified`;
 }
 
+/** Ce que la barre d'action du formulaire montre : une phrase à gauche, un bouton à droite. */
+export interface AddAction {
+    /**
+     * Ce qui est écrit à gauche du bouton — jamais rien.
+     *
+     * C'est soit le refus local, soit celui que le backend a opposé, soit ce que l'ajout
+     * fera. La barre garde sa phrase parce que la maquette garde son bouton : « le masquer
+     * ferait croire que ça n'existe pas ».
+     */
+    reason: string;
+    /** Le bouton `add` est-il allumé ? */
+    enabled: boolean;
+}
+
 /**
- * Pourquoi l'ajout est refusé, ou `null` s'il ne l'est pas.
+ * Ce que la barre d'action du formulaire d'ajout dit et permet.
  *
- * Une **raison**, jamais un booléen : la maquette garde le bouton à sa place, éteint, avec
- * sa raison à gauche — « le masquer ferait croire que ça n'existe pas ».
+ * **La précédence est une règle, pas une mise en forme**, et c'est pourquoi elle est ici :
+ * un refus local décrit la saisie qu'on a sous les yeux, tandis qu'un refus du backend
+ * décrit celle qu'on lui a envoyée. Le premier gagne — sinon on lirait le reproche fait à
+ * une saisie qu'on vient de corriger. Un refus du backend, lui, n'éteint pas le bouton :
+ * réessayer est exactement ce qu'on veut pouvoir faire.
  *
- * Trois conditions aujourd'hui, et une quatrième viendra : la maquette veut `add` éteint
- * **tant que les quatre tests n'ont pas répondu** (§3.8), et ces tests sont l'issue #15.
- * C'est ici qu'elle se branchera, à côté des autres — pas dans la vue.
+ * Trois conditions bloquantes aujourd'hui, et une quatrième viendra : la maquette veut
+ * `add` éteint **tant que les quatre tests n'ont pas répondu** (§3.8), et ces tests sont
+ * l'issue #15. C'est ici qu'elle se branchera, à côté des autres — pas dans la vue, qui
+ * n'est pas sous test.
  */
-export function addBlockedReason(
+export function describeAddAction(
     draft: ToolDraft,
     declared: readonly ToolDeclaration[],
-): string | null {
+    failure: string | null,
+): AddAction {
+    const blocked = blockedReason(draft, declared);
+    return {
+        reason: blocked ?? failure ?? "hooks install after adding, once the four tests pass",
+        enabled: blocked === null,
+    };
+}
+
+/** Pourquoi l'ajout est refusé sans même appeler le backend, ou `null` s'il ne l'est pas. */
+function blockedReason(draft: ToolDraft, declared: readonly ToolDeclaration[]): string | null {
     const command = draft.command.trim();
     if (command === "") return "name the command first";
     // Les mêmes deux refus que le backend, et pour la même raison : un `match` est comparé

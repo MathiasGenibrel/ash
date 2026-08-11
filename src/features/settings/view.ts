@@ -1,5 +1,12 @@
 import type { SettingsSnapshot, ToolDeclaration, ToolDraft } from "./contract";
-import { addBlockedReason, degradedModeSubject, describeTool, describeToolCount } from "./model";
+import {
+    type AddAction,
+    degradedModeSubject,
+    describeAddAction,
+    describeTool,
+    describeToolCount,
+    type ToolHeading,
+} from "./model";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 
 /**
@@ -135,35 +142,10 @@ export class SettingsView {
         // précisément pour rester alignés sur des contrôles de hauteurs différentes.
         const body = document.createElement("div");
         body.className = "settings-card-body";
-        body.append(text("span", "config", "settings-card-key"), this.pathField(tool));
+        body.append(text("span", "config", "settings-card-key"), pathField(shown, tool.verified));
 
         card.append(head, body);
         return card;
-    }
-
-    /**
-     * Le chemin de configuration, **en lecture** à ce jalon.
-     *
-     * Le rendre modifiable relancerait la vérification à chaque frappe (spec §9.1), et
-     * cette vérification est l'issue #15 : un champ qu'on peut changer sans que rien ne le
-     * re-juge dirait qu'Ash a accepté le nouveau chemin.
-     */
-    private pathField(tool: ToolDeclaration): HTMLElement {
-        const field = document.createElement("div");
-        field.className = "settings-field is-readonly";
-        field.append(text("span", describeTool(tool).config, "settings-path"));
-        if (!tool.verified) {
-            // La pastille « modifié, non enregistré » de la maquette. Elle n'est pas
-            // décorative : tant qu'une entrée n'a pas passé les quatre tests, elle vit en
-            // mémoire et n'est **pas** dans `~/.ash/config.toml`. C'est le cas de toutes
-            // les entrées à ce jalon, et le dire vaut mieux que de le taire.
-            const dot = document.createElement("span");
-            dot.className = "settings-unsaved";
-            dot.setAttribute("aria-label", "not verified — nothing written to config.toml");
-            dot.title = "not verified — nothing written to config.toml";
-            field.append(dot);
-        }
-        return field;
     }
 
     private deleteButton(command: string): HTMLElement {
@@ -213,8 +195,10 @@ export class SettingsView {
             }),
         );
 
-        const blocked = addBlockedReason(draft, scene.snapshot.tools);
-        body.append(grid, this.formActions(blocked ?? scene.failure, blocked === null));
+        body.append(
+            grid,
+            this.formActions(describeAddAction(draft, scene.snapshot.tools, scene.failure)),
+        );
 
         return [header("new tool", null, [escape]), body];
     }
@@ -277,7 +261,7 @@ export class SettingsView {
     }
 
     /** La barre d'action, poussée en bas : la raison à gauche, les boutons à droite. */
-    private formActions(reason: string | null, canAdd: boolean): HTMLElement {
+    private formActions(action: AddAction): HTMLElement {
         const cancel = button("cancel");
         cancel.addEventListener("click", () => {
             this.actions.cancelAdding();
@@ -286,7 +270,7 @@ export class SettingsView {
         const add = button("add", "is-primary");
         // Éteint, jamais masqué : « le masquer ferait croire que ça n'existe pas ». La
         // raison reste lisible à gauche.
-        add.disabled = !canAdd;
+        add.disabled = !action.enabled;
         add.addEventListener("click", () => {
             this.actions.submitDraft();
         });
@@ -294,13 +278,42 @@ export class SettingsView {
         const bar = document.createElement("div");
         bar.className = "settings-form-actions";
         bar.append(
-            text("span", reason ?? "hooks install after adding, once the four tests pass", "settings-gloss"),
+            text("span", action.reason, "settings-gloss"),
             spacer(),
             cancel,
             add,
         );
         return bar;
     }
+}
+
+/**
+ * Le chemin de configuration, **en lecture** à ce jalon.
+ *
+ * Le rendre modifiable relancerait la vérification à chaque frappe (spec §9.1), et cette
+ * vérification est l'issue #15 : un champ qu'on peut changer sans que rien ne le re-juge
+ * dirait qu'Ash a accepté le nouveau chemin.
+ *
+ * `verified` arrive tel quel du backend et n'est jamais recalculé ici : c'est lui qui
+ * décide de l'écriture dans `~/.ash/config.toml`
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+function pathField(shown: ToolHeading, verified: boolean): HTMLElement {
+    const field = document.createElement("div");
+    field.className = "settings-field is-readonly";
+    field.append(text("span", shown.config, "settings-path"));
+    if (!verified) {
+        // La pastille « modifié, non enregistré » de la maquette. Elle n'est pas
+        // décorative : tant qu'une entrée n'a pas passé les quatre tests, elle vit en
+        // mémoire et n'est **pas** dans `~/.ash/config.toml`. C'est le cas de toutes les
+        // entrées à ce jalon, et le dire vaut mieux que de le taire.
+        const dot = document.createElement("span");
+        dot.className = "settings-unsaved";
+        dot.setAttribute("aria-label", "not verified — nothing written to config.toml");
+        dot.title = "not verified — nothing written to config.toml";
+        field.append(dot);
+    }
+    return field;
 }
 
 /** L'en-tête d'une section : titre, compteur, puis les actions à droite. */

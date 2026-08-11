@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ToolDeclaration, ToolDraft } from "./contract";
-import { addBlockedReason, degradedModeSubject, describeTool, describeToolCount } from "./model";
+import {
+    degradedModeSubject,
+    describeAddAction,
+    describeTool,
+    describeToolCount,
+} from "./model";
 
 /**
  * Test Data Builders : une entrée déclarée, et une saisie de formulaire.
@@ -74,52 +79,84 @@ describe("le compteur de la section", () => {
     });
 });
 
-describe("la règle d'ajout d'une entrée", () => {
-    it("Given a draft that names a fresh command, when the add button is judged, then nothing blocks it", () => {
+describe("la barre d'action du formulaire d'ajout", () => {
+    it("Given a draft that names a fresh command, when the action bar is described, then add is on and the bar says what adding will do", () => {
         // Given
         const draft = aDraft({ command: "codex" });
 
         // When
-        const reason = addBlockedReason(draft, [aTool()]);
+        const action = describeAddAction(draft, [aTool()], null);
 
-        // Then
-        expect(reason).toBeNull();
+        // Then — la barre n'est jamais muette : sans refus, elle annonce la suite
+        expect(action).toEqual({
+            reason: "hooks install after adding, once the four tests pass",
+            enabled: true,
+        });
     });
 
-    it("Given a draft with no command yet, when the add button is judged, then it is blocked with its reason", () => {
+    it("Given a draft with no command yet, when the action bar is described, then add is off with its reason", () => {
         // Given — le bouton reste à sa place, éteint, avec sa raison : le masquer ferait
         // croire que l'ajout n'existe pas
         const draft = aDraft({ command: "  " });
 
         // When
-        const reason = addBlockedReason(draft, []);
+        const action = describeAddAction(draft, [], null);
 
         // Then
-        expect(reason).toBe("name the command first");
+        expect(action).toEqual({ reason: "name the command first", enabled: false });
     });
 
-    it("Given a command already declared, when the add button is judged, then it is blocked and names the collision", () => {
+    it("Given a command already declared, when the action bar is described, then add is off and names the collision", () => {
         // Given — `match` est la clé de la spec §9 : deux entrées homonymes désigneraient
         // le même processus
         const draft = aDraft({ command: " claude " });
 
         // When
-        const reason = addBlockedReason(draft, [aTool({ command: "claude" })]);
+        const action = describeAddAction(draft, [aTool({ command: "claude" })], null);
 
         // Then
-        expect(reason).toBe("claude is already declared");
+        expect(action).toEqual({ reason: "claude is already declared", enabled: false });
     });
 
-    it("Given a draft that carries a path instead of a command name, when the add button is judged, then it is blocked", () => {
+    it("Given a draft that carries a path instead of a command name, when the action bar is described, then add is off", () => {
         // Given — la sonde compare un nom de processus (ADR-0005/0006) : un chemin ne
         // correspondrait jamais, tout en se lisant comme une entrée valide
         const draft = aDraft({ command: "/usr/local/bin/claude" });
 
         // When
-        const reason = addBlockedReason(draft, []);
+        const action = describeAddAction(draft, [], null);
 
         // Then
-        expect(reason).toBe("/usr/local/bin/claude is not a command name");
+        expect(action).toEqual({
+            reason: "/usr/local/bin/claude is not a command name",
+            enabled: false,
+        });
+    });
+
+    it("Given a backend refusal the draft has since been corrected past, when the action bar is described, then the local reason wins", () => {
+        // Given — le refus du backend décrit la saisie qu'on lui a envoyée ; le refus local
+        // décrit celle qu'on a sous les yeux. Lire le premier ferait reprocher à l'écran
+        // une saisie qui n'existe plus
+        const draft = aDraft({ command: "" });
+
+        // When
+        const action = describeAddAction(draft, [], "« claude » est déjà déclarée");
+
+        // Then
+        expect(action.reason).toBe("name the command first");
+    });
+
+    it("Given a backend refusal and nothing wrong with the draft, when the action bar is described, then it shows the refusal and still lets you try again", () => {
+        // Given — un refus que le frontend ne sait pas prévoir (le registre a changé sous
+        // lui) : le masquer perdrait la seule explication, éteindre `add` interdirait de
+        // réessayer
+        const draft = aDraft({ command: "codex" });
+
+        // When
+        const action = describeAddAction(draft, [], "registre des outils empoisonné");
+
+        // Then
+        expect(action).toEqual({ reason: "registre des outils empoisonné", enabled: true });
     });
 });
 
