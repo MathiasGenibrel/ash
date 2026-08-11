@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::features::agents::AgentState;
+
 use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
@@ -98,25 +100,6 @@ struct Located {
     location: Option<TabLocation>,
 }
 
-/// L'état d'un onglet, tel que la sidebar le rend.
-///
-/// Les cinq états d'une ligne d'agent sont déclarés ici parce que c'est **le backend** qui
-/// les détient ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Seuls
-/// `Idle` et `Working` ont un producteur à ce jalon : la sonde d'ADR-0005 sait si le shell
-/// est à son invite ou si autre chose tient l'avant-plan. `Waiting`, `Done` et `Error`
-/// viendront des **hooks** ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)), qui
-/// interdit de les déduire de la sortie du PTY. Rien ne les produit aujourd'hui, et c'est
-/// le comportement correct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum TabState {
-    Idle,
-    Working,
-    Waiting,
-    Done,
-    Error,
-}
-
 /// Ce qu'un onglet montre de lui-même au frontend.
 ///
 /// C'est aussi ce que la boucle de sonde annonce quand un onglet a **bougé** : un même
@@ -134,7 +117,7 @@ pub struct TabInfo {
     pub cwd: String,
     /// Le programme qui tient l'avant-plan — le nom que la sidebar et la barre affichent.
     pub process: String,
-    pub state: TabState,
+    pub state: AgentState,
     /// Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
     /// n'a pas pu être situé.
     pub location: Option<TabLocation>,
@@ -369,12 +352,12 @@ impl PtyRegistry {
         // Un onglet que la sonde ne sait pas décrire est à son invite jusqu'à preuve du
         // contraire : rien ne permet d'affirmer qu'un programme y tourne.
         let (process, state) = seen.map_or_else(
-            || (tab.shell_name.clone(), TabState::Idle),
+            || (tab.shell_name.clone(), AgentState::Idle),
             |seen| {
                 let state = if seen.foreground.is_shell {
-                    TabState::Idle
+                    AgentState::Idle
                 } else {
-                    TabState::Working
+                    AgentState::Working
                 };
                 (seen.foreground.name, state)
             },
@@ -856,50 +839,11 @@ mod tests {
             at_prompt
                 .first()
                 .map(|tab| (tab.state, tab.process.clone())),
-            Some((TabState::Idle, "bash".to_owned()))
+            Some((AgentState::Idle, "bash".to_owned()))
         );
         assert_eq!(
             running.first().map(|tab| (tab.state, tab.process.clone())),
-            Some((TabState::Working, "claude".to_owned()))
-        );
-    }
-
-    #[test]
-    fn given_the_five_tab_states_when_they_cross_the_boundary_then_they_keep_the_names_the_frontend_knows(
-    ) {
-        // Given — le même modèle est déclaré des deux côtés de la frontière : `TabState`
-        // ici, `AgentState` dans `src/shared/ipc/index.ts`. Rien ne les tient ensemble à
-        // la compilation, et un état renommé ici ferait silencieusement tomber la sidebar
-        // sur `undefined`. Le `match` est exhaustif : un état ajouté ne compile pas tant
-        // que son nom n'a pas été décidé — et donc reporté côté TypeScript.
-        let states = [
-            TabState::Idle,
-            TabState::Working,
-            TabState::Waiting,
-            TabState::Done,
-            TabState::Error,
-        ];
-        let expected = states.map(|state| match state {
-            TabState::Idle => "idle",
-            TabState::Working => "working",
-            TabState::Waiting => "waiting",
-            TabState::Done => "done",
-            TabState::Error => "error",
-        });
-
-        // When
-        let on_the_wire: Vec<String> = states
-            .iter()
-            .map(|state| serde_json::to_string(state).unwrap())
-            .collect();
-
-        // Then
-        assert_eq!(
-            on_the_wire,
-            expected
-                .iter()
-                .map(|name| format!("\"{name}\""))
-                .collect::<Vec<_>>()
+            Some((AgentState::Working, "claude".to_owned()))
         );
     }
 
