@@ -25,6 +25,5 @@ pub use locate::{RepoRef, TabLocation, WorktreeLocator};
 pub use registry::PtyRegistry;
 pub use registry::TabId;
 pub use registry::TabInfo;
-pub use registry::TabState;
 pub use session::{PtySession, PtySpawner, PtySpec, SystemPtySpawner, Terminal};
 pub use sweep::Shutdown;
