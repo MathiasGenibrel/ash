@@ -283,33 +283,45 @@ fg_proc   = nom de l'exécutable de fg_pgid
 cwd       = proc_pidinfo(fg_pgid, PROC_PIDVNODEPATHINFO)   # macOS libproc
 ```
 
-- `fg_proc` figure dans les commandes reconnues → l'onglet **devient** un agent.
-- `fg_proc` redevient le shell → l'agent passe en `done` puis la ligne redevient
-  un simple onglet shell après un délai d'affichage (voir §6.4).
+- `fg_proc` figure dans les commandes reconnues → l'onglet **devient** un agent, et
+  la sonde suffit à le montrer `working`.
+- `fg_proc` redevient le shell → l'agent passe en `done` ou en `error` selon son code
+  de sortie, puis la ligne redevient un simple onglet shell après un délai d'affichage
+  (voir §6.4).
 
 ### 6.2 États
 
 ```
-        ┌──────────────────────────────────────────┐
-        │                                          │
+                    ┌──────────────────────────────┐
+                    │                              │
    idle ──lancement──▶ working ──question──▶ waiting
-                          │  ▲                  │
-                     fin  │  └──réponse─────────┘
-                          ▼
-                        done ──▶ (retour shell)
-                          │
-                       échec
-                          ▼
-                        error
+                       │    ▲                  │
+                       │    └──réponse─────────┘
+                       │
+             ┌─fin─────┴─────échec─┐
+             ▼                     ▼
+           done                  error
+             │                     │
+             └──▶ (retour shell) ◀─┘
 ```
+
+`done` et `error` sont les deux issues **exclusives** d'une même terminaison : on ne
+passe jamais de l'un à l'autre. Les deux mènent au retour à `idle` (§6.4).
 
 | État | Sens | Source |
 |---|---|---|
 | `idle` | shell sans agent | sonde |
-| `working` | l'agent travaille | hook |
-| `waiting` | l'agent attend une réponse de l'utilisateur | hook |
-| `done` | l'agent a rendu la main | hook, confirmé par la sonde |
-| `error` | l'agent s'est terminé anormalement | code de sortie |
+| `working` | un agent tient l'avant-plan | sonde, ou hook |
+| `waiting` | l'agent attend une réponse de l'utilisateur | **hook, et rien d'autre** |
+| `done` | l'agent a rendu la main | hook, ou disparition avec un code 0 |
+| `error` | l'agent s'est terminé anormalement | hook, ou code de sortie non nul |
+
+`working` a **deux** producteurs, et c'est voulu : la sonde répond à une question de
+présence — quelque chose d'autre que le shell tient l'avant-plan — tandis que le hook
+répond de ce que l'agent fait. Un outil sans instrumentation n'a que le premier, et
+reste utilisable. Voir la précision du 2026-08-11 dans
+[ADR-0007](./adr/0007-etats-par-hooks.md) et l'amendement d'
+[ADR-0008](./adr/0008-abstraction-adapter.md).
 
 `waiting` est l'état qui compte : c'est le seul qui justifie d'interrompre
 l'utilisateur.
@@ -325,18 +337,28 @@ Les états viennent des **hooks de l'outil**, pas d'une analyse de la sortie
   posée par Ash à la création du bash et héritée par toute la descendance.
 
 ```
-Ash ──spawn──▶ bash(ASH_TAB_ID=01J..., ASH_SOCK=/tmp/ash-<uid>.sock)
+Ash ──spawn──▶ bash(ASH_TAB_ID=01J..., ASH_SOCK=~/.ash/ash.sock)
                  └─▶ claude
                        └─▶ hook: ash-event working --tab $ASH_TAB_ID
                                     │
 Ash ◀──unix socket──────────────────┘
 ```
 
+`ash-event <state> --tab <id>` est la **forme canonique**, celle qu'Ash écrit dans le
+bloc de hooks. C'est elle que le `settings.json` de l'utilisateur portera.
+
+Le socket vit dans `~/.ash/`, avec `config.toml` et `theme.json`, et non dans `/tmp`.
+Le suffixe `<uid>` que dessinait la première rédaction n'existait que pour contourner le
+fait que `/tmp` est partagé — un problème qu'on peut ne pas avoir. Un dossier personnel
+en `0700` ferme en outre la fenêtre entre le `bind` et la pose du `0600` sur le socket ;
+sur `/tmp`, cette fenêtre reste ouverte. Il survit enfin au nettoyage de `/tmp`.
+
 ### 6.4 Règles de transition
 
 - Un événement de hook fait autorité sur la sonde.
 - Un agent sans événement depuis > 60 s en `working` reste `working` : Ash ne
-  devine pas. La sonde ne sert qu'à détecter la **disparition** du processus.
+  devine pas. La sonde ne dit que la **présence** et la **disparition** du processus,
+  jamais ce que l'agent fait.
 - Quand le processus disparaît sans événement `done` : `done` si code 0, `error` sinon.
 - Une ligne `done`/`error` reste visible 30 s dans la sidebar, puis l'onglet
   redevient une ligne shell `idle`. Elle reste visible indéfiniment si la fenêtre
