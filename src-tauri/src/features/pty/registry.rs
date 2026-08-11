@@ -403,6 +403,12 @@ impl PtyRegistry {
     /// Le verrou pris ici est celui de l'onglet, jamais celui du registre : une frappe
     /// clavier n'attend pas derrière une lecture de fichier.
     fn locate(&self, place: &SharedPlace, cwd: &Path) -> Option<TabLocation> {
+        // La révision est lue **avant** la résolution, et c'est l'ordre qui compte : un
+        // signal qui arrive pendant la lecture du disque fait retenir une révision déjà
+        // périmée, donc redemander à la passe suivante. La lire après ferait retenir la
+        // nouvelle avec une réponse d'avant — le signal serait avalé en silence, et
+        // l'onglet resterait dans le mauvais groupe jusqu'à la prochaine écriture dans
+        // `.git`, c'est-à-dire le défaut que tout ceci corrige.
         let revision = self.revision.load(Ordering::Acquire);
         let Ok(mut place) = place.lock() else {
             return None;
