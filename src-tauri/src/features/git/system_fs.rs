@@ -29,6 +29,15 @@ impl FileSystem for SystemFileSystem {
         std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
     }
 
+    fn list_dir(&self, path: &Path) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect()
+    }
+
     fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
         std::fs::canonicalize(path).ok()
     }

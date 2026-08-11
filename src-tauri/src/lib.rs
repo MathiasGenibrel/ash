@@ -16,7 +16,7 @@ pub mod spike;
 use std::path::Path;
 use std::sync::Arc;
 
-use features::git::{resolve_worktree, SystemFileSystem};
+use features::git::{resolve_worktree, MetadataWatch, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
 
@@ -62,6 +62,15 @@ pub fn run() -> tauri::Result<()> {
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(spike::Flow::default())
+        // La surveillance git a besoin du handle de l'application pour émettre, et
+        // l'application a besoin d'elle pour répondre à `git_metadata` : `setup` est le
+        // seul point où les deux existent.
+        .setup(|app| {
+            use tauri::Manager;
+            let watch = features::git::commands::watch_metadata(app.handle().clone());
+            app.manage(watch);
+            Ok(())
+        })
         .menu(menu::build)
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
@@ -72,22 +81,49 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_close,
             features::pty::commands::pty_tabs,
             features::pty::commands::pty_has_foreground_process,
+            features::git::commands::git_metadata,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report
         ])
         .build(tauri::generate_context!())?;
 
+    // La surveillance git, posée par `setup`. Elle est reprise ici pour être reliée aux
+    // deux autres moments de la spec §5.3 : le rattachement d'un onglet, et le focus de
+    // la fenêtre. Le troisième — la modification d'un fichier de contrôle — n'a besoin de
+    // personne, c'est elle qui l'observe.
+    let git_watch: Arc<MetadataWatch> = {
+        use tauri::Manager;
+        Arc::clone(app.state::<Arc<MetadataWatch>>().inner())
+    };
+
     // La boucle de sonde d'ADR-0005 démarre ici, et pas dans une commande : elle observe
     // les onglets pour toute la durée de l'application, pas pour la durée d'un appel du
     // frontend. C'est aussi ici qu'on lui donne son ordre d'arrêt — quitter l'application
     // doit éteindre les sondes, pas laisser le système le faire à notre place.
-    let stop = features::pty::commands::watch_tabs(app.handle().clone(), &ptys);
+    let follow = features::git::commands::follow_worktrees(&git_watch);
+    let stop = features::pty::commands::watch_tabs(app.handle().clone(), &ptys, follow);
 
-    app.run(move |_app, event| {
-        if matches!(event, tauri::RunEvent::Exit) {
-            stop.ask();
+    app.run(move |_app, event| match event {
+        // Un dépôt peut avoir bougé pendant qu'Ash était derrière une autre fenêtre.
+        //
+        // **Sur un fil à part, et c'est indispensable** : ce rappel-ci arrive sur le fil de
+        // l'interface, et relire un worktree lance un `git status` qui peut prendre des
+        // secondes sur un dépôt de plusieurs gigaoctets. Le faire ici gèlerait la fenêtre
+        // au moment précis où l'utilisateur y revient. La surveillance, elle, ne suppose
+        // aucun fil : c'est au composition root de savoir d'où il l'appelle.
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::Focused(true),
+            ..
+        } => {
+            let refreshing = Arc::clone(&git_watch);
+            std::thread::spawn(move || refreshing.on_focus());
         }
+        tauri::RunEvent::Exit => {
+            stop.ask();
+            git_watch.stop();
+        }
+        _ => {}
     });
 
     Ok(())

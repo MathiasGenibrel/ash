@@ -61,6 +61,24 @@ impl FakeFs {
         self.dir(root).file(&format!("{root}/.git"), git_file)
     }
 
+    /// Écrit dans un arbre déjà monté — ce que git fait pendant qu'Ash regarde.
+    ///
+    /// Le builder consomme `self` pour rester lisible dans un `Given` ; la surveillance,
+    /// elle, a besoin d'un arbre qui **change** entre deux lectures. Sans ça, « le dernier
+    /// état gagne » ne se vérifierait pas.
+    pub fn write(&mut self, path: &str, content: &str) {
+        *self = std::mem::take(self).file(path, content);
+    }
+
+    /// Retire une entrée et tout ce qu'elle contient — la fin d'un rebase, par exemple.
+    pub fn remove(&mut self, path: &str) {
+        let path = PathBuf::from(path);
+        self.files
+            .retain(|candidate, _| candidate != &path && !candidate.starts_with(&path));
+        self.dirs
+            .retain(|candidate| candidate != &path && !candidate.starts_with(&path));
+    }
+
     fn add_dir(&mut self, path: &Path) {
         for ancestor in path.ancestors() {
             self.dirs.insert(ancestor.to_owned());
@@ -107,6 +125,17 @@ impl FileSystem for FakeFs {
         let child_of = |candidate: &PathBuf| candidate.parent() == Some(path.as_path());
         self.dirs.contains(&path)
             && (self.dirs.iter().any(child_of) || self.files.keys().any(child_of))
+    }
+
+    fn list_dir(&self, path: &Path) -> Vec<PathBuf> {
+        let path = Self::normalize(path);
+        let child_of = |candidate: &&PathBuf| candidate.parent() == Some(path.as_path());
+        self.dirs
+            .iter()
+            .filter(child_of)
+            .chain(self.files.keys().filter(child_of))
+            .cloned()
+            .collect()
     }
 
     fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
