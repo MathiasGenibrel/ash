@@ -102,7 +102,16 @@ pub fn run() -> tauri::Result<()> {
     // La surveillance est ensuite reliée aux deux autres moments de la spec §5.3 : le
     // rattachement d'un onglet, et le focus de la fenêtre. Le troisième — la modification
     // d'un fichier de contrôle — n'a besoin de personne, c'est elle qui l'observe.
-    let git_watch = features::git::commands::watch_metadata(app.handle().clone());
+    // La surveillance de `.git` est aussi ce qui apprend qu'un dépôt a gagné ou perdu un
+    // worktree lié. La forme d'affichage d'ADR-0012 en dépend, et avec elle la localisation
+    // que le registre retient pour chaque onglet : un `git worktree add` change la bonne
+    // réponse sans qu'aucun `cwd` ne bouge. C'est ici — et nulle part ailleurs — que le
+    // signal de `git` rejoint le registre de `pty` ; les deux features continuent de
+    // s'ignorer, comme pour la résolution elle-même.
+    let relocating = Arc::clone(&ptys);
+    let git_watch = features::git::commands::watch_metadata(app.handle().clone(), move || {
+        relocating.invalidate_locations();
+    });
     {
         use tauri::Manager;
         app.manage(Arc::clone(&git_watch));

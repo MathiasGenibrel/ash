@@ -269,6 +269,63 @@ fn given_a_real_rebase_stopped_on_a_conflict_when_reading_the_metadata_then_it_r
 }
 
 #[test]
+fn given_a_real_flat_repository_when_it_gains_a_linked_worktree_then_the_same_directory_resolves_into_a_group(
+) {
+    // Given — un dépôt sans worktree lié, affiché à plat (ADR-0012), et un onglet ouvert
+    // dedans. C'est la prémisse que le registre d'onglets ne peut pas mémoriser par le seul
+    // `cwd` : la réponse dépend de l'état du dépôt, pas du chemin.
+    let sandbox = Sandbox::new("gains-worktree");
+    let repo = sandbox.path("omelette");
+    repository_at(&repo);
+    let flat = resolved(&repo);
+
+    // When — depuis un autre terminal, pendant qu'Ash tourne
+    git(
+        &repo,
+        &["worktree", "add", "--quiet", "../omelette-toc", "-b", "toc"],
+    );
+    let grouped = resolved(&repo);
+
+    // Then — même répertoire, réponse différente. Et l'entrée est apparue là où la
+    // surveillance de `.git` regarde : sous le dossier git du dépôt.
+    assert_eq!(flat.repo, None);
+    assert_eq!(
+        grouped.repo.map(|repo| repo.git_dir),
+        Some(sandbox.real("omelette/.git"))
+    );
+    // Git nomme l'entrée d'après le **dossier** du worktree, pas d'après sa branche.
+    assert!(sandbox
+        .path("omelette/.git/worktrees/omelette-toc")
+        .is_dir());
+}
+
+#[test]
+fn given_a_real_grouped_repository_when_its_last_linked_worktree_is_removed_then_the_same_directory_falls_back_flat(
+) {
+    // Given — le cas inverse : `git worktree remove` retire aussi l'entrée d'administration,
+    // et le dépôt n'a plus personne à grouper.
+    let sandbox = Sandbox::new("loses-worktree");
+    let repo = sandbox.path("omelette");
+    repository_at(&repo);
+    git(
+        &repo,
+        &["worktree", "add", "--quiet", "../omelette-toc", "-b", "toc"],
+    );
+    let grouped = resolved(&repo);
+
+    // When
+    git(&repo, &["worktree", "remove", "../omelette-toc"]);
+    let flat = resolved(&repo);
+
+    // Then
+    assert!(grouped.repo.is_some());
+    assert_eq!(flat.repo, None);
+    assert!(!sandbox
+        .path("omelette/.git/worktrees/omelette-toc")
+        .exists());
+}
+
+#[test]
 fn given_a_rebase_in_one_real_worktree_when_reading_its_sibling_then_the_sibling_reports_nothing() {
     // Given — deux worktrees du même dépôt ont des états différents, « parfois un rebase
     // en cours dans l'un et rien dans l'autre » (ADR-0012). Lire l'opération dans le

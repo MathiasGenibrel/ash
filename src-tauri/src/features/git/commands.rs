@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::git_cli::SystemGit;
 use super::metadata::WorktreeMetadata;
-use super::metadata_watch::MetadataWatch;
+use super::metadata_watch::{Listeners, MetadataWatch};
 use super::system_fs::SystemFileSystem;
 use super::throttle::MIN_INTERVAL;
 use super::time::{SystemClock, ThreadScheduler};
@@ -58,7 +58,14 @@ pub async fn git_metadata<R: Runtime>(
 ///
 /// Le pendant de `pty::commands::watch_tabs` : l'assemblage des effets réels d'une feature
 /// se fait dans son `commands.rs`, et le composition root ne fait que déclencher et arrêter.
-pub fn watch_metadata<R: Runtime>(app: AppHandle<R>) -> Arc<MetadataWatch> {
+///
+/// `on_relocation` est appelé quand un dépôt surveillé gagne ou perd un worktree lié. Il ne
+/// traverse pas la frontière du frontend : ce n'est pas un état à rendre, c'est un signal
+/// interne vers ce qui garde des résolutions. La feature ne sait pas qui l'écoute.
+pub fn watch_metadata<R: Runtime>(
+    app: AppHandle<R>,
+    on_relocation: impl Fn() + Send + Sync + 'static,
+) -> Arc<MetadataWatch> {
     MetadataWatch::new(
         Arc::new(SystemFileSystem),
         Arc::new(SystemGit::default()),
@@ -66,17 +73,20 @@ pub fn watch_metadata<R: Runtime>(app: AppHandle<R>) -> Arc<MetadataWatch> {
         Arc::new(SystemClock),
         Arc::new(ThreadScheduler),
         MIN_INTERVAL,
-        Arc::new(move |root: &Path, metadata: &WorktreeMetadata| {
-            // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
-            // rattraper, et surtout pas de panique dans un fil de fond.
-            let _ = app.emit(
-                METADATA_CHANGED_EVENT,
-                MetadataChanged {
-                    worktree_root: root.display().to_string(),
-                    metadata: metadata.clone(),
-                },
-            );
-        }),
+        Listeners {
+            announce: Arc::new(move |root: &Path, metadata: &WorktreeMetadata| {
+                // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
+                // rattraper, et surtout pas de panique dans un fil de fond.
+                let _ = app.emit(
+                    METADATA_CHANGED_EVENT,
+                    MetadataChanged {
+                        worktree_root: root.display().to_string(),
+                        metadata: metadata.clone(),
+                    },
+                );
+            }),
+            relocate: Arc::new(on_relocation),
+        },
     )
 }
 

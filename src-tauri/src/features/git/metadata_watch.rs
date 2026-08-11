@@ -29,6 +29,34 @@ use super::worktree::resolve_worktree;
 /// Ce que la surveillance annonce : un worktree, et son état git à cet instant.
 pub type Announce = Arc<dyn Fn(&Path, &WorktreeMetadata) + Send + Sync>;
 
+/// Ce qu'on appelle quand un dépôt surveillé change de **forme** : un worktree lié qui
+/// apparaît, ou le dernier qui disparaît.
+///
+/// Ce n'est pas une métadonnée, et ça ne passe donc ni par [`Announce`] ni par la
+/// limitation de débit : ça ne décrit pas un worktree, ça dit qu'une **résolution** faite
+/// depuis un dépôt surveillé a pu vieillir. Un dépôt qui gagne son premier worktree lié
+/// passe de la forme à plat à la forme groupée
+/// ([ADR-0012](../../../../docs/adr/0012-worktree-unite-de-travail.md)) sans qu'aucun `cwd`
+/// ne bouge d'un caractère.
+///
+/// Le signal ne nomme rien : il n'a pas à savoir qui retient des résolutions. C'est le
+/// composition root qui le relie à ce qui en garde — aujourd'hui le registre d'onglets —
+/// et cette feature-ci ne connaît toujours rien des onglets.
+pub type Relocate = Arc<dyn Fn() + Send + Sync>;
+
+/// Ce que la surveillance a à dire, et à qui.
+///
+/// Les deux rappels voyagent ensemble parce qu'ils répondent à la même chose — une écriture
+/// observée dans `.git` — et qu'ils sont posés au même endroit, une fois, par le
+/// composition root. Ce sont pourtant deux sorties distinctes : l'une décrit un worktree au
+/// frontend, l'autre dit qu'une résolution a vieilli, et personne n'a besoin des deux.
+pub struct Listeners {
+    /// L'état git d'un worktree a changé.
+    pub announce: Announce,
+    /// La forme d'un dépôt a changé — voir [`Relocate`].
+    pub relocate: Relocate,
+}
+
 /// Un worktree observé.
 struct Watched {
     /// Le dossier git **propre** au worktree : son `HEAD`, son rebase.
@@ -71,7 +99,7 @@ pub struct MetadataWatch {
     clock: Arc<dyn Clock>,
     scheduler: Arc<dyn Scheduler>,
     interval: Duration,
-    announce: Announce,
+    listeners: Listeners,
     followed: Mutex<Followed>,
 }
 
@@ -83,7 +111,7 @@ impl MetadataWatch {
         clock: Arc<dyn Clock>,
         scheduler: Arc<dyn Scheduler>,
         interval: Duration,
-        announce: Announce,
+        listeners: Listeners,
     ) -> Arc<Self> {
         Arc::new(Self {
             fs,
@@ -92,7 +120,7 @@ impl MetadataWatch {
             clock,
             scheduler,
             interval,
-            announce,
+            listeners,
             followed: Mutex::new(Followed::default()),
         })
     }
@@ -226,14 +254,26 @@ impl MetadataWatch {
         }
     }
 
+    /// Une écriture observée : deux questions distinctes, et deux réponses indépendantes.
+    ///
+    /// L'état du worktree se relit — au débit près. Sa **forme**, elle, ne se relit pas :
+    /// elle se signale, et à quelqu'un d'autre.
     fn on_change(self: &Arc<Self>, root: &Path, changed: &Path) {
-        let concerns = match self.followed.lock() {
-            Ok(followed) => followed
-                .watched
-                .get(root)
-                .is_some_and(|entry| entry.targets.concerns(changed)),
-            Err(_) => false,
+        let (concerns, shape) = match self.followed.lock() {
+            Ok(followed) => followed.watched.get(root).map_or((false, false), |entry| {
+                (
+                    entry.targets.concerns(changed),
+                    entry.targets.concerns_layout(changed),
+                )
+            }),
+            Err(_) => (false, false),
         };
+
+        // Hors du verrou : le rappel repart vers le composition root, qui n'a rien à faire
+        // derrière le verrou d'une surveillance de fichiers.
+        if shape {
+            (self.listeners.relocate)();
+        }
         if concerns {
             self.request(root);
         }
@@ -309,7 +349,7 @@ impl MetadataWatch {
         };
 
         if changed {
-            (self.announce)(root, &metadata);
+            (self.listeners.announce)(root, &metadata);
         }
     }
 
@@ -353,7 +393,9 @@ impl MetadataWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::git::fakes::{ControlledTime, RecordedAnnounces, WatchedTree};
+    use crate::features::git::fakes::{
+        ControlledTime, RecordedAnnounces, RecordedRelocations, WatchedTree,
+    };
     use crate::features::git::metadata::{Head, Upstream};
 
     /// Test Data Builder : une surveillance branchée sur un arbre en mémoire, une horloge
@@ -365,6 +407,7 @@ mod tests {
         tree: Arc<WatchedTree>,
         time: Arc<ControlledTime>,
         announces: Arc<RecordedAnnounces>,
+        relocations: Arc<RecordedRelocations>,
     }
 
     impl WatchBuilder {
@@ -377,6 +420,7 @@ mod tests {
                 tree: WatchedTree::with_repos(repos),
                 time: ControlledTime::new(),
                 announces: RecordedAnnounces::new(),
+                relocations: RecordedRelocations::new(),
             }
         }
 
@@ -388,7 +432,10 @@ mod tests {
                 Arc::clone(&self.time) as Arc<dyn Clock>,
                 Arc::clone(&self.time) as Arc<dyn Scheduler>,
                 Duration::from_secs(5),
-                self.announces.announce(),
+                Listeners {
+                    announce: self.announces.announce(),
+                    relocate: self.relocations.relocate(),
+                },
             )
         }
     }
@@ -582,6 +629,54 @@ mod tests {
         assert_eq!(invocations_after_attach, 5);
         assert_eq!(world.tree.invocations(), invocations_after_attach);
         assert_eq!(world.announces.branches().len(), 5);
+        // Et pas un signal de forme non plus : ce qui invalide les localisations retenues
+        // par le registre d'onglets vient d'une écriture observée, jamais d'une passe.
+        assert_eq!(world.relocations.count(), 0);
+    }
+
+    #[test]
+    fn given_a_followed_repository_when_a_linked_worktree_appears_in_it_then_the_resolved_locations_are_declared_stale(
+    ) {
+        // Given — un dépôt sans worktree lié, avec un onglet dedans : il s'affiche à plat
+        // (ADR-0012). Un `git worktree add` lancé depuis un autre terminal le fait passer à
+        // la forme groupée sans que le `cwd` de l'onglet ne bouge — donc sans que rien, du
+        // côté de la sonde, n'ait de raison de redemander où il se range.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        watch.follow(&["/dev/ash".to_owned()]);
+        world.announces.forget();
+        let reads_after_attach = world.tree.reads();
+        let invocations_after_attach = world.tree.invocations();
+
+        // When — git écrit l'entrée du nouveau worktree
+        world.tree.touch("/dev/ash/.git/worktrees/toc");
+
+        // Then — le signal part, et il ne traîne ni relecture ni `git status` derrière lui :
+        // la forme d'un dépôt n'est pas une de ses métadonnées
+        assert_eq!(world.relocations.count(), 1);
+        assert_eq!(world.tree.reads(), reads_after_attach);
+        assert_eq!(world.tree.invocations(), invocations_after_attach);
+        assert!(world.announces.branches().is_empty());
+    }
+
+    #[test]
+    fn given_a_followed_repository_when_a_sibling_worktree_writes_in_its_own_git_dir_then_nothing_is_declared_stale(
+    ) {
+        // Given — un agent qui travaille dans un worktree frère écrit son index en rafale.
+        // Chacune de ces écritures rendrait la résolution à la boucle de sonde si le filtre
+        // regardait le contenu de `worktrees/` au lieu de sa liste.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        watch.follow(&["/dev/ash".to_owned()]);
+
+        // When
+        for _ in 0..10 {
+            world.tree.touch("/dev/ash/.git/worktrees/toc/index");
+            world.tree.touch("/dev/ash/.git/worktrees/toc/logs/HEAD");
+        }
+
+        // Then
+        assert_eq!(world.relocations.count(), 0);
     }
 
     #[test]
