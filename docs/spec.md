@@ -356,9 +356,15 @@ sur `/tmp`, cette fenêtre reste ouverte. Il survit enfin au nettoyage de `/tmp`
 ### 6.4 Règles de transition
 
 - Un événement de hook fait autorité sur la sonde.
-- Un agent sans événement depuis > 60 s en `working` reste `working` : Ash ne
-  devine pas. La sonde ne dit que la **présence** et la **disparition** du processus,
-  jamais ce que l'agent fait.
+- Un agent en `working` y reste tant qu'un hook ou la disparition du processus n'en
+  décide autrement. **Aucun silence, si long soit-il, ne change son état** — un agent
+  met couramment bien plus d'une minute à faire une tâche, et Ash ne devine pas. La
+  sonde ne dit que la **présence** et la **disparition** du processus, jamais ce que
+  l'agent fait.
+
+  La rédaction initiale chiffrait ce silence à 60 s. Le seuil ne déclenchait rien —
+  la règle est une **interdiction**, pas un minuteur — et un nombre dans une spec
+  finit par se lire comme un déclencheur qu'il resterait à implémenter.
 - Quand le processus disparaît sans événement `done` : `done` si code 0, `error` sinon.
 - Une ligne `done`/`error` reste visible 30 s dans la sidebar, puis l'onglet
   redevient une ligne shell `idle`. Elle reste visible indéfiniment si la fenêtre
