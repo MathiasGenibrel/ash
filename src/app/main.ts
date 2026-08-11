@@ -3,6 +3,7 @@ import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { onMenuAction, type MenuAction } from "./menu";
 import { followThemeMode } from "./theme";
+import { createTitleBar } from "./titlebar";
 
 /**
  * Composition root du frontend.
@@ -16,7 +17,13 @@ import { followThemeMode } from "./theme";
  * feature.
  */
 function mount(root: HTMLElement): void {
-    root.classList.add("ash-layout");
+    // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
+    // largeur — c'est ce qui la laisse saisissable à droite des pastilles, et ce qui la
+    // rend indifférente à `⌘B`.
+    root.classList.add("ash-shell");
+
+    const layout = document.createElement("div");
+    layout.className = "ash-layout";
 
     const host = document.createElement("div");
     host.className = "terminal-host";
@@ -35,7 +42,8 @@ function mount(root: HTMLElement): void {
         sidebar.render(tabs, activeTabId);
     });
 
-    root.append(sidebar.element, host);
+    layout.append(sidebar.element, host);
+    root.append(createTitleBar(), layout);
 
     const fail = (error: unknown): void => {
         // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
