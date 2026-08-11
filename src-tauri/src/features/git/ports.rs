@@ -31,6 +31,14 @@ pub trait FileSystem: Send + Sync {
     /// Vrai si le dossier existe **et** contient au moins une entrée.
     fn has_entries(&self, path: &Path) -> bool;
 
+    /// Les entrées **directes** d'un dossier, chemins complets. Vide si illisible.
+    ///
+    /// Il en faut pour parcourir `refs/heads` : un dépôt fraîchement `git gc` n'a plus de
+    /// ref en fichier, mais un dépôt ordinaire en a, et une branche peut porter des `/`
+    /// — donc des sous-dossiers. Rendre un `Vec` plutôt qu'un itérateur garde le port
+    /// trivial à doubler ; un dossier de refs se compte en dizaines d'entrées.
+    fn list_dir(&self, path: &Path) -> Vec<PathBuf>;
+
     /// Le chemin réel : `..` résolus, liens suivis. `None` si le chemin n'existe pas.
     fn canonicalize(&self, path: &Path) -> Option<PathBuf>;
 }

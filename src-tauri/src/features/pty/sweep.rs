@@ -59,11 +59,18 @@ impl Shutdown {
 ///
 /// Elle s'arrête à l'arrêt demandé, et si le registre a disparu — la boucle observe les
 /// onglets, elle ne doit jamais être ce qui les maintient en vie. D'où le [`Weak`].
+///
+/// `settle` reçoit, à **chaque** passe, les racines de worktree où vit un onglet. Deux
+/// raisons pour que ce ne soit pas `announce` qui s'en charge : la fermeture du dernier
+/// onglet d'un worktree ne produit aucun changement à annoncer — et c'est pourtant le
+/// moment où il faut cesser de le surveiller — et la question ne coûte rien, la réponse
+/// étant déjà en mémoire (voir [`PtyRegistry::worktree_roots`]).
 pub fn run(
     registry: &Weak<PtyRegistry>,
     ticker: &dyn Ticker,
     shutdown: &Shutdown,
     announce: &dyn Fn(Vec<TabInfo>),
+    settle: &dyn Fn(Vec<String>),
 ) {
     while !shutdown.asked() {
         let Some(registry) = registry.upgrade() else {
@@ -73,6 +80,7 @@ pub fn run(
         // Un registre empoisonné n'a rien à annoncer, et un thread de fond n'a personne à
         // qui remonter une erreur : la passe suivante retentera.
         let changes = registry.changes().unwrap_or_default();
+        let roots = registry.worktree_roots().unwrap_or_default();
 
         // Le registre est relâché avant l'attente, et avant l'émission : rien ne doit
         // survivre à la fermeture d'un onglet parce que la boucle dormait.
@@ -81,6 +89,7 @@ pub fn run(
         if !changes.is_empty() {
             announce(changes);
         }
+        settle(roots);
 
         ticker.wait(PROBE_PERIOD);
     }
@@ -155,9 +164,13 @@ mod tests {
         probe.move_to("/tmp");
 
         // When — trois passes : celle qui découvre le déplacement, et deux qui suivent
-        run(&Arc::downgrade(&registry), &ticker, &shutdown, &|changes| {
-            announced.0.lock().unwrap().push(changes);
-        });
+        run(
+            &Arc::downgrade(&registry),
+            &ticker,
+            &shutdown,
+            &|changes| announced.0.lock().unwrap().push(changes),
+            &|_| {},
+        );
 
         // Then — le titre de l'onglet suit le `cd` sans qu'aucun onglet ne soit ouvert ni
         // fermé, et un onglet immobile ne réveille pas la webview pour rien
@@ -170,6 +183,40 @@ mod tests {
     }
 
     #[test]
+    fn given_a_tab_that_stopped_moving_when_the_loop_makes_a_pass_then_its_worktree_is_still_reported_as_inhabited(
+    ) {
+        // Given — un onglet posé à son invite : il n'a plus rien à annoncer, et pourtant
+        // son worktree reste celui qu'il faut surveiller. C'est la fermeture du dernier
+        // onglet, elle non plus sans changement à annoncer, qui doit relâcher la
+        // surveillance git (spec §5.3).
+        let (registry, _probe) = observed_registry("/dev/ash");
+        let registry = Arc::new(registry);
+        registry
+            .open(
+                SpecBuilder::new().starting_in("/dev/ash").build(),
+                "A".into(),
+            )
+            .unwrap();
+        let shutdown = Arc::new(Shutdown::default());
+        let ticker = FakeTicker::stopping_after(2, &shutdown);
+        let settled: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+
+        // When — deux passes, sans le moindre `cd`
+        run(
+            &Arc::downgrade(&registry),
+            &ticker,
+            &shutdown,
+            &|_| {},
+            &|roots| settled.lock().unwrap().push(roots),
+        );
+
+        // Then — chaque passe dit où vivent les onglets, changement ou pas
+        let settled = settled.lock().unwrap().clone();
+        assert_eq!(settled.len(), 2);
+        assert_eq!(settled[0], vec!["/dev/ash".to_owned()]);
+    }
+
+    #[test]
     fn given_the_application_quits_when_the_loop_finishes_its_pass_then_it_stops_probing() {
         // Given — un onglet fermé dont la sonde continuerait de lire un `fd` recyclé est
         // un bug de durée de vie ; à l'échelle de l'application, c'est cette boucle-là
@@ -179,7 +226,13 @@ mod tests {
         let ticker = FakeTicker::stopping_after(2, &shutdown);
 
         // When
-        run(&Arc::downgrade(&registry), &ticker, &shutdown, &|_| {});
+        run(
+            &Arc::downgrade(&registry),
+            &ticker,
+            &shutdown,
+            &|_| {},
+            &|_| {},
+        );
 
         // Then — la boucle rend la main, et ne sonde plus après l'ordre d'arrêt
         assert_eq!(ticker.passes(), 2);
@@ -195,7 +248,7 @@ mod tests {
         let ticker = FakeTicker::stopping_after(u32::MAX, &shutdown);
 
         // When
-        run(&weak, &ticker, &shutdown, &|_| {});
+        run(&weak, &ticker, &shutdown, &|_| {}, &|_| {});
 
         // Then — elle n'a même pas attendu : il n'y avait plus rien à sonder
         assert_eq!(ticker.passes(), 0);

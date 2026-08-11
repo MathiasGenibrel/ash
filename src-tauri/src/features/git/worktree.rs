@@ -7,6 +7,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use super::control::control_line;
 use super::error::GitError;
 use super::ports::{Entry, FileSystem};
 
@@ -206,25 +207,6 @@ fn resolve_against(
         at: named_by.to_owned(),
         target: joined,
     })
-}
-
-/// La ligne utile d'un fichier de contrôle git — `.git` d'un worktree lié, `commondir`.
-///
-/// Ces fichiers portent tous la même forme : **une** ligne, un chemin, parfois un
-/// préfixe. La règle est ici une fois pour toutes — première ligne, espaces retirés,
-/// jamais vide — plutôt qu'une fois par fichier lu : c'est ce qui garantit que le
-/// prochain (`worktrees/<nom>/gitdir`, `rebase-merge/head-name`) sera lu à l'identique,
-/// et échouera de la même manière.
-fn control_line(fs: &dyn FileSystem, path: &Path) -> Result<String, GitError> {
-    let content = fs.read_to_string(path).map_err(|why| GitError::Io {
-        path: path.to_owned(),
-        why,
-    })?;
-    let line = content.lines().next().unwrap_or_default().trim();
-    if line.is_empty() {
-        return Err(GitError::Malformed(path.to_owned()));
-    }
-    Ok(line.to_owned())
 }
 
 /// Le nom du dossier, avec le chemin entier pour seul repli — un dossier sans nom est la

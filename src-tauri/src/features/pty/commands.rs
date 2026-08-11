@@ -138,17 +138,32 @@ pub fn pty_close(
 /// `setInterval` côté webview aurait fait vivre la cadence du côté qui ne détient rien.
 ///
 /// Un seul thread pour tous les onglets, et seuls les changements traversent la frontière.
-pub fn watch_tabs<R: Runtime>(app: AppHandle<R>, registry: &Arc<PtyRegistry>) -> Arc<Shutdown> {
+///
+/// `settle` reçoit à chaque passe les racines de worktree habitées par un onglet. C'est le
+/// **rattachement** de la spec §5.3 : le composition root s'en sert pour aligner la
+/// surveillance git sur les worktrees réellement ouverts. La feature `pty` ne connaît pas
+/// `git` — elle passe une liste de chaînes, et ne sait pas qui la lit.
+pub fn watch_tabs<R: Runtime>(
+    app: AppHandle<R>,
+    registry: &Arc<PtyRegistry>,
+    settle: impl Fn(Vec<String>) + Send + 'static,
+) -> Arc<Shutdown> {
     let shutdown = Arc::new(Shutdown::default());
 
     let stop = Arc::clone(&shutdown);
     let registry = Arc::downgrade(registry);
     std::thread::spawn(move || {
-        sweep::run(&registry, &SystemTicker, &stop, &|changes| {
-            // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
-            // rattraper, et surtout pas de panique dans un thread de fond.
-            let _ = app.emit(TAB_CHANGED_EVENT, changes);
-        });
+        sweep::run(
+            &registry,
+            &SystemTicker,
+            &stop,
+            &|changes| {
+                // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien
+                // à rattraper, et surtout pas de panique dans un thread de fond.
+                let _ = app.emit(TAB_CHANGED_EVENT, changes);
+            },
+            &settle,
+        );
     });
 
     shutdown

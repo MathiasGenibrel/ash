@@ -25,6 +25,11 @@ ulid = "3.0.0"
 # `tcgetpgrp` et `proc_pidinfo` pour la sonde d'ADR-0005. Aucune nouvelle dépendance dans
 # l'arbre : `portable-pty` tire déjà exactement cette version de `libc`, on la nomme.
 libc = "0.2.189"
+# La surveillance de `.git` (spec §5.3). Sur macOS, `notify` s'appuie sur FSEvents, qui
+# est la seule façon d'observer `n` dépôts sans les sonder. Version épinglée : 8.2.0, la
+# dernière stable — les 9.0.0-rc ne sont pas publiées en version finale. Fonctionnalités
+# par défaut, qui se réduisent ici à `macos_fsevent` : ni `crossbeam-channel`, ni `serde`.
+notify = "=8.2.0"
 
 [lints.rust]
 # `clippy -- -D warnings` en fait une erreur : tout `unsafe` doit donc être introduit

@@ -1,17 +1,21 @@
-//! Tests d'intégration de la résolution worktree/dépôt — sur de vrais dépôts.
+//! Tests d'intégration de la lecture d'un dépôt — sur de vrais dépôts.
 //!
 //! Les tests unitaires vérifient les règles derrière le trait `FileSystem`. Ceux-ci
 //! vérifient ce qu'aucun double ne peut prouver : que ce qu'Ash lit est bien ce que
-//! **git écrit** — le `.git` fichier d'un worktree lié, son `gitdir:`, son `commondir`.
+//! **git écrit** — le `.git` fichier d'un worktree lié, son `gitdir:`, son `commondir`,
+//! et les fichiers qu'un rebase laisse derrière lui pendant qu'il est arrêté.
 //!
-//! Ils lancent `git`, jamais pour résoudre quoi que ce soit : uniquement pour fabriquer
-//! le décor. La résolution, elle, ne lit que des fichiers.
+//! Ils lancent `git`, jamais pour résoudre ni pour lire quoi que ce soit : uniquement
+//! pour fabriquer le décor. Ash, lui, ne lit que des fichiers.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ash_lib::features::git::{resolve_worktree, GitError, SystemFileSystem, WorktreeLocation};
+use ash_lib::features::git::{
+    read_metadata, resolve_worktree, GitError, Head, OperationKind, Progress, SystemFileSystem,
+    WorktreeLocation, WorktreeMetadata,
+};
 
 /// Un dossier temporaire qui se supprime à la fin du test, réussi ou non.
 struct Sandbox {
@@ -50,6 +54,16 @@ impl Drop for Sandbox {
 /// Lance `git` dans un environnement clos : ni configuration globale, ni configuration
 /// système, ni identité de la machine. Le test doit donner le même résultat partout.
 fn git(cwd: &Path, args: &[&str]) {
+    assert!(run_git(cwd, args), "git {args:?} a échoué dans {cwd:?}");
+}
+
+/// La même chose, pour les commandes dont l'échec **est** le décor : un rebase arrêté sur
+/// conflit sort en erreur, et c'est exactement l'état qu'on veut lire.
+fn git_may_fail(cwd: &Path, args: &[&str]) {
+    let _ = run_git(cwd, args);
+}
+
+fn run_git(cwd: &Path, args: &[&str]) -> bool {
     let status = Command::new("git")
         .current_dir(cwd)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -67,7 +81,7 @@ fn git(cwd: &Path, args: &[&str]) {
         .args(args)
         .status()
         .expect("git doit être installé");
-    assert!(status.success(), "git {args:?} a échoué dans {cwd:?}");
+    status.success()
 }
 
 /// Un dépôt avec un commit — `git worktree add` refuse une `HEAD` non née.
@@ -83,6 +97,135 @@ fn resolve(cwd: &Path) -> Result<WorktreeLocation, GitError> {
 
 fn resolved(cwd: &Path) -> WorktreeLocation {
     resolve(cwd).expect("la résolution doit aboutir")
+}
+
+/// Les métadonnées d'un worktree, lues comme la surveillance les lit : on résout d'abord,
+/// on lit ensuite dans les deux dossiers que la résolution a rendus.
+fn metadata_of(worktree_root: &Path) -> WorktreeMetadata {
+    let location = resolved(worktree_root);
+    let git_dir = location
+        .worktree
+        .git_dir
+        .expect("un worktree dans un dépôt a un dossier git");
+    let common_dir = location
+        .repo
+        .map_or_else(|| git_dir.clone(), |repo| repo.git_dir);
+    read_metadata(&SystemFileSystem, &git_dir, &common_dir).expect("le dépôt doit être lisible")
+}
+
+/// Écrit un fichier et le commite — de quoi fabriquer une divergence, donc un conflit.
+fn commit(worktree: &Path, content: &str) {
+    std::fs::write(worktree.join("f.txt"), content).expect("le fichier doit pouvoir être écrit");
+    git(worktree, &["add", "f.txt"]);
+    git(worktree, &["commit", "--quiet", "-m", content]);
+}
+
+/// Un dépôt, un worktree lié sur `feat`, et un rebase arrêté sur conflit à la première
+/// des deux étapes.
+fn repository_with_a_conflicting_rebase(sandbox: &Sandbox) -> PathBuf {
+    let main = sandbox.path("ash");
+    repository_at(&main);
+    commit(&main, "base");
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "../ash-feat", "-b", "feat"],
+    );
+
+    let worktree = sandbox.path("ash-feat");
+    commit(&worktree, "feat-un");
+    commit(&worktree, "feat-deux");
+    commit(&main, "main-bouge");
+    worktree
+}
+
+#[test]
+fn given_a_real_rebase_stopped_on_a_conflict_when_reading_the_metadata_then_it_reports_the_branch_the_target_and_the_step(
+) {
+    // Given — l'état que la sidebar doit rendre `rebasing onto main · 1/2`. Aucun double
+    // ne prouve que git écrit bien `msgnum`, `end`, `head-name` et un `onto` qui est un
+    // identifiant de commit et non un nom.
+    let sandbox = Sandbox::new("rebase");
+    let worktree = repository_with_a_conflicting_rebase(&sandbox);
+    git_may_fail(&worktree, &["rebase", "main"]);
+
+    // When
+    let metadata = metadata_of(&worktree);
+
+    // Then
+    let operation = metadata
+        .operation
+        .expect("un rebase arrêté sur conflit est une opération en cours");
+    assert_eq!(operation.kind, OperationKind::Rebase);
+    assert_eq!(operation.branch.as_deref(), Some("feat"));
+    assert_eq!(operation.onto.as_deref(), Some("main"));
+    assert_eq!(operation.progress, Some(Progress { step: 1, total: 2 }));
+}
+
+#[test]
+fn given_a_rebase_in_one_real_worktree_when_reading_its_sibling_then_the_sibling_reports_nothing() {
+    // Given — deux worktrees du même dépôt ont des états différents, « parfois un rebase
+    // en cours dans l'un et rien dans l'autre » (ADR-0012). Lire l'opération dans le
+    // dépôt commun les confondrait.
+    let sandbox = Sandbox::new("sibling");
+    let worktree = repository_with_a_conflicting_rebase(&sandbox);
+    git_may_fail(&worktree, &["rebase", "main"]);
+
+    // When
+    let sibling = metadata_of(&sandbox.path("ash"));
+
+    // Then
+    assert_eq!(sibling.operation, None);
+    assert_eq!(
+        sibling.head,
+        Head::Branch {
+            name: "main".to_owned()
+        }
+    );
+}
+
+#[test]
+fn given_a_real_repository_whose_refs_have_been_packed_when_a_rebase_runs_then_the_target_is_still_named(
+) {
+    // Given — après un `git gc`, `refs/heads/main` n'existe plus comme fichier : il est
+    // dans `packed-refs`. Ne surveiller et ne lire que `refs/` ferait afficher
+    // `rebasing onto 80eca44` au lieu de `rebasing onto main`.
+    let sandbox = Sandbox::new("packed");
+    let worktree = repository_with_a_conflicting_rebase(&sandbox);
+    git(&sandbox.path("ash"), &["pack-refs", "--all"]);
+    assert!(
+        !sandbox.path("ash/.git/refs/heads/main").exists(),
+        "le décor du test suppose des refs empaquetées"
+    );
+    git_may_fail(&worktree, &["rebase", "main"]);
+
+    // When
+    let metadata = metadata_of(&worktree);
+
+    // Then
+    assert_eq!(
+        metadata.operation.and_then(|operation| operation.onto),
+        Some("main".to_owned())
+    );
+}
+
+#[test]
+fn given_a_real_detached_head_when_reading_the_metadata_then_it_reports_the_abbreviated_commit() {
+    // Given
+    let sandbox = Sandbox::new("detached");
+    let repo = sandbox.path("solo");
+    repository_at(&repo);
+    commit(&repo, "base");
+    git(&repo, &["checkout", "--quiet", "--detach"]);
+
+    // When
+    let metadata = metadata_of(&repo);
+
+    // Then — sept caractères, comme git les abrège lui-même
+    let Head::Detached { commit } = metadata.head else {
+        panic!("attendu un HEAD détaché, obtenu {:?}", metadata.head);
+    };
+    assert_eq!(commit.len(), 7);
+    assert!(commit.chars().all(|glyph| glyph.is_ascii_hexdigit()));
 }
 
 #[test]

@@ -1,14 +1,15 @@
 /**
- * Le contrat Rust ↔ TypeScript des onglets.
+ * Le contrat Rust ↔ TypeScript des onglets et de l'état git des worktrees.
  *
  * Il vit dans `shared/` et non dans une feature parce qu'il en sert **deux** — la feature
  * terminal, qui ouvre et affiche les onglets, et la sidebar, qui les range par worktree —
  * et qu'il ne porte la règle d'aucune des deux : ce ne sont que les formes que le backend
  * sérialise.
  *
- * Miroir de `src-tauri/src/features/pty/registry.rs` et de
- * `src-tauri/src/features/pty/locate.rs`. Rien ici n'est calculé : le frontend **rend** ce
- * que le backend détient ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ * Miroir de `src-tauri/src/features/pty/registry.rs`, de
+ * `src-tauri/src/features/pty/locate.rs` et de
+ * `src-tauri/src/features/git/metadata.rs`. Rien ici n'est calculé : le frontend **rend**
+ * ce que le backend détient ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 
 /** Identifiant d'onglet : l'ulid que le backend a posé dans `ASH_TAB_ID`. */
@@ -68,4 +69,63 @@ export interface TabInfo {
     process: string;
     state: AgentState;
     location: TabLocation | null;
+}
+
+/**
+ * Où pointe le `HEAD` d'un worktree.
+ *
+ * Deux formes, et pas de troisième : une branche, ou un commit détaché — pendant un
+ * rebase, notamment. Le nom est déjà court (`feat/watch`), le commit déjà abrégé : la
+ * mise en forme est faite côté backend, qui est le seul à savoir ce qu'il a lu.
+ */
+export type GitHead = { kind: "branch"; name: string } | { kind: "detached"; commit: string };
+
+/** L'opération git en cours dans un worktree. */
+export type GitOperationKind = "rebase" | "am" | "merge";
+
+/** `2/5` : l'étape en cours et le total. */
+export interface GitProgress {
+    step: number;
+    total: number;
+}
+
+/**
+ * Ce qu'un worktree traverse en ce moment — ce que la ligne `rebasing onto main · 2/5`
+ * met en mots.
+ *
+ * `branch` est la branche que l'opération déplace, `onto` son point d'arrivée : un nom de
+ * branche quand un ref le désigne, un identifiant abrégé sinon. `progress` est absente
+ * pour un merge, qui n'a pas d'étapes.
+ */
+export interface GitOperation {
+    kind: GitOperationKind;
+    branch: string | null;
+    onto: string | null;
+    progress: GitProgress | null;
+}
+
+/**
+ * L'état git d'un worktree, tel que le backend le lit dans `.git`.
+ *
+ * Il est **propre au worktree**, jamais au dépôt : deux worktrees du même projet peuvent
+ * avoir un rebase en cours dans l'un et rien dans l'autre
+ * ([ADR-0012](../../../docs/adr/0012-worktree-unite-de-travail.md)).
+ *
+ * L'état de l'arbre (`+3 ~1`) et l'avance sur l'amont (`↑2 ↓1`) n'y figurent pas encore :
+ * ni l'un ni l'autre ne se lit dans les fichiers de contrôle du dépôt.
+ */
+export interface WorktreeMetadata {
+    head: GitHead;
+    operation: GitOperation | null;
+}
+
+/**
+ * Ce que porte l'event `ash://git-metadata`.
+ *
+ * `worktreeRoot` est la même clé que celle des onglets (`TabLocation.worktreeRoot`) :
+ * c'est par elle que la sidebar rapproche un état git de la ligne qui l'affiche.
+ */
+export interface WorktreeMetadataChanged {
+    worktreeRoot: string;
+    metadata: WorktreeMetadata;
 }
