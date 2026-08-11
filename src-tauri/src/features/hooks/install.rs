@@ -13,7 +13,7 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use super::block::{self, Located};
+use super::block::{self, Document, Located};
 use super::diff;
 use super::error::HookError;
 use super::ports::ConfigFiles;
@@ -66,7 +66,7 @@ pub fn install(
         // Pas de fichier, ou un fichier vide : Ash écrit le document entier. Il n'y a rien
         // à sauvegarder, et rien de l'utilisateur à préserver.
         let created_the_file = !files.exists(file);
-        write(files, file, &block::fresh_document(instrumentation))?;
+        write(files, file, &Document::fresh(instrumentation))?;
         return Ok(Installation::Written {
             file: file.to_owned(),
             backup: None,
@@ -74,17 +74,14 @@ pub fn install(
         });
     };
 
-    let placement = decide(&content, instrumentation, file)?;
-    let Some((span, replacement)) = placement else {
+    let Some(document) = decide(&content, instrumentation, file)? else {
         return Ok(Installation::AlreadyCurrent {
             file: file.to_owned(),
         });
     };
 
     let backup = back_up(files, file)?;
-    let mut written = content;
-    written.replace_range(span, &replacement);
-    write(files, file, &written)?;
+    write(files, file, &document)?;
 
     Ok(Installation::Written {
         file: file.to_owned(),
@@ -127,8 +124,7 @@ pub fn uninstall(files: &dyn ConfigFiles, file: &Path) -> Result<Removal, HookEr
         }
     };
 
-    let mut remaining = content;
-    remaining.replace_range(span, "");
+    let remaining = Document::splicing(&content, span, "");
 
     if block::is_an_empty_object(&remaining) {
         files.remove(file).map_err(|why| HookError::Io {
@@ -148,15 +144,17 @@ pub fn uninstall(files: &dyn ConfigFiles, file: &Path) -> Result<Removal, HookEr
     })
 }
 
-/// Où écrire, et quoi — ou `None` s'il n'y a rien à faire.
+/// Le fichier tel qu'il devrait être — ou `None` s'il n'y a rien à faire.
 ///
 /// Toute la prudence de la feature tient dans cette fonction, et elle n'écrit rien : c'est
-/// ce qui permet de prouver chaque refus sans qu'un seul octet ne parte sur le disque.
+/// ce qui permet de prouver chaque refus sans qu'un seul octet ne parte sur le disque. Le
+/// [`Document`] qu'elle rend est le seul lien entre la décision et l'écriture, et il ne se
+/// fabrique qu'autour d'une plage.
 fn decide(
     content: &str,
     instrumentation: &Instrumentation,
     file: &Path,
-) -> Result<Option<(Range<usize>, String)>, HookError> {
+) -> Result<Option<Document>, HookError> {
     let hand_edited = |carried: &str| HookError::HandEdited {
         file: file.to_owned(),
         diff: diff::compare(&instrumentation.block, carried),
@@ -176,7 +174,11 @@ fn decide(
             }
             let rest = content.get(block.span.end..).unwrap_or("");
             let comma = block::is_followed_by_an_entry(rest);
-            Ok(Some((block.span, block::render(instrumentation, comma))))
+            Ok(Some(Document::splicing(
+                content,
+                block.span,
+                &block::render(instrumentation, comma),
+            )))
         }
 
         Located::Absent => {
@@ -186,7 +188,11 @@ fn decide(
             })?;
             let rest = content.get(at..).unwrap_or("");
             let comma = block::is_followed_by_an_entry(rest);
-            Ok(Some((at..at, block::render(instrumentation, comma))))
+            Ok(Some(Document::splicing(
+                content,
+                at..at,
+                &block::render(instrumentation, comma),
+            )))
         }
     }
 }
@@ -254,7 +260,7 @@ fn read(files: &dyn ConfigFiles, file: &Path) -> Result<Option<String>, HookErro
     })
 }
 
-fn write(files: &dyn ConfigFiles, file: &Path, content: &str) -> Result<(), HookError> {
+fn write(files: &dyn ConfigFiles, file: &Path, content: &Document) -> Result<(), HookError> {
     files.write(file, content).map_err(|why| HookError::Io {
         path: file.to_owned(),
         why,

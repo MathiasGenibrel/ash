@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use super::block::Document;
 use super::ports::ConfigFiles;
 
 /// Le vrai disque.
@@ -33,14 +34,14 @@ impl ConfigFiles for SystemConfigFiles {
     ///
     /// Le fichier temporaire est **dans le même dossier** que la cible, sans quoi le
     /// renommage traverserait deux systèmes de fichiers et ne serait plus atomique.
-    fn write(&self, path: &Path, content: &str) -> Result<(), String> {
+    fn write(&self, path: &Path, content: &Document) -> Result<(), String> {
         let parent = path
             .parent()
             .ok_or_else(|| "chemin sans dossier parent".to_owned())?;
         std::fs::create_dir_all(parent).map_err(|why| why.to_string())?;
 
         let temporary = temporary_beside(path);
-        std::fs::write(&temporary, content).map_err(|why| why.to_string())?;
+        std::fs::write(&temporary, content.as_str()).map_err(|why| why.to_string())?;
         std::fs::rename(&temporary, path).map_err(|why| {
             // Le temporaire n'a rien à faire à côté de la configuration de l'utilisateur si
             // le renommage a échoué.
@@ -91,8 +92,12 @@ mod tests {
         let files = SystemConfigFiles;
 
         // When
-        files.write(&file, "{\n  \"a\": 1\n}\n").unwrap();
-        files.write(&file, "{\n  \"a\": 2\n}\n").unwrap();
+        files
+            .write(&file, &Document::verbatim("{\n  \"a\": 1\n}\n"))
+            .unwrap();
+        files
+            .write(&file, &Document::verbatim("{\n  \"a\": 2\n}\n"))
+            .unwrap();
 
         // Then
         assert_eq!(

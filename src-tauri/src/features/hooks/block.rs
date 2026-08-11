@@ -76,6 +76,56 @@ pub struct Block {
     pub intact: bool,
 }
 
+/// Le seul texte qu'Ash sache écrire dans un fichier de l'utilisateur.
+///
+/// **C'est ici que « rien n'est modifié hors marqueurs » cesse d'être une promesse testée
+/// pour devenir une propriété du type.** Tant que [`ConfigFiles::write`](super::ConfigFiles::write)
+/// prenait une chaîne, la garantie ne tenait que par la prudence des deux fonctions qui
+/// l'appelaient : une troisième, écrite plus tard, aurait pu composer n'importe quoi sans
+/// qu'un seul test ne tombe. Un `Document` ne se fabrique que de deux façons, et chacune
+/// nomme ce qu'elle change :
+///
+/// - [`Document::splicing`] — le fichier d'origine, dont **une seule plage** diffère ;
+/// - [`Document::fresh`] — un fichier entier, réservé au cas où il n'y en avait pas, donc
+///   où il n'y a rien de l'utilisateur à préserver.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Document(String);
+
+impl Document {
+    /// Le fichier d'origine, dont seule cette plage a changé.
+    ///
+    /// La plage vient de [`locate`] appliqué à ce même texte, ou de [`insertion_point`] :
+    /// c'est l'invariant que le type porte. Une plage qui ne tomberait pas dans le texte ne
+    /// vient de nulle part — le document reste alors celui d'origine, et l'écriture est un
+    /// non-événement. Découper au jugé, ou paniquer, se paierait dans le `settings.json` de
+    /// l'utilisateur.
+    pub fn splicing(original: &str, span: Range<usize>, replacement: &str) -> Self {
+        match (original.get(..span.start), original.get(span.end..)) {
+            (Some(head), Some(tail)) => Self(format!("{head}{replacement}{tail}")),
+            _ => Self(original.to_owned()),
+        }
+    }
+
+    /// Le fichier qu'Ash écrit quand il n'y en avait pas.
+    pub fn fresh(instrumentation: &Instrumentation) -> Self {
+        Self(format!("{{{}\n}}\n", render(instrumentation, false)))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Un document quelconque, **réservé aux tests**.
+    ///
+    /// Les tests de l'adaptateur système vérifient l'écriture — son atomicité, l'absence de
+    /// résidu — et n'ont rien à dire du bloc. Cette porte est `#[cfg(test)]` pour que le
+    /// code de production n'en dispose à aucun moment.
+    #[cfg(test)]
+    pub fn verbatim(text: &str) -> Self {
+        Self(text.to_owned())
+    }
+}
+
 /// Le texte du bloc, prêt à être inséré ou à remplacer un bloc existant.
 ///
 /// Il commence par un `\n` et ne finit **pas** par un : c'est ce qui fait que la plage
@@ -119,18 +169,13 @@ pub fn insertion_point(content: &str) -> Option<usize> {
     content.find('{').map(|brace| brace + 1)
 }
 
-/// Le fichier qu'Ash écrit quand il n'y en avait pas.
-pub fn fresh_document(instrumentation: &Instrumentation) -> String {
-    format!("{{{}\n}}\n", render(instrumentation, false))
-}
-
 /// Ne reste-t-il qu'un objet vide, une fois le bloc retiré ?
 ///
 /// C'est la question de la désinstallation : un `settings.json` qui ne contient plus que
 /// `{}` est un fichier qu'Ash a créé pour lui seul, et le laisser derrière serait une trace
 /// de plus — la clé orpheline que le critère d'acceptation nomme.
-pub fn is_an_empty_object(content: &str) -> bool {
-    content.split_whitespace().collect::<String>() == "{}"
+pub fn is_an_empty_object(document: &Document) -> bool {
+    document.as_str().split_whitespace().collect::<String>() == "{}"
 }
 
 /// Faut-il une virgule après le bloc, vu ce qui le suit dans le fichier ?
@@ -324,11 +369,10 @@ mod tests {
         let Located::Present(block) = locate(&installed) else {
             panic!("le bloc posé doit se retrouver : {installed}");
         };
-        let mut uninstalled = installed.clone();
-        uninstalled.replace_range(block.span, "");
+        let uninstalled = Document::splicing(&installed, block.span, "");
 
         // Then
-        assert_eq!(uninstalled, theirs);
+        assert_eq!(uninstalled.as_str(), theirs);
     }
 
     #[test]
@@ -434,21 +478,39 @@ mod tests {
         // bloc doit rendre le fichier inutile, et c'est ce qui autorise `uninstall` à
         // l'effacer plutôt qu'à laisser une coquille vide (spec §10).
         let instrumentation = InstrumentationBuilder::new().build();
-        let created = fresh_document(&instrumentation);
+        let created = Document::fresh(&instrumentation);
 
         // When
-        let Located::Present(block) = locate(&created) else {
-            panic!("bloc introuvable dans le fichier qu'Ash vient d'écrire :\n{created}");
+        let Located::Present(block) = locate(created.as_str()) else {
+            panic!(
+                "bloc introuvable dans le fichier qu'Ash vient d'écrire :\n{}",
+                created.as_str()
+            );
         };
-        let mut emptied = created.clone();
-        emptied.replace_range(block.span, "");
+        let emptied = Document::splicing(created.as_str(), block.span, "");
 
         // Then
         assert!(
-            serde_json::from_str::<serde_json::Value>(&created).is_ok(),
-            "le fichier créé doit être du JSON valide :\n{created}"
+            serde_json::from_str::<serde_json::Value>(created.as_str()).is_ok(),
+            "le fichier créé doit être du JSON valide :\n{}",
+            created.as_str()
         );
         assert!(is_an_empty_object(&emptied), "il reste : {emptied:?}");
+    }
+
+    #[test]
+    fn given_a_span_that_does_not_fall_in_the_file_when_a_document_is_composed_then_the_file_is_left_exactly_as_it_was(
+    ) {
+        // Given — une plage vient toujours de `locate` appliqué à ce texte-là. Le jour où
+        // ce ne serait plus vrai, la faute ne doit pas se payer dans le `settings.json` de
+        // l'utilisateur : ni panique au milieu d'une installation, ni découpe au jugé.
+        let theirs = "{\n  \"model\": \"opus\"\n}\n";
+
+        // When
+        let composed = Document::splicing(theirs, 3..9_000, "n'importe quoi");
+
+        // Then
+        assert_eq!(composed.as_str(), theirs);
     }
 
     #[test]

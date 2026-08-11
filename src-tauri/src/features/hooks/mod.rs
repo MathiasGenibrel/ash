@@ -7,7 +7,7 @@
 //! | La règle | Où elle vit |
 //! |---|---|
 //! | bloc délimité `ash:begin` / `ash:end`, versionné | [`block`] |
-//! | rien n'est modifié hors marqueurs | [`block`] — le fichier est du texte, jamais un arbre relu |
+//! | rien n'est modifié hors marqueurs | [`block`] — le fichier est du texte, jamais un arbre relu, et le port n'accepte qu'un [`Document`] |
 //! | `.bak` **avant** l'écriture, et jamais écrasé | [`install`] |
 //! | refus d'écrire sur un bloc édité à la main, avec son diff | [`install`], [`diff`] |
 //! | désinstallation qui ne laisse rien | [`install`] |
@@ -42,6 +42,7 @@ mod system_files;
 #[cfg(test)]
 mod fakes;
 
+pub use block::Document;
 pub use error::HookError;
 pub use install::{install, uninstall, Installation, Removal};
 pub use ports::ConfigFiles;

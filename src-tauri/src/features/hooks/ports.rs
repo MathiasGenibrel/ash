@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use super::block::Document;
+
 /// Les fichiers de configuration **de l'utilisateur**, derrière un trait que la feature
 /// possède.
 ///
@@ -12,6 +14,11 @@ use std::path::Path;
 /// La surface est délibérément étroite : lire, écrire, copier, effacer. Aucune méthode ne
 /// prend de contenu partiel, parce que la feature ne modifie jamais un fichier en place —
 /// elle en compose le texte complet et le remplace d'un coup.
+///
+/// Et ce texte n'est pas une chaîne quelconque : c'est un [`Document`], le seul type qui
+/// sache se composer, et qui ne se compose que d'une des deux façons qu'Ash s'autorise. La
+/// règle « rien n'est modifié hors marqueurs » vit donc **dans la signature du port**, pas
+/// seulement dans les tests de ses appelants.
 pub trait ConfigFiles: Send + Sync {
     /// Le contenu du fichier, ou `None` s'il n'existe pas.
     ///
@@ -27,7 +34,7 @@ pub trait ConfigFiles: Send + Sync {
     /// milieu d'une installation ne doit pas laisser le `settings.json` de l'utilisateur
     /// tronqué. C'est une exigence du port, pas un détail de son adaptateur — un double qui
     /// ne la respecterait pas ne doublerait pas la même chose.
-    fn write(&self, path: &Path, content: &str) -> Result<(), String>;
+    fn write(&self, path: &Path, content: &Document) -> Result<(), String>;
 
     fn copy(&self, from: &Path, to: &Path) -> Result<(), String>;
 

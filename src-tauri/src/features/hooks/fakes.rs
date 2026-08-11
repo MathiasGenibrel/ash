@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use super::block::Document;
 use super::ports::ConfigFiles;
 
 pub struct FakeConfigFiles {
@@ -77,9 +78,9 @@ impl ConfigFiles for FakeConfigFiles {
         self.content_of(path).is_some()
     }
 
-    fn write(&self, path: &Path, content: &str) -> Result<(), String> {
+    fn write(&self, path: &Path, content: &Document) -> Result<(), String> {
         self.note(format!("write {}", path.display()));
-        self.replace(path, content);
+        self.replace(path, content.as_str());
         Ok(())
     }
 
