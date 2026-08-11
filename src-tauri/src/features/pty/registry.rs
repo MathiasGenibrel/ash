@@ -275,6 +275,18 @@ impl PtyRegistry {
         Ok(roots)
     }
 
+    /// Cet onglet existe-t-il encore ?
+    ///
+    /// La question que pose le socket d'events d'ADR-0007 avant de livrer quoi que ce soit.
+    /// Elle ne sonde rien, contrairement à [`Self::tabs`] : un hook arrive sur le fil d'une
+    /// écoute, pas sur celui de l'interface, et un événement ne justifie pas deux appels
+    /// système par onglet. Un registre empoisonné répond « non » — se taire vaut mieux que
+    /// livrer un événement à un onglet dont on ne sait plus rien.
+    pub fn knows(&self, tab_id: &str) -> bool {
+        self.lock()
+            .is_ok_and(|tabs| tabs.iter().any(|tab| tab.id == tab_id))
+    }
+
     /// Vrai si quelque chose d'autre que le shell tient l'avant-plan de l'onglet.
     ///
     /// C'est la question que `Cmd+W` pose avant de détruire quoi que ce soit (spec §4.4).
