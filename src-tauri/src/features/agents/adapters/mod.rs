@@ -5,6 +5,8 @@
 //! ([ADR-0008](../../../../../docs/adr/0008-abstraction-adapter.md)). Chacune passe la
 //! suite contractuelle de [`super::contract`], puis teste ce qui lui est propre.
 
+mod claude_code;
 mod generic;
 
+pub use claude_code::ClaudeCodeAdapter;
 pub use generic::GenericAdapter;
