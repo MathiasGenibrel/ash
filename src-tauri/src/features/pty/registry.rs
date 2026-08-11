@@ -215,6 +215,28 @@ impl PtyRegistry {
             .collect())
     }
 
+    /// Les racines de worktree où vit au moins un onglet, sans doublon et **sans rien
+    /// redemander au disque**.
+    ///
+    /// C'est la dernière localisation retenue par [`Self::locate`] qui répond : la
+    /// question est posée à chaque passe de la boucle de sonde, et y répondre par une
+    /// résolution serait exactement le sondage que la spec §5.3 écarte. Un onglet que
+    /// personne n'a encore su situer n'y figure pas.
+    pub fn worktree_roots(&self) -> Result<Vec<String>, PtyError> {
+        let mut roots: Vec<String> = self
+            .snapshot()?
+            .iter()
+            .filter_map(|tab| {
+                let place = tab.place.lock().ok()?;
+                let located = place.as_ref()?;
+                Some(located.location.as_ref()?.worktree_root.clone())
+            })
+            .collect();
+        roots.sort();
+        roots.dedup();
+        Ok(roots)
+    }
+
     /// Vrai si quelque chose d'autre que le shell tient l'avant-plan de l'onglet.
     ///
     /// C'est la question que `Cmd+W` pose avant de détruire quoi que ce soit (spec §4.4).

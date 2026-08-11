@@ -7,6 +7,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use super::control::control_line;
 use super::error::GitError;
 use super::ports::{Entry, FileSystem};
 
@@ -63,6 +64,27 @@ pub struct WorktreeLocation {
     /// l'entrée dans `worktrees/` tant qu'on ne l'élague pas. C'est visible, et c'est le
     /// prix de ne rien inventer par-dessus ce que le dépôt déclare.
     pub repo: Option<Repo>,
+}
+
+impl WorktreeLocation {
+    /// Les deux dossiers git d'un worktree : le **sien** — `HEAD`, `MERGE_HEAD`, les
+    /// dossiers de rebase — et le dossier **commun**, où vivent les refs partagées avec ses
+    /// frères. Ils sont confondus dans un dépôt sans worktree lié.
+    ///
+    /// La règle est ici plutôt que chez chaque lecteur : c'est elle qui fait que deux
+    /// worktrees du même dépôt peuvent avoir « un rebase en cours dans l'un et rien dans
+    /// l'autre » ([ADR-0012](../../../../docs/adr/0012-worktree-unite-de-travail.md)), et
+    /// la répartir en deux endroits serait la laisser diverger.
+    ///
+    /// `None` hors de tout dépôt : il n'y a alors aucun fichier de contrôle à lire.
+    pub fn git_dirs(&self) -> Option<(PathBuf, PathBuf)> {
+        let git_dir = self.worktree.git_dir.clone()?;
+        let common_dir = self
+            .repo
+            .as_ref()
+            .map_or_else(|| git_dir.clone(), |repo| repo.git_dir.clone());
+        Some((git_dir, common_dir))
+    }
 }
 
 /// Résout un `cwd` vers son worktree et, s'il en forme un groupe, son dépôt commun.
@@ -206,25 +228,6 @@ fn resolve_against(
         at: named_by.to_owned(),
         target: joined,
     })
-}
-
-/// La ligne utile d'un fichier de contrôle git — `.git` d'un worktree lié, `commondir`.
-///
-/// Ces fichiers portent tous la même forme : **une** ligne, un chemin, parfois un
-/// préfixe. La règle est ici une fois pour toutes — première ligne, espaces retirés,
-/// jamais vide — plutôt qu'une fois par fichier lu : c'est ce qui garantit que le
-/// prochain (`worktrees/<nom>/gitdir`, `rebase-merge/head-name`) sera lu à l'identique,
-/// et échouera de la même manière.
-fn control_line(fs: &dyn FileSystem, path: &Path) -> Result<String, GitError> {
-    let content = fs.read_to_string(path).map_err(|why| GitError::Io {
-        path: path.to_owned(),
-        why,
-    })?;
-    let line = content.lines().next().unwrap_or_default().trim();
-    if line.is_empty() {
-        return Err(GitError::Malformed(path.to_owned()));
-    }
-    Ok(line.to_owned())
 }
 
 /// Le nom du dossier, avec le chemin entier pour seul repli — un dossier sans nom est la
