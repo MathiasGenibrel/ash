@@ -198,7 +198,42 @@ body {
     place-items: stretch;
 }
 
-/* La fenêtre est en deux colonnes : la sidebar, et tout le reste.
+/* La fenêtre est en deux rangées : la bande de titre, et les deux colonnes.
+ *
+ * `auto 1fr` : la bande annonce sa hauteur, le reste prend ce qui reste. `min-height: 0`
+ * sur la seconde rangée est ce qui laisse la zone terminal se réduire au lieu de pousser
+ * la fenêtre. */
+.ash-shell {
+    grid-template-rows: auto 1fr;
+}
+
+/* La bande de titre — 38 px, comme la maquette la dessine, et la **seule** prise de la
+ * fenêtre.
+ *
+ * Elle remplace les deux réserves de 30 px que la sidebar et la zone terminal portaient
+ * chacune de leur côté pour dégager les pastilles : c'était le même espace, en double, et
+ * il ne servait qu'à rester vide. Ici il est une surface, et il traverse toute la largeur
+ * — donc il reste saisissable à droite des pastilles, et `⌘B` ne le change pas.
+ *
+ * Sa hauteur n'est pas décorative : les pastilles de macOS sont posées à un décalage fixe
+ * en haut à gauche de la fenêtre. Une bande plus courte les ferait retomber sur la barre
+ * d'onglets, où elles avaleraient des clics.
+ *
+ * `user-select: none` : sans lui, un glissement qui part de la bande sélectionne du texte
+ * dans la fenêtre au lieu de la déplacer. */
+.ash-titlebar {
+    height: 38px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    background: var(--ash-bg-chrome);
+    border-bottom: 1px solid var(--ash-border);
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+}
+
+/* Les deux colonnes : la sidebar, et tout le reste.
  *
  * `auto 1fr`, et pas une largeur fixe : la colonne annonce elle-même sa largeur (240 px,
  * ou 46 px repliée), et le terminal prend systématiquement ce qui reste. `⌘B` n'a donc
@@ -210,19 +245,16 @@ body {
     min-height: 0;
 }
 
-/* Le terminal occupe toute la fenêtre. La barre de titre est en overlay : sans cette
- * réserve en haut, les premières lignes passeraient sous les boutons de fenêtre.
+/* La zone terminal occupe la seconde colonne, sous la bande de titre. Elle ne réserve
+ * plus rien en haut : la bande dégage les pastilles pour toute la fenêtre, et une seconde
+ * réserve ici décalerait la barre d'onglets sans raison.
  *
  * `overflow: hidden` n'est pas cosmétique : le `FitAddon` calcule une grille entière, et
  * le reste — quelques pixels de moins d'une ligne — suffit à faire apparaître les barres
  * de défilement de la webview par-dessus celles du terminal. */
-/* Seule la réserve du haut reste ici : la ligne de statut est collée au bas de la fenêtre
- * comme la maquette la dessine, donc c'est la barre d'onglets et la pile de terminaux qui
- * portent leurs marges, pas la colonne entière. */
 .terminal-host {
     min-height: 0;
     min-width: 0;
-    padding-top: 30px;
     background: var(--ash-bg);
     overflow: hidden;
 }
