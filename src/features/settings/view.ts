@@ -8,11 +8,14 @@ import type {
 } from "./contract";
 import {
     type AddAction,
+    countProblems,
     degradedModeSubject,
     describeAddAction,
     describeHooksAvailability,
+    describeStop,
     describeTool,
     describeToolCount,
+    NOTHING_VERIFIED_YET,
     type ToolHeading,
 } from "./model";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
@@ -138,10 +141,9 @@ export class SettingsView {
     }
 
     private navRows(scene: SettingsScene): HTMLElement[] {
-        // Le compteur de problèmes de la colonne : il n'apparaît que si la section en a un.
-        const invalid = scene.snapshot.tools.filter(
-            (tool) => tool.verification.state === "invalid",
-        ).length;
+        // Le compteur de problèmes de la colonne : il n'apparaît que si la section en a un,
+        // et il compte comme celui de l'en-tête — la règle est dans `model`, pas ici.
+        const invalid = countProblems(scene.snapshot.tools);
 
         return SETTINGS_SECTIONS.map((section) => {
             // Un vrai bouton, et pas une `div` cliquable : c'est ce qui met la section sur
@@ -357,11 +359,8 @@ export class SettingsView {
             spacer(),
             tileRow(verification, tests),
         );
-        if (verification.stoppedAt !== null && verification.state === "invalid") {
-            line.append(
-                text("span", `stopped at test ${verification.stoppedAt}`, "settings-stopped"),
-            );
-        }
+        const stop = describeStop(verification);
+        if (stop !== null) line.append(text("span", stop, "settings-stopped"));
         return line;
     }
 
@@ -478,17 +477,7 @@ export class SettingsView {
 
     /** La ligne `test` du formulaire : la même rangée que dans une carte. */
     private draftTestLine(scene: SettingsScene): HTMLElement {
-        const verification = scene.draftVerification ?? {
-            state: "unverified" as const,
-            tests: ["pending", "pending", "pending", "pending"] as const,
-            summary: "nothing verified yet",
-            stoppedAt: null,
-            detail: null,
-            fix: null,
-            launched: null,
-            allowsHooks: false,
-        };
-        return this.testLine(verification, scene.snapshot.tests);
+        return this.testLine(scene.draftVerification ?? NOTHING_VERIFIED_YET, scene.snapshot.tests);
     }
 
     private field(

@@ -108,6 +108,14 @@ export interface SettingsSnapshot {
 export interface Verified {
     command: string;
     verification: Verification;
+    /**
+     * Ce que `verified` vaut désormais pour cette entrée — **calculé en Rust**.
+     *
+     * Il voyage avec le résultat plutôt que d'être redéduit ici : c'est le oui/non qui
+     * décide d'écrire chez l'utilisateur, et le rejouer côté fenêtre lui donnerait un
+     * second propriétaire ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    verified: boolean;
 }
 
 /** Ce que le formulaire d'ajout envoie : du texte, pas encore une déclaration. */

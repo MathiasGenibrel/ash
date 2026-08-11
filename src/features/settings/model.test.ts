@@ -2,11 +2,14 @@ import { describe, expect, it } from "bun:test";
 
 import type { ToolDeclaration, ToolDraft, Verification, VerificationState } from "./contract";
 import {
+    countProblems,
     degradedModeSubject,
     describeAddAction,
     describeHooksAvailability,
+    describeStop,
     describeTool,
     describeToolCount,
+    NOTHING_VERIFIED_YET,
 } from "./model";
 
 /**
@@ -119,6 +122,69 @@ describe("le compteur de la section", () => {
 
         // Then
         expect(counted).toBe("3 declared · 1 invalid");
+    });
+});
+
+describe("le chiffre que l'en-tête et la colonne montrent ensemble", () => {
+    it("Given a list whose entries are unverified, valid with a caveat and invalid, when its problems are counted, then only the invalid one counts", () => {
+        // Given — la colonne de navigation et l'en-tête de section montrent le même chiffre
+        // au même instant (maquette `3e`). Une réserve n'en est pas un : ash y écrit quand
+        // même. Comptés séparément, les deux finiraient par ne plus dire la même chose
+        const tools = [
+            aTool({ command: "kimi", verification: aVerification("unverified") }),
+            aTool({ command: "codex", verification: aVerification("caveat") }),
+            aTool({ command: "claude", verification: aVerification("invalid") }),
+        ];
+
+        // When
+        const problems = countProblems(tools);
+
+        // Then
+        expect([problems, describeToolCount(tools)]).toEqual([1, "3 declared · 1 invalid"]);
+    });
+});
+
+describe("où la chaîne s'est arrêtée", () => {
+    it("Given an invalid entry, when its test line is described, then it names the test the sequence stopped at", () => {
+        // Given — « l'erreur nomme le test échoué » : c'est le numéro qui désigne la chose à
+        // corriger
+        const verification = aVerification("invalid", { stoppedAt: 2 });
+
+        // When
+        const stop = describeStop(verification);
+
+        // Then
+        expect(stop).toBe("stopped at test 2");
+    });
+
+    it("Given an entry valid with a caveat, when its test line is described, then it says nothing about stopping", () => {
+        // Given — la séquence pose `stoppedAt` sur une réserve aussi, et son résumé dit déjà
+        // ce qui manque. Répéter `stopped at test 3` à côté ferait lire un échec là où le
+        // dossier a été reconnu
+        const verification = aVerification("caveat", { stoppedAt: 3 });
+
+        // When
+        const stop = describeStop(verification);
+
+        // Then
+        expect(stop).toBeNull();
+    });
+});
+
+describe("la saisie que rien n'a encore jugée", () => {
+    it("Given a form whose tests have not answered, when its test line is drawn, then nothing it shows authorises a write", () => {
+        // Given — c'est la vue qui fabriquait cette vérification, hors de portée de tout
+        // test. `allowsHooks` y est faux comme partout ailleurs : une saisie que rien n'a
+        // jugée n'autorise jamais ash à écrire chez l'utilisateur
+        // When
+        const shown = NOTHING_VERIFIED_YET;
+
+        // Then
+        expect([shown.state, shown.allowsHooks, shown.tests]).toEqual([
+            "unverified",
+            false,
+            ["pending", "pending", "pending", "pending"],
+        ]);
     });
 });
 

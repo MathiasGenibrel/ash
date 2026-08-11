@@ -266,7 +266,7 @@ export function mountSettings(
      * avant de l'émettre. La recopier ici est du rendu, pas de la détention : la fenêtre ne
      * la calcule ni ne la corrige, et une entrée qu'elle ne connaît pas est ignorée.
      */
-    void ports.onVerified(({ command, verification }) => {
+    void ports.onVerified(({ command, verification, verified }) => {
         if (draft !== null && draft.command.trim() === command) {
             draftVerification = verification;
             draw();
@@ -275,9 +275,7 @@ export function mountSettings(
         snapshot = {
             ...snapshot,
             tools: snapshot.tools.map((tool) =>
-                tool.command === command
-                    ? { ...tool, verification, verified: verification.allowsHooks }
-                    : tool,
+                tool.command === command ? { ...tool, verification, verified } : tool,
             ),
         };
         draw();

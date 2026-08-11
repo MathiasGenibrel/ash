@@ -70,11 +70,56 @@ export function describeTool(tool: ToolDeclaration): ToolHeading {
  */
 export function describeToolCount(tools: readonly ToolDeclaration[]): string {
     if (tools.length === 0) return "none";
-    const invalid = tools.filter((tool) => tool.verification.state === "invalid").length;
+    const invalid = countProblems(tools);
     if (invalid > 0) return `${tools.length} declared · ${invalid} invalid`;
     const verified = tools.filter((tool) => tool.verified).length;
     return `${tools.length} declared · ${verified} verified`;
 }
+
+/**
+ * Combien d'entrées posent un problème — le chiffre de l'en-tête, et celui de la colonne.
+ *
+ * Les deux le montrent au même instant et doivent donc le compter au même endroit : la
+ * maquette `3e` met `3 declared · 1 invalid` en tête de section **et** `1` sur la ligne
+ * `tools` de la navigation. Écrit deux fois, ce filtre finirait par ne plus dire la même
+ * chose des deux côtés le jour où `caveat` compterait aussi — et l'un des deux n'est pas
+ * sous test.
+ */
+export function countProblems(tools: readonly ToolDeclaration[]): number {
+    return tools.filter((tool) => tool.verification.state === "invalid").length;
+}
+
+/**
+ * Où la chaîne s'est arrêtée, quand c'est une information et non un détail.
+ *
+ * La séquence pose `stoppedAt` dès qu'elle s'arrête, **y compris sur une réserve** — et une
+ * réserve n'a pas besoin de l'annoncer : son résumé dit déjà ce qui manque, et un
+ * `stopped at test 3` à côté ferait lire un échec là où le dossier a été reconnu. Seul un
+ * état invalide le dit, parce que là le numéro est ce qui désigne la chose à corriger.
+ */
+export function describeStop(verification: Verification): string | null {
+    if (verification.state !== "invalid" || verification.stoppedAt === null) return null;
+    return `stopped at test ${verification.stoppedAt}`;
+}
+
+/**
+ * Ce qu'un formulaire d'ajout montre tant que les tests n'ont pas parlé.
+ *
+ * Une vérification vide, et non un cas particulier de la vue : `allowsHooks` y est faux
+ * comme partout ailleurs, et c'est ce qui garantit qu'une saisie que rien n'a jugée
+ * n'autorise jamais une écriture ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ * La vue la dessinait elle-même, hors de portée de tout test.
+ */
+export const NOTHING_VERIFIED_YET: Verification = {
+    state: "unverified",
+    tests: ["pending", "pending", "pending", "pending"],
+    summary: "nothing verified yet",
+    stoppedAt: null,
+    detail: null,
+    fix: null,
+    launched: null,
+    allowsHooks: false,
+};
 
 /** Ce que la barre d'action du formulaire montre : une phrase à gauche, un bouton à droite. */
 export interface AddAction {

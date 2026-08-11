@@ -32,7 +32,7 @@ use super::ports::{expand_home, CommandRunner, ConfigFiles, Folder, Launch};
 /// raison : c'est le point où l'on préfère une réserve honnête à une fenêtre figée. Une
 /// commande qui met plus de cinq secondes à répondre `--version` n'est de toute façon pas
 /// dans un état où l'on veut lui écrire des hooks.
-pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// L'identifiant de l'adaptateur de repli d'[ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md).
 ///
@@ -618,7 +618,7 @@ fn first_line(output: &str) -> String {
 /// Les fichiers sont groupés par extension et les dossiers nommés : c'est ce qui permet de
 /// reconnaître d'un coup d'œil qu'on a désigné un dossier de notes plutôt qu'une
 /// configuration. Une liste brute de trente entrées ne dirait rien.
-pub fn summarise(entries: &[String]) -> String {
+fn summarise(entries: &[String]) -> String {
     if entries.is_empty() {
         return "an empty folder".to_owned();
     }
@@ -1023,13 +1023,47 @@ mod tests {
     }
 
     #[test]
+    fn given_a_configuration_folder_named_like_an_option_when_the_command_is_launched_then_it_still_never_reaches_the_arguments(
+    ) {
+        // Given — **frontière de sécurité**, prise par le seul bout que l'utilisateur tient :
+        // le champ de chemin. Un dossier qui se lit comme une option de ligne de commande est
+        // ce qui transformerait une vérification en exécution d'autre chose. Il n'y a aucun
+        // shell, et le chemin ne voyage que par l'environnement — donc rien ne le relit
+        let hostile = "~/--dangerously-skip-permissions";
+        let (verifier, _) = VerifierBuilder::new()
+            .folder(
+                "/Users/ash/--dangerously-skip-permissions",
+                &["settings.json", "projects"],
+            )
+            .in_path("claude", "/usr/local/bin/claude")
+            .build();
+
+        // When
+        let launch = match verifier.first_pass("claude", "claude-code", Some(hostile)) {
+            FirstPass::Pending { launch, .. } => launch,
+            FirstPass::Settled(_) => panic!("le test 4 devait rester à lancer"),
+        };
+
+        // Then — les arguments restent ceux de l'adaptateur, et rien d'autre
+        assert_eq!(launch.args, vec!["--version".to_owned()]);
+        assert_eq!(launch.program, PathBuf::from("/usr/local/bin/claude"));
+        assert_eq!(
+            launch.env,
+            vec![(
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                "/Users/ash/--dangerously-skip-permissions".to_owned()
+            )]
+        );
+    }
+
+    #[test]
     fn given_a_folder_full_of_notes_when_it_is_summarised_then_it_reads_as_a_glance_and_not_as_a_listing(
     ) {
         // Given — c'est le « found » du rappel d'erreur : trente noms bruts ne diraient
         // rien, alors que « 12 .md files, .git » se reconnaît d'un coup d'œil
         let entries: Vec<String> = (0..12)
             .map(|n| format!("note{n}.md"))
-            .chain(["\u{2e}git".to_owned()])
+            .chain([".git".to_owned()])
             .collect();
 
         // When

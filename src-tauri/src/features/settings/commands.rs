@@ -97,6 +97,26 @@ impl SettingsSnapshot {
 pub struct Verified {
     pub command: String,
     pub verification: Verification,
+    /// Ce que [`ToolDeclaration::verified`] vaut désormais pour cette entrée.
+    ///
+    /// Il voyage **avec** le résultat plutôt que d'être redéduit à l'arrivée : c'est le
+    /// oui/non qui décide d'écrire chez l'utilisateur, et le recalculer côté fenêtre en
+    /// ferait un second propriétaire — celui qui divergerait sans bruit le jour où
+    /// `verified` cesserait d'être exactement `allows_hooks`
+    /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+    pub verified: bool,
+}
+
+impl Verified {
+    /// Le seul endroit où l'event se construit, et il lit `allows_hooks` comme
+    /// [`ToolDeclaration::verified_by`] : une seule règle, deux lecteurs.
+    fn of(command: String, verification: Verification) -> Self {
+        Self {
+            verified: verification.allows_hooks,
+            command,
+            verification,
+        }
+    }
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
@@ -204,13 +224,7 @@ fn follow_up<R: Runtime>(app: AppHandle<R>, registry: Arc<ToolRegistry>, pending
             // Un registre empoisonné n'a pas à faire paniquer un fil de fond : la fenêtre
             // garde ce que le premier temps lui a dit, ce qui reste vrai.
             let _ = registry.settle(&next, verification.clone());
-            let _ = app.emit(
-                SETTINGS_VERIFIED,
-                Verified {
-                    command: next.command,
-                    verification,
-                },
-            );
+            let _ = app.emit(SETTINGS_VERIFIED, Verified::of(next.command, verification));
         });
     }
 }
