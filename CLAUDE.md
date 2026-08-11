@@ -6,15 +6,30 @@ Ash est une application macOS qui entoure un shell plutôt que de le remplacer :
 supervise les agents de code lancés dans de vrais PTY, et apporte un git conscient de
 ces agents. Voir [`docs/spec.md`](./docs/spec.md) et [`docs/adr/`](./docs/adr/).
 
-**Le squelette est en place, le produit ne l'est pas.** La fenêtre Tauri s'ouvre et les
-six commandes de vérification passent ; aucune feature n'existe encore. Le jalon J0 se
-termine par le spike xterm.js, qui peut encore invalider [ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md).
+**J0 et J1 sont terminés : Ash peut déjà remplacer un terminal quotidien.** De vrais
+shells dans des onglets avec leurs raccourcis et un menu natif, une sonde qui suit le
+`cwd` et le processus en avant-plan, la résolution d'un `cwd` vers son worktree et son
+dépôt, une sidebar qui groupe les onglets par worktree et les worktrees par dépôt, les
+métadonnées git lues par surveillance de fichiers, une ligne de statut, et trois thèmes.
+Le spike xterm.js a levé le risque de [ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md)
+— voir son amendement.
+
+**Ce qui n'existe pas encore : tout ce qui touche aux agents.** Les cinq états
+(`working`, `waiting`, `done`, `idle`, `error`) sont modélisés et la sidebar sait les
+afficher, mais seuls `idle` et `working` ont un producteur — la sonde. `waiting`, `done`
+et `error` viendront des **hooks** au jalon J2 ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)),
+et ne se déduisent **jamais** de la sortie du PTY. N'invente aucune source d'état.
+
+Ne prends pas les durées de la maquette (`working · 15m22s`) pour un manque : rien ne
+date encore l'entrée dans un état.
 
 ## Stack
 
 - **Type de projet** : application de bureau macOS
 - **Coquille** : Tauri v2 ([ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md))
-- **Backend** : Rust — `portable-pty`, `libproc`, socket unix
+- **Backend** : Rust — `portable-pty`, `libc` (la sonde), `notify` (la surveillance de
+  `.git`). Le socket unix et le binaire `ash-event`
+  ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)) n'existent pas encore : c'est J2
 - **Frontend** : TypeScript + xterm.js, dans la webview système (WKWebView)
 - **Gestionnaire de paquets** : **bun** — n'utilise aucun autre gestionnaire dans ce dépôt
 - **Tests** : `cargo test` côté Rust, `bun test` côté TypeScript
@@ -47,40 +62,64 @@ cargo test                        # tests Rust
 Cibler un seul test pendant une itération :
 
 ```bash
-bun test src/features/sidebar/state.test.ts
+bun test src/features/sidebar/tree.test.ts
 cargo test -p ash --lib features::probe
 ```
 
 Les commandes `cargo` se lancent depuis `src-tauri/`, ou avec
 `cargo --manifest-path src-tauri/Cargo.toml`.
 
+**`cargo` n'est pas dans le `PATH` de tous les shells.** `rustup` l'ajoute via un fichier
+de profil que les shells non interactifs — celui d'un agent, d'un éditeur, d'un
+`Makefile` — ne lisent pas toujours. Le symptôme est un `No such file or directory
+(os error 2)`, y compris via `bun run tauri dev`, qui lance `cargo metadata`. Le remède
+tient en une ligne, à mettre en tête de session :
+
+```bash
+source ~/.cargo/env
+```
+
 ## Structure
 
 Architecture : **feature folders des deux côtés de la frontière Tauri**, retenue au
 démarrage du projet.
 
+`✓` existe, le reste est la cible. **Ne crée pas un dossier prévu tant qu'une tâche ne le
+demande pas** : la cible dit où les choses iront, pas où elles sont.
+
 ```
 src-tauri/src/
   main.rs                composition root : assemblage, configuration, démarrage
+  menu.rs              ✓ menu natif macOS et routage de ses actions
   features/
-    pty/                 PTY et cycle de vie des onglets shell
-    probe/               sonde fg_pid + cwd (libproc)          — ADR-0005
-    agents/              découverte, états, trait Adapter      — ADR-0006/7/8
+    pty/               ✓ PTY, onglets, boucle de sonde 300 ms       — ADR-0003
+    probe/             ✓ sonde fg_pid + cwd (libc)                  — ADR-0005
+    git/               ✓ résolution worktree/dépôt, surveillance de
+                         `.git`, métadonnées                        — ADR-0011/12
+    theme/             ✓ clair / sombre / système, persisté
+    agents/              découverte, états, trait Adapter           — ADR-0006/7/8
       adapters/          claude-code, codex, generic
-    git/                 refs, worktrees, graphe, rebase       — ADR-0011/12
-    journal/             attribution commit → agent → prompt   — ADR-0014
+    journal/             attribution commit → agent → prompt        — ADR-0014
     hooks/               installation du bloc dans settings.json
   shared/                réellement transverse, et justifié
 src/
-  app/                   composition root du frontend
+  app/                 ✓ composition root, tokens des thèmes, menu
   features/
-    terminal/            xterm.js, barre d'onglets
-    sidebar/             dépôts, worktrees, agents, subagents
+    terminal/          ✓ xterm.js, barre d'onglets, ligne de statut
+    sidebar/           ✓ dépôts, worktrees, onglets
     git/                 popup de branches, graphe, merge, fiche
     settings/            la fenêtre de réglages
   shared/
-    ipc/                 le contrat Rust ↔ TypeScript
+    ipc/               ✓ le contrat Rust ↔ TypeScript, et ses builders
+    agent-state/       ✓ présentation des cinq états, partagée par
+                         la sidebar et la ligne de statut
 ```
+
+`features/git/` est déjà la plus grosse : elle porte la résolution, la surveillance de
+fichiers, le parsing des fichiers de contrôle et **le seul appel à `git`** du dépôt. Cet
+appel est encadré par une frontière de sécurité documentée dans `git_cli.rs` — Ash lance
+`git status` sur un simple `cd`, donc visiter un dépôt hostile ne doit rien exécuter. Si
+tu ajoutes un verbe git, repose la question pour lui.
 
 Détail et justification : [`.claude/docs/architecture.md`](./.claude/docs/architecture.md).
 
@@ -140,26 +179,33 @@ compteur de couverture.
 
 **Structure `Given / When / Then` obligatoire**, et un nom qui décrit un comportement.
 
+Les deux exemples ci-dessous sont tirés du code réel — copie leur forme, et les vrais
+noms.
+
 ```ts
-it("Given a collapsed workspace whose agent is waiting, when the row renders, then it shows the waiting state", () => {
+it("Given a collapsed worktree whose agent is waiting, when its row bubbles a state, then waiting wins", () => {
     // Given
-    const workspace = WorkspaceBuilder.create().collapsed().withAgent("waiting").build();
+    const states: AgentState[] = ["idle", "waiting", "working"];
     // When
-    const state = bubbleState(workspace);
+    const bubbled = bubbleState(states);
     // Then
-    expect(state).toBe("waiting");
+    expect(bubbled).toBe("waiting");
 });
 ```
 
 ```rust
 #[test]
-fn given_a_worktree_git_file_when_resolving_then_it_finds_the_common_repo() {
+fn given_a_worktree_git_file_when_resolving_then_it_finds_the_worktree_and_the_common_repo() {
     // Given
-    let tree = FakeFs::with_worktree("/wt/ash-sidebar", "gitdir: /dev/ash/.git/worktrees/sidebar");
+    let tree = FakeFs::new()
+        .plain_repo("/dev/ash")
+        .dir("/dev/ash/.git/worktrees/sidebar")
+        .file("/wt/ash-sidebar/.git", "gitdir: /dev/ash/.git/worktrees/sidebar");
     // When
-    let repo = resolve_repo(&tree, Path::new("/wt/ash-sidebar/src"));
+    let located = resolve_worktree(&tree, Path::new("/wt/ash-sidebar/src"));
     // Then
-    assert_eq!(repo.unwrap(), Path::new("/dev/ash/.git"));
+    let repo = located.unwrap().repo.unwrap();
+    assert_eq!(repo.git_dir, Path::new("/dev/ash/.git"));
 }
 ```
 
