@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+    HOOK_STATES,
+    hookShapes,
+    presentHooks,
     presentVerification,
     testTileClass,
     testTileLabel,
@@ -44,6 +47,59 @@ describe("la présentation des cinq états de vérification", () => {
 
         // Then
         expect(neutral).toEqual(["unverified", "verifying"]);
+    });
+});
+
+describe("la présentation des cinq états de la ligne hooks", () => {
+    it("Given the five hook states, when they are presented, then each one has a word of its own", () => {
+        // Given — mêmes exigences que les états de vérification : un état qui partage son
+        // mot avec un autre est un état qu'un lecteur d'écran ne distingue plus
+        const shown = HOOK_STATES.map((state) => presentHooks(state));
+
+        // When
+        const words = new Set(shown.map((one) => one.label));
+
+        // Then
+        expect(HOOK_STATES.length).toBe(5);
+        expect(words.size).toBe(5);
+    });
+
+    it("Given missing and blocked, the two grey states, when their shapes are compared, then they share no stroke at all", () => {
+        // Given — c'est le point délicat de cet écran. La maquette les dessine en cercle
+        // vide contre cercle barré : à 13 px, une diagonale d'un pixel est tout ce qui les
+        // sépare, et le dépôt exige qu'un état soit distinguable **sans la couleur** — les
+        // deux sont gris. `blocked` est donc un cadenas : aucune forme partagée avec un
+        // cercle, et « pas possible » ne se lit plus comme « pas encore fait »
+        const missing = hookShapes("missing");
+        const blocked = hookShapes("blocked");
+
+        // When
+        const shared = missing.filter((shape) => blocked.includes(shape));
+
+        // Then
+        expect(shared).toEqual([]);
+    });
+
+    it("Given the five hook states, when their shapes are compared, then no two of them draw the same thing", () => {
+        // Given — la forme porte l'état à elle seule. Deux états au même tracé ne se
+        // distinguent plus qu'à la couleur, ce que le dépôt refuse depuis `agent-state`
+        // When
+        const drawn = new Set(HOOK_STATES.map((state) => hookShapes(state).join("|")));
+
+        // Then
+        expect(drawn.size).toBe(5);
+    });
+
+    it("Given a blocked hooks line whose refusal already names its file, when it is presented, then the file is not written twice on the same row", () => {
+        // Given — les trois blocages qui portent un fichier sont des refus qui le nomment
+        // dans leur phrase (« ash can't read /home/… ») ; les trois autres n'ont pas de
+        // fichier du tout. Les quatre autres états, eux, ont une phrase courte et le fichier
+        // en pastille à côté. La règle vivait dans la vue, que `bun test` ne monte pas
+        // When
+        const shown = HOOK_STATES.filter((state) => presentHooks(state).showsFile);
+
+        // Then
+        expect(shown).toEqual(["installed", "missing", "outdated", "conflict"]);
     });
 });
 

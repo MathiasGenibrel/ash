@@ -150,6 +150,31 @@ describe("les couleurs de la fenêtre de réglages", () => {
     });
 });
 
+describe("le diff d'un conflit de hooks", () => {
+    it("Given the diff colours, when they are measured on the tinted line they are written on, then both sides stay readable in both themes", () => {
+        // Given — la maquette ne dessine le diff **qu'en thème sombre** : les quatre valeurs
+        // claires sont dérivées, donc rien ne les a jamais vues. C'est exactement le genre
+        // de couleur qu'on choisit à l'œil sur un écran et qui disparaît sur un autre. Les
+        // fonds sont des teintes à 8–10 % : on les compose sur le fond réel du panneau avant
+        // de mesurer, sinon on mesurerait un contraste que personne ne voit.
+        const panel = "--ash-bg-disabled";
+        const sides = [
+            ["--ash-diff-removed-fg", "--ash-diff-removed-bg"],
+            ["--ash-diff-added-fg", "--ash-diff-added-bg"],
+        ] as const;
+
+        // When
+        const ratios = [LIGHT, DARK].flatMap((tokens) =>
+            sides.map(([ink, wash]) =>
+                contrast(read(tokens, ink), blend(read(tokens, wash), read(tokens, panel))),
+            ),
+        );
+
+        // Then — du texte de 11,5 px : le seuil est celui du corps de texte
+        expect(Math.min(...ratios)).toBeGreaterThanOrEqual(4.5);
+    });
+});
+
 describe("la palette du terminal", () => {
     it("Given the colours xterm.js asks for, when they are looked up, then both palettes define every one of them", () => {
         // Given — xterm.js ne résout pas un `var(--ash-…)` : un token absent d'une palette
@@ -193,6 +218,27 @@ function read(tokens: Map<string, string>, token: string): string {
     const value = tokens.get(token);
     if (value === undefined) throw new Error(`token absent de la palette : ${token}`);
     return value;
+}
+
+/**
+ * Une teinte `rgb(r g b / a%)` posée sur un fond opaque, rendue en `#rrggbb`.
+ *
+ * Sans ça, mesurer un fond de diff reviendrait à mesurer une couleur pleine que personne
+ * n'affiche : ce que l'œil voit est la composition, et c'est elle qui décide de la
+ * lisibilité.
+ */
+function blend(wash: string, behind: string): string {
+    const parsed = /rgb\((\d+) (\d+) (\d+) \/ (\d+)%\)/.exec(wash);
+    if (parsed === null) return wash;
+    const alpha = Number(parsed[4]) / 100;
+    const front = [1, 2, 3].map((index) => Number(parsed[index]));
+    const back = [0, 2, 4].map((offset) =>
+        Number.parseInt(behind.replace("#", "").slice(offset, offset + 2), 16),
+    );
+    const mixed = front.map((value, index) =>
+        Math.round(alpha * value + (1 - alpha) * (back[index] ?? 0)),
+    );
+    return `#${mixed.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** Le rapport de contraste WCAG entre deux couleurs `#rrggbb`. */

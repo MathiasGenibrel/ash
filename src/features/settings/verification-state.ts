@@ -1,4 +1,4 @@
-import type { TestOutcome, VerificationState } from "./contract";
+import type { HookState, TestOutcome, VerificationState } from "./contract";
 
 /**
  * La présentation des cinq états de vérification — forme, mot, teinte.
@@ -120,41 +120,131 @@ const SVG = "http://www.w3.org/2000/svg";
  */
 export function verificationGlyph(state: VerificationState, size = 14): SVGElement {
     const shown = PRESENTATIONS[state];
-    const svg = document.createElementNS(SVG, "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("width", String(size));
-    svg.setAttribute("height", String(size));
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", "1.75");
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("class", `settings-verify-glyph ${shown.className}`);
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", shown.label);
-    for (const shape of SHAPES[state]) {
-        const path = document.createElementNS(SVG, "path");
-        path.setAttribute("d", shape);
-        svg.append(path);
-    }
+    const svg = glyph(SHAPES[state], size, shown.className, shown.label);
     if (shown.spinning) svg.classList.add("is-spinning");
     return svg;
 }
 
 /**
- * Le glyphe de la ligne `hooks` **quand elle est bloquée**, et rien d'autre.
+ * La présentation des cinq états de la ligne `hooks` — même discipline, autre question.
  *
- * Les cinq états de cette ligne appartiennent à l'issue #16 ; celui-ci est là parce que la
- * planche `3e` — l'entrée invalide en contexte, qui est de cette issue-ci — le montre :
- * *« le bouton installer reste à sa place, éteint, avec sa raison à gauche. le masquer
- * ferait croire que les hooks n'existent pas pour cet outil. »*
+ * **Le couple `missing` / `blocked` est le point délicat**, et il est tranché ici. La
+ * maquette les dessine en cercle vide contre cercle barré : deux gris que seule une
+ * diagonale sépare, à 13 px. Ash exige qu'un état soit distinguable **sans la couleur**
+ * (`shared/agent-state`), et une barre d'un pixel sur un cercle de treize n'y suffit pas —
+ * elle disparaît au premier écran non-Retina et en vision périphérique.
  *
- * **Cercle barré**, et pas cercle vide : le second dira `missing` chez #16, c'est-à-dire
- * « rien n'est encore installé, et vous pouvez le faire ». C'est la barre diagonale, et
- * elle seule, qui distingue « pas fait » de « pas possible » — les deux sont gris, et
- * remplacer l'un par une nuance de l'autre effacerait la différence.
+ * `blocked` est donc un **cadenas** : une silhouette rectangulaire à anse, qui ne partage
+ * aucune forme avec le cercle de `missing`. Le sens y gagne aussi — « pas possible » n'est
+ * pas « pas encore fait », et un cadenas dit exactement lequel des deux.
  */
-export function blockedHooksGlyph(size = 13): SVGElement {
+export interface HookPresentation {
+    /** Le mot lu par un lecteur d'écran, et l'infobulle. */
+    readonly label: string;
+    /** La classe qui porte la couleur du glyphe. */
+    readonly className: string;
+    /** La classe qui teinte la bordure de la ligne — la seconde façon de dire l'état. */
+    readonly rowClassName: string;
+    /**
+     * La ligne montre-t-elle le fichier en pastille, à côté de sa phrase ?
+     *
+     * **Non pour `blocked`, et c'est une décision, pas un oubli** : les trois blocages qui
+     * portent un fichier sont des refus qui le nomment déjà dans leur phrase — « ash can't
+     * read /home/… ». La pastille l'écrirait une seconde fois sur la même ligne. Les trois
+     * autres blocages, eux, n'ont pas de fichier du tout : ils précèdent la lecture.
+     *
+     * Elle vit dans la table et non dans la vue parce que c'est le backend qui décide de
+     * nommer le fichier, et que `bun test` ne monte pas de DOM : posée dans le rendu, la
+     * règle serait le seul endroit du chemin où une information venue du backend disparaît
+     * sans que rien ne le vérifie.
+     */
+    readonly showsFile: boolean;
+}
+
+const HOOK_PRESENTATIONS: Readonly<Record<HookState, HookPresentation>> = {
+    installed: {
+        label: "hooks installed",
+        className: "is-valid",
+        rowClassName: "is-installed",
+        showsFile: true,
+    },
+    missing: {
+        label: "hooks missing",
+        className: "is-unverified",
+        rowClassName: "",
+        showsFile: true,
+    },
+    outdated: {
+        label: "hooks from an older version",
+        className: "is-caveat",
+        rowClassName: "is-outdated",
+        showsFile: true,
+    },
+    conflict: {
+        label: "hook block edited by hand",
+        className: "is-invalid",
+        rowClassName: "is-conflict",
+        showsFile: true,
+    },
+    blocked: {
+        label: "hooks unavailable",
+        className: "is-blocked",
+        rowClassName: "is-blocked",
+        showsFile: false,
+    },
+};
+
+/**
+ * Les cinq états, dérivés de la table et non recopiés à côté d'elle — comme
+ * [`VERIFICATION_STATES`].
+ */
+export const HOOK_STATES = Object.keys(HOOK_PRESENTATIONS) as readonly HookState[];
+
+export function presentHooks(state: HookState): HookPresentation {
+    return HOOK_PRESENTATIONS[state];
+}
+
+/**
+ * Les cinq tracés de la ligne `hooks`, dans le vocabulaire de Lucide.
+ *
+ * `outdated` est une **flèche vers le haut** et non un point d'exclamation : c'est une
+ * direction, pas un statut — il y a quelque chose vers quoi aller.
+ */
+const HOOK_SHAPES: Readonly<Record<HookState, readonly string[]>> = {
+    installed: ["M20 6 9 17l-5-5"],
+    missing: ["M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20"],
+    outdated: ["m5 12 7-7 7 7", "M12 19V5"],
+    conflict: ["M18 6 6 18", "m6 6 12 12"],
+    blocked: [
+        "M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z",
+        "M7 11V7a5 5 0 0 1 10 0v4",
+    ],
+};
+
+/**
+ * Les tracés d'un état, **sans DOM**.
+ *
+ * Ils sont lisibles hors de `hooksGlyph` parce que le choix des formes est une décision et
+ * non un détail de rendu : c'est elle qui garantit que deux états gris ne se confondent
+ * pas. Le dépôt ne monte pas de DOM dans `bun test` ; sans cette porte, la seule chose qui
+ * distingue `missing` de `blocked` ne serait vérifiable nulle part.
+ */
+export function hookShapes(state: HookState): readonly string[] {
+    return HOOK_SHAPES[state];
+}
+
+/** Le glyphe d'un état de hooks, prêt à poser dans le DOM. */
+export function hooksGlyph(state: HookState, size = 13): SVGElement {
+    const shown = HOOK_PRESENTATIONS[state];
+    return glyph(HOOK_SHAPES[state], size, shown.className, shown.label);
+}
+
+function glyph(
+    shapes: readonly string[],
+    size: number,
+    className: string,
+    label: string,
+): SVGElement {
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("width", String(size));
@@ -164,10 +254,10 @@ export function blockedHooksGlyph(size = 13): SVGElement {
     svg.setAttribute("stroke-width", "1.75");
     svg.setAttribute("stroke-linecap", "round");
     svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("class", "settings-verify-glyph is-blocked");
+    svg.setAttribute("class", `settings-verify-glyph ${className}`);
     svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "hooks unavailable");
-    for (const shape of ["M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20", "m4.9 4.9 14.2 14.2"]) {
+    svg.setAttribute("aria-label", label);
+    for (const shape of shapes) {
         const path = document.createElementNS(SVG, "path");
         path.setAttribute("d", shape);
         svg.append(path);

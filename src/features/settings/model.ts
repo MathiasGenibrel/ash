@@ -1,4 +1,4 @@
-import type { ToolDeclaration, ToolDraft, Verification } from "./contract";
+import type { HookAction, ToolDeclaration, ToolDraft, Verification } from "./contract";
 
 /**
  * Les règles de la liste d'outils : ce qu'une ligne dit, ce que l'en-tête compte, et ce
@@ -192,28 +192,115 @@ function blockedReason(
 }
 
 /**
- * Si les hooks peuvent être écrits sur cette entrée, et sinon pourquoi.
+ * Le mot du bouton de la ligne `hooks`.
  *
- * **La règle n'est pas ici** : `allowsHooks` est calculé par la séquence en Rust, qui seule
- * a lu le dossier. Ce que cette fonction fait est de lui donner sa **phrase**, celle qui
- * reste à gauche du bouton éteint — « le masquer ferait croire que les hooks n'existent pas
- * pour cet outil ».
- *
- * Elle est ici, et pas dans la vue, parce que la précédence des raisons en est une : une
- * entrée invalide et une entrée jamais vérifiée sont éteintes toutes les deux, et ne disent
- * pas la même chose.
+ * La seule chose que le frontend ajoute à [`HooksReport`] : le backend dit **quelle** action
+ * la ligne propose, l'écran dit comment elle s'écrit. Le libellé de `seeTheDiff` est le seul
+ * qui ne se déduise pas de son nom, et c'est aussi le seul qui n'écrive rien.
  */
-export function describeHooksAvailability(verification: Verification): AddAction {
-    if (verification.allowsHooks) {
-        return { reason: "", enabled: true };
-    }
-    return {
-        reason:
-            verification.state === "invalid"
-                ? "unavailable until the path is verified"
-                : "install unavailable",
-        enabled: false,
+export function hookActionLabel(action: HookAction): string {
+    const said: Record<HookAction, string> = {
+        install: "install",
+        update: "update",
+        remove: "remove",
+        seeTheDiff: "see the diff",
     };
+    return said[action];
+}
+
+/**
+ * La bannière de doublon, ou `null` quand deux entrées ne se marchent pas dessus.
+ *
+ * Elle est **de section** et non de carte, parce que le doublon n'appartient à aucune des
+ * deux entrées : « claude et claude-perso pointent le même dossier — l'une des deux ne fera
+ * rien ». Les cartes, elles, portent chacune leur étiquette (spec §9.1 : signalé sur les
+ * deux lignes).
+ *
+ * `undo` nomme l'entrée qu'on peut ramener en arrière, et il n'existe que si une
+ * réinitialisation a **créé** la collision : proposer d'annuler un geste qui n'a pas eu lieu
+ * ferait chercher lequel.
+ */
+export interface DuplicateBanner {
+    /** Les entrées en cause, dans l'ordre de la liste. */
+    readonly commands: readonly string[];
+    readonly sentence: string;
+    /** L'entrée dont la réinitialisation a produit le doublon, s'il y en a une. */
+    readonly undo: string | null;
+}
+
+export function describeDuplicates(tools: readonly ToolDeclaration[]): DuplicateBanner | null {
+    const colliding = tools.filter((tool) => tool.duplicates.length > 0);
+    if (colliding.length < 2) return null;
+
+    const commands = colliding.map((tool) => tool.command);
+    const named = commands.slice(0, -1).join(", ");
+    const last = commands[commands.length - 1] ?? "";
+    return {
+        commands,
+        sentence: `${named} and ${last} point at the same folder — one of them will do nothing`,
+        undo: colliding.find((tool) => tool.resetFrom !== null)?.command ?? null,
+    };
+}
+
+/**
+ * Ce que le `↺` d'une carte fait, et ce qu'il dit quand il ne peut rien faire.
+ *
+ * « Réinitialiser une entrée la ramène à sa dernière valeur valide, pas au défaut de son
+ * adaptateur » (spec §9.1). Une entrée qui n'a jamais rien prouvé n'a donc **rien** à
+ * restaurer, et son bouton suit la règle que la maquette répète trois fois : visible,
+ * éteint, avec sa raison.
+ */
+export function describeReset(tool: ToolDeclaration): AddAction {
+    if (tool.lastValidConfig === null) {
+        return { reason: "no verified folder to go back to yet", enabled: false };
+    }
+    if (tool.lastValidConfig === (tool.config ?? "")) {
+        return { reason: "already on the last folder that worked", enabled: false };
+    }
+    return { reason: `back to ${tool.lastValidConfig}`, enabled: true };
+}
+
+/** Une ligne du diff, telle que l'écran la peint. */
+export interface DiffLine {
+    readonly kind: "removed" | "added" | "context";
+    readonly text: string;
+}
+
+/**
+ * Le diff, découpé en lignes qualifiées.
+ *
+ * C'est une **décision**, donc elle est ici : reconnaître un préfixe et jeter l'en-tête
+ * `---`/`+++` du backend est exactement le genre de chose qu'une vue non testée finit par
+ * faire de travers — et le dépôt ne monte pas de DOM dans `bun test`.
+ *
+ * **Le sens est celui du backend, et l'écran l'annonce tel quel** : `-` est ce qu'Ash
+ * écrirait, `+` ce que le fichier porte. La maquette légende l'inverse ; suivre sa légende
+ * sur ces lignes-ci ferait lire chaque ligne à l'envers, ce qui est la seule faute qu'un
+ * diff ne pardonne pas.
+ */
+export function parseDiff(diff: string): DiffLine[] {
+    return diff
+        .split("\n")
+        .filter((line) => !line.startsWith("---") && !line.startsWith("+++"))
+        .map((line) => {
+            if (line.startsWith("-")) return { kind: "removed", text: line.slice(1).trimEnd() };
+            if (line.startsWith("+")) return { kind: "added", text: line.slice(1).trimEnd() };
+            return { kind: "context", text: line.slice(2).trimEnd() };
+        });
+}
+
+/**
+ * L'entrée que la correction proposée ferait basculer en mode dégradé, ou `null`.
+ *
+ * `generic` est un mode dégradé, et l'écran doit le dire **avant** qu'on l'applique
+ * (maquette §3.6) : le bouton `apply` d'une carte invalide propose justement `generic`, et
+ * l'appuyer sans savoir ce qu'il coûte ferait perdre `waiting` sans que rien ne l'ait
+ * annoncé.
+ */
+export function degradedFixSubject(tool: ToolDeclaration): string | null {
+    const apply = tool.verification.fix?.apply ?? null;
+    if (apply === null || apply.kind !== "useAdapter") return null;
+    return apply.adapter === GENERIC_ADAPTER ? tool.command : null;
 }
 
 /**

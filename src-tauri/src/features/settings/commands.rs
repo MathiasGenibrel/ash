@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : sept commandes, un event, et l'ouverture de
+//! La surface de la feature vers le frontend : onze commandes, un event, et l'ouverture de
 //! sa fenêtre.
 //!
 //! Le frontend ne connaît de `settings` que ces noms et la forme de [`SettingsSnapshot`].
@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::error::SettingsError;
+use super::hooks::HooksReport;
 use super::registry::{Changed, SecondPass, ToolRegistry};
 use super::tool::{NewTool, ToolDeclaration};
 use super::verification::{ToolTest, Verification};
@@ -105,18 +106,53 @@ pub struct Verified {
     /// `verified` cesserait d'être exactement `allows_hooks`
     /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
     pub verified: bool,
+    /// Où en est la ligne `hooks` de cette entrée **après** ce résultat.
+    ///
+    /// Elle voyage avec lui parce que le test 4 peut la changer : une entrée qui attendait
+    /// sa réponse laissait déjà écrire (`verifying` autorise les hooks), et un test 4 en
+    /// échec la rend invalide. Sans cette ligne-là, la fenêtre garderait celle du premier
+    /// temps — un bouton `install` allumé sur une entrée que le backend refuse désormais.
+    ///
+    /// `None` pour une saisie du formulaire d'ajout : elle n'est au registre, donc n'a pas
+    /// de ligne `hooks` — le formulaire n'en montre aucune.
+    pub hooks: Option<HooksReport>,
 }
 
-impl Verified {
-    /// Le seul endroit où l'event se construit, et il lit `allows_hooks` comme
-    /// [`ToolDeclaration::verified_by`] : une seule règle, deux lecteurs.
-    fn of(command: String, verification: Verification) -> Self {
-        Self {
+/// Ce que le second temps annonce à la fenêtre, ou rien du tout.
+///
+/// Deux règles, et elles sont ici — pures, donc éprouvées — plutôt que dans le fil de
+/// [`follow_up`], qu'aucun test ne peut lancer sans une application Tauri :
+///
+/// 1. **un résultat que le registre a jeté ne s'annonce pas.** Il le jette quand l'entrée
+///    ne décrit plus la même chose (spec §9.1, [`ToolRegistry::settle`]) ; l'émettre quand
+///    même le ferait poser par la fenêtre sur l'entrée que le backend a refusé de toucher —
+///    la règle de fraîcheur aurait un propriétaire, et une porte à côté.
+/// 2. **une entrée du registre s'annonce entière** : sa vérification, son `verified` et sa
+///    ligne `hooks`, tels que le registre vient de les reposer. Recomposer l'entrée champ
+///    par champ côté fenêtre laisse vieillir ceux qu'on a oubliés.
+fn announce(
+    next: &SecondPass,
+    verification: Verification,
+    settled: Option<Vec<ToolDeclaration>>,
+) -> Option<Verified> {
+    if !next.stored {
+        return Some(Verified {
             verified: verification.allows_hooks,
-            command,
+            command: next.command.clone(),
             verification,
-        }
+            hooks: None,
+        });
     }
+
+    let tool = settled?
+        .into_iter()
+        .find(|tool| tool.command == next.command)?;
+    Some(Verified {
+        command: tool.command,
+        verification,
+        verified: tool.verified,
+        hooks: Some(tool.hooks),
+    })
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
@@ -184,6 +220,56 @@ pub fn settings_verify_all<R: Runtime>(
     answer(app, &registry, changed)
 }
 
+/// Ramène une entrée à son dernier dossier valide — le `↺` de l'en-tête de carte.
+#[tauri::command]
+pub fn settings_reset_tool<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.reset(&command)?;
+    answer(app, &registry, changed)
+}
+
+/// Annule la réinitialisation — le `undo the reset` de la bannière de doublon.
+#[tauri::command]
+pub fn settings_undo_reset<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.undo_reset(&command)?;
+    answer(app, &registry, changed)
+}
+
+/// Pose ou met à jour le bloc de hooks — le bouton `install` / `update` de la ligne.
+///
+/// **C'est le seul geste du frontend qui écrive dans un fichier de l'utilisateur.** Il ne
+/// porte aucune condition : celle qui décide est en Rust, et elle est la même qui a allumé
+/// le bouton ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+#[tauri::command]
+pub fn settings_install_hooks(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    Ok(SettingsSnapshot::around(
+        registry.install_hooks(&command)?,
+        &registry,
+    ))
+}
+
+/// Retire le bloc et ses marqueurs — le `remove` de l'état `installed`.
+#[tauri::command]
+pub fn settings_remove_hooks(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    Ok(SettingsSnapshot::around(
+        registry.remove_hooks(&command)?,
+        &registry,
+    ))
+}
+
 /// Vérifie une saisie du formulaire d'ajout, sans rien ajouter.
 #[tauri::command]
 pub fn settings_verify_draft<R: Runtime>(
@@ -221,10 +307,13 @@ fn follow_up<R: Runtime>(app: AppHandle<R>, registry: Arc<ToolRegistry>, pending
         let registry = Arc::clone(&registry);
         std::thread::spawn(move || {
             let verification = registry.second_pass(&next);
-            // Un registre empoisonné n'a pas à faire paniquer un fil de fond : la fenêtre
-            // garde ce que le premier temps lui a dit, ce qui reste vrai.
-            let _ = registry.settle(&next, verification.clone());
-            let _ = app.emit(SETTINGS_VERIFIED, Verified::of(next.command, verification));
+            // Un registre empoisonné n'a pas à faire paniquer un fil de fond, et il se lit
+            // ici comme un résultat qui n'a pas été posé : rien n'est annoncé, et la fenêtre
+            // garde ce que le premier temps lui a dit. C'est [`announce`] qui en décide.
+            let settled = registry.settle(&next, verification.clone()).ok().flatten();
+            if let Some(announcement) = announce(&next, verification, settled) {
+                let _ = app.emit(SETTINGS_VERIFIED, announcement);
+            }
         });
     }
 }
@@ -265,5 +354,110 @@ pub fn open<R: Runtime>(app: &AppHandle<R>) {
 
     if let Err(why) = builder.build() {
         eprintln!("ash: la fenêtre de réglages ne s'est pas ouverte : {why}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::features::settings::hooks::{HookAction, HookState};
+    use crate::features::settings::ports::Launch;
+
+    /// Test Data Builder : le second temps d'une entrée du registre.
+    fn second_pass(command: &str, stored: bool) -> SecondPass {
+        SecondPass {
+            command: command.to_owned(),
+            adapter: "claude-code".to_owned(),
+            config: Some("/home/.claude".to_owned()),
+            launch: Launch {
+                program: PathBuf::from("/bin/claude"),
+                args: vec!["--version".to_owned()],
+                env: Vec::new(),
+                timeout: Duration::from_secs(5),
+            },
+            stored,
+        }
+    }
+
+    /// Une entrée telle que le registre vient de la reposer, avec sa ligne `hooks` éteinte.
+    fn refused(command: &str) -> ToolDeclaration {
+        let mut tool = NewTool {
+            command: command.to_owned(),
+            label: None,
+            adapter: "claude-code".to_owned(),
+            config: Some("/home/.claude".to_owned()),
+        }
+        .declare(&["claude-code".to_owned()], &[])
+        .unwrap_or_else(|why| panic!("la saisie est valide : {why}"));
+        tool.hooks = HooksReport {
+            state: HookState::Blocked,
+            summary: "unavailable until the path is verified".to_owned(),
+            note: "the button stays where it is, dimmed.".to_owned(),
+            file: None,
+            action: HookAction::Install,
+            enabled: false,
+            diff: None,
+            backup: None,
+        };
+        tool
+    }
+
+    #[test]
+    fn given_a_second_pass_the_registry_dropped_as_stale_when_it_is_announced_then_nothing_is_emitted(
+    ) {
+        // Given — l'entrée ne décrit plus la même chose : le registre a jeté le résultat
+        // sans bruit. L'annoncer quand même le ferait poser par la fenêtre sur l'entrée
+        // que le backend a justement refusé de toucher
+        let next = second_pass("claude", true);
+
+        // When
+        let announcement = announce(&next, Verification::unverified(), None);
+
+        // Then
+        assert!(announcement.is_none());
+    }
+
+    #[test]
+    fn given_a_fourth_test_that_invalidated_an_entry_when_it_is_announced_then_the_hooks_line_travels_with_it(
+    ) {
+        // Given — pendant qu'elle attendait sa réponse, l'entrée laissait écrire
+        // (`verifying` autorise les hooks). Annoncer la seule vérification laisserait à
+        // l'écran le bouton `install` allumé du premier temps
+        let next = second_pass("claude", true);
+
+        // When
+        let announcement = announce(
+            &next,
+            Verification::unverified(),
+            Some(vec![refused("claude")]),
+        );
+
+        // Then
+        let announced = announcement.expect("l'entrée est au registre");
+        assert!(!announced.verified);
+        let hooks = announced
+            .hooks
+            .expect("une entrée déclarée a une ligne hooks");
+        assert_eq!(hooks.state, HookState::Blocked);
+        assert!(!hooks.enabled);
+    }
+
+    #[test]
+    fn given_a_draft_the_form_is_still_waiting_on_when_it_is_announced_then_it_is_emitted_without_a_hooks_line(
+    ) {
+        // Given — une saisie n'est pas au registre : elle n'a pas de ligne `hooks`, et le
+        // formulaire n'en montre aucune. Se taire ferait attendre le test 4 pour toujours
+        let next = second_pass("claude", false);
+
+        // When
+        let announcement = announce(&next, Verification::unverified(), None);
+
+        // Then
+        let announced = announcement.expect("le formulaire attend sa réponse");
+        assert_eq!(announced.command, "claude");
+        assert!(announced.hooks.is_none());
     }
 }
