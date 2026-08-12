@@ -18,6 +18,7 @@ use std::path::Path;
 /// chaîne, et c'est par elle — pas par le nom, qui peut se répéter d'un disque à l'autre —
 /// que la sidebar les groupe.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct RepoRef {
     pub id: String,
@@ -30,6 +31,7 @@ pub struct RepoRef {
 /// répertoire hors de tout dépôt. Le frontend n'a rien à en déduire — il rend un niveau ou
 /// deux selon que ce champ est là.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TabLocation {
     /// La racine du worktree. C'est la clé de groupement des onglets.

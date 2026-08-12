@@ -40,6 +40,9 @@ libc = "0.2.189"
 # par défaut, qui se réduisent ici à `macos_fsevent` : ni `crossbeam-channel`, ni `serde`.
 notify = "=8.2.0"
 
+[dev-dependencies]
+ts-rs = "12.0.1"
+
 [lints.rust]
 # `clippy -- -D warnings` en fait une erreur : tout `unsafe` doit donc être introduit
 # par un `#![allow(unsafe_code)]` explicite et local. La sonde d'ADR-0005 en aura besoin,

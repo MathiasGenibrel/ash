@@ -107,6 +107,7 @@ struct Located {
 /// apprenne un onglet de deux façons différentes. Un onglet posé à son invite ne traverse
 /// pas la frontière — voir [`PtyRegistry::changes`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
     pub tab_id: TabId,

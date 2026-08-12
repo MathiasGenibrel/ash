@@ -116,6 +116,7 @@ impl ToolTest {
 /// ne se peignent pourtant pas pareil : le premier attend, le second ne viendra jamais
 /// parce que la chaîne s'est arrêtée avant lui.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum TestOutcome {
     /// Rien n'a encore été lancé.
@@ -133,6 +134,7 @@ pub enum TestOutcome {
 
 /// Les cinq états de la maquette §3.4, et rien de plus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum VerificationState {
     Unverified,
@@ -144,6 +146,7 @@ pub enum VerificationState {
 
 /// Ce qui était attendu, et ce qui a été trouvé.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Mismatch {
     pub expected: String,
@@ -156,6 +159,7 @@ pub struct Mismatch {
 /// aider, proposer quand même une action serait un conseil générique — exactement ce que le
 /// critère d'acceptation refuse. La question, elle, est toujours là.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct SuggestedFix {
     /// La question posée à l'utilisateur, telle qu'elle s'affiche.
@@ -166,6 +170,7 @@ pub struct SuggestedFix {
 
 /// Ce qu'`apply` change dans l'entrée — et rien d'autre ne change jamais.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FixAction {
     /// Basculer l'entrée sur un autre adaptateur.
@@ -180,6 +185,7 @@ pub enum FixAction {
 /// rangée de pastilles et la phrase existent dans les cinq cas, et la fenêtre les dessine
 /// sans se demander lequel elle a sous la main.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Verification {
     pub state: VerificationState,

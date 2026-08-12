@@ -21,6 +21,7 @@ use super::verification::{Verification, VerificationState};
 /// donnerait deux clés pour une seule chose, et rien ne dirait laquelle fait foi le jour
 /// où le fichier est édité à la main — ce que la spec §9 autorise explicitement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDeclaration {
     /// Le `match` : le nom du processus, tel qu'on le tape dans le shell.
@@ -135,6 +136,7 @@ impl ToolDeclaration {
 /// tout est possible, y compris des espaces autour et un adaptateur qui n'existe pas.
 /// [`NewTool::declare`] est le seul passage de l'un à l'autre.
 #[derive(Debug, Clone, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct NewTool {
     pub command: String,
