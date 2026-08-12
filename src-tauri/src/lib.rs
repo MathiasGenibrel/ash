@@ -20,12 +20,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use features::agents::commands::{AgentEvent, AGENT_EVENT};
-use features::agents::{Adapter, EventFrame, EventSink, GenericAdapter};
+use features::agents::{Adapter, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter};
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
 use features::settings::{
-    AdapterProfile, SystemCommands, SystemConfigFiles, ToolRegistry, Verifier,
+    AdapterProfile, BlockAt, HookBlocks, SystemCommands, SystemConfigFiles, ToolRegistry, Verifier,
 };
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
@@ -80,6 +80,64 @@ impl EventSink for HookEvents {
     }
 }
 
+/// Relie la fenêtre de réglages à l'écriture des hooks, en traduisant un **identifiant**
+/// d'adaptateur en instrumentation.
+///
+/// C'est ici, et seulement ici, que les trois features se rencontrent : `settings` ne
+/// connaît aucun adaptateur concret
+/// ([ADR-0008](../../docs/adr/0008-abstraction-adapter.md)), `agents` décrit ce qu'il faut
+/// écrire sans jamais l'écrire, et `hooks` écrit sans savoir de quel outil il s'agit. Le
+/// seul endroit qui connaît les trois est celui qui les assemble.
+///
+/// Il n'y a aucune décision ici — un identifiant, un dossier, un appel — et c'est
+/// délibéré : le composition root n'a pas de test unitaire, donc tout ce qui s'y glisse
+/// n'en a pas non plus.
+struct AdapterHooks {
+    adapters: Vec<Arc<dyn Adapter>>,
+    files: Arc<dyn features::hooks::ConfigFiles>,
+}
+
+impl AdapterHooks {
+    fn describing(
+        &self,
+        adapter: &str,
+        config_dir: &Path,
+    ) -> Option<features::agents::Instrumentation> {
+        self.adapters
+            .iter()
+            .find(|known| known.id() == adapter)?
+            .instrumentation(config_dir)
+    }
+}
+
+impl HookBlocks for AdapterHooks {
+    fn inspect(&self, adapter: &str, config_dir: &Path) -> Option<BlockAt> {
+        let instrumentation = self.describing(adapter, config_dir)?;
+        Some(BlockAt {
+            file: instrumentation.file.clone(),
+            presence: features::hooks::inspect(&*self.files, &instrumentation),
+        })
+    }
+
+    fn install(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+        let instrumentation = self
+            .describing(adapter, config_dir)
+            .ok_or_else(|| format!("the {adapter} adapter has no hooks to install"))?;
+        features::hooks::install(&*self.files, &instrumentation)
+            .map(|_| ())
+            .map_err(|why| why.to_string())
+    }
+
+    fn remove(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+        let instrumentation = self
+            .describing(adapter, config_dir)
+            .ok_or_else(|| format!("the {adapter} adapter wrote nothing to remove"))?;
+        features::hooks::uninstall(&*self.files, &instrumentation.file)
+            .map(|_| ())
+            .map_err(|why| why.to_string())
+    }
+}
+
 /// Assemble et démarre l'application.
 ///
 /// Composition root : c'est le seul endroit du crate où les implémentations concrètes
@@ -114,18 +172,57 @@ pub fn run() -> tauri::Result<()> {
     // l'adaptateur de l'outil dont on ne sait rien. La séquence en tire une **réserve** —
     // le dossier est accepté, mais rien ne prouve que la commande le lit — au lieu de
     // lancer un programme pour une question à laquelle il ne saurait pas répondre.
-    let profiles = vec![AdapterProfile {
+    let mut adapters: Vec<Arc<dyn Adapter>> = vec![Arc::new(GenericAdapter)];
+    let mut profiles = vec![AdapterProfile {
         id: GenericAdapter.id().to_owned(),
         default_config: None,
         signature: Vec::new(),
         config_env: None,
         probe_args: vec!["--version".to_owned()],
     }];
-    let tools = Arc::new(ToolRegistry::new(Arc::new(Verifier::new(
-        Arc::new(SystemConfigFiles),
-        Arc::new(SystemCommands),
-        profiles,
-    ))));
+
+    // Claude Code, et le seul adaptateur qui pose vraiment des hooks aujourd'hui.
+    //
+    // Il n'est enregistré que si l'on sait où est `ash-event` : sans ce chemin absolu, le
+    // bloc écrit chez l'utilisateur nommerait une commande que le shell du hook ne
+    // trouverait pas, et l'outil paraîtrait instrumenté sans jamais rien émettre. Ne pas le
+    // proposer du tout est plus honnête que de le proposer cassé.
+    //
+    // **Les quatre champs du profil viennent de ce que l'adaptateur sait déjà** :
+    // `CLAUDE_CONFIG_DIR` est la variable par laquelle on lui impose un dossier — c'est
+    // elle qui fait que `claude` et `claude-perso` sont deux configurations —, `~/.claude`
+    // est le dossier qu'il lit quand personne ne lui en impose un, et `--version` est
+    // l'invocation qui le fait répondre sans rien faire.
+    //
+    // **La signature est `projects` seul, et pas `settings.json`.** Le fichier de réglages
+    // est précisément celui qu'Ash s'apprête à écrire : l'exiger rendrait invalide un
+    // dossier de configuration tout neuf, donc interdirait d'y poser les hooks — et
+    // l'entrée resterait bloquée sur la seule chose que l'installation aurait réparée.
+    match ClaudeCodeAdapter::beside_the_app() {
+        Some(claude) => {
+            profiles.push(AdapterProfile {
+                id: claude.id().to_owned(),
+                default_config: Some("~/.claude".to_owned()),
+                signature: vec!["projects".to_owned()],
+                config_env: Some("CLAUDE_CONFIG_DIR".to_owned()),
+                probe_args: vec!["--version".to_owned()],
+            });
+            adapters.push(Arc::new(claude));
+        }
+        None => eprintln!("ash: ash-event est introuvable ; claude-code n'est pas proposé"),
+    }
+
+    let tools = Arc::new(ToolRegistry::new(
+        Arc::new(Verifier::new(
+            Arc::new(SystemConfigFiles),
+            Arc::new(SystemCommands),
+            profiles,
+        )),
+        Arc::new(AdapterHooks {
+            adapters,
+            files: Arc::new(features::hooks::SystemConfigFiles),
+        }),
+    ));
 
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
@@ -151,6 +248,10 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::settings_verify_tool,
             features::settings::commands::settings_verify_all,
             features::settings::commands::settings_verify_draft,
+            features::settings::commands::settings_reset_tool,
+            features::settings::commands::settings_undo_reset,
+            features::settings::commands::settings_install_hooks,
+            features::settings::commands::settings_remove_hooks,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report

@@ -7,6 +7,7 @@
 //! | La règle | Où elle vit |
 //! |---|---|
 //! | bloc délimité `ash:begin` / `ash:end`, versionné | [`block`] |
+//! | un seul classement de l'état d'un fichier, pour agir **et** pour l'afficher | [`presence`] |
 //! | rien n'est modifié hors marqueurs | [`block`] — le fichier est du texte, jamais un arbre relu, et le port n'accepte qu'un [`Document`] |
 //! | `.bak` **avant** l'écriture, et jamais écrasé | [`install`] |
 //! | refus d'écrire sur un bloc édité à la main, avec son diff | [`install`], [`diff`] |
@@ -28,14 +29,19 @@
 //! |---|---|---|
 //! | `ConfigFiles` (`ports.rs`) | `SystemConfigFiles` (`system_files.rs`) | `FakeConfigFiles` (`fakes.rs`) |
 //!
-//! Rien n'est encore exposé au frontend : il n'y a pas d'écran de réglages, donc pas de
-//! geste d'installation à offrir. Le `commands.rs` de cette feature naîtra avec lui (#16).
+//! **Cette feature n'a pas de `commands.rs`, et n'en aura pas** : l'écran de réglages est le
+//! seul geste d'installation du produit (#16), et il appelle `settings`, qui sait de quel
+//! outil il s'agit et si son entrée a prouvé son dossier. Exposer `install` directement au
+//! frontend ouvrirait un second chemin vers l'écriture — celui qui contourne la garde.
+//! `settings` traverse cette frontière par le port `HookBlocks`, que la composition root
+//! relie ici en traduisant un identifiant d'adaptateur en instrumentation.
 
 mod block;
 mod diff;
 mod error;
 mod install;
 mod ports;
+mod presence;
 mod system_files;
 
 /// Le double du port `ConfigFiles`, réservé aux tests de la feature.
@@ -46,4 +52,5 @@ pub use block::Document;
 pub use error::HookError;
 pub use install::{install, uninstall, Installation, Removal};
 pub use ports::ConfigFiles;
+pub use presence::{inspect, Presence};
 pub use system_files::SystemConfigFiles;

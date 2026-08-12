@@ -20,6 +20,7 @@
 //! même si on insiste, et le dit — c'est la « réserve » de la maquette. Cette ligne de
 //! partage est portée par [`ToolTest::decisive`], une fois, et tout le reste en découle.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -335,6 +336,29 @@ impl Verifier {
     /// Les identifiants des adaptateurs, dans l'ordre où on les propose.
     pub fn adapters(&self) -> Vec<String> {
         self.profiles.iter().map(|p| p.id.clone()).collect()
+    }
+
+    /// Le dossier qu'une entrée désigne, **tel qu'elle l'écrit** — le sien, ou celui de son
+    /// adaptateur.
+    ///
+    /// C'est la mémoire du dernier dossier valide (spec §9.1) et le doublon qui en ont
+    /// besoin : deux entrées « sur le même dossier » ne s'écrivent pas forcément pareil, et
+    /// une entrée qui n'en nomme aucun désigne quand même celui de son adaptateur.
+    pub fn declared_config(&self, adapter: &str, config: Option<&str>) -> Option<String> {
+        let profile = self.profiles.iter().find(|p| p.id == adapter);
+        config
+            .map(str::to_owned)
+            .or_else(|| profile.and_then(|p| p.default_config.clone()))
+    }
+
+    /// Le dossier réellement visé, `~` résolu — la clé qui fait qu'il y a doublon.
+    ///
+    /// Deux entrées écrites `~/.claude` et `/Users/moi/.claude` pointent le même dossier et
+    /// écriraient donc dans le même fichier. Comparer les chaînes brutes laisserait passer
+    /// exactement le cas que le doublon existe pour attraper.
+    pub fn config_dir(&self, adapter: &str, config: Option<&str>) -> Option<PathBuf> {
+        let raw = self.declared_config(adapter, config)?;
+        Some(expand_home(&raw, self.files.home().as_deref()))
     }
 
     /// Le premier temps : les tests 1 à 3. **Ne lance rien.**
@@ -661,8 +685,6 @@ fn summarise(entries: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
     use crate::features::settings::fakes::{FakeCommands, FakeFolders};
 

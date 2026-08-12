@@ -1,5 +1,6 @@
 import type {
     FixAction,
+    HooksReport,
     SettingsSnapshot,
     TestDescription,
     ToolDeclaration,
@@ -9,18 +10,23 @@ import type {
 import {
     type AddAction,
     countProblems,
+    degradedFixSubject,
     degradedModeSubject,
     describeAddAction,
-    describeHooksAvailability,
+    describeDuplicates,
+    describeReset,
     describeStop,
     describeTool,
     describeToolCount,
+    hookActionLabel,
     NOTHING_VERIFIED_YET,
+    parseDiff,
     type ToolHeading,
 } from "./model";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 import {
-    blockedHooksGlyph,
+    hooksGlyph,
+    presentHooks,
     presentVerification,
     testTileClass,
     testTileLabel,
@@ -36,15 +42,16 @@ import {
  * champ qui a le focus et la position du curseur sont **rendus** après coup — sans ça, la
  * relance de la vérification arracherait le curseur des mains de celui qui tape.
  *
- * **Ce que cette vue laisse volontairement vide**, et où :
+ * **Rien n'est décidé dans ce fichier, et c'est une règle du dépôt** : `bun test` n'y monte
+ * pas de DOM, donc tout ce qui s'y glisse échappe aux tests. Les cinq états de la ligne
+ * `hooks`, la précédence de leurs raisons et le droit d'écrire viennent du backend ; le
+ * découpage du diff, la bannière de doublon et ce que le `↺` peut faire viennent de
+ * [`model`](./model.ts). Ce fichier pose des nœuds et des chaînes littérales.
  *
- * - la ligne `hooks` prend sa place dans la grille `44px 1fr` de [`toolCard`], sous la
- *   ligne `test`, mais **seulement dans sa forme éteinte** : c'est ce que la planche `3e`
- *   exige de cette issue-ci. Ses cinq états, son diff de conflit et son bouton allumé sont
- *   l'issue #16, qui remplacera [`blockedHooksRow`] au même endroit ;
- * - l'encart de découverte de l'état vide (« ash found these commands in your PATH ») et le
- *   bouton `Browse…` attendent que quelque chose sache lire le `PATH` et ouvrir le Finder :
- *   inventer des candidats serait afficher les données d'exemple de la maquette.
+ * **Ce qu'il laisse volontairement vide** : l'encart de découverte de l'état vide (« ash
+ * found these commands in your PATH ») et le bouton `Browse…` attendent que quelque chose
+ * sache lire le `PATH` et ouvrir le Finder — inventer des candidats serait afficher les
+ * données d'exemple de la maquette.
  */
 export interface SettingsViewActions {
     selectSection(section: SettingsSection): void;
@@ -65,6 +72,18 @@ export interface SettingsViewActions {
     verifyAll(): void;
     /** Le bouton `apply` d'une correction proposée. */
     applyFix(command: string, fix: FixAction): void;
+    /** Le `↺` d'une carte — retour au dernier dossier valide (spec §9.1). */
+    resetTool(command: string): void;
+    /** Le `undo the reset` de la bannière, et le `restore` de la ligne `was`. */
+    undoReset(command: string): void;
+    /** Le bouton de la ligne `hooks` : poser le bloc, ou le mettre à jour. */
+    installHooks(command: string): void;
+    /** Le `remove` de l'état `installed`. */
+    removeHooks(command: string): void;
+    /** `see the diff` — **n'écrit rien**, ouvre l'écran de conflit. */
+    openConflict(command: string): void;
+    /** `← back to the list`. */
+    closeConflict(): void;
 }
 
 /** Tout ce qu'il faut pour dessiner la fenêtre à un instant donné. */
@@ -85,6 +104,13 @@ export interface SettingsScene {
      * reste celle de `snapshot` ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
      */
     edits: ReadonlyMap<string, string>;
+    /**
+     * L'entrée dont on regarde le conflit, ou `null`.
+     *
+     * L'écran de conflit **remplace la liste** (§4.4) : ce n'est ni une modale ni un
+     * panneau. Rien n'y est écrit — c'est le refus lui-même qu'on affiche.
+     */
+    conflict: string | null;
 }
 
 /** La clé de focus de la saisie en cours — voir [`SettingsView.render`]. */
@@ -166,7 +192,10 @@ export class SettingsView {
 
     private panelRows(scene: SettingsScene): Node[] {
         if (scene.section !== "tools") return placeholderSection(scene.section);
-        return scene.draft === null ? this.toolsSection(scene) : this.addForm(scene, scene.draft);
+        if (scene.draft !== null) return this.addForm(scene, scene.draft);
+        const conflicting = scene.snapshot.tools.find((tool) => tool.command === scene.conflict);
+        if (conflicting !== undefined) return this.conflictScreen(conflicting);
+        return this.toolsSection(scene);
     }
 
     /** La section `tools` : son en-tête, sa liste — ou son état vide — et son pied. */
@@ -199,6 +228,7 @@ export class SettingsView {
         return [
             header("tools", describeToolCount(tools), actions),
             scaleNote(scene.snapshot.tests),
+            ...this.duplicateBanner(tools),
             body,
             foot(
                 tools.length === 0
@@ -208,11 +238,39 @@ export class SettingsView {
         ];
     }
 
+    /**
+     * La bannière de doublon (§3.7) — **entre l'en-tête et la liste**, parce qu'elle ne
+     * décrit aucune des deux cartes en particulier.
+     */
+    private duplicateBanner(tools: readonly ToolDeclaration[]): Node[] {
+        const banner = describeDuplicates(tools);
+        if (banner === null) return [];
+
+        const line = document.createElement("div");
+        line.className = "settings-banner is-warning";
+        line.append(
+            hooksGlyph("outdated", 12),
+            text("span", banner.sentence, "settings-banner-text"),
+        );
+        if (banner.undo !== null) {
+            const undo = button("undo the reset", "is-small is-nowrap");
+            const command = banner.undo;
+            undo.addEventListener("click", () => {
+                this.actions.undoReset(command);
+            });
+            line.append(spacer(), undo);
+        }
+        return [line];
+    }
+
     private toolCard(tool: ToolDeclaration, scene: SettingsScene): HTMLElement {
         const shown = describeTool(tool);
         const state = presentVerification(tool.verification.state);
         const card = document.createElement("article");
-        card.className = `settings-card ${state.cardClassName}`.trim();
+        // Deux teintes possibles, et le doublon l'emporte : une entrée valide qu'une autre
+        // double n'écrira rien, et c'est ça qu'il faut voir en premier.
+        const duplicated = tool.duplicates.length > 0 ? "is-duplicate" : "";
+        card.className = `settings-card ${duplicated || state.cardClassName}`.trim();
 
         const head = document.createElement("div");
         head.className = "settings-card-head";
@@ -222,6 +280,7 @@ export class SettingsView {
             this.adapterMenu(tool, scene.snapshot.adapters),
             spacer(),
             this.verifyButton(tool),
+            this.resetButton(tool),
             this.deleteButton(tool.command),
         );
 
@@ -233,10 +292,14 @@ export class SettingsView {
         body.append(
             text("span", "config", "settings-card-key"),
             this.pathField(tool, shown, scene.edits),
+            ...this.wasRow(tool),
             text("span", "test", "settings-card-key is-test"),
             this.testLine(tool.verification, scene.snapshot.tests),
             ...this.testDetail(tool),
-            ...blockedHooksRow(tool.verification),
+            text("span", "hooks", "settings-card-key is-hooks"),
+            this.hooksLine(tool),
+            document.createElement("span"),
+            hooksNote(tool.hooks),
         );
 
         card.append(head, body);
@@ -279,6 +342,119 @@ export class SettingsView {
         return verify;
     }
 
+    /**
+     * Le `↺` : retour au **dernier dossier valide de cette entrée** (spec §9.1).
+     *
+     * Il reste visible même quand il ne peut rien faire, avec sa raison en infobulle — la
+     * même règle que celle du bouton d'installation, et pour la même raison : le masquer
+     * ferait croire que le geste n'existe pas.
+     */
+    private resetButton(tool: ToolDeclaration): HTMLElement {
+        const reset = describeReset(tool);
+        const button_ = document.createElement("button");
+        button_.type = "button";
+        button_.className = `settings-icon-button ${tool.resetFrom === null ? "" : "is-warning"}`.trim();
+        button_.textContent = "↺";
+        button_.disabled = !reset.enabled;
+        button_.title = tool.resetFrom === null ? reset.reason : "reset just now";
+        button_.setAttribute("aria-label", `reset ${tool.command}: ${reset.reason}`);
+        button_.addEventListener("click", () => {
+            this.actions.resetTool(tool.command);
+        });
+        return button_;
+    }
+
+    /**
+     * La ligne `was` — elle n'existe **que** juste après une réinitialisation.
+     *
+     * À ne pas confondre avec l'étiquette de doublon, qui existe dès que deux entrées
+     * collisionnent : ce sont deux conditions indépendantes (§7.3).
+     */
+    private wasRow(tool: ToolDeclaration): Node[] {
+        if (tool.resetFrom === null) return [];
+
+        const line = document.createElement("div");
+        line.className = "settings-was";
+        line.append(text("span", tool.resetFrom, "settings-was-path"));
+
+        const restore = text("button", "restore", "settings-link");
+        restore.addEventListener("click", () => {
+            this.actions.undoReset(tool.command);
+        });
+        line.append(restore);
+        return [text("span", "was", "settings-card-key"), line];
+    }
+
+    /**
+     * La ligne `hooks`, dans **les cinq états** que le backend distingue.
+     *
+     * Rien n'est décidé ici : l'état, la phrase, le fichier, l'action et le fait que le
+     * bouton soit allumé viennent tous de `tool.hooks`, calculé en Rust — c'est la règle qui
+     * autorise Ash à écrire chez l'utilisateur, et elle n'a qu'un propriétaire
+     * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+     */
+    private hooksLine(tool: ToolDeclaration): HTMLElement {
+        const { hooks } = tool;
+        const shown = presentHooks(hooks.state);
+        const line = document.createElement("div");
+        line.className = `settings-hooks ${shown.rowClassName}`.trim();
+        line.append(
+            hooksGlyph(hooks.state),
+            text("span", hooks.summary, "settings-hooks-reason"),
+        );
+        if (hooks.file !== null && shown.showsFile) {
+            line.append(text("span", hooks.file, "settings-hooks-file"));
+        }
+
+        // Un seul bouton, toujours présent, éteint quand il ne peut rien faire.
+        const action = button(hookActionLabel(hooks.action), hooks.action === "remove" ? "" : "is-primary");
+        action.disabled = !hooks.enabled;
+        action.addEventListener("click", () => {
+            if (hooks.action === "remove") this.actions.removeHooks(tool.command);
+            else if (hooks.action === "seeTheDiff") this.actions.openConflict(tool.command);
+            else this.actions.installHooks(tool.command);
+        });
+        line.append(spacer(), action);
+        return line;
+    }
+
+    /**
+     * L'écran de conflit (§4.4) — il **remplace la liste**, et n'écrit rien.
+     *
+     * C'est le refus lui-même : la spec §10 ne demande pas seulement de refuser, elle
+     * demande de signaler, de proposer le diff, et de demander. Ash ne propose donc ici ni
+     * `replace`, ni `merge` : l'un écraserait les lignes de l'utilisateur, l'autre
+     * demanderait d'écrire hors des marqueurs — ce que toute la feature `hooks` interdit.
+     * Le seul geste qui reste est de sortir, et de décider dans son éditeur.
+     */
+    private conflictScreen(tool: ToolDeclaration): Node[] {
+        const back = button("← back to the list");
+        back.addEventListener("click", () => {
+            this.actions.closeConflict();
+        });
+
+        const body = document.createElement("div");
+        body.className = "settings-body is-conflict";
+
+        const banner = document.createElement("div");
+        banner.className = "settings-banner is-error";
+        banner.append(
+            hooksGlyph("conflict", 12),
+            text(
+                "span",
+                "the ash block in this file was edited by hand — ash writes nothing until this is settled",
+                "settings-banner-text",
+            ),
+        );
+
+        const where = document.createElement("p");
+        where.className = "settings-locate";
+        where.append(text("span", tool.hooks.file ?? "", "settings-locate-path"));
+
+        body.append(banner, where, diffPanel(tool.hooks.diff ?? ""), hooksNote(tool.hooks));
+        return [header("tools", `${tool.command} · ${tool.hooks.file ?? ""}`, [back]), body];
+    }
+
     private deleteButton(command: string): HTMLElement {
         const remove = document.createElement("button");
         remove.type = "button";
@@ -305,8 +481,12 @@ export class SettingsView {
         edits: ReadonlyMap<string, string>,
     ): HTMLElement {
         const invalid = tool.verification.state === "invalid";
+        const duplicated = tool.duplicates.length > 0;
         const field = document.createElement("div");
-        field.className = `settings-field ${invalid ? "is-invalid" : ""}`.trim();
+        // Le champ lui-même prend la teinte : c'est **le dossier** qui est en cause, dans
+        // les deux cas, et c'est lui qu'on va corriger.
+        const marking = duplicated ? "is-duplicate" : invalid ? "is-invalid" : "";
+        field.className = `settings-field ${marking}`.trim();
 
         const input = document.createElement("input");
         input.type = "text";
@@ -332,6 +512,18 @@ export class SettingsView {
             this.actions.commitPath(tool.command);
         });
         field.append(input);
+
+        if (duplicated) {
+            // L'étiquette est sur **les deux** cartes, pas seulement sur celle qu'on vient
+            // de toucher (spec §9.1) : c'est le registre qui l'a posée sur chacune.
+            field.append(
+                text(
+                    "span",
+                    `duplicate · also ${tool.duplicates.join(", ")}`,
+                    "settings-duplicate-tag",
+                ),
+            );
+        }
 
         if (!tool.verified) {
             // La pastille « modifié, non enregistré » de la maquette. Tant qu'une entrée n'a
@@ -391,6 +583,10 @@ export class SettingsView {
 
         if (verification.fix !== null) {
             rows.push(document.createElement("span"), this.fixInset(tool));
+            // `generic` est un mode dégradé, et l'écran le dit **avant** qu'on l'applique :
+            // le bouton `apply` juste au-dessus est celui qui y bascule.
+            const degrading = degradedFixSubject(tool);
+            if (degrading !== null) rows.push(...degradedRow(degrading));
         }
 
         return rows;
@@ -534,7 +730,7 @@ export class SettingsView {
         const rows: Node[] = [text("span", "adapter", "settings-form-key"), line];
         // Une ligne de grille à **cellule de libellé vide** : l'avertissement se range sous
         // le menu qu'il commente, aligné sur lui, pas sur la colonne des libellés.
-        if (subject !== null) rows.push(document.createElement("span"), degradedNotice(subject));
+        if (subject !== null) rows.push(...degradedRow(subject));
         return rows;
     }
 
@@ -560,32 +756,65 @@ export class SettingsView {
     }
 }
 
-/**
- * La ligne `hooks`, **et seulement quand elle est éteinte** (§3.6).
- *
- * Ses cinq états sont l'issue #16 ; ce qui est ici est ce que la planche `3e` exige de
- * celle-ci : *« le bouton installer reste à sa place, éteint, avec sa raison à gauche. le
- * masquer ferait croire que les hooks n'existent pas pour cet outil. »* Une entrée qui a
- * prouvé assez n'a donc rien ici — c'est #16 qui lui donnera sa ligne, à la même place.
- *
- * La règle est celle du backend (`verification.allowsHooks`), et [`describeHooksAvailability`]
- * lui donne sa phrase. Rien n'est décidé dans ce fichier, qui n'est pas sous test.
- */
-function blockedHooksRow(verification: Verification): Node[] {
-    const hooks = describeHooksAvailability(verification);
-    if (hooks.enabled) return [];
+/** L'avertissement du mode dégradé, posé sous ce qu'il commente. */
+function degradedRow(subject: string): Node[] {
+    return [document.createElement("span"), degradedNotice(subject)];
+}
 
-    const line = document.createElement("div");
-    line.className = "settings-hooks";
-    const install = button("install");
-    install.disabled = true;
-    line.append(
-        blockedHooksGlyph(),
-        text("span", hooks.reason, "settings-hooks-reason"),
-        spacer(),
-        install,
+/**
+ * La prose sous la ligne `hooks` : **la conséquence**, et la copie annoncée avant l'action.
+ *
+ * La phrase vient du backend, qui seul sait dans quel état est le fichier. Ce que la vue
+ * ajoute est la promesse de sauvegarde, écrite **avant** le geste et pas après (§4.2).
+ */
+function hooksNote(hooks: HooksReport): HTMLElement {
+    const note = document.createElement("p");
+    note.className = "settings-hooks-note";
+    note.append(document.createTextNode(hooks.note));
+    if (hooks.backup !== null) {
+        note.append(
+            document.createElement("br"),
+            document.createTextNode(`before writing: ${hooks.backup}`),
+        );
+    }
+    return note;
+}
+
+/**
+ * Le diff d'un conflit — les lignes qui divergent, et ce qui n'est pas touché.
+ *
+ * La légende dit le sens **du diff qu'on affiche** : `−` ce qu'Ash écrirait, `+` ce que le
+ * fichier porte. C'est celui du backend, et l'annoncer autrement ferait lire chaque ligne à
+ * l'envers.
+ */
+function diffPanel(diff: string): HTMLElement {
+    const panel = document.createElement("div");
+    panel.className = "settings-diff";
+
+    const head = document.createElement("div");
+    head.className = "settings-diff-head";
+    head.append(
+        text("span", "− the ash block", "settings-diff-legend is-removed"),
+        text("span", "+ this file", "settings-diff-legend is-added"),
     );
-    return [text("span", "hooks", "settings-card-key is-hooks"), line];
+
+    const body = document.createElement("pre");
+    body.className = "settings-diff-body";
+    for (const line of parseDiff(diff)) {
+        const sign = line.kind === "removed" ? "−" : line.kind === "added" ? "+" : " ";
+        body.append(text("span", `${sign} ${line.text}`, `settings-diff-line is-${line.kind}`));
+    }
+
+    panel.append(
+        head,
+        body,
+        text(
+            "p",
+            "outside the ash block the file is untouched — ash changes nothing between its markers either, until this is settled.",
+            "settings-diff-foot",
+        ),
+    );
+    return panel;
 }
 
 /** Les quatre pastilles, dans l'ordre où les tests se lancent. */

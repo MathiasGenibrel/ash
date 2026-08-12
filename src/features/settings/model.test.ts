@@ -1,15 +1,24 @@
 import { describe, expect, it } from "bun:test";
 
-import type { ToolDeclaration, ToolDraft, Verification, VerificationState } from "./contract";
+import type {
+    HooksReport,
+    ToolDeclaration,
+    ToolDraft,
+    Verification,
+    VerificationState,
+} from "./contract";
 import {
     countProblems,
+    degradedFixSubject,
     degradedModeSubject,
     describeAddAction,
-    describeHooksAvailability,
+    describeDuplicates,
+    describeReset,
     describeStop,
     describeTool,
     describeToolCount,
     NOTHING_VERIFIED_YET,
+    parseDiff,
 } from "./model";
 
 /**
@@ -46,9 +55,28 @@ function aTool(overrides: Partial<ToolDeclaration> = {}): ToolDeclaration {
         label: null,
         adapter: "generic",
         config: null,
+        lastValidConfig: null,
+        resetFrom: null,
+        duplicates: [],
+        hooks: aHooksReport(),
         ...overrides,
         verification,
         verified: overrides.verified ?? verification.allowsHooks,
+    };
+}
+
+/** Une ligne `hooks` posée et à jour — l'état nominal, dont on ne surcharge que le reste. */
+function aHooksReport(overrides: Partial<HooksReport> = {}): HooksReport {
+    return {
+        state: "installed",
+        summary: "installed · v1",
+        note: "remove deletes the block and its markers.",
+        file: "/home/someone/.claude/settings.json",
+        action: "remove",
+        enabled: true,
+        diff: null,
+        backup: "/home/someone/.claude/settings.json.bak",
+        ...overrides,
     };
 }
 
@@ -307,59 +335,164 @@ describe("la barre d'action du formulaire d'ajout", () => {
     });
 });
 
-describe("ce qui autorise l'écriture des hooks", () => {
-    it("Given an entry the tests found invalid, when the hooks line is described, then the button stays visible, off, with its reason", () => {
-        // Given — « the block stays visible: button present, disabled, with its reason —
-        // never hidden ». Le masquer ferait croire que les hooks n'existent pas pour cet
-        // outil
-        const verification = aVerification("invalid");
+describe("le doublon de dossier", () => {
+    it("Given two entries aiming at the same folder, when the section is described, then the banner names both of them", () => {
+        // Given — « le doublon est signalé sur les deux lignes, pas seulement sur celle
+        // qu'on vient de toucher » (spec §9.1). Le registre a posé le drapeau sur chacune
+        const tools = [
+            aTool({ command: "claude", duplicates: ["claude-perso"] }),
+            aTool({ command: "claude-perso", duplicates: ["claude"] }),
+        ];
 
         // When
-        const hooks = describeHooksAvailability(verification);
+        const banner = describeDuplicates(tools);
 
         // Then
-        expect(hooks).toEqual({
-            reason: "unavailable until the path is verified",
-            enabled: false,
+        expect(banner?.sentence).toBe(
+            "claude and claude-perso point at the same folder — one of them will do nothing",
+        );
+    });
+
+    it("Given a duplicate a reset produced, when the banner is described, then undoing that reset is offered", () => {
+        // Given — « ash n'empêche rien, il refuse seulement de poser deux fois les hooks
+        // dans le même fichier, et laisse rétablir à portée »
+        const tools = [
+            aTool({ command: "claude", duplicates: ["claude-perso"] }),
+            aTool({
+                command: "claude-perso",
+                duplicates: ["claude"],
+                resetFrom: "~/.claude-perso",
+            }),
+        ];
+
+        // When
+        const banner = describeDuplicates(tools);
+
+        // Then
+        expect(banner?.undo).toBe("claude-perso");
+    });
+
+    it("Given a duplicate nobody reset, when the banner is described, then it offers no undo", () => {
+        // Given — deux entrées peuvent collisionner sans qu'aucun geste ne l'ait causé.
+        // Proposer « annuler la réinitialisation » ferait alors chercher laquelle a eu lieu
+        const tools = [
+            aTool({ command: "claude", duplicates: ["claude-perso"] }),
+            aTool({ command: "claude-perso", duplicates: ["claude"] }),
+        ];
+
+        // When
+        const banner = describeDuplicates(tools);
+
+        // Then
+        expect(banner?.undo).toBeNull();
+    });
+
+    it("Given a list where nothing collides, when the banner is described, then there is none", () => {
+        // Given
+        const tools = [aTool({ command: "claude" }), aTool({ command: "codex" })];
+
+        // When / Then
+        expect(describeDuplicates(tools)).toBeNull();
+    });
+});
+
+describe("la réinitialisation d'une entrée", () => {
+    it("Given an entry that never passed the four tests, when its reset button is described, then it stays visible, off, with its reason", () => {
+        // Given — « réinitialiser ramène à la dernière valeur valide » (spec §9.1) : sans
+        // mémoire, il n'y a nulle part où revenir, et la même règle que les hooks s'applique
+        const tool = aTool({ lastValidConfig: null, config: "~/dev/notes" });
+
+        // When
+        const reset = describeReset(tool);
+
+        // Then
+        expect(reset).toEqual({ reason: "no verified folder to go back to yet", enabled: false });
+    });
+
+    it("Given an entry that moved away from a folder that worked, when its reset button is described, then it names that folder", () => {
+        // Given — c'est **son** dossier, pas le défaut de son adaptateur : deux entrées
+        // `claude-code` qui reviendraient au même défaut deviendraient identiques
+        const tool = aTool({ lastValidConfig: "~/.claude-perso", config: "~/dev/notes" });
+
+        // When
+        const reset = describeReset(tool);
+
+        // Then
+        expect(reset).toEqual({ reason: "back to ~/.claude-perso", enabled: true });
+    });
+
+    it("Given an entry already sitting on the folder that worked, when its reset button is described, then there is nothing to do", () => {
+        // Given — un geste qui ne changerait rien doit se lire comme tel avant d'être tenté
+        const tool = aTool({ lastValidConfig: "~/.claude", config: "~/.claude" });
+
+        // When
+        const reset = describeReset(tool);
+
+        // Then
+        expect(reset.enabled).toBe(false);
+    });
+});
+
+describe("le diff d'un conflit", () => {
+    it("Given the diff the backend produced, when it is parsed, then each line carries its side and its header is dropped", () => {
+        // Given — la première décision de l'écran de conflit : reconnaître un préfixe. Elle
+        // est ici parce que la vue n'est pas sous test, et qu'un diff lu à l'envers est la
+        // seule faute qu'un diff ne pardonne pas
+        const diff = [
+            "--- ce qu'Ash écrirait",
+            "+++ ce que le fichier porte",
+            "    \"hooks\": {",
+            "-     \"Stop\": \"ash-event waiting\"",
+            "+     \"Stop\": \"mon script\"",
+        ].join("\n");
+
+        // When
+        const lines = parseDiff(diff);
+
+        // Then
+        expect(lines).toEqual([
+            { kind: "context", text: '  "hooks": {' },
+            { kind: "removed", text: '     "Stop": "ash-event waiting"' },
+            { kind: "added", text: '     "Stop": "mon script"' },
+        ]);
+    });
+});
+
+describe("le mode dégradé, dit avant qu'on l'applique", () => {
+    it("Given an invalid entry whose suggested fix switches to generic, when the card is drawn, then the warning is shown before apply is pressed", () => {
+        // Given — « generic est un mode dégradé, et l'écran le dit **avant** qu'on
+        // l'applique : l'outil apparaîtra en idle / done / error, jamais en waiting »
+        const tool = aTool({
+            command: "claude",
+            verification: aVerification("invalid", {
+                fix: {
+                    question: "use the generic adapter instead?",
+                    apply: { kind: "useAdapter", adapter: "generic" },
+                },
+            }),
         });
-    });
-
-    it("Given an entry nothing has verified yet, when the hooks line is described, then it is off for a different reason than an invalid one", () => {
-        // Given — les deux sont éteintes et ne disent pas la même chose : l'une attend, à
-        // l'autre on a répondu non
-        const verification = aVerification("unverified");
 
         // When
-        const hooks = describeHooksAvailability(verification);
+        const subject = degradedFixSubject(tool);
 
         // Then
-        expect(hooks).toEqual({ reason: "install unavailable", enabled: false });
+        expect(subject).toBe("claude");
     });
 
-    it("Given the first three tests passing while the command is still answering, when the hooks line is described, then it already lights up", () => {
-        // Given — c'est la conséquence fonctionnelle du résultat en deux temps : « as soon
-        // as tests 1–3 pass it lights up — without waiting for test 4 ». La règle est
-        // calculée en Rust ; ce qui est vérifié ici est que la fenêtre l'annonce sans la
-        // rejouer
-        const verification = aVerification("verifying");
+    it("Given a fix that only repoints the folder, when the card is drawn, then nothing is degraded and nothing is said", () => {
+        // Given — un conseil générique là où rien ne change de mode ferait douter du seul
+        // avertissement qui compte
+        const tool = aTool({
+            verification: aVerification("invalid", {
+                fix: {
+                    question: "use the adapter default ~/.claude instead?",
+                    apply: { kind: "useFolder", path: "~/.claude" },
+                },
+            }),
+        });
 
-        // When
-        const hooks = describeHooksAvailability(verification);
-
-        // Then
-        expect(hooks.enabled).toBe(true);
-    });
-
-    it("Given an entry valid with a caveat, when the hooks line is described, then ash still writes if you insist", () => {
-        // Given — « the folder is right, the pair isn't. ash still writes if you insist,
-        // and says so »
-        const verification = aVerification("caveat");
-
-        // When
-        const hooks = describeHooksAvailability(verification);
-
-        // Then
-        expect(hooks.enabled).toBe(true);
+        // When / Then
+        expect(degradedFixSubject(tool)).toBeNull();
     });
 });
 

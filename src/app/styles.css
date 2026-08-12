@@ -96,6 +96,23 @@
     --ash-tile-failed-bg: rgb(176 58 48 / 13%);
     --ash-tile-idle-bg: #f2f2f0;
 
+    /* Les hooks (réglages §4). Le doublon et le conflit sont les deux seuls endroits où un
+     * **fond** teinté porte un état, et ils le font parce qu'ils s'adressent à deux entrées
+     * ou à un fichier entier — pas à un mot.
+     *
+     * **Le diff n'existe qu'en thème sombre dans la maquette.** Les quatre valeurs claires
+     * sont dérivées de `--ash-error` et `--ash-done` sur le fond du panneau (`#f7f7f5`), et
+     * mesurées : 7,98:1 pour la ligne retirée, 6,82:1 pour la ligne ajoutée — contre 9,97 et
+     * 11,28 en sombre. `styles.test.ts` les tient. */
+    --ash-warning-border-strong: #d8c69c;
+    --ash-warning-header-bg: #faf6ee;
+    --ash-warning-header-rule: #ece2cd;
+    --ash-error-bg: rgb(176 58 48 / 6%);
+    --ash-diff-removed-bg: rgb(176 58 48 / 8%);
+    --ash-diff-removed-fg: #7a2a22;
+    --ash-diff-added-bg: rgb(47 125 92 / 8%);
+    --ash-diff-added-fg: #1e5a41;
+
     /* Le terminal. Son fond et son texte sont ceux de la fenêtre (`--ash-bg`, `--ash-fg`) ;
      * ce qui suit est ce que xterm.js peint et que le CSS ne peut pas atteindre.
      *
@@ -192,6 +209,17 @@
     --ash-tile-warned-bg: rgb(217 164 65 / 16%);
     --ash-tile-failed-bg: rgb(207 79 79 / 16%);
     --ash-tile-idle-bg: #16171a;
+
+    /* Les hooks (réglages §4). Les quatre valeurs du diff sont celles de la maquette, qui
+     * ne le dessine qu'en sombre ; leurs équivalents clairs sont dérivés et mesurés. */
+    --ash-warning-border-strong: #6b5a2f;
+    --ash-warning-header-bg: #191712;
+    --ash-warning-header-rule: #241f17;
+    --ash-error-bg: rgb(207 79 79 / 6%);
+    --ash-diff-removed-bg: rgb(207 79 79 / 10%);
+    --ash-diff-removed-fg: #e0b9b9;
+    --ash-diff-added-bg: rgb(99 185 149 / 9%);
+    --ash-diff-added-fg: #b6dbc9;
 
     --ash-term-cursor: #ff8a5c;
     --ash-term-cursor-text: #0c0d0f;

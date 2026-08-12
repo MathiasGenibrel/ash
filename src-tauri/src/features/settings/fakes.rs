@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, Launch};
+use super::hooks::BlockAt;
+use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, HookBlocks, Launch};
+use crate::features::hooks::Presence;
 
 /// Un système de fichiers en mémoire : ce qu'on trouve à chaque chemin, et le foyer.
 pub struct FakeFolders {
@@ -51,6 +53,82 @@ impl ConfigFiles for FakeFolders {
 
     fn home(&self) -> Option<PathBuf> {
         Some(self.home.clone())
+    }
+}
+
+/// Des blocs de hooks en mémoire — **et un journal**, parce que ce qui compte ici est ce
+/// qu'Ash a écrit, pas seulement ce qu'il a répondu.
+///
+/// Un double qui ne retiendrait que l'état final laisserait passer la faute qu'on cherche :
+/// une écriture faite sur une entrée que la séquence n'autorisait pas a exactement la même
+/// trace qu'une écriture légitime.
+pub struct FakeBlocks {
+    /// Ce que chaque dossier porte. Absent = l'adaptateur n'instrumente pas ce dossier.
+    found: HashMap<PathBuf, Presence>,
+    /// Les adaptateurs qui n'instrumentent rien du tout — `generic`.
+    silent: Vec<String>,
+    written: Mutex<Vec<String>>,
+}
+
+impl FakeBlocks {
+    pub fn new() -> Self {
+        Self {
+            found: HashMap::new(),
+            silent: Vec::new(),
+            written: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Ce qu'on trouvera dans ce dossier de configuration.
+    #[must_use]
+    pub fn at(mut self, config_dir: &str, presence: Presence) -> Self {
+        self.found.insert(PathBuf::from(config_dir), presence);
+        self
+    }
+
+    /// Un adaptateur qui ne décrit aucune instrumentation.
+    #[must_use]
+    pub fn without_hooks(mut self, adapter: &str) -> Self {
+        self.silent.push(adapter.to_owned());
+        self
+    }
+
+    /// Ce qu'Ash a réellement écrit, dans l'ordre — vide veut dire « aucun fichier touché ».
+    pub fn written(&self) -> Vec<String> {
+        self.written
+            .lock()
+            .map(|seen| seen.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl HookBlocks for FakeBlocks {
+    fn inspect(&self, adapter: &str, config_dir: &Path) -> Option<BlockAt> {
+        if self.silent.iter().any(|id| id == adapter) {
+            return None;
+        }
+        Some(BlockAt {
+            file: config_dir.join("settings.json"),
+            presence: self
+                .found
+                .get(config_dir)
+                .cloned()
+                .unwrap_or(Presence::Missing),
+        })
+    }
+
+    fn install(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+        if let Ok(mut seen) = self.written.lock() {
+            seen.push(format!("install {adapter} {}", config_dir.display()));
+        }
+        Ok(())
+    }
+
+    fn remove(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+        if let Ok(mut seen) = self.written.lock() {
+            seen.push(format!("remove {adapter} {}", config_dir.display()));
+        }
+        Ok(())
     }
 }
 

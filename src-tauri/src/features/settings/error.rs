@@ -20,6 +20,18 @@ pub enum SettingsError {
     UnknownAdapter(String),
     /// L'entrée à oublier n'est pas — ou n'est plus — déclarée.
     UnknownTool(String),
+    /// L'entrée n'a jamais été valide : la réinitialisation n'a rien où revenir (spec §9.1).
+    NothingToRestore(String),
+    /// Rien n'a été réinitialisé, donc rien à annuler.
+    NothingToUndo(String),
+    /// L'entrée ne désigne aucun dossier, et son adaptateur n'en propose pas.
+    NoConfigFolder(String),
+    /// Ash a refusé d'écrire, et dit pourquoi.
+    ///
+    /// C'est le refus le plus important du produit : il porte la phrase que la ligne `hooks`
+    /// affichait déjà, parce que le backend refuse pour **la même raison** qui avait éteint
+    /// le bouton ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+    HooksRefused(String),
     /// Le registre a été empoisonné par la panique d'un autre fil.
     Poisoned,
 }
@@ -36,6 +48,17 @@ impl fmt::Display for SettingsError {
             }
             SettingsError::UnknownAdapter(adapter) => write!(f, "adaptateur inconnu : {adapter}"),
             SettingsError::UnknownTool(command) => write!(f, "outil inconnu : {command}"),
+            SettingsError::NothingToRestore(command) => write!(
+                f,
+                "{command} n'a jamais été vérifiée : il n'y a aucun dossier où revenir"
+            ),
+            SettingsError::NothingToUndo(command) => {
+                write!(f, "{command} n'a pas été réinitialisée")
+            }
+            SettingsError::NoConfigFolder(command) => {
+                write!(f, "{command} ne désigne aucun dossier de configuration")
+            }
+            SettingsError::HooksRefused(why) => write!(f, "{why}"),
             SettingsError::Poisoned => write!(f, "registre des outils empoisonné"),
         }
     }
