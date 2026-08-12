@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::block::Document;
+use super::document::Document;
 use super::ports::ConfigFiles;
 
 /// Le vrai disque.

@@ -35,27 +35,53 @@ use crate::features::hooks::Presence;
 pub enum HookState {
     /// Le bloc en place est celui qu'Ash écrirait.
     Installed,
-    /// Rien n'est posé, et rien n'empêche de le poser.
+    /// **Rien n'est posé**, et rien n'empêche de le poser. Le fichier ne porte aucun hook.
     Missing,
     /// Un bloc d'Ash est là, mais pas celui-ci.
     Outdated,
-    /// Une main est passée dans le bloc : **Ash n'écrit pas**, et montre le diff.
+    /// Il y a dans ce fichier quelque chose qu'Ash n'a pas mis — les hooks de
+    /// l'utilisateur, ou une entrée d'Ash qu'une main a modifiée.
+    ///
+    /// **Ash n'écrit pas de lui-même** : il montre le diff de ce qu'il écrirait et laisse
+    /// choisir. Les deux cas se ressemblent du point de vue de celui qui regarde — « il y a
+    /// là quelque chose que je n'ai pas mis, montre-le-moi » — et c'était une faute de n'en
+    /// traiter qu'un ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), amendement
+    /// du 2026-08-12).
     Conflict,
     /// Quelque chose empêche d'écrire. La raison est dans [`HooksReport::summary`].
     Blocked,
 }
 
-/// Ce que le bouton de la ligne propose. Un seul, jamais deux.
+/// Ce qu'un bouton de la ligne — ou du diff — déclenche.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum HookAction {
+    /// Pose les entrées d'Ash, **à côté** de celles de l'utilisateur : c'est la fusion.
     Install,
     Update,
     /// Destructif, donc secondaire dans la fenêtre.
     Remove,
-    /// **N'écrit rien** : elle ouvre un écran. C'est ce qui distingue le conflit des autres.
+    /// **N'écrit rien** : elle ouvre le diff de ce qu'Ash écrirait, sur le fichier tel
+    /// qu'il est. C'est le geste qui précède tous les autres quand il y a un conflit.
     SeeTheDiff,
+}
+
+/// Une issue offerte depuis le diff — ce que l'utilisateur peut trancher.
+///
+/// **Elle porte son libellé**, et ce n'est pas un détail de vue : « merge » et « install »
+/// sont le même geste pour le backend et deux promesses différentes pour celui qui lit
+/// l'écran. Le mot qui dit ce que l'écriture va préserver appartient à celui qui sait ce
+/// qu'elle fait ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HookChoice {
+    pub action: HookAction,
+    /// Le mot du bouton — `merge, keeping every hook`.
+    pub label: String,
+    /// Ce que ce geste fait au fichier, en une phrase.
+    pub note: String,
 }
 
 /// Ce que la ligne `hooks` d'une entrée affiche, et ce qu'elle laisse faire.
@@ -68,7 +94,7 @@ pub enum HookAction {
 #[serde(rename_all = "camelCase")]
 pub struct HooksReport {
     pub state: HookState,
-    /// La phrase de la ligne — `installed · v1`, `missing`, `v1 · v2 available`…
+    /// La phrase de la ligne — `installed · v1`, `no ash hooks in this file`…
     pub summary: String,
     /// Les deux lignes de prose sous la ligne : **la conséquence**, pas la répétition.
     pub note: String,
@@ -77,7 +103,10 @@ pub struct HooksReport {
     pub action: HookAction,
     /// Le bouton est-il allumé ? Il reste **visible** dans tous les cas.
     pub enabled: bool,
-    /// Les lignes qui divergent — seulement en conflit, et c'est le refus lui-même.
+    /// Ce que le diff propose de trancher, dans l'ordre. Vide quand rien ne s'écrit.
+    pub choices: Vec<HookChoice>,
+    /// Le diff de ce qu'Ash écrirait, sur le fichier **tel qu'il est**, avant toute
+    /// écriture. `None` quand il n'y a rien à écrire, ou rien à lire.
     pub diff: Option<String>,
     /// La copie qui sera prise **avant** l'action, annoncée avant et non après (§4.2).
     pub backup: Option<String>,
@@ -90,6 +119,48 @@ impl HooksReport {
     /// dossier, donc rien ne sera écrit. Le registre la remplace dès qu'il regarde.
     pub fn until_verified() -> Self {
         blocked("path unverified", WAITING_ON_THE_TESTS)
+    }
+}
+
+/// Les libellés des issues, écrits une fois.
+///
+/// « merge » plutôt qu'« install » quand le fichier porte déjà des hooks : le mot doit dire
+/// ce que l'écriture **préserve**, sinon la seule façon de le savoir est de cliquer.
+fn merge_choice() -> HookChoice {
+    HookChoice {
+        action: HookAction::Install,
+        label: "merge, keeping every hook".to_owned(),
+        note: "ash adds its own entries next to yours, in the same event arrays. \
+               nothing already there is replaced, and a .bak is written first."
+            .to_owned(),
+    }
+}
+
+fn rewrite_choice() -> HookChoice {
+    HookChoice {
+        action: HookAction::Install,
+        label: "restore ash's entries".to_owned(),
+        note: "only the entries carrying ash's marker are rewritten. \
+               everything else in the file is left as it is, and a .bak is written first."
+            .to_owned(),
+    }
+}
+
+fn update_choice(available: u32) -> HookChoice {
+    HookChoice {
+        action: HookAction::Update,
+        label: format!("update to v{available}"),
+        note: "ash rewrites its own entries in place, and touches nothing else.".to_owned(),
+    }
+}
+
+fn remove_choice() -> HookChoice {
+    HookChoice {
+        action: HookAction::Remove,
+        label: "remove ash's hooks".to_owned(),
+        note: "the entries carrying ash's marker are taken out, and the file goes back \
+               to what it was, byte for byte. yours stay."
+            .to_owned(),
     }
 }
 
@@ -157,74 +228,95 @@ pub fn report(
         Presence::Current { version } => HooksReport {
             state: HookState::Installed,
             summary: format!("installed · v{version}"),
-            note: "remove deletes the block and its markers, leaves the rest of the file \
-                   intact, and writes a .bak first."
+            note: "remove takes out the entries carrying ash's marker, leaves the rest of \
+                   the file intact, and writes a .bak first."
                 .to_owned(),
             file: Some(shown),
             action: HookAction::Remove,
             enabled: true,
+            choices: vec![remove_choice()],
             diff: None,
             backup: Some(backup),
         },
-        Presence::Missing => HooksReport {
+        // Rien d'Ash, et rien de personne : l'absence, écrite en toutes lettres. C'est la
+        // demande la plus concrète de l'utilisateur — « on ne comprend pas » — et elle vient
+        // de ce que l'absence ressemblait à un refus.
+        Presence::Missing { others: 0, diff } => HooksReport {
             state: HookState::Missing,
-            summary: "missing".to_owned(),
-            note: "the tool stays visible in the sidebar, but without waiting: \
-                   ash can't tell that it is waiting."
+            summary: "no ash hooks in this file".to_owned(),
+            note: "nothing is installed, and nothing is in the way. until you install, \
+                   the tool stays visible in the sidebar but never shows as waiting."
                 .to_owned(),
             file: Some(shown),
             action: HookAction::Install,
             enabled: true,
-            diff: None,
+            choices: vec![merge_choice()],
+            diff: Some(diff),
+            backup: Some(backup),
+        },
+        // Le cas des vrais utilisateurs : quelqu'un qui outille déjà son agent. Ce n'est
+        // plus un refus — c'est un conflit qu'on montre, et qu'on tranche.
+        Presence::Missing { others, diff } => HooksReport {
+            state: HookState::Conflict,
+            summary: format!(
+                "{others} hook{} here {} not ash's",
+                if others > 1 { "s" } else { "" },
+                if others > 1 { "are" } else { "is" }
+            ),
+            note: "ash wrote nothing yet. see the diff of what it would add, then choose: \
+                   merging keeps every hook already there — ash only ever writes, and later \
+                   removes, what carries its own marker."
+                .to_owned(),
+            file: Some(shown),
+            action: HookAction::SeeTheDiff,
+            enabled: true,
+            choices: vec![merge_choice()],
+            diff: Some(diff),
             backup: Some(backup),
         },
         Presence::Superseded {
             installed,
             available,
+            diff,
         } => HooksReport {
             state: HookState::Outdated,
             summary: if installed < available {
                 format!("v{installed} · v{available} available")
             } else {
-                // Même numéro, autre contenu : le bloc a changé de forme sans changer de
-                // version. Écrire « v1 · v1 available » ferait lire une erreur d'affichage.
+                // Même numéro, autre contenu : les entrées ont changé de forme sans changer
+                // de version. Écrire « v1 · v1 available » ferait lire une erreur
+                // d'affichage.
                 format!("v{installed} · out of date")
             },
             note: "until you update, ash keeps working — just coarser. nothing blinks.".to_owned(),
             file: Some(shown),
             action: HookAction::Update,
             enabled: true,
-            diff: None,
+            choices: vec![update_choice(available), remove_choice()],
+            diff: Some(diff),
             backup: Some(backup),
         },
         Presence::HandEdited { diff } => HooksReport {
             state: HookState::Conflict,
-            summary: "block edited by hand".to_owned(),
-            note: "ash does not write. it shows the diverging lines and lets you choose. \
-                   a conflict does not degrade the display: the hooks already in place keep \
-                   working."
+            summary: "ash's entries were edited by hand".to_owned(),
+            note: "ash does not write of its own accord. it shows the diverging lines and \
+                   lets you choose. a conflict does not degrade the display: the hooks \
+                   already in place keep working."
                 .to_owned(),
             file: Some(shown),
             action: HookAction::SeeTheDiff,
             enabled: true,
+            choices: vec![rewrite_choice(), remove_choice()],
             diff: Some(diff),
-            // Rien ne sera écrit : annoncer une copie promettrait une action qui n'aura
-            // pas lieu.
-            backup: None,
+            backup: Some(backup),
         },
-        // Le refus que les vrais utilisateurs heurtent en premier. Il nomme le fichier, dit
-        // qu'Ash n'a rien écrit, et pourquoi il ne le fera pas de lui-même.
-        Presence::ForeignHooks => refusal(
-            &shown,
-            &format!("{shown} already carries hooks that aren't ash's"),
-            "ash wrote nothing. merging them would mean editing outside its markers, and \
-             writing a second \"hooks\" key would silently disable yours. move them into \
-             the ash block yourself, or point this entry at another folder.",
-        ),
+        // Les deux refus qui restent : on ne devine pas où écrire, et on ne devine pas ce
+        // qu'on n'a pas pu lire.
         Presence::NotAnObject => refusal(
             &shown,
-            &format!("{shown} is not a JSON object"),
-            "ash wrote nothing: it wouldn't know where to put its block.",
+            &format!("{shown} is not a JSON object ash can write into"),
+            "ash wrote nothing: it wouldn't know where to put its entries. \
+             fix the file, or point this entry at another folder.",
         ),
         Presence::Unreadable { why } => refusal(
             &shown,
@@ -243,6 +335,7 @@ fn blocked(summary: &str, note: &str) -> HooksReport {
         file: None,
         action: HookAction::Install,
         enabled: false,
+        choices: Vec::new(),
         diff: None,
         backup: None,
     }
@@ -269,6 +362,14 @@ mod tests {
         verification
     }
 
+    /// Un fichier sans entrée d'Ash, qui porte `others` hooks de l'utilisateur.
+    fn missing(others: usize) -> Presence {
+        Presence::Missing {
+            others,
+            diff: "--- the file as it is\n+++ what ash would write\n+ ash-event".to_owned(),
+        }
+    }
+
     fn at(presence: Presence) -> Option<BlockAt> {
         Some(BlockAt {
             file: PathBuf::from("/home/someone/.claude/settings.json"),
@@ -285,7 +386,7 @@ mod tests {
         verification.state = VerificationState::Invalid;
 
         // When
-        let line = report(&verification, "claude-code", None, at(Presence::Missing));
+        let line = report(&verification, "claude-code", None, at(missing(0)));
 
         // Then — le fichier n'a même pas été regardé : c'est la séquence qui tranche
         assert_eq!(line.state, HookState::Blocked);
@@ -306,7 +407,7 @@ mod tests {
             &verification,
             "claude-code",
             Some(&Command::parse("claude").expect("un nom valide")),
-            at(Presence::Missing),
+            at(missing(0)),
         );
 
         // Then
@@ -316,10 +417,62 @@ mod tests {
     }
 
     #[test]
-    fn given_a_file_that_already_carries_hooks_of_its_own_when_the_line_is_built_then_it_names_the_file_and_says_nothing_was_written(
+    fn given_a_file_that_already_carries_hooks_of_its_own_when_the_line_is_built_then_it_offers_the_diff_and_a_merge_instead_of_a_dead_end(
     ) {
-        // Given — c'est le refus qu'un utilisateur ayant déjà ses propres hooks heurte en
-        // premier. « Ça a échoué » ne suffit pas : il lui faut le fichier, et la raison
+        // Given — c'est ce qu'un utilisateur ayant déjà ses propres hooks heurtait en
+        // premier, et le produit devenait alors inutilisable pour lui : « déplace-les
+        // toi-même » était la seule issue. Il doit voir un conflit, un diff, et un choix
+        let verification = allowing();
+
+        // When
+        let line = report(&verification, "claude-code", None, at(missing(1)));
+
+        // Then
+        assert_eq!(line.state, HookState::Conflict);
+        assert!(line.enabled, "le bouton du diff est allumé");
+        assert_eq!(line.action, HookAction::SeeTheDiff);
+        assert_eq!(line.summary, "1 hook here is not ash's");
+        assert_eq!(
+            line.choices
+                .iter()
+                .map(|choice| choice.action)
+                .collect::<Vec<_>>(),
+            [HookAction::Install],
+            "et depuis le diff, il peut fusionner"
+        );
+        assert!(line.choices[0]
+            .note
+            .contains("nothing already there is replaced"));
+        assert_eq!(
+            line.backup.as_deref(),
+            Some("/home/someone/.claude/settings.json.bak"),
+            "la copie est annoncée avant le geste, parce qu'il y aura une écriture"
+        );
+    }
+
+    #[test]
+    fn given_a_file_with_no_hooks_at_all_when_the_line_is_built_then_the_absence_is_written_in_full(
+    ) {
+        // Given — « aujourd'hui l'absence ne se distingue pas assez du refus, et on ne
+        // comprend pas ». Un mot — `missing` — ne dit ni ce qui manque, ni que rien ne
+        // s'y oppose
+        let verification = allowing();
+
+        // When
+        let line = report(&verification, "claude-code", None, at(missing(0)));
+
+        // Then
+        assert_eq!(line.state, HookState::Missing);
+        assert_eq!(line.summary, "no ash hooks in this file");
+        assert!(line.note.contains("nothing is in the way"));
+        assert_eq!(line.action, HookAction::Install);
+        assert!(line.diff.is_some(), "et le diff est là avant d'écrire");
+    }
+
+    #[test]
+    fn given_a_file_ash_cannot_write_into_when_the_line_is_built_then_it_stays_a_refusal() {
+        // Given — un `settings.json` qui n'est pas un objet JSON. La fusion a levé
+        // l'impasse des hooks étrangers ; elle n'autorise pas à deviner où écrire
         let verification = allowing();
 
         // When
@@ -327,18 +480,17 @@ mod tests {
             &verification,
             "claude-code",
             None,
-            at(Presence::ForeignHooks),
+            at(Presence::NotAnObject),
         );
 
         // Then
         assert_eq!(line.state, HookState::Blocked);
         assert!(!line.enabled);
-        assert!(line.summary.contains("/home/someone/.claude/settings.json"));
-        assert!(line.note.contains("ash wrote nothing"));
-        assert_eq!(
-            line.file.as_deref(),
-            Some("/home/someone/.claude/settings.json")
+        assert!(
+            line.choices.is_empty(),
+            "rien à trancher : rien ne s'écrira"
         );
+        assert!(line.note.contains("ash wrote nothing"));
     }
 
     #[test]
@@ -354,15 +506,22 @@ mod tests {
             "claude-code",
             None,
             at(Presence::HandEdited {
-                diff: "- ash\n+ moi".to_owned(),
+                diff: "- moi\n+ ash".to_owned(),
             }),
         );
 
         // Then
         assert_eq!(line.state, HookState::Conflict);
         assert_eq!(line.action, HookAction::SeeTheDiff);
-        assert_eq!(line.diff.as_deref(), Some("- ash\n+ moi"));
-        assert_eq!(line.backup, None);
+        assert_eq!(line.diff.as_deref(), Some("- moi\n+ ash"));
+        assert_eq!(
+            line.choices
+                .iter()
+                .map(|choice| choice.action)
+                .collect::<Vec<_>>(),
+            [HookAction::Install, HookAction::Remove],
+            "les deux issues : remettre les entrées d'Ash, ou les retirer"
+        );
     }
 
     #[test]
@@ -380,6 +539,7 @@ mod tests {
             at(Presence::Superseded {
                 installed: 1,
                 available: 2,
+                diff: "- v1\n+ v2".to_owned(),
             }),
         );
 
@@ -426,6 +586,14 @@ mod tests {
         assert_eq!(line.state, HookState::Installed);
         assert_eq!(line.summary, "installed · v1");
         assert_eq!(line.action, HookAction::Remove);
+        assert_eq!(
+            line.choices
+                .iter()
+                .map(|choice| choice.action)
+                .collect::<Vec<_>>(),
+            [HookAction::Remove],
+            "le geste inverse reste offert quand les entrées sont en place"
+        );
         assert_eq!(
             line.backup.as_deref(),
             Some("/home/someone/.claude/settings.json.bak")

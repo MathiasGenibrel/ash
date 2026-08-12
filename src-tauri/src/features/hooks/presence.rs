@@ -1,89 +1,100 @@
-//! Où en est le bloc dans un fichier — **la question qu'on pose avant d'écrire**.
+//! Où en sont les entrées d'Ash dans un fichier — **la question qu'on pose avant d'écrire**.
 //!
-//! C'est le classement, et il n'y en a qu'un : [`install`](super::install) décide quoi
-//! faire à partir de lui, et l'écran de réglages annonce le même verdict sans rien écrire
-//! (#16). Deux classements séparés — un pour agir, un pour afficher — diraient forcément
-//! deux choses différentes un jour, et ce jour-là l'écran promettrait une installation que
-//! la feature refuserait.
+//! C'est le classement, et il n'y en a qu'un : [`install`](super::install) décide quoi faire
+//! à partir de lui, et l'écran de réglages annonce le même verdict sans rien écrire (#16).
+//! Deux classements séparés — un pour agir, un pour afficher — diraient forcément deux
+//! choses différentes un jour, et ce jour-là l'écran promettrait une installation que la
+//! feature refuserait.
 //!
 //! Aucune fonction de ce fichier n'écrit quoi que ce soit : [`presence`] est pure, et
-//! [`inspect`] ne fait que lire. C'est ce qui permet à la fenêtre de montrer les cinq états
-//! d'une ligne `hooks` sans qu'un seul octet ne parte sur le disque.
+//! [`inspect`] ne fait que lire. C'est ce qui permet à la fenêtre de montrer l'état d'une
+//! ligne `hooks` — **et le diff de ce qu'Ash écrirait** — sans qu'un seul octet ne parte sur
+//! le disque.
+//!
+//! **`ForeignHooks` a disparu, et c'est le cœur de l'amendement du 2026-08-12 d'ADR-0007.**
+//! Un fichier qui portait déjà des hooks à lui n'est plus un refus : c'est un conflit, qui
+//! se montre et se tranche. Le sens d'ADR-0007 est « jamais silencieux », pas « jamais ».
 
-use std::ops::Range;
-
-use super::block::{self, Located};
 use super::diff;
+use super::merge::{self, Plan, Standing};
 use super::ports::ConfigFiles;
 use crate::features::agents::Instrumentation;
 
 /// Ce que le fichier porte, face à ce qu'Ash y écrirait.
 ///
-/// Les six cas sont **les six issues d'`install`**, dites avant de l'appeler : trois
-/// laissent écrire (rien, un bloc périmé), trois font refuser (une main est passée, des
-/// hooks qui ne sont pas les nôtres, un fichier qu'on ne sait pas lire).
+/// Les six cas sont **les six issues d'`install`**, dites avant de l'appeler : quatre
+/// laissent écrire — dont deux après que l'utilisateur a regardé le diff — et deux font
+/// refuser, parce qu'on ne devine pas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Presence {
-    /// Aucun bloc d'Ash : il n'est jamais passé par ici. Une installation l'y poserait.
-    Missing,
-    /// Le bloc en place est exactement celui qu'on écrirait. Installer ne toucherait à rien.
+    /// Aucune entrée d'Ash. `others` dit combien de hooks le fichier porte quand même : zéro
+    /// se lit « il n'y a rien », le reste se lit « il y a quelque chose que je n'ai pas
+    /// mis ».
+    Missing { others: usize, diff: String },
+    /// Les entrées en place sont exactement celles qu'on écrirait. Installer ne toucherait
+    /// à rien.
     Current { version: u32 },
-    /// Un bloc d'Ash, mais pas celui-ci — écrit par une version antérieure, ou dont le
-    /// contenu a changé de forme depuis. Une installation le réécrit sans rien demander.
-    Superseded { installed: u32, available: u32 },
-    /// Quelqu'un a édité le bloc. **Ash n'écrit pas**, et porte le diff (spec §10).
+    /// Des entrées d'Ash, mais pas celles-ci — écrites par une version antérieure. Une
+    /// installation les réécrit sans rien demander.
+    Superseded {
+        installed: u32,
+        available: u32,
+        diff: String,
+    },
+    /// Quelqu'un a édité une entrée d'Ash, ou en a retiré une. **Ash montre le diff et
+    /// laisse choisir** (spec §10).
     HandEdited { diff: String },
-    /// Le fichier a déjà une clé `hooks` qui n'est pas la nôtre.
-    ForeignHooks,
-    /// Pas d'accolade ouvrante : Ash ne saurait pas où poser son bloc.
+    /// Pas d'objet JSON où écrire, ou un chemin occupé par autre chose : Ash ne devine pas.
     NotAnObject,
     /// Le disque a dit non. Seul [`inspect`] peut produire ce cas.
     Unreadable { why: String },
 }
 
+impl Presence {
+    /// Le diff de ce qu'Ash écrirait, sur le fichier tel qu'il est — vide quand il n'y a
+    /// rien à écrire.
+    pub fn diff(&self) -> Option<&str> {
+        match self {
+            Presence::Missing { diff, .. }
+            | Presence::Superseded { diff, .. }
+            | Presence::HandEdited { diff } => Some(diff),
+            _ => None,
+        }
+    }
+}
+
 /// Le classement, à partir du texte du fichier. **Pure.**
 pub fn presence(content: &str, instrumentation: &Instrumentation) -> Presence {
-    // Un fichier vide est un fichier sans bloc : c'est le cas nominal d'une première
+    // Un fichier vide est un fichier sans entrées : c'est le cas nominal d'une première
     // installation, et le distinguer de l'absence de fichier n'apporterait rien ici.
     if content.trim().is_empty() {
-        return Presence::Missing;
+        return Presence::Missing {
+            others: 0,
+            diff: merge::fresh(instrumentation)
+                .map(|document| diff::preview("", document.as_str()))
+                .unwrap_or_default(),
+        };
     }
 
-    match block::locate(content) {
-        // Des marqueurs qu'on ne sait plus lire ne sortent pas de `render` : personne
-        // d'autre qu'un humain ne produit ça.
-        Located::Damaged => Presence::HandEdited {
-            diff: diff::compare(&instrumentation.block, content),
-        },
-
-        Located::Present(block) if !block.intact => Presence::HandEdited {
-            diff: diff::compare(&instrumentation.block, &block.payload),
-        },
-
-        Located::Present(block) => match foreign(content, Some(block.span.clone())) {
-            Some(refusal) => refusal,
-            // Un bloc intact, de la version courante, au contenu identique : c'est le
-            // démarrage ordinaire d'Ash, et le fichier de l'utilisateur ne doit pas bouger.
-            None if block.version == instrumentation.version
-                && block.payload == instrumentation.block =>
-            {
-                Presence::Current {
-                    version: block.version,
-                }
+    match merge::plan(content, instrumentation) {
+        Plan::Unusable => Presence::NotAnObject,
+        Plan::Current { version } => Presence::Current { version },
+        Plan::Write {
+            document,
+            standing,
+            others,
+        } => {
+            let diff = diff::preview(content, document.as_str());
+            match standing {
+                Standing::Absent => Presence::Missing { others, diff },
+                Standing::Older { version } => Presence::Superseded {
+                    installed: version,
+                    available: instrumentation.version,
+                    diff,
+                },
+                Standing::Changed => Presence::HandEdited { diff },
             }
-            None => Presence::Superseded {
-                installed: block.version,
-                available: instrumentation.version,
-            },
-        },
-
-        Located::Absent => match foreign(content, None) {
-            Some(refusal) => refusal,
-            None => match block::insertion_point(content) {
-                Some(_) => Presence::Missing,
-                None => Presence::NotAnObject,
-            },
-        },
+        }
     }
 }
 
@@ -92,28 +103,9 @@ pub fn inspect(files: &dyn ConfigFiles, instrumentation: &Instrumentation) -> Pr
     match files.read(&instrumentation.file) {
         Ok(Some(content)) => presence(&content, instrumentation),
         // Pas de fichier du tout : rien n'y est écrit, et une installation le créerait.
-        Ok(None) => Presence::Missing,
+        Ok(None) => presence("", instrumentation),
         Err(why) => Presence::Unreadable { why },
     }
-}
-
-/// Ash n'écrit pas dans un fichier qui a déjà des hooks à lui.
-///
-/// **La détection est délibérément grossière** : toute occurrence de `"hooks"` hors du bloc
-/// suffit à refuser, même dans une chaîne ou une clé imbriquée. Se tromper dans ce sens fait
-/// perdre une installation, et l'utilisateur l'apprend ; se tromper dans l'autre écrit une
-/// seconde clé `"hooks"` dans son objet racine, où le dernier arrivé l'emporte — donc
-/// désactive silencieusement les hooks qu'il avait écrits lui-même.
-///
-/// Fusionner les deux configurations serait la vraie réponse, mais elle demande de modifier
-/// du texte **hors** des marqueurs : c'est précisément ce que toute cette feature interdit,
-/// et ça mérite sa propre décision.
-fn foreign(content: &str, ours: Option<Range<usize>>) -> Option<Presence> {
-    let ours = ours.unwrap_or(0..0);
-    content
-        .match_indices("\"hooks\"")
-        .any(|(at, _)| !ours.contains(&at))
-        .then_some(Presence::ForeignHooks)
 }
 
 #[cfg(test)]
@@ -122,6 +114,7 @@ mod tests {
 
     use super::*;
     use crate::features::agents::{Adapter, ClaudeCodeAdapter};
+    use crate::features::hooks::document::Document;
     use crate::features::hooks::fakes::FakeConfigFiles;
     use crate::features::hooks::install;
 
@@ -134,11 +127,12 @@ mod tests {
     }
 
     #[test]
-    fn given_a_configuration_file_ash_never_touched_when_it_is_inspected_then_the_block_is_missing_and_nothing_was_read_twice(
+    fn given_a_configuration_file_ash_never_touched_when_it_is_inspected_then_the_absence_is_said_in_full_and_nothing_was_written(
     ) {
         // Given — l'écran de réglages pose la question à chaque affichage ; y répondre ne
         // doit rien écrire, sans quoi ouvrir la fenêtre modifierait le fichier de
-        // l'utilisateur
+        // l'utilisateur. Et l'absence doit se distinguer d'un refus : c'est la demande la
+        // plus concrète de l'utilisateur — « on ne comprend pas »
         let files = FakeConfigFiles::new().carrying(
             "/home/someone/.claude/settings.json",
             "{\n  \"model\": \"opus\"\n}\n",
@@ -149,7 +143,14 @@ mod tests {
         let found = inspect(&files, &instrumentation);
 
         // Then
-        assert_eq!(found, Presence::Missing);
+        let Presence::Missing { others, diff } = found else {
+            panic!("rien d'Ash n'est dans ce fichier : {found:?}");
+        };
+        assert_eq!(others, 0, "et rien de l'utilisateur non plus");
+        assert!(
+            diff.lines().any(|line| line.starts_with("+ ")),
+            "le diff montre ce qu'Ash écrirait :\n{diff}"
+        );
         assert_eq!(
             files.journal(),
             vec!["read /home/someone/.claude/settings.json"]
@@ -157,7 +158,44 @@ mod tests {
     }
 
     #[test]
-    fn given_a_block_ash_just_installed_when_it_is_inspected_then_it_is_the_current_one() {
+    fn given_a_file_that_already_carries_hooks_of_its_own_when_it_is_inspected_then_it_is_a_conflict_that_carries_the_merge_to_come(
+    ) {
+        // Given — c'est le fichier que les vrais utilisateurs ont : quelqu'un qui outille
+        // déjà Claude Code. Il rendait la fonction centrale d'Ash inatteignable, et la seule
+        // issue proposée était « déplace-les toi-même ». L'issue est maintenant de regarder
+        // et de choisir
+        let files = FakeConfigFiles::new().carrying(
+            "/home/someone/.claude/settings.json",
+            "{\n  \"hooks\": { \"PreToolUse\": [ { \"matcher\": \"Bash\",\n    \"hooks\": [ { \"type\": \"command\", \"command\": \"rtk hook claude\", \"timeout\": 5 } ] } ] }\n}\n",
+        );
+
+        // When
+        let found = inspect(&files, &instrumentation("/home/someone/.claude"));
+
+        // Then
+        let Presence::Missing { others, diff } = found else {
+            panic!("Ash n'a rien écrit dans ce fichier : {found:?}");
+        };
+        assert_eq!(others, 1, "le hook de l'utilisateur est compté, pas ignoré");
+        assert!(
+            diff.contains("ash-event"),
+            "le diff montre ce qu'Ash ajouterait :\n{diff}"
+        );
+        assert!(
+            diff.lines()
+                .filter(|line| line.starts_with("- "))
+                .all(|line| diff.contains(&format!("+{}", &line[1..]))
+                    || diff.contains("rtk hook claude")),
+            "ce que le diff retire doit se retrouver dans ce qu'il ajoute :\n{diff}"
+        );
+        assert!(
+            diff.contains("rtk hook claude"),
+            "le hook de l'utilisateur survit à ce qu'Ash écrirait :\n{diff}"
+        );
+    }
+
+    #[test]
+    fn given_entries_ash_just_installed_when_they_are_inspected_then_they_are_the_current_ones() {
         // Given — c'est l'état `installed · v1` de la ligne hooks, et il ne se déduit pas
         // d'un souvenir : Ash relit le fichier, parce que l'utilisateur a pu le vider entre
         // deux ouvertures de la fenêtre
@@ -178,14 +216,24 @@ mod tests {
     }
 
     #[test]
-    fn given_a_block_written_by_an_older_ash_when_it_is_inspected_then_it_names_both_versions() {
+    fn given_entries_written_by_an_older_ash_when_they_are_inspected_then_it_names_both_versions() {
         // Given — l'état `v1 · v2 available` : l'écran doit pouvoir dire de quoi vers quoi,
         // sinon « mettre à jour » ne dit pas ce qu'il changerait
         let files = FakeConfigFiles::new().carrying("/home/someone/.claude/settings.json", "{}\n");
         let older = instrumentation("/home/someone/.claude");
         install(&files, &older).unwrap_or_else(|why| panic!("{why}"));
         let newer = Instrumentation {
-            block: older.block.replace("--tab", "--onglet"),
+            entries: older
+                .entries
+                .iter()
+                .map(|entry| crate::features::agents::HookEntry {
+                    path: entry.path.clone(),
+                    item: entry.item.replace("--tab", "--onglet").replace(
+                        &crate::features::agents::hook_mark(older.version),
+                        &crate::features::agents::hook_mark(older.version + 1),
+                    ),
+                })
+                .collect(),
             version: older.version + 1,
             ..older.clone()
         };
@@ -194,20 +242,22 @@ mod tests {
         let found = inspect(&files, &newer);
 
         // Then
-        assert_eq!(
-            found,
-            Presence::Superseded {
-                installed: older.version,
-                available: older.version + 1,
-            }
-        );
+        let Presence::Superseded {
+            installed,
+            available,
+            ..
+        } = found
+        else {
+            panic!("un bloc périmé se réécrit : {found:?}");
+        };
+        assert_eq!((installed, available), (older.version, older.version + 1));
     }
 
     #[test]
-    fn given_a_block_someone_edited_by_hand_when_it_is_inspected_then_it_carries_the_diverging_lines(
+    fn given_an_entry_someone_edited_by_hand_when_it_is_inspected_then_it_carries_the_diverging_lines(
     ) {
-        // Given — refuser sans montrer ce qui diffère ne laisse que le choix de tout
-        // effacer (spec §10). Le diff est une partie du refus, pas un agrément
+        // Given — refuser d'écrire sans montrer ce qui diffère ne laisse que le choix de
+        // tout effacer (spec §10). Le diff est une partie du conflit, pas un agrément
         let files = FakeConfigFiles::new().carrying("/home/someone/.claude/settings.json", "{}\n");
         let instrumentation = instrumentation("/home/someone/.claude");
         install(&files, &instrumentation).unwrap_or_else(|why| panic!("{why}"));
@@ -226,26 +276,9 @@ mod tests {
         };
         assert!(
             diff.lines()
-                .any(|line| line.starts_with('+') && line.contains("mon-script")),
+                .any(|line| line.starts_with('-') && line.contains("mon-script")),
             "le diff montre la ligne de l'utilisateur :\n{diff}"
         );
-    }
-
-    #[test]
-    fn given_a_file_that_already_carries_hooks_of_its_own_when_it_is_inspected_then_ash_says_it_is_blocked(
-    ) {
-        // Given — c'est le refus que les vrais utilisateurs heurteront en premier : écrire
-        // une seconde clé `"hooks"` désactiverait la leur en silence
-        let files = FakeConfigFiles::new().carrying(
-            "/home/someone/.claude/settings.json",
-            "{\n  \"hooks\": {\"Stop\": \"le mien\"}\n}\n",
-        );
-
-        // When
-        let found = inspect(&files, &instrumentation("/home/someone/.claude"));
-
-        // Then
-        assert_eq!(found, Presence::ForeignHooks);
     }
 
     #[test]
@@ -261,7 +294,7 @@ mod tests {
             fn exists(&self, _: &Path) -> bool {
                 true
             }
-            fn write(&self, _: &Path, _: &block::Document) -> Result<(), String> {
+            fn write(&self, _: &Path, _: &Document) -> Result<(), String> {
                 Err("permission denied".to_owned())
             }
             fn copy(&self, _: &Path, _: &Path) -> Result<(), String> {

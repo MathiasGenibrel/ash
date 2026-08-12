@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::block::Document;
+use super::document::Document;
 use super::ports::ConfigFiles;
 
 pub struct FakeConfigFiles {

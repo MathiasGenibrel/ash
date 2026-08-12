@@ -133,7 +133,7 @@ impl HookBlocks for AdapterHooks {
         let instrumentation = self
             .describing(adapter, config_dir.resolved())
             .ok_or_else(|| format!("the {adapter} adapter wrote nothing to remove"))?;
-        features::hooks::uninstall(&*self.files, &instrumentation.file)
+        features::hooks::uninstall(&*self.files, &instrumentation)
             .map(|_| ())
             .map_err(|why| why.to_string())
     }
