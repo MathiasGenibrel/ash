@@ -13,6 +13,13 @@ import type { MenuAction } from "./menu";
  * Ce module est le seul du frontend à lire une touche brute, et il vit dans `app/` pour
  * la même raison que `menu.ts` : un raccourci de fenêtre n'appartient à aucune feature.
  *
+ * **Ce que l'écoute voit, et ce qu'elle ne voit pas.** Elle n'est posée que par
+ * `app/main.ts`, sur le document de la fenêtre principale. La fenêtre de réglages a le
+ * sien (`settings.html` → `app/settings.ts`, voir `vite.config.ts`) : ses champs de
+ * saisie ne passent jamais par ici, et `⌃⇥` y reste ce que la webview en fait. La porte
+ * est étroite pour la même raison qu'elle est en capture : elle ne retient que ce que le
+ * menu natif ne peut pas capter, et tout ce qui ne correspond pas ressort intact.
+ *
  * **`Tab` seul n'est pas un raccourci.** C'est la contrainte qui a dicté la forme de
  * [`matchShortcut`] : elle exige `Control`, et refuse tout ce qui porte `Cmd` ou `Option`
  * — sans quoi la complétion de `zsh` s'arrêterait de fonctionner, ce qui coûterait

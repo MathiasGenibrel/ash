@@ -19,15 +19,31 @@
 //! `Key::Tab` en équivalent clavier `⇥` (U+21E5), le **glyphe** d'affichage, alors que
 //! `NSEvent` rend `\t` (U+0009) quand on presse Tab. `-[NSMenu performKeyEquivalent:]`
 //! compare ces chaînes : l'entrée s'affiche donc correctement, mais ne s'allume jamais au
-//! clavier. Mesuré sur cette machine avec un `NSMenu` monté à la main et un `NSEvent`
-//! synthétisé (`⇥`+ctrl ne correspond pas à Ctrl+Tab, `\t`+ctrl correspond).
+//! clavier.
+//!
+//! **Ce qu'il faut revérifier en montant `muda`** — constaté sur **0.19.3** : la ligne
+//! `Key::Tab => "⇥".into()` de `src/platform_impl/macos/accelerator.rs`. C'est la seule
+//! de cette table à rendre un glyphe ; `Escape` y vaut `\u{1b}`, `Enter` `\r`,
+//! `Backspace` `\u{8}` — les vrais caractères. Le jour où elle rendra `\u{9}`, les deux
+//! entrées ci-dessous s'allumeront au clavier d'elles-mêmes, et `src/app/shortcuts.ts`
+//! n'aura plus lieu d'être.
+//!
+//! La mesure qui l'établit se refait en quelques lignes de Swift — un `NSMenu` monté à
+//! la main, un `NSEvent` synthétisé, `performKeyEquivalent:` :
+//!
+//! ```text
+//! muda glyph U+21E5 + ctrl   vs Ctrl+Tab                -> matched=0
+//! real tab U+0009  + ctrl    vs Ctrl+Tab                -> matched=1
+//! real tab U+0009  + ctrl    vs plain Tab (no modifier) -> matched=0
+//! ```
 //!
 //! La conséquence est heureuse pour nous : la touche traverse jusqu'à la webview, où
 //! `src/app/shortcuts.ts` la capte — et c'est de toute façon le côté qu'il fallait pour
-//! `Tab`, la seule touche de cette table dont le shell a un usage propre. Un
-//! **accélérateur** ne se confond pas avec une touche nue : `Tab` seul n'a pas le drapeau
-//! `Control`, donc ni AppKit ni notre gestionnaire ne le retiennent, et la complétion de
-//! `zsh` reste intacte.
+//! `Tab`, la seule touche de cette table dont le shell a un usage propre. La troisième
+//! ligne de la mesure compte donc autant que les deux autres : un **accélérateur** ne se
+//! confond pas avec une touche nue, `Tab` seul n'a pas le drapeau `Control`, donc ni
+//! AppKit ni notre gestionnaire ne le retiennent, et la complétion de `zsh` reste
+//! intacte.
 //!
 //! Le prix est que la liste des accélérateurs est en Rust et leur effet en TypeScript.
 //! C'est assumé : le frontend rend les onglets, il ne les détient pas
