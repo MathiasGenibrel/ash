@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { menuAccelerators, press } from "./builders";
-import { applyKeyAction, resolveKeyAction, type ScrollSurface } from "./key-actions";
+import { applyKeyAction, resolveKeyAction, type ActionSurface } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 
 /** Les quatre accords de la spec, dans l'ordre où l'issue #78 les écrit. */
@@ -25,7 +25,7 @@ const scrollingChords = [
  * `-1` écrit `+1` dans `applyKeyAction` fait dire « une page vers le bas » à la surface,
  * et l'assertion tombe.
  */
-class RecordingSurface implements ScrollSurface {
+class RecordingSurface implements ActionSurface {
     readonly moves: string[] = [];
 
     scrollPages(pageCount: number): void {
@@ -34,6 +34,10 @@ class RecordingSurface implements ScrollSurface {
 
     scrollLines(amount: number): void {
         this.moves.push(describeMove(amount, "ligne"));
+    }
+
+    openSearch(): void {
+        this.moves.push("ouvre la recherche");
     }
 }
 
@@ -116,8 +120,9 @@ describe("les raccourcis de défilement du scrollback", () => {
 
     it("Given a menu accelerator of the native menu, when it is resolved, then the table lets it through", () => {
         // Given — la liste de `src-tauri/src/menu.rs`. macOS les consomme avant la webview,
-        // mais ce test est le garde-fou du jour où la table grandira (#79) : une entrée qui
-        // recouvrirait un accélérateur casserait le menu sans bruit.
+        // et ce test est le garde-fou de la table qui grandit : `⌘F` s'y est ajouté sans
+        // recouvrir aucun accélérateur, et une entrée qui en recouvrirait un casserait le
+        // menu sans bruit.
         const accelerators = menuAccelerators();
 
         // When
@@ -145,5 +150,53 @@ describe("les raccourcis de défilement du scrollback", () => {
             "1 ligne vers le haut",
             "1 ligne vers le bas",
         ]);
+    });
+});
+
+describe("le raccourci de recherche dans le scrollback", () => {
+    it("Given Cmd+F, when it is resolved, then it opens the search of the current tab", () => {
+        // Given — `⌘F` est ce que tout le monde tape ; il n'est déclaré dans aucun menu
+        // natif, donc c'est bien la webview qui le voit
+        const chord = press("f").withCommand().build();
+
+        // When
+        const action = resolveKeyAction(chord);
+
+        // Then
+        expect(action).toBe("open-search");
+    });
+
+    it("Given Cmd+F, when the input table also sees it, then nothing is sent to the PTY", () => {
+        // Given — la vue compose les deux résolveurs, saisie d'abord et action ensuite : une
+        // entrée qui recouvrirait `⌘F` dans `key-bindings.ts` écrirait des octets dans le
+        // shell avant même que le champ ne s'ouvre
+        const chord = press("f").withCommand().build();
+
+        // When / Then
+        expect(resolveKeyBinding(chord)).toBeNull();
+    });
+
+    it("Given the letter f typed on its own, when it is resolved, then it is left to the shell", () => {
+        // Given — sans le modificateur, `f` est une lettre ; l'avaler rendrait le terminal
+        // inutilisable
+        const bare = [press("f"), press("f").withControl(), press("f").withOption()];
+
+        // When
+        const actions = bare.map((chord) => resolveKeyAction(chord.build()));
+
+        // Then
+        expect(actions).toEqual([null, null, null]);
+    });
+
+    it("Given the open-search action, when it is applied, then it opens the field and moves nothing", () => {
+        // Given — chercher n'est pas défiler : l'affichage reste où il est jusqu'à ce qu'une
+        // occurrence soit trouvée
+        const surface = new RecordingSurface();
+
+        // When
+        applyKeyAction("open-search", surface);
+
+        // Then
+        expect(surface.moves).toEqual(["ouvre la recherche"]);
     });
 });
