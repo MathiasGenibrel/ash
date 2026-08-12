@@ -300,9 +300,13 @@ Les quatre règles qui reviennent le plus souvent :
 
 - **Ash ne valide rien à la place de l'utilisateur.** Il peut rédiger un texte dans un
   terminal, il ne presse jamais `⏎` ([ADR-0015](./docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
-- **Bloc délimité, sauvegarde, jamais silencieux.** Partout où Ash écrit dans un
-  fichier de l'utilisateur ([ADR-0007](./docs/adr/0007-etats-par-hooks.md),
-  [ADR-0013](./docs/adr/0013-fiche-de-branche-dans-le-depot.md)).
+- **Ash n'écrit que ce qui lui appartient, et sait le reconnaître. Sauvegarde, jamais
+  silencieux.** Partout où Ash écrit dans un fichier de l'utilisateur
+  ([ADR-0007](./docs/adr/0007-etats-par-hooks.md),
+  [ADR-0013](./docs/adr/0013-fiche-de-branche-dans-le-depot.md)). La forme dépend du
+  fichier : **entrées marquées** dans un `settings.json`, dont chacune se reconnaît
+  seule et cohabite avec celles de l'utilisateur ; **bloc délimité** dans un `.md`, où
+  il n'y a rien à entrelacer.
 - **Les états d'agent viennent des hooks, jamais d'une analyse de la sortie du PTY**
   ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)).
 - **Un onglet porte au plus un PTY, et le panneau bas n'en contient jamais**
