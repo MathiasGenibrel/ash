@@ -209,7 +209,7 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "" });
 
         // When
-        const action = describeAddAction(draft, [], "« claude » est déjà déclarée", aVerification());
+        const action = describeAddAction(draft, [], "claude is already declared", aVerification());
 
         // Then
         expect(action.reason).toBe("name the command first");
@@ -222,10 +222,10 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "codex" });
 
         // When
-        const action = describeAddAction(draft, [], "registre des outils empoisonné", aVerification());
+        const action = describeAddAction(draft, [], "tool registry poisoned", aVerification());
 
         // Then
-        expect(action).toEqual({ reason: "registre des outils empoisonné", enabled: true });
+        expect(action).toEqual({ reason: "tool registry poisoned", enabled: true });
     });
 
     it("Given a draft whose tests have not answered yet, when the action bar is described, then add stays visible, off, with what it is waiting for", () => {
