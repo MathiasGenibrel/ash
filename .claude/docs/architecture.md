@@ -58,7 +58,7 @@ pour un agent : la question « où vit la résolution du workspace ? » se répo
 |---|---|---|
 | `pty` | [0001](../../docs/adr/0001-application-graphique-avec-pty-embarques.md), [0002](../../docs/adr/0002-tauri-rust-portable-pty.md) | la création d'un bash, son environnement (`ASH_TAB_ID`, `ASH_SOCK`), son cycle de vie |
 | `probe` | [0005](../../docs/adr/0005-sonde-cwd-libproc.md) | `tcgetpgrp`, `proc_pidinfo`, et **rien** qui interprète un état |
-| `agents` | [0006](../../docs/adr/0006-decouverte-automatique-des-agents.md), [0007](../../docs/adr/0007-etats-par-hooks.md), [0008](../../docs/adr/0008-abstraction-adapter.md) | le vocabulaire commun `idle/working/waiting/done/error`, le trait `Adapter`, le socket d'events |
+| `agents` | [0006](../../docs/adr/0006-decouverte-automatique-des-agents.md), [0007](../../docs/adr/0007-etats-par-hooks.md), [0008](../../docs/adr/0008-abstraction-adapter.md) | le vocabulaire commun `idle/working/waiting/done/error`, le trait `Adapter`, le socket d'events, et **la décision** — une machine à états par onglet, que `pty` consulte par son port `AgentStates` |
 | `git` | [0011](../../docs/adr/0011-git-domaine-de-premier-plan.md), [0012](../../docs/adr/0012-worktree-unite-de-travail.md) | refs, worktrees, dépôt commun, état de rebase, couloirs du graphe |
 | `journal` | [0014](../../docs/adr/0014-attribution-locale-des-commits.md) | l'écriture et la relecture de l'attribution |
 | `hooks` | [0007](../../docs/adr/0007-etats-par-hooks.md), [0013](../../docs/adr/0013-fiche-de-branche-dans-le-depot.md) | le marqueur par entrée, le `.bak`, le diff montré avant toute écriture |

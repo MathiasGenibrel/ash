@@ -19,11 +19,15 @@ pub mod spike;
 use std::path::Path;
 use std::sync::Arc;
 
-use features::agents::commands::{AgentEvent, AGENT_EVENT};
-use features::agents::{Adapter, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter};
+use features::agents::{
+    Adapter, AgentState, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Presence,
+    Supervisor,
+};
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
-use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
+use features::pty::{
+    AgentStates, PtyRegistry, RepoRef, SystemPtySpawner, TabId, TabLocation, WorktreeLocator,
+};
 use features::settings::{
     AdapterProfile, BlockAt, ConfigTarget, HookBlocks, SystemCommands, SystemConfigFiles,
     ToolRegistry, Verifier,
@@ -57,15 +61,20 @@ impl WorktreeLocator for GitWorktrees {
     }
 }
 
-/// Relie le port du socket d'events au registre des onglets, et à la webview.
+/// Relie le port du socket d'events au registre des onglets, et au superviseur d'états.
 ///
 /// C'est ici, et seulement ici, que les deux features se rencontrent : `agents` ne connaît
 /// que son trait, `pty` ne sait rien des hooks. La corrélation, elle, est déjà tranchée par
 /// [ADR-0007](../../docs/adr/0007-etats-par-hooks.md) — `ASH_TAB_ID`, que le registre a posé
 /// sur le shell de chaque onglet, et que la descendance de ce shell hérite jusqu'au hook.
+///
+/// Un événement livré ne traverse **pas** la frontière Tauri : il entre dans la machine à
+/// états de son onglet, et c'est la boucle de sonde qui portera le verdict jusqu'à la
+/// webview, avec le reste de ce que l'onglet montre
+/// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 struct HookEvents {
-    app: tauri::AppHandle,
     ptys: Arc<PtyRegistry>,
+    agents: Arc<Supervisor>,
 }
 
 impl EventSink for HookEvents {
@@ -74,10 +83,24 @@ impl EventSink for HookEvents {
     }
 
     fn deliver(&self, event: &EventFrame) {
-        use tauri::Emitter;
-        // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
-        // rattraper, et surtout pas de panique dans un fil de fond.
-        let _ = self.app.emit(AGENT_EVENT, AgentEvent::from(event));
+        self.agents.on_hook(event);
+    }
+}
+
+/// Relie le port d'états de `pty` au superviseur de `features::agents`.
+///
+/// Il n'y a aucune décision ici — une question, une délégation — et c'est délibéré : le
+/// composition root n'a pas de test unitaire, donc tout ce qui s'y glisse n'en a pas non
+/// plus. La règle, elle, vit dans `agents/supervisor.rs`, où elle se prouve.
+struct TabAgents(Arc<Supervisor>);
+
+impl AgentStates for TabAgents {
+    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentState {
+        self.0.state(tab_id, seen)
+    }
+
+    fn forget(&self, tab_id: &TabId) {
+        self.0.forget(tab_id);
     }
 }
 
@@ -139,41 +162,23 @@ impl HookBlocks for AdapterHooks {
     }
 }
 
-/// Assemble et démarre l'application.
+/// Les adaptateurs que **cette** application embarque, et ce que la vérification en sait.
 ///
-/// Composition root : c'est le seul endroit du crate où les implémentations concrètes
-/// des effets système sont choisies et injectées. `SystemPtySpawner` et `SystemProbe`
-/// n'apparaissent qu'ici ; partout ailleurs les features ne connaissent que leurs traits.
-pub fn run() -> tauri::Result<()> {
-    let ptys = Arc::new(PtyRegistry::new(
-        Box::new(SystemPtySpawner),
-        Arc::new(SystemProbe),
-        Arc::new(GitWorktrees),
-    ));
-
-    // L'apparence — le thème et la taille de police du terminal — est relue **avant** la
-    // construction du menu : ses trois coches disent le mode en cours, et le menu est bâti
-    // une seule fois, avant que la webview n'existe.
-    let theme = Arc::new(ThemeState::restore(
-        Arc::new(FileThemeStore::in_home()) as Arc<dyn ThemeStore>
-    ));
-    let theme_mode = theme.mode();
-
-    // La fenêtre de réglages ne propose que les adaptateurs que **cette** application
-    // embarque : c'est ici qu'on les connaît, et la feature `settings` n'a donc pas à
-    // connaître leurs implémentations
-    // ([ADR-0008](../../docs/adr/0008-abstraction-adapter.md)). Un adaptateur de plus est
-    // une ligne de plus ici, et rien à changer dans les réglages.
-    //
-    // **Le profil est la traduction d'un adaptateur en ce que la vérification sait
-    // regarder** : de la donnée, et non le trait lui-même. C'est ce qui laisse `settings`
-    // ignorer `GenericAdapter` comme il ignorera les autres — et c'est ici, au seul endroit
-    // qui connaît les deux, que la traduction se fait.
-    //
-    // `generic` ne signe rien et n'impose aucun dossier, et ce n'est pas un manque : il est
-    // l'adaptateur de l'outil dont on ne sait rien. La séquence en tire une **réserve** —
-    // le dossier est accepté, mais rien ne prouve que la commande le lit — au lieu de
-    // lancer un programme pour une question à laquelle il ne saurait pas répondre.
+/// C'est ici qu'on les connaît, et nulle part ailleurs : la feature `settings` n'a donc pas
+/// à connaître leurs implémentations, ni `agents` à savoir lesquels sont livrés
+/// ([ADR-0008](../../docs/adr/0008-abstraction-adapter.md)). Un adaptateur de plus est une
+/// ligne de plus ici, et rien à changer dans les réglages.
+///
+/// **Le profil est la traduction d'un adaptateur en ce que la vérification sait regarder** :
+/// de la donnée, et non le trait lui-même. C'est ce qui laisse `settings` ignorer
+/// `GenericAdapter` comme il ignorera les autres — et c'est ici, au seul endroit qui connaît
+/// les deux, que la traduction se fait.
+///
+/// `generic` ne signe rien et n'impose aucun dossier, et ce n'est pas un manque : il est
+/// l'adaptateur de l'outil dont on ne sait rien. La séquence en tire une **réserve** — le
+/// dossier est accepté, mais rien ne prouve que la commande le lit — au lieu de lancer un
+/// programme pour une question à laquelle il ne saurait pas répondre.
+fn embedded_adapters() -> (Vec<Arc<dyn Adapter>>, Vec<AdapterProfile>) {
     let mut adapters: Vec<Arc<dyn Adapter>> = vec![Arc::new(GenericAdapter)];
     let mut profiles = vec![AdapterProfile {
         id: GenericAdapter.id().to_owned(),
@@ -214,6 +219,40 @@ pub fn run() -> tauri::Result<()> {
         None => eprintln!("ash: ash-event est introuvable ; claude-code n'est pas proposé"),
     }
 
+    (adapters, profiles)
+}
+
+/// Assemble et démarre l'application.
+///
+/// Composition root : c'est le seul endroit du crate où les implémentations concrètes
+/// des effets système sont choisies et injectées. `SystemPtySpawner` et `SystemProbe`
+/// n'apparaissent qu'ici ; partout ailleurs les features ne connaissent que leurs traits.
+pub fn run() -> tauri::Result<()> {
+    // Les adaptateurs sont assemblés **en premier** : ce sont eux qui traduisent les verbes
+    // des hooks, donc le superviseur d'états en dépend, et le registre de PTY dépend du
+    // superviseur pour savoir quoi montrer d'un onglet.
+    let (adapters, profiles) = embedded_adapters();
+
+    let agents = Arc::new(Supervisor::new(
+        Arc::new(shared::time::SystemClock),
+        adapters.clone(),
+    ));
+
+    let ptys = Arc::new(PtyRegistry::new(
+        Box::new(SystemPtySpawner),
+        Arc::new(SystemProbe),
+        Arc::new(GitWorktrees),
+        Arc::new(TabAgents(Arc::clone(&agents))),
+    ));
+
+    // L'apparence — le thème et la taille de police du terminal — est relue **avant** la
+    // construction du menu : ses trois coches disent le mode en cours, et le menu est bâti
+    // une seule fois, avant que la webview n'existe.
+    let theme = Arc::new(ThemeState::restore(
+        Arc::new(FileThemeStore::in_home()) as Arc<dyn ThemeStore>
+    ));
+    let theme_mode = theme.mode();
+
     let tools = Arc::new(ToolRegistry::new(
         Arc::new(Verifier::new(
             Arc::new(SystemConfigFiles),
@@ -225,7 +264,6 @@ pub fn run() -> tauri::Result<()> {
             files: Arc::new(features::hooks::SystemConfigFiles),
         }),
     ));
-
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
@@ -306,8 +344,8 @@ pub fn run() -> tauri::Result<()> {
     // l'utilisateur bien plus que ce que ça lui rendrait ; le message sur la sortie
     // d'erreur est ce qui rend la panne trouvable.
     let events = features::agents::listen(Arc::new(HookEvents {
-        app: app.handle().clone(),
         ptys: Arc::clone(&ptys),
+        agents: Arc::clone(&agents),
     }));
     let events = match events {
         Ok(socket) => Some(socket),
@@ -326,11 +364,19 @@ pub fn run() -> tauri::Result<()> {
         // au moment précis où l'utilisateur y revient. La surveillance, elle, ne suppose
         // aucun fil : c'est au composition root de savoir d'où il l'appelle.
         tauri::RunEvent::WindowEvent {
-            event: tauri::WindowEvent::Focused(true),
+            event: tauri::WindowEvent::Focused(focused),
             ..
         } => {
-            let refreshing = Arc::clone(&git_watch);
-            std::thread::spawn(move || refreshing.on_focus());
+            // Le focus est ce qui décide qu'une ligne `done` a été **vue**, donc qu'elle a le
+            // droit de s'effacer au bout de trente secondes (spec §6.4). Sans ce signal, un
+            // agent qui finit pendant qu'Ash est derrière l'éditeur laisserait sa ligne
+            // affichée pour toujours. C'est immédiat et sans disque, donc sur ce fil-ci.
+            agents.on_window_focus(focused);
+
+            if focused {
+                let refreshing = Arc::clone(&git_watch);
+                std::thread::spawn(move || refreshing.on_focus());
+            }
         }
         tauri::RunEvent::Exit => {
             stop.ask();
