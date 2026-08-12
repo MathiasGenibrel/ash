@@ -21,9 +21,24 @@
 //!
 //! La question que la passe d'architecture de #13 avait posée — « peut-on ajouter une
 //! fonction qui écrirait hors des marqueurs sans qu'un seul test ne tombe ? » — se repose
-//! donc telle quelle, et la réponse reste non : une telle fonction ne peut pas **fabriquer
-//! ses arguments**. Les deux constructeurs sont totaux et vérifient, à l'exécution, la seule
-//! chose qu'un type ne peut pas porter seul : que ces octets-là sont bien ceux d'Ash.
+//! donc telle quelle. Elle a deux moitiés, et il a fallu les deux :
+//!
+//! 1. **Fabriquer les arguments** est impossible : les deux constructeurs sont totaux et
+//!    vérifient, à l'exécution, la seule chose qu'un type ne peut pas porter seul — que ces
+//!    octets-là sont bien ceux d'Ash.
+//! 2. **Fabriquer le [`Document`] lui-même** l'est aussi, et c'est la visibilité qui s'en
+//!    charge. [`Document`] est le seul type de ce fichier que `hooks` réexporte — le port
+//!    `ConfigFiles` l'a dans sa signature — donc il traverse la frontière de la feature. Ses
+//!    constructeurs, eux, sont `pub(super)` : hors de `features::hooks`, un `Document` ne se
+//!    compose pas. Sans cette restriction, `Document::edited(n_importe_quoi, Vec::new())`
+//!    passait la garantie par-dessus depuis n'importe quel module du crate — le `Vec<Edit>`
+//!    vide s'infère sans avoir à nommer [`Edit`], et le résultat partait sur le disque par
+//!    le même port. C'est le compilateur qui ferme cette porte, pas un test.
+//!
+//! Ce que les types ne portent **pas**, et qu'il faut savoir en lisant : ils disent *quoi*
+//! écrire, pas *où*. La justesse d'une position — l'index d'un [`Edit::Add`], les bornes
+//! d'une plage passée à [`Ours::covering`] — vient du planificateur, qui les lit dans la
+//! structure du fichier ([`json`](super::json)), et de lui seul.
 
 use std::ops::Range;
 
@@ -73,8 +88,14 @@ pub enum Edit {
     /// Ash ajoute du texte à lui, à un point que le planificateur a lu dans la structure.
     ///
     /// Une insertion ne peut **rien perdre** : elle n'écrase aucun octet. C'est la raison
-    /// pour laquelle la position est un simple index et non un troisième type — la seule
-    /// chose à garantir est que le texte ajouté soit d'Ash, et [`AshText`] s'en charge.
+    /// pour laquelle la position est un simple index et non un troisième type — le texte
+    /// ajouté est d'Ash, et [`AshText`] s'en charge.
+    ///
+    /// Elle peut en revanche **mal tomber** : un index quelconque coupe au milieu d'une
+    /// valeur de l'utilisateur, et le fichier devient illisible sans qu'un octet ait
+    /// disparu. Rien dans le type ne l'empêche, et il faut le savoir : les index viennent
+    /// tous de [`json`](super::json), qui les prend juste après une accolade ou un crochet
+    /// ouvrant. Un index calculé autrement n'a pas sa place ici.
     Add(usize, AshText),
 }
 
@@ -113,7 +134,7 @@ impl Document {
     /// toutes les suivantes. Une plage qui ne tomberait pas dans le texte ne vient de nulle
     /// part — elle est ignorée, parce que découper au jugé se paierait dans le
     /// `settings.json` de l'utilisateur.
-    pub fn edited(original: &str, mut edits: Vec<Edit>) -> Self {
+    pub(super) fn edited(original: &str, mut edits: Vec<Edit>) -> Self {
         edits.sort_by_key(|edit| std::cmp::Reverse(edit.at()));
         let mut composed = original.to_owned();
         for edit in edits {
@@ -130,7 +151,7 @@ impl Document {
     ///
     /// Il n'y a alors rien de l'utilisateur à préserver, et c'est la seule raison pour
     /// laquelle un document entier peut se composer.
-    pub fn fresh(body: &AshText) -> Self {
+    pub(super) fn fresh(body: &AshText) -> Self {
         Self(format!("{{{}\n}}\n", body.as_str()))
     }
 
@@ -144,7 +165,7 @@ impl Document {
     /// résidu — et n'ont rien à dire de ce qu'on écrit. Cette porte est `#[cfg(test)]` pour
     /// que le code de production n'en dispose à aucun moment.
     #[cfg(test)]
-    pub fn verbatim(text: &str) -> Self {
+    pub(super) fn verbatim(text: &str) -> Self {
         Self(text.to_owned())
     }
 }

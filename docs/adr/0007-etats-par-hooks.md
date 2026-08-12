@@ -102,7 +102,11 @@ C'est un affaiblissement du **mécanisme**, pas de la **promesse**, et la promes
 toujours dans les types plutôt que dans la prudence des appelants
 (`features/hooks/document.rs`) : un document ne se compose que de modifications qui
 retirent ou remplacent une plage **portant le marqueur**, ou qui ajoutent un texte **le
-portant**. Ce qui est retiré n'est retiré que si Ash sait le réécrire à l'octet près.
+portant** — et, hors de la feature, un document ne se compose pas du tout, ses
+constructeurs étant `pub(super)`. Le retrait, lui, préfère recomposer le texte qu'Ash
+avait écrit et le comparer octet par octet ; quand la comparaison échoue — le fichier a
+été réindenté, l'entrée retouchée — il se replie sur les bornes de l'entrée marquée
+elle-même et de son séparateur, jamais au-delà.
 
 **« Jamais silencieux » ne change pas, et devient plus vrai.** Un fichier qui porte des
 hooks qui ne sont pas ceux d'Ash n'est plus un refus : c'est un **conflit**, au même titre

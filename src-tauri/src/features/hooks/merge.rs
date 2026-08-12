@@ -315,29 +315,21 @@ fn creations_at(
     level: usize,
     anchor: usize,
 ) -> Vec<(Vec<usize>, String)> {
-    let mut keys: Vec<&str> = Vec::new();
-    let mut grouped: Vec<Vec<usize>> = Vec::new();
+    let here: Vec<usize> = instrumentation
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(index, entry)| {
+            !settled[*index]
+                && held[*index].is_some()
+                && walks[*index].anchors.get(level) == Some(&anchor)
+                && entry.path.get(level).is_some()
+        })
+        .map(|(index, _)| index)
+        .collect();
 
-    for (index, entry) in instrumentation.entries.iter().enumerate() {
-        if settled[index]
-            || held[index].is_none()
-            || walks[index].anchors.get(level) != Some(&anchor)
-        {
-            continue;
-        }
-        let Some(key) = entry.path.get(level) else {
-            continue;
-        };
-        match keys.iter().position(|known| *known == key.as_str()) {
-            Some(rank) => grouped[rank].push(index),
-            None => {
-                keys.push(key);
-                grouped.push(vec![index]);
-            }
-        }
-    }
-
-    grouped
+    by_key_at(instrumentation, &here, level)
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|group| {
             let text = create(instrumentation, &group, level, &|index| {
@@ -409,18 +401,7 @@ fn creation_edits(
                 .filter(|(at, _)| *at == anchor)
                 .map(|(_, index)| *index)
                 .collect();
-            let mut keys: Vec<&str> = Vec::new();
-            let mut grouped: Vec<Vec<usize>> = Vec::new();
-            for index in mine {
-                let key = instrumentation.entries[index].path.get(level)?;
-                match keys.iter().position(|known| *known == key.as_str()) {
-                    Some(rank) => grouped[rank].push(index),
-                    None => {
-                        keys.push(key);
-                        grouped.push(vec![index]);
-                    }
-                }
-            }
+            let grouped = by_key_at(instrumentation, &mine, level)?;
 
             let pieces: Vec<String> = grouped
                 .iter()
@@ -471,18 +452,7 @@ fn create(
         ));
     }
 
-    let mut keys: Vec<&str> = Vec::new();
-    let mut grouped: Vec<Vec<usize>> = Vec::new();
-    for index in group {
-        let next = instrumentation.entries[*index].path.get(level + 1)?;
-        match keys.iter().position(|known| *known == next.as_str()) {
-            Some(rank) => grouped[rank].push(*index),
-            None => {
-                keys.push(next);
-                grouped.push(vec![*index]);
-            }
-        }
-    }
+    let grouped = by_key_at(instrumentation, group, level + 1)?;
     let children: Vec<String> = grouped
         .iter()
         .filter_map(|child| create(instrumentation, child, level + 1, item))
@@ -499,6 +469,37 @@ fn create(
     Some(format!("\"{key}\": {{\n{body}\n{}}}", indent(level + 1)))
 }
 
+/// Les entrées données, groupées par la clé qu'elles partagent à ce niveau du chemin.
+///
+/// C'est **le** groupement de la fusion : deux entrées dont le chemin dit `["hooks", "Stop"]`
+/// et `["hooks", "Notification"]` partagent la clé `hooks` au niveau 0 et divergent au
+/// niveau 1, donc Ash écrit une seule clé `hooks` portant deux clés d'événement. L'ordre est
+/// celui du premier venu — celui de l'adaptateur — parce que c'est lui qui rend
+/// l'[`Instrumentation`] déterministe, donc le fichier stable d'une installation à l'autre.
+///
+/// `None` dès qu'une entrée n'a pas de clé à ce niveau : les appelants composent tous un
+/// texte à partir de ce groupement, et un chemin trop court n'en a pas à composer. Celui qui
+/// veut ignorer ces entrées-là les écarte **avant** d'appeler.
+fn by_key_at(
+    instrumentation: &Instrumentation,
+    indexes: &[usize],
+    level: usize,
+) -> Option<Vec<Vec<usize>>> {
+    let mut keys: Vec<&str> = Vec::new();
+    let mut grouped: Vec<Vec<usize>> = Vec::new();
+    for index in indexes {
+        let key = instrumentation.entries.get(*index)?.path.get(level)?;
+        match keys.iter().position(|known| *known == key.as_str()) {
+            Some(rank) => grouped[rank].push(*index),
+            None => {
+                keys.push(key);
+                grouped.push(vec![*index]);
+            }
+        }
+    }
+    Some(grouped)
+}
+
 fn all_indexes(instrumentation: &Instrumentation) -> Vec<usize> {
     (0..instrumentation.entries.len()).collect()
 }
@@ -509,19 +510,7 @@ fn created(
     group: &[usize],
     level: usize,
 ) -> Option<Vec<String>> {
-    let mut keys: Vec<&str> = Vec::new();
-    let mut grouped: Vec<Vec<usize>> = Vec::new();
-    for index in group {
-        let key = instrumentation.entries.get(*index)?.path.get(level)?;
-        match keys.iter().position(|known| *known == key.as_str()) {
-            Some(rank) => grouped[rank].push(*index),
-            None => {
-                keys.push(key);
-                grouped.push(vec![*index]);
-            }
-        }
-    }
-    grouped
+    by_key_at(instrumentation, group, level)?
         .iter()
         .map(|child| {
             create(instrumentation, child, level, &|index| {
