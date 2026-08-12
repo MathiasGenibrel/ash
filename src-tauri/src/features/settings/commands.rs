@@ -5,6 +5,12 @@
 //! Il **rend** la liste et ce qu'elle a prouvé ; il ne les détient pas
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 //!
+//! **Les noms de commande sont jugés ici, et une seule fois.** Les paramètres restent des
+//! chaînes — c'est ce que la webview envoie, et le contrat sur le fil ne bouge pas — mais
+//! chacun devient un [`Command`] avant de toucher au registre. C'est ce qui fait qu'aucune
+//! signature de `settings` ne porte plus un nom que rien n'a jugé, et qu'une commande de
+//! plus ne peut pas passer à côté de la règle sans que le compilateur le dise.
+//!
 //! **Le résultat en deux temps traverse la frontière tel quel** : une commande de
 //! vérification répond dès que les tests 1 à 3 ont parlé, et le test 4 arrive plus tard par
 //! [`SETTINGS_VERIFIED`]. C'est ce qui permet au bouton d'installation de s'allumer sans
@@ -18,6 +24,7 @@ use super::error::SettingsError;
 use super::hooks::HooksReport;
 use super::registry::{Changed, SecondPass, ToolRegistry};
 use super::tool::{NewTool, ToolDeclaration};
+use super::values::Command;
 use super::verification::{ToolTest, Verification};
 
 /// Le label de la seconde fenêtre. Contrat avec `src-tauri/capabilities/settings.json`,
@@ -96,7 +103,7 @@ impl SettingsSnapshot {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Verified {
-    pub command: String,
+    pub command: Command,
     pub verification: Verification,
     /// Ce que [`ToolDeclaration::verified`] vaut désormais pour cette entrée.
     ///
@@ -180,7 +187,7 @@ pub fn settings_forget_tool(
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
     Ok(SettingsSnapshot::around(
-        registry.forget(&command)?,
+        registry.forget(&Command::parse(&command)?)?,
         &registry,
     ))
 }
@@ -195,7 +202,7 @@ pub fn settings_retarget_tool<R: Runtime>(
     adapter: String,
     config: Option<String>,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    let changed = registry.retarget(&command, &adapter, config.as_deref())?;
+    let changed = registry.retarget(&Command::parse(&command)?, &adapter, config.as_deref())?;
     answer(app, &registry, changed)
 }
 
@@ -206,7 +213,7 @@ pub fn settings_verify_tool<R: Runtime>(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    let changed = registry.verify(&command)?;
+    let changed = registry.verify(&Command::parse(&command)?)?;
     answer(app, &registry, changed)
 }
 
@@ -227,7 +234,7 @@ pub fn settings_reset_tool<R: Runtime>(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    let changed = registry.reset(&command)?;
+    let changed = registry.reset(&Command::parse(&command)?)?;
     answer(app, &registry, changed)
 }
 
@@ -238,7 +245,7 @@ pub fn settings_undo_reset<R: Runtime>(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    let changed = registry.undo_reset(&command)?;
+    let changed = registry.undo_reset(&Command::parse(&command)?)?;
     answer(app, &registry, changed)
 }
 
@@ -253,7 +260,7 @@ pub fn settings_install_hooks(
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
     Ok(SettingsSnapshot::around(
-        registry.install_hooks(&command)?,
+        registry.install_hooks(&Command::parse(&command)?)?,
         &registry,
     ))
 }
@@ -265,7 +272,7 @@ pub fn settings_remove_hooks(
     command: String,
 ) -> Result<SettingsSnapshot, SettingsError> {
     Ok(SettingsSnapshot::around(
-        registry.remove_hooks(&command)?,
+        registry.remove_hooks(&Command::parse(&command)?)?,
         &registry,
     ))
 }
@@ -277,7 +284,7 @@ pub fn settings_verify_draft<R: Runtime>(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
     tool: NewTool,
 ) -> Result<Verification, SettingsError> {
-    let (shown, pending) = registry.verify_draft(&tool);
+    let (shown, pending) = registry.verify_draft(&tool)?;
     follow_up(app, Arc::clone(&registry), pending.into_iter().collect());
     Ok(shown)
 }
@@ -369,7 +376,7 @@ mod tests {
     /// Test Data Builder : le second temps d'une entrée du registre.
     fn second_pass(command: &str, stored: bool) -> SecondPass {
         SecondPass {
-            command: command.to_owned(),
+            command: Command::parse(command).expect("un nom valide"),
             adapter: "claude-code".to_owned(),
             config: Some("/home/.claude".to_owned()),
             launch: Launch {
@@ -457,7 +464,7 @@ mod tests {
 
         // Then
         let announced = announcement.expect("le formulaire attend sa réponse");
-        assert_eq!(announced.command, "claude");
+        assert_eq!(announced.command.as_str(), "claude");
         assert!(announced.hooks.is_none());
     }
 }

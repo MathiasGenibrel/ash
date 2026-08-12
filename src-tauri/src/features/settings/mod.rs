@@ -31,6 +31,15 @@
 //! écriture, et [`hooks::report`] compose les deux avec ce que le fichier porte pour donner
 //! l'un des cinq états de la ligne.
 //!
+//! **Deux valeurs portent les règles que la feature vérifiait puis oubliait** ([`values`]) :
+//! [`Command`] est un nom de processus — ni espace, ni barre oblique, parce que la sonde
+//! compare un nom (ADR-0006) — et [`ConfigTarget`] est le dossier qu'une entrée vise, sous
+//! ses deux formes, celle qu'on affiche et celle qui touche le disque. Les deux ne se
+//! fabriquent qu'en un endroit chacun, et c'est ce qui fait qu'une commande Tauri de plus ne
+//! peut pas passer à côté : le doublon, la vérification, la recherche du bloc de hooks et la
+//! mémoire du dernier dossier valide consomment tous la même valeur, donc ne peuvent plus
+//! diverger sur ce que « le même dossier » veut dire.
+//!
 //! **Ce qui n'y est pas encore, et pourquoi :** l'**écriture dans `~/.ash/config.toml`**,
 //! qui n'a lieu que pour une entrée vérifiée. La vérification l'a débloquée ; la persistance
 //! appartient à la tâche qui la porte, et un registre en mémoire dit exactement la vérité du
@@ -50,6 +59,7 @@ mod ports;
 mod registry;
 mod system;
 mod tool;
+mod values;
 mod verification;
 
 pub use error::SettingsError;
@@ -58,4 +68,5 @@ pub use ports::{CommandRunner, ConfigFiles, HookBlocks};
 pub use registry::ToolRegistry;
 pub use system::{SystemCommands, SystemConfigFiles};
 pub use tool::{NewTool, ToolDeclaration};
+pub use values::{Command, ConfigTarget};
 pub use verification::{AdapterProfile, Verification, Verifier};

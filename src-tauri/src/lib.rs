@@ -25,7 +25,8 @@ use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
 use features::settings::{
-    AdapterProfile, BlockAt, HookBlocks, SystemCommands, SystemConfigFiles, ToolRegistry, Verifier,
+    AdapterProfile, BlockAt, ConfigTarget, HookBlocks, SystemCommands, SystemConfigFiles,
+    ToolRegistry, Verifier,
 };
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
@@ -111,26 +112,26 @@ impl AdapterHooks {
 }
 
 impl HookBlocks for AdapterHooks {
-    fn inspect(&self, adapter: &str, config_dir: &Path) -> Option<BlockAt> {
-        let instrumentation = self.describing(adapter, config_dir)?;
+    fn inspect(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<BlockAt> {
+        let instrumentation = self.describing(adapter, config_dir.resolved())?;
         Some(BlockAt {
             file: instrumentation.file.clone(),
             presence: features::hooks::inspect(&*self.files, &instrumentation),
         })
     }
 
-    fn install(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+    fn install(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
         let instrumentation = self
-            .describing(adapter, config_dir)
+            .describing(adapter, config_dir.resolved())
             .ok_or_else(|| format!("the {adapter} adapter has no hooks to install"))?;
         features::hooks::install(&*self.files, &instrumentation)
             .map(|_| ())
             .map_err(|why| why.to_string())
     }
 
-    fn remove(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
         let instrumentation = self
-            .describing(adapter, config_dir)
+            .describing(adapter, config_dir.resolved())
             .ok_or_else(|| format!("the {adapter} adapter wrote nothing to remove"))?;
         features::hooks::uninstall(&*self.files, &instrumentation.file)
             .map(|_| ())
