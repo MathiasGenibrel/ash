@@ -21,6 +21,7 @@
 
 use std::path::PathBuf;
 
+use super::values::Command;
 use super::verification::{Verification, VerificationState};
 use crate::features::hooks::Presence;
 
@@ -110,7 +111,7 @@ pub struct BlockAt {
 pub fn report(
     verification: &Verification,
     adapter: &str,
-    taken_by: Option<&str>,
+    taken_by: Option<&Command>,
     found: Option<BlockAt>,
 ) -> HooksReport {
     // 1 — la séquence. C'est **elle** qui autorise Ash à écrire chez l'utilisateur, et elle
@@ -301,7 +302,7 @@ mod tests {
         let line = report(
             &verification,
             "claude-code",
-            Some("claude"),
+            Some(&Command::parse("claude").expect("un nom valide")),
             at(Presence::Missing),
         );
 

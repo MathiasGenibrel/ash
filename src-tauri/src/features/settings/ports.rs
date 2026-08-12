@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::hooks::BlockAt;
+use super::values::{Command, ConfigTarget};
 
 /// Ce qu'on trouve à un chemin de configuration — le test 1, en entier.
 ///
@@ -58,8 +59,8 @@ pub trait ConfigFiles: Send + Sync {
 /// 1. **`program` est le chemin qu'a résolu le `PATH`**, jamais une saisie de
 ///    l'utilisateur. Le test 3 le trouve, le test 4 le lance : Ash ne lance donc jamais
 ///    autre chose que ce que taper le nom dans un shell aurait lancé. Le nom lui-même est
-///    déjà contraint par [`SettingsError::NotACommandName`](super::SettingsError) — ni
-///    espace, ni barre oblique.
+///    déjà contraint par [`Command`] — ni espace, ni barre oblique, et le port qui le
+///    résout ne prend rien d'autre.
 /// 2. **`args` vient de l'adaptateur**, jamais du chemin de configuration ni d'un champ de
 ///    l'écran. Un chemin ne devient jamais un argument : il ne voyage que par
 ///    l'environnement, où rien ne l'interprète.
@@ -120,7 +121,12 @@ pub struct Answer {
 /// sidebar.
 pub trait CommandRunner: Send + Sync {
     /// Le chemin absolu de `command` dans le `PATH`, `None` si elle n'y est pas (test 3).
-    fn locate(&self, command: &str) -> Option<PathBuf>;
+    ///
+    /// Le paramètre est un [`Command`] et non un `&str` : c'est **la frontière de sécurité**
+    /// de ce port, et elle est désormais dans sa signature. Un chemin déguisé en nom de
+    /// commande ferait sortir la résolution du `PATH` et exécuter un fichier désigné à la
+    /// main dans un champ de réglages — le type l'a refusé bien avant d'arriver ici.
+    fn locate(&self, command: &Command) -> Option<PathBuf>;
 
     /// Lance ce que [`Launch`] décrit, ou dit pourquoi rien n'a répondu (test 4).
     fn run(&self, launch: &Launch) -> Result<Answer, String>;
@@ -138,17 +144,19 @@ pub trait CommandRunner: Send + Sync {
 /// « identifiant d'adaptateur + dossier → fichier et bloc » se fait donc **dans la
 /// composition root**, qui est le seul endroit à connaître les deux côtés.
 ///
-/// Le dossier passé est **déjà résolu** : `~` est étendu, le défaut de l'adaptateur est
-/// appliqué. Le port n'a aucune convention de chemin à connaître.
+/// Le dossier passé est une [`ConfigTarget`] : `~` est déjà étendu et le défaut de
+/// l'adaptateur déjà appliqué, parce qu'un seul endroit produit ce type. Le port n'a aucune
+/// convention de chemin à connaître, et il n'a plus à croire sur parole que le chemin qu'on
+/// lui donne est bien celui que la vérification a jugé.
 pub trait HookBlocks: Send + Sync {
     /// Où en est le bloc, sans rien écrire. `None` quand cet adaptateur n'instrumente rien.
-    fn inspect(&self, adapter: &str, config_dir: &Path) -> Option<BlockAt>;
+    fn inspect(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<BlockAt>;
 
     /// Pose ou met à jour le bloc. Rend la raison du refus, telle qu'on la montre.
-    fn install(&self, adapter: &str, config_dir: &Path) -> Result<(), String>;
+    fn install(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String>;
 
     /// Retire le bloc et ses marqueurs.
-    fn remove(&self, adapter: &str, config_dir: &Path) -> Result<(), String>;
+    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String>;
 }
 
 /// Résout le `~` de tête d'un chemin de configuration.

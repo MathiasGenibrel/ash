@@ -12,6 +12,7 @@ use std::sync::Mutex;
 
 use super::hooks::BlockAt;
 use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, HookBlocks, Launch};
+use super::values::{Command, ConfigTarget};
 use crate::features::hooks::Presence;
 
 /// Un système de fichiers en mémoire : ce qu'on trouve à chaque chemin, et le foyer.
@@ -103,30 +104,36 @@ impl FakeBlocks {
 }
 
 impl HookBlocks for FakeBlocks {
-    fn inspect(&self, adapter: &str, config_dir: &Path) -> Option<BlockAt> {
+    fn inspect(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<BlockAt> {
         if self.silent.iter().any(|id| id == adapter) {
             return None;
         }
         Some(BlockAt {
-            file: config_dir.join("settings.json"),
+            file: config_dir.resolved().join("settings.json"),
             presence: self
                 .found
-                .get(config_dir)
+                .get(config_dir.resolved())
                 .cloned()
                 .unwrap_or(Presence::Missing),
         })
     }
 
-    fn install(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+    fn install(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
         if let Ok(mut seen) = self.written.lock() {
-            seen.push(format!("install {adapter} {}", config_dir.display()));
+            seen.push(format!(
+                "install {adapter} {}",
+                config_dir.resolved().display()
+            ));
         }
         Ok(())
     }
 
-    fn remove(&self, adapter: &str, config_dir: &Path) -> Result<(), String> {
+    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
         if let Ok(mut seen) = self.written.lock() {
-            seen.push(format!("remove {adapter} {}", config_dir.display()));
+            seen.push(format!(
+                "remove {adapter} {}",
+                config_dir.resolved().display()
+            ));
         }
         Ok(())
     }
@@ -172,8 +179,8 @@ impl FakeCommands {
 }
 
 impl CommandRunner for FakeCommands {
-    fn locate(&self, command: &str) -> Option<PathBuf> {
-        self.path.get(command).cloned()
+    fn locate(&self, command: &Command) -> Option<PathBuf> {
+        self.path.get(command.as_str()).cloned()
     }
 
     fn run(&self, launch: &Launch) -> Result<Answer, String> {
