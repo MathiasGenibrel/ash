@@ -17,6 +17,16 @@ import type { HookAction, ToolDeclaration, ToolDraft, Verification } from "./con
 /** L'adaptateur de repli d'ADR-0008 — le seul dont le mode dégradé se dit à l'écran. */
 export const GENERIC_ADAPTER = "generic";
 
+/**
+ * Ce que veut dire un dossier absent — **le mot, écrit une fois**.
+ *
+ * Trois endroits le montrent au même instant : le libellé d'une carte, l'invite de son champ
+ * de chemin, et la glose du formulaire d'ajout. Ce n'est pas une décoration : c'est ce que
+ * l'absence *signifie*, et le jour où la phrase change, deux des trois endroits ne sont sous
+ * aucun test. Le mot appartient donc au modèle, comme les autres phrases de cet écran.
+ */
+export const ADAPTER_DEFAULT = "adapter default";
+
 /** Ce qu'une carte affiche en tête. */
 export interface ToolHeading {
     /** Le nom de la commande — c'est l'identité de l'entrée, elle reste visible. */
@@ -52,7 +62,7 @@ export function describeTool(tool: ToolDeclaration): ToolHeading {
         badge: tool.label,
         // Le dossier absent n'est pas un dossier vide : c'est celui de l'adaptateur, que
         // l'adaptateur est seul à connaître. Le dire est plus honnête qu'un champ vide.
-        config: tool.config ?? "adapter default",
+        config: tool.config ?? ADAPTER_DEFAULT,
         path: tool.config ?? "",
     };
 }

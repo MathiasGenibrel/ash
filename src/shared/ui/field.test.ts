@@ -15,7 +15,7 @@ describe("un champ de saisie", () => {
             .build();
 
         // When
-        described.on["input"]?.({ value: "~/.claude/settings.json" });
+        described.on["input"]?.({ value: "~/.claude/settings.json", key: "" });
 
         // Then
         expect(typed).toEqual(["~/.claude/settings.json"]);
@@ -29,6 +29,24 @@ describe("un champ de saisie", () => {
 
         // Then
         expect(described.attrs[FOCUS_KEY]).toBe("path:claude");
+    });
+
+    it("Given a field being typed into, when any key but Enter is pressed, then nothing says the typing is over", () => {
+        // Given — `⏎` abrège l'attente de la relance différée. Le déclencher sur une autre
+        // touche vérifierait à chaque frappe, ce que les 400 ms existent pour éviter
+        const done: number[] = [];
+        const described = field("config")
+            .onSubmit(() => {
+                done.push(1);
+            })
+            .build();
+
+        // When
+        described.on["keydown"]?.({ value: "~/.cl", key: "l" });
+        described.on["keydown"]?.({ value: "~/.claude", key: "Enter" });
+
+        // Then
+        expect(done).toHaveLength(1);
     });
 
     it("Given a field, when it is described, then it names itself for a screen reader", () => {

@@ -1,13 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
-import type {
-    HooksReport,
-    ToolDeclaration,
-    ToolDraft,
-    Verification,
-    VerificationState,
-} from "./contract";
+import { aDraft, aTool, aVerification } from "./builders";
 import {
+    ADAPTER_DEFAULT,
     countProblems,
     degradedFixSubject,
     degradedModeSubject,
@@ -20,69 +15,6 @@ import {
     NOTHING_VERIFIED_YET,
     parseDiff,
 } from "./model";
-
-/**
- * Test Data Builders : une vérification, une entrée déclarée, et une saisie de formulaire.
- *
- * Les défauts sont valides et déterministes — une entrée `claude` sur l'adaptateur de
- * repli, dont les quatre tests sont passés. Un scénario ne surcharge que ce qu'il regarde.
- *
- * `aVerification` dérive `allowsHooks` de l'état plutôt que de le laisser surcharger : la
- * règle est celle du backend, et un test qui la contredirait dans son `Given` prouverait
- * quelque chose qui ne peut pas arriver.
- */
-function aVerification(
-    state: VerificationState = "valid",
-    overrides: Partial<Verification> = {},
-): Verification {
-    return {
-        state,
-        tests: ["passed", "passed", "passed", "passed"],
-        summary: "folder recognised · claude answers with this folder",
-        stoppedAt: null,
-        detail: null,
-        fix: null,
-        launched: null,
-        allowsHooks: state === "valid" || state === "caveat" || state === "verifying",
-        ...overrides,
-    };
-}
-
-function aTool(overrides: Partial<ToolDeclaration> = {}): ToolDeclaration {
-    const verification = overrides.verification ?? aVerification();
-    return {
-        command: "claude",
-        label: null,
-        adapter: "generic",
-        config: null,
-        lastValidConfig: null,
-        resetFrom: null,
-        duplicates: [],
-        hooks: aHooksReport(),
-        ...overrides,
-        verification,
-        verified: overrides.verified ?? verification.allowsHooks,
-    };
-}
-
-/** Une ligne `hooks` posée et à jour — l'état nominal, dont on ne surcharge que le reste. */
-function aHooksReport(overrides: Partial<HooksReport> = {}): HooksReport {
-    return {
-        state: "installed",
-        summary: "installed · v1",
-        note: "remove deletes the block and its markers.",
-        file: "/home/someone/.claude/settings.json",
-        action: "remove",
-        enabled: true,
-        diff: null,
-        backup: "/home/someone/.claude/settings.json.bak",
-        ...overrides,
-    };
-}
-
-function aDraft(overrides: Partial<ToolDraft> = {}): ToolDraft {
-    return { command: "claude", label: "", adapter: "generic", config: "", ...overrides };
-}
 
 describe("ce qu'une carte d'outil dit", () => {
     it("Given a tool with a display label, when its card is described, then the command stays the name and the label rides beside it", () => {
@@ -106,7 +38,7 @@ describe("ce qu'une carte d'outil dit", () => {
         const heading = describeTool(tool);
 
         // Then
-        expect(heading.config).toBe("adapter default");
+        expect(heading.config).toBe(ADAPTER_DEFAULT);
     });
 });
 

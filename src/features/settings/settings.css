@@ -674,7 +674,12 @@
     gap: 9px;
 }
 
-.settings-empty-title {
+/* L'état vide vient de `shared/ui/feedback.ts` : ses deux paragraphes portent donc les
+ * classes du socle, et c'est cette feuille qui les peint — « les classes posées sont
+ * peintes par les feuilles de style des features qui les emploient ». Les deux sélecteurs
+ * cohabitent tant que l'écran des sections, qui n'a qu'un paragraphe et pas de titre, garde
+ * le sien. */
+.ui-empty-title {
     font-size: 13px;
     color: var(--ash-fg-done);
 }
@@ -682,7 +687,8 @@
 /* `--ash-fg-subtle` et non `--ash-fg-dim` : c'est un paragraphe, pas un libellé. Le gris
  * des métadonnées tient sur trois mots dans la sidebar ; sur trois lignes il tombe à 2,9:1
  * et cesse d'être lisible. Le cran au-dessus mesure 4,7 en sombre et 5,5 en clair. */
-.settings-empty-prose {
+.settings-empty-prose,
+.ui-empty-prose {
     max-width: 420px;
     font-size: 11.5px;
     line-height: 1.7;
