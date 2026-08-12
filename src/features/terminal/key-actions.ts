@@ -107,8 +107,25 @@ export function resolveKeyAction(chord: KeyChord): KeyAction | null {
     if (chord.type !== "keydown") return null;
     if (chord.ctrlKey || chord.altKey) return null;
 
-    const pressed = `${chord.shiftKey ? "⇧" : ""}${chord.metaKey ? "⌘" : ""}${chord.key}`;
+    const pressed = `${chord.shiftKey ? "⇧" : ""}${chord.metaKey ? "⌘" : ""}${asTyped(chord.key)}`;
     return BY_CHORD[pressed] ?? null;
+}
+
+/**
+ * La touche telle que la table la nomme, verrou majuscules compris.
+ *
+ * `KeyboardEvent.key` porte le **caractère produit**, pas la touche pressée : verrou
+ * majuscules enfoncé, `⌘F` arrive en `"F"` avec `shiftKey` à `false`, et la table — qui
+ * dit `⌘f` — ne le reconnaîtrait pas. Le raccourci serait alors muet, sans rien qui
+ * l'explique.
+ *
+ * Seules les touches d'**un** caractère sont ramenées en bas de casse : les touches nommées
+ * (`ArrowUp`) en font plus d'un, et leur casse porte du sens. La modulation par ⇧ n'est pas
+ * perdue pour autant — elle est lue sur `shiftKey`, jamais sur la casse, donc `⇧⌘F` reste
+ * un accord distinct de `⌘F`.
+ */
+function asTyped(key: string): string {
+    return key.length === 1 ? key.toLowerCase() : key;
 }
 
 /**

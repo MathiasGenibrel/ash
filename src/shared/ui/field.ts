@@ -34,16 +34,6 @@ export interface Submission {
  * s'écrire — et de se tester — sans jamais nommer le DOM. `paint` fait l'extraction.
  */
 class FieldBuilder extends ElementBuilder {
-    /**
-     * Les touches que ce champ reconnaît, et l'unique écoute qui les distribue.
-     *
-     * `on("keydown", …)` **remplace** le gestionnaire précédent — les gestionnaires sont un
-     * dictionnaire indexé par nom d'événement. Sans cette table, un champ qui répond à `⏎`
-     * **et** à `⎋` perdrait silencieusement celui des deux posé en premier, et la panne ne
-     * se verrait qu'au clavier. La table rend l'ordre des appels sans effet.
-     */
-    private readonly keys = new Map<string, (event: UiEvent) => void>();
-
     constructor(name: string) {
         super("input", "ui-field");
         // Le nom sert d'étiquette accessible : un champ posé dans une grille n'a pas de
@@ -84,7 +74,7 @@ class FieldBuilder extends ElementBuilder {
      * l'état où l'un des deux est branché et l'autre non — c'est-à-dire un `⇧⏎` muet.
      */
     onSubmit(handler: (submission: Submission) => void): this {
-        return this.bindKey("Enter", (event) => {
+        return this.onKey("Enter", (event) => {
             handler({ reversed: event.shiftKey });
         });
     }
@@ -98,17 +88,23 @@ class FieldBuilder extends ElementBuilder {
      * appartient à la vue ; le socle ne fait que reconnaître la frappe.
      */
     onCancel(handler: () => void): this {
-        return this.bindKey("Escape", () => {
+        return this.onKey("Escape", () => {
             handler();
         });
     }
 
-    /** Pose la touche dans la table, et l'écoute unique la première fois. */
-    private bindKey(key: string, handler: (event: UiEvent) => void): this {
-        this.keys.set(key, handler);
-        if (this.keys.size > 1) return this;
+    /**
+     * Une frappe, et elle seule.
+     *
+     * Chaque touche pose sa propre écoute : c'est [`ElementBuilder.on`](./node.ts) qui
+     * garantit qu'un `keydown` de plus n'efface pas celui d'avant, donc l'ordre des appels
+     * est sans effet et un champ qui répond à `⏎` **et** à `⎋` n'a rien à coordonner. Le
+     * nom de la touche ne sort jamais de ce fichier — un composant ne compare pas une
+     * chaîne à `"Enter"`.
+     */
+    private onKey(key: string, handler: (event: UiEvent) => void): this {
         return this.on("keydown", (event) => {
-            this.keys.get(event.key)?.(event);
+            if (event.key === key) handler(event);
         });
     }
 

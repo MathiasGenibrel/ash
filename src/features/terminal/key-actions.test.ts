@@ -176,6 +176,22 @@ describe("le raccourci de recherche dans le scrollback", () => {
         expect(resolveKeyBinding(chord)).toBeNull();
     });
 
+    it("Given Cmd+F typed with caps lock on, when it is resolved, then it still opens the search", () => {
+        // Given — `KeyboardEvent.key` porte le caractère produit : verrou majuscules
+        // enfoncé, la frappe arrive en `"F"` sans que `shiftKey` ne soit vrai. Sans
+        // normalisation, `⌘F` serait muet et rien ne dirait pourquoi
+        const locked = press("F").withCommand().build();
+        // Et `⇧⌘F` reste un accord distinct : ⇧ module la navigation dans le champ, pas son
+        // ouverture
+        const shifted = press("F").withCommand().withShift().build();
+
+        // When
+        const actions = [resolveKeyAction(locked), resolveKeyAction(shifted)];
+
+        // Then
+        expect(actions).toEqual(["open-search", null]);
+    });
+
     it("Given the letter f typed on its own, when it is resolved, then it is left to the shell", () => {
         // Given — sans le modificateur, `f` est une lettre ; l'avaler rendrait le terminal
         // inutilisable

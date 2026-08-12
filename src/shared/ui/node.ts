@@ -212,8 +212,29 @@ export abstract class ElementBuilder implements UiBuilder {
         return this.attr("title", hint);
     }
 
+    /**
+     * Un gestionnaire de plus — **jamais un gestionnaire à la place d'un autre**.
+     *
+     * Les gestionnaires sont indexés par nom d'événement, et une affectation nue perdrait le
+     * précédent **en silence** : deux composites qui posent chacun un `click`, ou un `⏎` et
+     * un `⎋` qui arrivent tous deux en `keydown`, et l'un des deux ne se déclencherait plus.
+     * La panne ne se verrait qu'au clavier ou à la souris, jamais dans un test — la
+     * description, elle, resterait parfaitement bien formée.
+     *
+     * Les composer est ce que fait le DOM lui-même : `addEventListener` accepte N écoutes
+     * pour un événement, et les joue dans l'ordre où elles ont été posées. Ce socle décrit
+     * ce que le DOM fera ; il n'a pas à en savoir moins que lui. Un test qui déclenche
+     * `on["keydown"]` les joue toutes, comme le navigateur.
+     */
     on(event: string, handler: UiHandler): this {
-        this.handlers[event] = handler;
+        const posed = this.handlers[event];
+        this.handlers[event] =
+            posed === undefined
+                ? handler
+                : (ui): void => {
+                      posed(ui);
+                      handler(ui);
+                  };
         return this;
     }
 
