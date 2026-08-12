@@ -8,4 +8,5 @@ pub mod git;
 pub mod hooks;
 pub mod probe;
 pub mod pty;
+pub mod settings;
 pub mod theme;

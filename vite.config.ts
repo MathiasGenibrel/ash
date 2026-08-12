@@ -29,6 +29,18 @@ export default defineConfig({
         // Safari 15 est la base de WKWebView sur les macOS que l'app vise.
         target: "safari15",
         sourcemap: true,
+
+        // Deux pages, parce qu'il y a deux fenêtres : la fenêtre de réglages a son propre
+        // document (`settings.html`), que le backend ouvre par `WebviewUrl::App`. Sans
+        // cette entrée, `vite build` ne produirait que `index.html` et la seconde fenêtre
+        // serait blanche en bundle — alors qu'elle marcherait en développement, où Vite
+        // sert le dossier entier.
+        rollupOptions: {
+            input: {
+                main: fileURLToPath(new URL("./index.html", import.meta.url)),
+                settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
+            },
+        },
     },
 
     // Tauri sert le bundle depuis un chemin local, pas depuis la racine d'un domaine.

@@ -50,6 +50,29 @@
     --ash-error: #b03a30;
     --ash-idle: #a9abaf;
 
+    /* La fenêtre de réglages, et ce qu'elle a apporté à la table.
+     *
+     * `--ash-warning` est le seul **manque de couleur** de la palette : le dépôt n'avait
+     * rien entre `--ash-done` et `--ash-error`, et il en faut un cran — « valide avec
+     * réserve », « une version plus ancienne des hooks », « modifié, non enregistré ».
+     * Ce n'est pas un état d'agent : les cinq mots d'ADR-0007 restent cinq.
+     *
+     * Les autres sont **structurels** : une carte n'est pas la fenêtre (`--ash-bg-card`
+     * est plus clair qu'elle dans les deux thèmes), un pied de fenêtre n'est pas une ligne
+     * de statut, et un contrôle secondaire a besoin d'une bordure entre `--ash-border` et
+     * `--ash-border-strong`. `--ash-bg-card` et `--ash-bg-status` coïncident en sombre et
+     * divergent en clair : les mutualiser rendrait la carte invisible sur fond papier. */
+    --ash-warning: #9a6b10;
+    --ash-warning-border: #e0d3b6;
+    --ash-warning-bg: #faf6ee;
+    --ash-bg-card: #ffffff;
+    --ash-bg-card-header: #f2f2f0;
+    --ash-bg-footer: #f7f7f5;
+    --ash-bg-disabled: #f7f7f5;
+    --ash-control-border: #dedcd8;
+    --ash-fg-subtle: #66696f;
+    --ash-fg-icon: #94979d;
+
     /* Le terminal. Son fond et son texte sont ceux de la fenêtre (`--ash-bg`, `--ash-fg`) ;
      * ce qui suit est ce que xterm.js peint et que le CSS ne peut pas atteindre.
      *
@@ -112,6 +135,17 @@
     --ash-done: #63b995;
     --ash-error: #cf4f4f;
     --ash-idle: #565a62;
+
+    --ash-warning: #d9a441;
+    --ash-warning-border: #3d3423;
+    --ash-warning-bg: rgb(217 164 65 / 6%);
+    --ash-bg-card: #101114;
+    --ash-bg-card-header: #16171a;
+    --ash-bg-footer: #101114;
+    --ash-bg-disabled: #0e0f11;
+    --ash-control-border: #2c2f36;
+    --ash-fg-subtle: #7c8089;
+    --ash-fg-icon: #6b6f78;
 
     --ash-term-cursor: #ff8a5c;
     --ash-term-cursor-text: #0c0d0f;
@@ -203,6 +237,26 @@ textarea {
     color: var(--ash-accent);
 }
 
+/* Les quatre mots teints de l'avertissement de mode dégradé (réglages, §3.8) — le seul
+ * texte courant coloré par état de toute l'interface. Ils sont peints ici, avec les
+ * glyphes : la couleur d'un état est du thème, pas de la mise en forme d'une feature.
+ * Classe distincte de `.ash-glyph`, qui impose une boîte de 12 px faite pour un signe. */
+.ash-state-word.is-idle {
+    color: var(--ash-idle);
+}
+.ash-state-word.is-working {
+    color: var(--ash-working);
+}
+.ash-state-word.is-done {
+    color: var(--ash-done);
+}
+.ash-state-word.is-error {
+    color: var(--ash-error);
+}
+.ash-state-word.is-waiting {
+    color: var(--ash-accent);
+}
+
 /* Le mouvement seul distingue `working` de `done` — rotation continue, pas clignotement. */
 .ash-glyph.is-spinning {
     animation: ash-spin 0.9s linear infinite;
@@ -286,6 +340,21 @@ body {
     user-select: none;
     -webkit-user-select: none;
     cursor: default;
+}
+
+/* La bande titrée de la fenêtre de réglages : deux réserves de 160 px et un titre au
+ * milieu. La réserve de gauche dégage les pastilles de macOS ; celle de droite ne sert
+ * qu'à centrer optiquement le titre, et c'est sa seule raison d'être. */
+.ash-titlebar.is-titled {
+    display: grid;
+    grid-template-columns: 160px 1fr 160px;
+    padding: 0;
+}
+
+.ash-titlebar-title {
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--ash-fg-meta);
 }
 
 /* Les deux colonnes : la sidebar, et tout le reste.

@@ -115,6 +115,41 @@ describe("les deux palettes", () => {
     });
 });
 
+describe("les couleurs de la fenêtre de réglages", () => {
+    it("Given the warning colour the settings window introduced, when it is measured on a card, then it stays readable in both themes", () => {
+        // Given — c'est la seule **couleur** que la fenêtre de réglages a ajoutée à la
+        // table : le cran manquant entre `--ash-done` et `--ash-error`. Elle porte du
+        // texte de 11 px et plus (le mode dégradé, `valide avec réserve`), donc le seuil
+        // est celui du texte, pas celui d'un objet graphique.
+        const measure = (tokens: Map<string, string>): number =>
+            contrast(read(tokens, "--ash-warning"), read(tokens, "--ash-bg-card"));
+
+        // When
+        const ratios = [LIGHT, DARK].map(measure);
+
+        // Then
+        expect(Math.min(...ratios)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it("Given the colour the settings window writes its paragraphs in, when it is measured on the surfaces it is written on, then it clears the body-text threshold in both themes", () => {
+        // Given — la maquette écrit des paragraphes entiers en `--ash-fg-dim`, qui mesure
+        // 2,9:1 sur une carte : c'est un gris de métadonnée, tenable sur trois mots dans la
+        // sidebar, illisible sur trois lignes. La prose longue est donc montée d'un cran, à
+        // `--ash-fg-subtle`, et ce test est ce qui empêche de la redescendre sans le voir.
+        const surfaces = ["--ash-bg", "--ash-bg-card"] as const;
+
+        // When
+        const ratios = [LIGHT, DARK].flatMap((tokens) =>
+            surfaces.map((surface) =>
+                contrast(read(tokens, "--ash-fg-subtle"), read(tokens, surface)),
+            ),
+        );
+
+        // Then
+        expect(Math.min(...ratios)).toBeGreaterThanOrEqual(4.5);
+    });
+});
+
 describe("la palette du terminal", () => {
     it("Given the colours xterm.js asks for, when they are looked up, then both palettes define every one of them", () => {
         // Given — xterm.js ne résout pas un `var(--ash-…)` : un token absent d'une palette

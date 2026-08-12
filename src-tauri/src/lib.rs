@@ -20,10 +20,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use features::agents::commands::{AgentEvent, AGENT_EVENT};
-use features::agents::{EventFrame, EventSink};
+use features::agents::{Adapter, EventFrame, EventSink, GenericAdapter};
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
 use features::pty::{PtyRegistry, RepoRef, SystemPtySpawner, TabLocation, WorktreeLocator};
+use features::settings::ToolRegistry;
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
@@ -96,9 +97,17 @@ pub fn run() -> tauri::Result<()> {
     ));
     let theme_mode = theme.mode();
 
+    // La fenêtre de réglages ne propose que les adaptateurs que **cette** application
+    // embarque : c'est ici qu'on les connaît, et la feature `settings` n'a donc pas à
+    // connaître leurs implémentations
+    // ([ADR-0008](../../docs/adr/0008-abstraction-adapter.md)). Un adaptateur de plus est
+    // une ligne de plus ici, et rien à changer dans les réglages.
+    let tools = Arc::new(ToolRegistry::new(vec![GenericAdapter.id().to_owned()]));
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
+        .manage(Arc::clone(&tools))
         .manage(spike::Flow::default())
         .menu(move |app| menu::build(app, theme_mode))
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
@@ -112,6 +121,9 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_has_foreground_process,
             features::git::commands::git_metadata,
             features::theme::commands::theme_mode,
+            features::settings::commands::settings_tools,
+            features::settings::commands::settings_declare_tool,
+            features::settings::commands::settings_forget_tool,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report
