@@ -538,6 +538,19 @@ d'installation reste alors **visible et éteint, avec sa raison** — jamais mas
 Deux entrées pointant sur le même dossier ne sont pas une erreur système, mais l'une
 des deux ne servira à rien. Le doublon est signalé **sur les deux lignes**.
 
+**Réinitialiser une entrée la ramène à sa dernière valeur valide**, pas au défaut de son
+adaptateur. Chaque entrée retient donc le dernier dossier qui a passé la vérification, et
+c'est cette mémoire-là que le geste restaure.
+
+La nuance décide du sens de tout l'écran. Deux entrées partagent souvent un adaptateur —
+`claude` et `claude-perso` sont toutes deux en `claude-code` — donc un retour au défaut de
+l'adaptateur les rendrait **identiques**, et le doublon signalé ci-dessus passerait
+d'accident rare à conséquence mécanique du geste. Ramener chaque entrée là où *elle*
+fonctionnait laisse le doublon exceptionnel, ce qu'il doit être.
+
+Tant qu'une entrée n'a jamais été valide, elle n'a rien à restaurer : le bouton reste
+**visible et éteint, avec sa raison**, comme celui de l'installation des hooks.
+
 ### 9.2 Fichiers écrits par Ash
 
 `~/.ash/state.json` (worktrees épinglés, état replié) et
