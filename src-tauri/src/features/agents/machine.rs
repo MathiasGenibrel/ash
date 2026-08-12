@@ -80,9 +80,16 @@ pub enum Exit {
     ///
     /// Ça vaut **échec**, et c'est une décision de produit : un agent instrumenté déclare sa
     /// fin lui-même (`SessionEnd` → `done`), donc disparaître sans l'avoir dite est
-    /// anormal — plantage, `kill`, `Ctrl-C` en plein travail. Dire `done` à sa place
-    /// annoncerait un travail terminé là où il a été interrompu, ce qui est la seule des
-    /// deux erreurs qui trompe l'utilisateur sur ce qu'il lui reste à faire.
+    /// anormal — un plantage, un `kill`, une sortie que l'outil n'a pas eu le temps
+    /// d'annoncer. Dire `done` à sa place annoncerait un travail terminé là où il a été
+    /// interrompu, ce qui est la seule des deux erreurs qui trompe l'utilisateur sur ce qu'il
+    /// lui reste à faire.
+    ///
+    /// C'est aussi, pour Claude Code, le **seul producteur d'`error`** : sa table de hooks
+    /// n'installe rien qui déclare un échec, donc `Unseen` valant `done` retirerait au
+    /// produit l'un de ses cinq états. Ce qui la rend sûre est la symétrie : la fin normale
+    /// a, elle, un producteur explicite, et un `done` déjà déclaré n'est jamais repris par
+    /// une disparition (voir [`AgentMachine::vanished`]).
     Unseen,
 }
 
@@ -106,6 +113,11 @@ pub enum AgentEvent {
     /// pas à chaque passe de la boucle. Un agent qui a rendu la main reste souvent au
     /// premier plan à son invite ; répété trois fois par seconde, cet événement ferait
     /// repasser en `working` un agent que son hook vient de déclarer `done`.
+    ///
+    /// **Personne ne l'émet encore**, et la règle qu'il porte n'en est pas moins juste : il
+    /// dit « une commande **reconnue** », ce que la sonde seule ne sait pas établir. Son
+    /// producteur est la reconnaissance par nom de processus d'ADR-0006 ; d'ici là,
+    /// [`super::Supervisor`] s'abstient plutôt que de deviner, et explique pourquoi.
     AgentStarted,
     /// La sonde a constaté la disparition du processus, avec son code de sortie.
     ProcessVanished(Exit),

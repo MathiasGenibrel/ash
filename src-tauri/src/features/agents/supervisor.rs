@@ -39,10 +39,33 @@
 //! agent quand l'utilisateur quitte `vim`
 //! ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)).
 //!
-//! **Limite connue** : pendant les trente secondes où la ligne d'un agent fini reste
-//! affichée, un programme lancé dans le même onglet est pris pour cet agent — il le remet au
-//! travail, et sa sortie donne `error`. La distinguer demande de reconnaître les commandes
-//! d'agent par leur nom (ADR-0006), ce qui est une tranche à part.
+//! ## Ce que la sonde n'a pas le droit d'attribuer
+//!
+//! La machine sait repartir au travail quand un agent démarre sur la ligne d'un agent fini —
+//! c'est la flèche « on relance `claude` dans l'onglet qu'on vient de lire »
+//! ([`AgentEvent::AgentStarted`]). **Ce fichier ne l'émet pourtant jamais**, et c'est
+//! délibéré : la sonde ne rend qu'une [`Presence`], donc rien ici ne distingue `claude` de
+//! `cargo test`. Attribuer le front à l'agent reviendrait à parier, et le pari se paie cher
+//! dans un seul sens :
+//!
+//! - une commande ordinaire tapée dans les trente secondes qui suivent un `done` — le geste
+//!   le plus courant qui soit — repasserait l'onglet en `working`, puis sa fin donnerait
+//!   `error` par [`Exit::Unseen`]. Un `cargo test` vert afficherait un échec, et l'onglet
+//!   resterait accroché à cette machine **bien au-delà** des trente secondes, puisqu'un état
+//!   actif n'expire jamais ;
+//! - à l'inverse, ne rien attribuer laisse la ligne `done` en place pendant qu'un agent
+//!   relancé démarre, jusqu'à son premier hook — au plus tard jusqu'à l'expiration des
+//!   trente secondes, après quoi la sonde reprend la main et dit `working`.
+//!
+//! Le second se corrige tout seul et n'annonce rien de faux ; le premier détruit exactement
+//! ce que l'état sert à porter. La flèche reste donc dans la machine, où elle est prouvée, et
+//! attend son vrai producteur : la reconnaissance d'une commande d'agent par son nom
+//! ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)), qui est une
+//! tranche à part.
+//!
+//! **Limite connue, elle non bornée ici** : tant que cette reconnaissance n'existe pas, la
+//! disparition d'un programme quelconque de l'avant-plan d'un onglet où un agent vit encore
+//! est prise pour celle de l'agent. Un `Ctrl-Z` sur un agent en `waiting` donne donc `error`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -159,19 +182,12 @@ impl Supervisor {
             return probed(seen);
         };
 
-        match (before, seen) {
-            // Le lancement : un programme prend l'avant-plan d'un onglet qui n'en avait pas.
-            // Un **front**, jamais un niveau — répété trois fois par seconde, il remettrait
-            // au travail l'agent qu'un hook vient de dire fini.
-            (Presence::Prompt | Presence::Unknown, Presence::Program) => {
-                machine.on(AgentEvent::AgentStarted);
-            }
-            // La disparition : le shell a repris son terminal. On ne saura jamais avec quel
-            // code — voir [`Exit::Unseen`].
-            (Presence::Program, Presence::Prompt) => {
-                machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
-            }
-            _ => {}
+        // La disparition : le shell a repris son terminal. On ne saura jamais avec quel code
+        // — voir [`Exit::Unseen`]. C'est le **seul** front que la sonde permet d'attribuer à
+        // l'agent ; le lancement, lui, n'est volontairement émis nulle part ici (voir « Ce
+        // que la sonde n'a pas le droit d'attribuer », en tête de fichier).
+        if (before, seen) == (Presence::Program, Presence::Prompt) {
+            machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
         }
 
         machine.tick();
@@ -380,6 +396,29 @@ mod tests {
 
         // Then
         assert_eq!(after_the_crash, AgentState::Error);
+    }
+
+    #[test]
+    fn given_a_finished_agent_line_when_the_user_runs_an_ordinary_command_before_it_expires_then_no_failure_is_ever_announced(
+    ) {
+        // Given — la séquence la plus banale du produit : l'agent finit, et l'utilisateur
+        // enchaîne sur un `cargo test` dans la seconde qui suit. La sonde ne rend qu'une
+        // présence : rien ne distingue ce programme de l'agent (ADR-0006). Le prendre pour
+        // lui annoncerait un échec sur une commande qui a réussi — et pour bien plus longtemps
+        // que trente secondes, puisqu'un état actif n'expire jamais.
+        let (supervisor, clock) = SupervisorBuilder::new().watched().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("done", TAB));
+        sweep(&supervisor, Presence::Prompt);
+
+        // When — la commande prend l'avant-plan, tourne une minute, et se termine bien
+        let while_it_runs = sweep(&supervisor, Presence::Program);
+        clock.advance(60);
+        let once_it_is_over = sweep(&supervisor, Presence::Prompt);
+
+        // Then — la ligne `done` a vécu, puis l'onglet est redevenu une ligne shell
+        assert_eq!(while_it_runs, AgentState::Done);
+        assert_eq!(once_it_is_over, AgentState::Idle);
     }
 
     #[test]
