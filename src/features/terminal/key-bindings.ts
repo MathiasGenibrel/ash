@@ -34,17 +34,22 @@ export interface KeyChord {
     readonly shiftKey: boolean;
 }
 
-/** Une entrée de la table : un accord de touches, et les octets qu'il envoie. */
-interface KeyBinding {
-    /** La valeur de `KeyboardEvent.key`, comparée telle quelle. */
-    readonly key: string;
-    readonly altKey: boolean;
-    readonly metaKey: boolean;
-    /** Ce qui part dans le PTY. Jamais de `\r` ni de `\n` : ADR-0015. */
-    readonly send: string;
-}
-
 const ESC = "\x1b";
+
+/** Les seules valeurs de `KeyboardEvent.key` que la table nomme. */
+type BoundKey = "ArrowLeft" | "ArrowRight" | "Backspace" | "Delete";
+
+/**
+ * L'accord, écrit comme on le lit : ses modificateurs puis sa touche.
+ *
+ * C'est un type, et pas une convention de commentaire, parce que la table est indexée par
+ * lui : une entrée mal orthographiée (`"Alt+ArrowLeft"`, `"⌘⌥ArrowLeft"` dans le mauvais
+ * ordre) ne compile pas, et **deux entrées pour le même accord non plus** — un objet
+ * littéral n'a pas deux fois la même clé. C'est ce qui rend l'ajout d'une ligne sûr : le
+ * recouvrement silencieux, où la seconde entrée serait morte sans qu'aucun test ne le
+ * dise, n'est pas représentable.
+ */
+type Chord = `${"" | "⌥"}${"" | "⌘"}${BoundKey}`;
 
 /**
  * Les six raccourcis de la spec, et rien d'autre.
@@ -54,27 +59,38 @@ const ESC = "\x1b";
  * passent pas par ici — ils n'ont ni `altKey` ni `metaKey` — et continuent d'être traités
  * par xterm.js.
  *
- * Ajouter une ligne ici suffit à ajouter un raccourci qui **envoie des octets**. Les
- * issues voisines (#77 onglets, #78 défilement, #79 recherche, #80 taille de police) ne
- * relèvent pas de cette table : elles déclenchent des actions de l'application, pas une
- * écriture dans le PTY, et ce n'est pas la même chose qu'on rend.
+ * Ajouter une ligne ici suffit à ajouter un raccourci qui **envoie des octets** ; une
+ * touche nouvelle s'ajoute d'abord à `BoundKey`. Les issues voisines (#77 onglets, #78
+ * défilement, #79 recherche, #80 taille de police) ne relèvent pas de cette table : elles
+ * déclenchent des actions de l'application, pas une écriture dans le PTY, et ce n'est pas
+ * la même chose qu'on rend.
+ *
+ * Les valeurs ne contiennent jamais `\r` ni `\n` : ADR-0015, et un test le vérifie.
  */
-const LINE_EDITING: readonly KeyBinding[] = [
+const LINE_EDITING = {
     // Mot précédent / suivant — `backward-word` et `forward-word`.
-    { key: "ArrowLeft", altKey: true, metaKey: false, send: `${ESC}b` },
-    { key: "ArrowRight", altKey: true, metaKey: false, send: `${ESC}f` },
+    "⌥ArrowLeft": `${ESC}b`,
+    "⌥ArrowRight": `${ESC}f`,
     // Début / fin de ligne — `Ctrl-A` et `Ctrl-E`.
-    { key: "ArrowLeft", altKey: false, metaKey: true, send: "\x01" },
-    { key: "ArrowRight", altKey: false, metaKey: true, send: "\x05" },
+    "⌘ArrowLeft": "\x01",
+    "⌘ArrowRight": "\x05",
     // Efface le mot précédent — `ESC ⌫`, et non `ESC w` : c'est ce qu'envoie Terminal.app,
     // et le seul que `zle` relie à `backward-kill-word` sans configuration.
-    { key: "Backspace", altKey: true, metaKey: false, send: `${ESC}\x7f` },
+    "⌥Backspace": `${ESC}\x7f`,
     // Efface le mot suivant — `ESC d`, `kill-word`.
-    { key: "Delete", altKey: true, metaKey: false, send: `${ESC}d` },
+    "⌥Delete": `${ESC}d`,
     // Efface jusqu'au début / la fin de la ligne — `Ctrl-U` et `Ctrl-K`.
-    { key: "Backspace", altKey: false, metaKey: true, send: "\x15" },
-    { key: "Delete", altKey: false, metaKey: true, send: "\x0b" },
-];
+    "⌘Backspace": "\x15",
+    "⌘Delete": "\x0b",
+} satisfies Partial<Record<Chord, string>>;
+
+/**
+ * La même table, vue comme un dictionnaire ouvert.
+ *
+ * L'affectation élargit le type sans `as` : la table garde ses clés vérifiées à
+ * l'écriture, et la résolution peut y chercher n'importe quelle touche du clavier.
+ */
+const BY_CHORD: Readonly<Record<string, string | undefined>> = LINE_EDITING;
 
 /**
  * Les octets qu'un accord doit envoyer au PTY, ou `null` s'il ne nous regarde pas.
@@ -91,11 +107,6 @@ export function resolveKeyBinding(chord: KeyChord): string | null {
     if (chord.type !== "keydown") return null;
     if (chord.ctrlKey || chord.shiftKey) return null;
 
-    const match = LINE_EDITING.find(
-        (binding) =>
-            binding.key === chord.key &&
-            binding.altKey === chord.altKey &&
-            binding.metaKey === chord.metaKey,
-    );
-    return match?.send ?? null;
+    const pressed = `${chord.altKey ? "⌥" : ""}${chord.metaKey ? "⌘" : ""}${chord.key}`;
+    return BY_CHORD[pressed] ?? null;
 }

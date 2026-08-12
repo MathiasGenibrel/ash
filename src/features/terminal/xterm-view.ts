@@ -25,7 +25,9 @@ export class XtermView implements TerminalView {
      * Les abonnés à la saisie, appelés par xterm.js **et** par la table de raccourcis.
      *
      * La liste est tenue ici plutôt que déléguée à `term.onData` parce qu'il y a désormais
-     * deux sources de saisie pour un même onglet, et qu'une seule est celle de xterm.
+     * deux sources de saisie pour un même onglet, et qu'une seule est celle de xterm. Elle
+     * est donc aussi vidée dans `dispose` : c'est la seule ressource de cette vue que
+     * `term.dispose()` ne libère pas à notre place.
      */
     private readonly inputs: ((data: string) => void)[] = [];
 
@@ -59,6 +61,13 @@ export class XtermView implements TerminalView {
             // Ce que ⌥ était censé apporter en échange — la navigation par mot — n'était
             // relié nulle part : c'est maintenant la table de `key-bindings.ts`, posée
             // ci-dessous, qui l'assure explicitement.
+            //
+            // À relire en montant xterm.js de version : ce chemin est **interne** à
+            // xterm.js (`_keyDown` consulte `_isThirdLevelShift`, vérifié sur 6.0.0) et
+            // aucun test ne le couvre — `bun test` n'a ni WKWebView ni clavier, et les
+            // tests de `key-bindings.test.ts` protègent la table, pas le comportement de
+            // xterm.js. La vérification est manuelle et tient en une frappe : sur un
+            // clavier AZERTY, ⌥⇧L doit écrire `|` dans un onglet.
             macOptionIsMeta: false,
         });
 
@@ -140,6 +149,15 @@ export class XtermView implements TerminalView {
         this.observer.disconnect();
         this.term.dispose();
         this.pane.remove();
+        // Le gestionnaire de touches et `term.onData` passent tous deux par `emitInput` :
+        // laisser la liste garnie après la fermeture retiendrait la session, son `tabId` et
+        // son pont pour un onglet dont le PTY n'existe plus.
+        this.inputs.length = 0;
+    }
+
+    /** Pousse une saisie vers les abonnés, qu'elle vienne de xterm.js ou d'un raccourci. */
+    private emitInput(data: string): void {
+        for (const handler of this.inputs) handler(data);
     }
 
     /**
@@ -155,10 +173,6 @@ export class XtermView implements TerminalView {
      * `display` : ils gardent leur taille. Ce garde-fou couvre le reste — fenêtre
      * réduite, panneau replié à zéro, onglet retiré du DOM.
      */
-    private emitInput(data: string): void {
-        for (const handler of this.inputs) handler(data);
-    }
-
     private refit(): void {
         const { width, height } = this.pane.getBoundingClientRect();
         if (width < 1 || height < 1) return;
