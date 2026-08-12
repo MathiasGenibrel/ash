@@ -107,6 +107,36 @@ export function selectAt(state: TabsState, position: number): TabsState {
     return { tabs: state.tabs, activeTabId: tab.tabId };
 }
 
+/** Le sens d'un cycle : `Ctrl+Tab` avance, `Ctrl+Shift+Tab` recule. */
+export type Step = 1 | -1;
+
+/**
+ * Passe à l'onglet voisin, **en bouclant** — `Ctrl+Tab` et `Ctrl+Shift+Tab`.
+ *
+ * Le voisinage se lit dans l'ordre du backend, le seul qui existe
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : c'est aussi celui que
+ * la barre affiche et que `Cmd+1`…`Cmd+9` numérote, donc « suivant » désigne bien ce que
+ * l'utilisateur voit à droite.
+ *
+ * Le bouclage n'est pas un détail d'implémentation : sans lui, le raccourci s'arrêterait
+ * au bout de la barre, et il faudrait regarder où l'on est avant de savoir s'il va faire
+ * quelque chose. Avec un seul onglet, il ne bouge donc rien — l'onglet suivant du seul
+ * onglet, c'est lui-même.
+ */
+export function cycle(state: TabsState, step: Step): TabsState {
+    const count = state.tabs.length;
+    if (count === 0) return state;
+
+    // Sans sélection — juste après la fermeture du dernier onglet, ou avant le premier
+    // rendu — le cycle entre par le bout d'où il vient : le premier en avançant, le
+    // dernier en reculant.
+    const from = state.tabs.findIndex((tab) => tab.tabId === state.activeTabId);
+    const at = from === -1 ? (step === 1 ? 0 : count - 1) : (from + step + count) % count;
+
+    const tab = state.tabs[at];
+    return tab === undefined ? state : { tabs: state.tabs, activeTabId: tab.tabId };
+}
+
 export function activeTab(state: TabsState): TabInfo | null {
     return state.tabs.find((tab) => tab.tabId === state.activeTabId) ?? null;
 }

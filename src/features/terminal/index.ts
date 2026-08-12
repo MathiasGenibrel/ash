@@ -14,12 +14,13 @@ import { WorktreeMetadataStore } from "./metadata-store";
 import { tauriPty } from "./pty-bridge";
 import { StatusLine, composeStatusLine } from "./status-line";
 import { TabBar } from "./tab-bar";
-import { noTabs, type TabsState } from "./tabs";
+import { noTabs, type Step, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
 
 export type { PtyFrame, TabId, TabInfo, TerminalSize, ThemeSignal } from "./ports";
 export type { Origin } from "./workbench";
+export type { Step } from "./tabs";
 /**
  * Les tokens que le terminal lit dans la table de `app/styles.css`.
  *
@@ -38,6 +39,13 @@ export interface Terminals {
     closeActiveTab(): Promise<void>;
     selectTab(tabId: TabId): Promise<void>;
     selectTabAt(position: number): Promise<void>;
+    /**
+     * `Ctrl+Tab` / `Ctrl+Shift+Tab` : l'onglet voisin dans l'ordre du backend, en bouclant.
+     *
+     * Un seul point d'entrée pour les deux sens : ce sont la même règle lue dans deux
+     * directions, et deux méthodes en auraient fait deux règles à garder d'accord.
+     */
+    cycleTab(step: Step): Promise<void>;
     clearActiveScrollback(): Promise<void>;
     /**
      * S'abonne à l'état des onglets.
@@ -128,6 +136,7 @@ export function mountTerminals(host: HTMLElement, theme: ThemeSignal): Terminals
         closeActiveTab: () => workbench.closeActive(),
         selectTab: (tabId) => workbench.select(tabId),
         selectTabAt: (position) => workbench.selectAt(position),
+        cycleTab: (step) => workbench.cycle(step),
         clearActiveScrollback: () => workbench.clearActive(),
         onTabs: (listener) => {
             listeners.push(listener);
