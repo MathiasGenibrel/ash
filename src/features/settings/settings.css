@@ -1,0 +1,427 @@
+/* La mise en forme de la fenêtre de réglages, à côté du code qui pose ces classes.
+ *
+ * Les **tokens** viennent de `app/styles.css` : le thème est à l'application, la mise en
+ * forme est à la feature. Les mesures sont celles de la maquette, au demi-pixel près pour
+ * les tailles de police — la hiérarchie y est faite à la taille et à la couleur, jamais au
+ * gras, et arrondir 11,5 px à 12 px l'écraserait.
+ *
+ * **Tout est calibré pour 800 × 600.** C'est la taille minimale de lisibilité, et la
+ * fenêtre s'ouvre dessus : rien n'y est coupé, et il n'y a jamais de défilement
+ * horizontal. Une seule zone défile — le corps de section — et c'est délibéré : un pied
+ * qui s'en irait avec le défilement emporterait la phrase qui dit ce qu'Ash écrit. */
+
+.settings-layout {
+    display: grid;
+    grid-template-columns: 152px 1fr;
+    min-height: 0;
+}
+
+/* --- la colonne de navigation --------------------------------------------- */
+
+.settings-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 10px 0;
+    background: var(--ash-bg-sidebar);
+    border-right: 1px solid var(--ash-border);
+    overflow: hidden;
+}
+
+/* Un vrai `button` : c'est ce qui met la ligne sur le chemin de `tab`. Il faut donc lui
+ * retirer l'apparence que WebKit lui donne, et lui rendre l'alignement d'une ligne. */
+.settings-nav-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 11.5px;
+    text-align: left;
+    color: var(--ash-fg-subtle);
+    background: none;
+    border: 0;
+    border-left: 2px solid transparent;
+    cursor: pointer;
+}
+
+.settings-nav-row:hover {
+    color: var(--ash-fg-done);
+}
+
+/* Le filet de 2 px et le fond sélectionné sont **ceux de la sidebar principale** : c'est
+ * la même grammaire, et elle doit rester la même à la valeur près. Les 2 px du filet sont
+ * repris sur le retrait gauche pour que le texte ne bouge pas d'un pixel à la sélection. */
+.settings-nav-row.is-active {
+    padding-left: 10px;
+    background: var(--ash-bg-selected);
+    border-left-color: var(--ash-select-rail);
+    color: var(--ash-fg-strong);
+}
+
+.settings-nav-row:focus-visible {
+    outline: 2px solid var(--ash-select-rail);
+    outline-offset: -2px;
+}
+
+/* Poussé en bas par la marge automatique — le `flex: 1` de la maquette, sans nœud vide. */
+.settings-nav-hint {
+    margin-top: auto;
+    padding: 8px 12px;
+    font-size: 9.5px;
+    line-height: 1.6;
+    color: var(--ash-fg-dim);
+}
+
+/* --- le panneau de droite ------------------------------------------------- */
+
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--ash-bg);
+}
+
+.settings-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+    padding: 12px 16px 10px;
+}
+
+.settings-title {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ash-fg-strong);
+}
+
+.settings-count {
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-spacer {
+    flex: 1;
+}
+
+/* La note de barème, sous l'en-tête de `tools` et nulle part ailleurs. Les quatre chiffres
+ * sont d'un ton plus clair que le texte : ce sont des repères, pas des mots. */
+.settings-note {
+    flex: none;
+    padding: 0 16px 8px;
+    font-size: 9.5px;
+    line-height: 1.6;
+    color: var(--ash-fg-faint);
+}
+
+.settings-note-index {
+    color: var(--ash-fg-dim);
+}
+
+/* La **seule** zone qui défile. `min-height: 0` est ce qui la laisse se réduire au lieu de
+ * pousser le pied hors de la fenêtre. */
+.settings-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+    padding: 0 16px 14px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* L'état vide et les sections encore muettes ne défilent pas : il n'y a rien à parcourir,
+ * donc le contenu se centre. */
+.settings-body.is-empty {
+    justify-content: center;
+    gap: 22px;
+    overflow: hidden;
+}
+
+.settings-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+    padding: 7px 16px;
+    border-top: 1px solid var(--ash-border-soft);
+    background: var(--ash-bg-footer);
+    font-size: 9.5px;
+    color: var(--ash-fg-faint);
+}
+
+/* --- la carte d'un outil -------------------------------------------------- */
+
+.settings-card {
+    flex: none;
+    border: 1px solid var(--ash-border);
+    border-radius: 6px;
+    background: var(--ash-bg-card);
+    overflow: hidden;
+}
+
+.settings-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: var(--ash-bg-card-header);
+    border-bottom: 1px solid var(--ash-border-soft);
+}
+
+.settings-card-name {
+    font-size: 12.5px;
+    color: var(--ash-fg-strong);
+}
+
+/* Le libellé d'affichage (`Pro`, `Perso`), à côté du nom et pas à sa place : c'est
+ * l'écran où l'on déclare la commande. */
+.settings-card-badge {
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border: 1px solid var(--ash-control-border);
+    border-radius: 3px;
+    color: var(--ash-fg-muted);
+}
+
+.settings-card-adapter {
+    font-size: 9.5px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-icon-button {
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    border: 0;
+    border-radius: 3px;
+    background: none;
+    color: var(--ash-fg-icon);
+    font-size: 11px;
+    cursor: pointer;
+    transition:
+        background 90ms,
+        color 90ms;
+}
+
+.settings-icon-button:hover {
+    background: var(--ash-bg-selected);
+    color: var(--ash-fg-done);
+}
+
+/* La grille `44px 1fr` de la maquette. Les lignes `test` (#15) et `hooks` (#16) s'y
+ * ajouteront : c'est pourquoi le libellé porte un interligne **en pixels** plutôt qu'un
+ * `align-items: center` — les trois contrôles n'ont pas la même hauteur, et c'est
+ * l'interligne du libellé qui les aligne un par un. */
+.settings-card-body {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 7px 10px;
+    padding: 9px 10px;
+}
+
+.settings-card-key {
+    font-size: 9.5px;
+    line-height: 21px;
+    color: var(--ash-fg-faint);
+}
+
+.settings-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 3px 8px;
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    background: var(--ash-bg);
+    font-size: 11.5px;
+    color: var(--ash-fg-done);
+}
+
+/* Un chemin trop long se coupe, il ne pousse pas la carte : la fenêtre ne défile jamais
+ * horizontalement. */
+.settings-path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* « Modifié, non enregistré » — l'entrée n'a pas passé les quatre tests, donc rien n'est
+ * dans `~/.ash/config.toml`. Ronde et pleine : c'est une marque, pas un mot. */
+.settings-unsaved {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ash-warning);
+}
+
+/* --- l'état vide ---------------------------------------------------------- */
+
+.settings-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.settings-empty-title {
+    font-size: 13px;
+    color: var(--ash-fg-done);
+}
+
+/* `--ash-fg-subtle` et non `--ash-fg-dim` : c'est un paragraphe, pas un libellé. Le gris
+ * des métadonnées tient sur trois mots dans la sidebar ; sur trois lignes il tombe à 2,9:1
+ * et cesse d'être lisible. Le cran au-dessus mesure 4,7 en sombre et 5,5 en clair. */
+.settings-empty-prose {
+    max-width: 420px;
+    font-size: 11.5px;
+    line-height: 1.7;
+    text-wrap: pretty;
+    color: var(--ash-fg-subtle);
+}
+
+/* --- le formulaire d'ajout ------------------------------------------------ */
+
+.settings-body.is-form {
+    overflow-y: auto;
+}
+
+.settings-form {
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    gap: 10px;
+    align-items: center;
+    flex: none;
+}
+
+.settings-form-key {
+    font-size: 9.5px;
+    color: var(--ash-fg-faint);
+}
+
+.settings-form-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.settings-input {
+    width: 230px;
+    flex: none;
+    padding: 5px 9px;
+    font-size: 12px;
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    background: var(--ash-bg);
+    color: var(--ash-fg);
+}
+
+/* L'anneau de focus est un `box-shadow`, jamais un `outline` : la maquette en fait un
+ * halo de 3 px de la couleur de l'état, et un `outline` ne se colore pas ainsi. */
+.settings-input:focus {
+    outline: none;
+    border-color: var(--ash-working);
+    box-shadow: 0 0 0 3px rgb(111 178 210 / 16%);
+}
+
+.settings-input.is-menu {
+    width: auto;
+    min-width: 140px;
+}
+
+.settings-gloss {
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-gloss.is-warning {
+    color: var(--ash-warning);
+}
+
+/* L'avertissement du mode dégradé. Il ne dit pas « attention » : il dit ce que l'outil
+ * fera, et ce qu'il ne fera jamais. Prose de plus d'une ligne, donc `--ash-fg-subtle`. */
+.settings-degraded {
+    padding: 9px 10px;
+    border: 1px solid var(--ash-warning-border);
+    border-radius: 5px;
+    background: var(--ash-warning-bg);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ash-fg-subtle);
+}
+
+/* Poussée en bas de la section, comme dans la maquette : la raison à gauche, les deux
+ * boutons à droite. */
+.settings-form-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 14px;
+}
+
+/* --- les deux niveaux de bouton, et deux seulement ------------------------- */
+
+.settings-button {
+    padding: 3px 9px;
+    font-size: 10.5px;
+    border: 1px solid var(--ash-control-border);
+    border-radius: 4px;
+    /* `--ash-bg-card` vaut `#fff` en clair — le fond que la maquette donne aux boutons —
+     * et se confond avec le fond de fenêtre en sombre, où ils n'en ont pas. */
+    background: var(--ash-bg-card);
+    color: var(--ash-fg-muted);
+    cursor: pointer;
+    transition:
+        background 90ms,
+        border-color 90ms,
+        color 90ms;
+}
+
+.settings-button:hover {
+    background: var(--ash-bg-selected);
+    color: var(--ash-fg-done);
+}
+
+/* `--ash-rule` et non `--ash-border-strong` : les deux valent `#3a3d45` en sombre, et
+ * c'est `--ash-rule` que la maquette emploie en clair. Un seul token pour les deux
+ * thèmes, donc, et il tombe juste des deux côtés. */
+.settings-button.is-primary {
+    border-color: var(--ash-rule);
+    color: var(--ash-fg-strong);
+}
+
+/* Éteint, jamais masqué : sa raison est écrite à sa gauche. Pas de `cursor: pointer` —
+ * la forme du curseur est ce qui dit qu'il n'y a rien à cliquer avant même le clic. */
+.settings-button:disabled {
+    border-color: var(--ash-border-soft);
+    background: var(--ash-bg-disabled);
+    color: var(--ash-fg-faint);
+    cursor: default;
+}
+
+.settings-button:disabled:hover {
+    background: var(--ash-bg-disabled);
+    color: var(--ash-fg-faint);
+}
+
+/* Un lien de texte — `esc to cancel`. Ni bordure ni fond : ce n'est pas un troisième
+ * niveau de bouton, c'est un rappel de raccourci qu'on peut aussi cliquer. */
+.settings-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 10.5px;
+    color: var(--ash-fg-subtle);
+    cursor: pointer;
+}
+
+.settings-link:hover {
+    color: var(--ash-fg-done);
+}
