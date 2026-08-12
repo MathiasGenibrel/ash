@@ -21,6 +21,7 @@
 /// La représentation sérialisée est le contrat partagé avec le TypeScript
 /// (`src/shared/ipc`) : cinq mots en minuscules, et `presentAgentState` en face.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentState {
     Idle,

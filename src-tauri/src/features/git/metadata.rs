@@ -33,6 +33,7 @@ const MAX_REF_DEPTH: usize = 8;
 
 /// Ce que la ligne de statut et la sidebar affichent d'un worktree.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeMetadata {
     pub head: Head,
@@ -51,6 +52,7 @@ pub struct WorktreeMetadata {
 /// Les deux moitiés viennent du **même** appel : les compter séparément coûterait deux
 /// processus pour une seule ligne d'affichage.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub tree: TreeStatus,
@@ -65,6 +67,7 @@ pub struct Status {
 /// appel et qu'ils disent des choses différentes. Ce qui s'affiche est l'affaire de la
 /// ligne de statut, pas du backend.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TreeStatus {
     /// Fichiers ajoutés à l'index, **et** fichiers non suivis : le `+` de la maquette.
@@ -87,6 +90,7 @@ impl TreeStatus {
 
 /// `↑2 ↓1` : l'avance et le retard sur la branche amont.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Upstream {
     pub ahead: u32,
@@ -95,6 +99,7 @@ pub struct Upstream {
 
 /// Où pointe `HEAD`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Head {
     /// Sur une branche — le cas ordinaire. `name` est le nom court (`feat/watch`).
@@ -112,6 +117,7 @@ pub enum Head {
 /// dans l'un et rien dans l'autre ([ADR-0012](../../../../docs/adr/0012-worktree-unite-de-travail.md)).
 /// C'est pourquoi elle se lit dans le dossier git du worktree, pas dans le dépôt commun.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Operation {
     pub kind: OperationKind,
@@ -125,6 +131,7 @@ pub struct Operation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "kebab-case")]
 pub enum OperationKind {
     /// `git rebase`, quel que soit son moteur — `rebase-merge` ou `rebase-apply`.
@@ -137,6 +144,7 @@ pub enum OperationKind {
 
 /// `2/5` : l'étape en cours et le total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
     pub step: u32,

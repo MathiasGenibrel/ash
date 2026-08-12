@@ -25,6 +25,7 @@ pub const AGENT_EVENT: &str = "ash://agent-event";
 /// quoi en faire celui de la machine à états d'ADR-0007 §6.4. Ni l'un ni l'autre n'existe
 /// encore, et le frontend n'a donc rien à en déduire de son côté.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEvent {
     pub tab_id: String,

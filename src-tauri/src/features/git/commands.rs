@@ -25,6 +25,7 @@ pub const METADATA_CHANGED_EVENT: &str = "ash://git-metadata";
 
 /// L'état git d'un worktree, tel qu'il traverse la frontière.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataChanged {
     /// La racine du worktree — la même clé que celle des onglets (`TabLocation`).

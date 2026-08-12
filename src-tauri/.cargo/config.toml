@@ -1,0 +1,11 @@
+# Où `ts-rs` dépose les types qu'il tire des `struct` sérialisées.
+#
+# Ici et non répété sur chaque type : le chemin est le même pour les trente formes qui
+# traversent la frontière, et trente copies d'une même chaîne finiraient par ne plus être
+# la même. `relative = true` l'ancre sur le dossier parent de ce fichier — `src-tauri/` —
+# et non sur le répertoire d'où `cargo` est lancé, qui n'est pas toujours celui-là.
+#
+# Seul `ts-rs` lit cette variable, et seulement pendant `cargo test` : les dérivations sont
+# sous `cfg(test)`, donc la compilation de l'application ne la regarde jamais.
+[env]
+TS_RS_EXPORT_DIR = { value = "../src/shared/ipc/generated", relative = true }
