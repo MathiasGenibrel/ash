@@ -41,6 +41,7 @@ export {
     toNode,
     type UiBuilder,
     type UiChild,
+    type UiComponent,
     type UiElementNode,
     type UiEvent,
     type UiHandler,

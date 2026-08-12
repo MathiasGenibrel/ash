@@ -78,6 +78,18 @@ export interface UiBuilder {
 }
 
 /**
+ * Un composant : ce qui rend un **élément**, et pas un morceau de texte nu.
+ *
+ * C'est le type que rendent les composites d'une feature, et il n'existe que pour leurs
+ * tests : `build()` y donne un `UiElementNode`, donc un test lit `attrs`, `classes` et
+ * `children` sans avoir à écarter d'abord le cas d'un nœud texte qui ne peut pas se
+ * produire.
+ */
+export interface UiComponent extends UiBuilder {
+    build(): UiElementNode;
+}
+
+/**
  * Ce qu'un conteneur accepte : une description, ou un constructeur qui en produit une.
  *
  * C'est ce qui permet d'écrire `row(badge("claude"), button("add"))` sans un `.build()`

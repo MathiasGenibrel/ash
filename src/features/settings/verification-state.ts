@@ -1,4 +1,4 @@
-import { ElementBuilder, SVG_NAMESPACE, type UiBuilder } from "@/shared/ui";
+import { ElementBuilder, SVG_NAMESPACE, type UiComponent } from "@/shared/ui";
 
 import type { HookState, TestOutcome, VerificationState } from "./contract";
 
@@ -117,7 +117,7 @@ const SHAPES: Readonly<Record<VerificationState, readonly string[]>> = {
  * distingue `verifying` du reste. Écrit à plusieurs endroits, il finit par ne plus dire la
  * même chose des deux côtés.
  */
-export function verificationGlyph(state: VerificationState, size = 14): UiBuilder {
+export function verificationGlyph(state: VerificationState, size = 14): UiComponent {
     const shown = PRESENTATIONS[state];
     const svg = glyph(SHAPES[state], size, shown.className, shown.label);
     // Le mouvement n'appartient qu'à `verifying`, et c'est ce qui le distingue
@@ -235,7 +235,7 @@ export function hookShapes(state: HookState): readonly string[] {
 }
 
 /** Le glyphe d'un état de hooks — une description, elle aussi. */
-export function hooksGlyph(state: HookState, size = 13): UiBuilder {
+export function hooksGlyph(state: HookState, size = 13): UiComponent {
     const shown = HOOK_PRESENTATIONS[state];
     return glyph(HOOK_SHAPES[state], size, shown.className, shown.label);
 }
