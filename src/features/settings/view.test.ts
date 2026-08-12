@@ -91,12 +91,23 @@ describe("le panneau de la fenêtre de réglages", () => {
         expect(cards).toEqual([]);
     });
 
-    it("Given a conflict being looked at, when the panel is composed, then the diff replaces the list and no install button survives", () => {
-        // Given — l'écran de conflit remplace la liste (§4.4), et il n'écrit rien : un
-        // bouton d'installation qui traînerait à côté du diff écrirait dans le fichier même
-        // qu'Ash refuse de toucher
+    it("Given a diff being looked at, when the panel is composed, then it replaces the list and offers exactly what the backend allows", () => {
+        // Given — l'écran du diff remplace la liste (§4.4). Les issues qu'il propose sont
+        // celles du backend, et rien d'autre : un bouton que l'écran ajouterait de lui-même
+        // écrirait dans un fichier que le backend n'a pas autorisé à toucher (ADR-0009)
         const tool = aTool({
-            hooks: aHooksReport({ state: "conflict", action: "seeTheDiff", diff: "-a\n+b" }),
+            hooks: aHooksReport({
+                state: "conflict",
+                action: "seeTheDiff",
+                diff: "-a\n+b",
+                choices: [
+                    {
+                        action: "install",
+                        label: "merge, keeping every hook",
+                        note: "ash adds its entries next to yours.",
+                    },
+                ],
+            }),
         });
         const composed = settingsPanel(
             scene({ snapshot: aSnapshot({ tools: [tool] }), conflict: "claude" }),
@@ -107,7 +118,7 @@ describe("le panneau de la fenêtre de réglages", () => {
         const buttons = composed.flatMap((child) => findAll(child, "ui-button")).map(plainText);
 
         // Then
-        expect(buttons).toEqual(["← back to the list"]);
+        expect(buttons).toEqual(["← back to the list", "merge, keeping every hook"]);
         expect(composed.flatMap((child) => findAll(child, "settings-card"))).toEqual([]);
     });
 

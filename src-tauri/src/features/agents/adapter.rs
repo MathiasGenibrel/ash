@@ -3,13 +3,52 @@ use std::path::{Path, PathBuf};
 
 use super::state::AgentState;
 
+/// Le marqueur qu'Ash pose dans **chacune** de ses entrées, suivi de sa version.
+///
+/// C'est ce qui a remplacé le bloc délimité `ash:begin`/`ash:end`
+/// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), amendement du 2026-08-12) :
+/// des marqueurs par entrée cohabitent ligne à ligne avec les hooks de l'utilisateur, là où
+/// une région du fichier ne le pouvait pas.
+///
+/// **Il vit dans une ligne de commande, et c'est la forme la moins risquée qu'on ait
+/// trouvée.** Une clé JSON inconnue posée au milieu d'un objet de hooks serait à la merci
+/// d'un schéma strict : au pire, l'outil refuserait tout le fichier, et l'utilisateur
+/// perdrait ses réglages à cause d'Ash. Un commentaire de shell en fin de commande est
+/// inerte pour le shell qui l'exécute — la commande d'un hook est déjà une ligne de shell,
+/// puisqu'elle contient `"$ASH_TAB_ID"` — et invisible pour tout schéma JSON. L'asymétrie
+/// des deux risques tranche toute seule.
+pub const HOOK_MARK: &str = "# ash:hook v";
+
+/// Le marqueur d'une version donnée, tel qu'il s'écrit dans le fichier.
+pub fn hook_mark(version: u32) -> String {
+    format!("{HOOK_MARK}{version}")
+}
+
+/// Une entrée qu'Ash veut voir dans la configuration d'un outil, et où.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookEntry {
+    /// La chaîne de clés d'objet qui mène au **tableau** où l'entrée doit vivre —
+    /// `["hooks", "Stop"]` pour Claude Code.
+    ///
+    /// C'est ce qui permet à la feature `hooks` de fusionner sans connaître un seul outil :
+    /// elle sait descendre une chaîne de clés, créer ce qui manque, et insérer dans ce qui
+    /// existe. Le nom des événements, lui, ne sort pas de l'adaptateur.
+    pub path: Vec<String>,
+
+    /// L'objet à poser dans ce tableau, sérialisé **sur une ligne**, marqueur compris.
+    ///
+    /// Une ligne parce que c'est ce qui rend le retrait exact : la plage retirée est
+    /// exactement celle qui avait été insérée, sans reste ni ligne vide.
+    pub item: String,
+}
+
 /// Ce qu'Ash doit écrire dans la configuration d'un outil pour qu'il parle.
 ///
-/// L'adaptateur décrit **quoi** écrire ; il n'écrit rien. Le bloc délimité
-/// `ash:begin`/`ash:end`, la sauvegarde `.bak` et le refus d'écrire sur un bloc édité à la
-/// main sont une règle transverse qui n'a qu'un propriétaire dans le code — la feature
-/// `hooks` ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)). Un adaptateur qui
-/// ouvrirait lui-même le fichier de l'utilisateur ferait exister une deuxième façon
+/// L'adaptateur décrit **quoi** écrire ; il n'écrit rien. Le marqueur par entrée, la
+/// sauvegarde `.bak`, la fusion qui ne perd aucun hook de l'utilisateur et le retrait qui ne
+/// laisse rien sont une règle transverse qui n'a qu'un propriétaire dans le code — la
+/// feature `hooks` ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)). Un adaptateur
+/// qui ouvrirait lui-même le fichier de l'utilisateur ferait exister une deuxième façon
 /// d'écrire chez lui, donc une deuxième façon de se tromper.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instrumentation {
@@ -21,17 +60,13 @@ pub struct Instrumentation {
     /// suite contractuelle : Ash écrit chez l'utilisateur, et la cible ne se négocie pas.
     pub file: PathBuf,
 
-    /// Le contenu que le bloc doit porter, tel quel.
-    ///
-    /// L'adaptateur le compose dans le format de son outil — JSON pour Claude Code, autre
-    /// chose ailleurs. La feature `hooks` l'entoure de ses marqueurs sans le relire.
-    pub block: String,
+    /// Les entrées à poser, dans l'ordre où l'adaptateur les veut.
+    pub entries: Vec<HookEntry>,
 
-    /// La version du bloc, incrémentée dès que son contenu change de forme.
+    /// La version des entrées, incrémentée dès que leur contenu change de forme.
     ///
-    /// C'est elle qui permet de reconnaître un bloc écrit par une version antérieure d'Ash
-    /// et de le réécrire, sans avoir à comparer deux textes ni à deviner si l'utilisateur
-    /// y a touché.
+    /// C'est elle qui permet de reconnaître une entrée écrite par une version antérieure
+    /// d'Ash et de la réécrire, au lieu de la prendre pour une édition de l'utilisateur.
     pub version: u32,
 }
 

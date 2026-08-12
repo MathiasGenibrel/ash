@@ -1,25 +1,30 @@
-//! Le diff que la spec §10 exige quand Ash refuse d'écrire.
+//! Le diff que la spec §10 exige **avant** qu'Ash n'écrive.
 //!
-//! « Il signale, propose le diff, et demande. » Refuser sans montrer ce qui diffère laisse
-//! l'utilisateur devant un choix aveugle : garder un bloc dont il ne sait plus ce qu'il a
-//! changé, ou tout effacer. Le diff est donc une partie du refus, pas un agrément.
+//! « Il signale, propose le diff, et demande. » Écrire — ou refuser — sans montrer ce qui
+//! changerait laisse l'utilisateur devant un choix aveugle. Depuis l'amendement du
+//! 2026-08-12 d'[ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), le diff n'est plus
+//! seulement la forme d'un refus : c'est **ce sur quoi l'utilisateur tranche**, et il porte
+//! le fichier tel qu'il est face au fichier tel qu'Ash le laisserait.
 //!
 //! Il est écrit ici plutôt que pris dans une bibliothèque : deux blocs de vingt lignes ne
 //! justifient pas une dépendance, et la comparaison est celle du manuel — plus longue
 //! sous-séquence commune, puis restitution.
 
-/// Les deux blocs, ligne à ligne, dans la forme que tout le monde sait lire.
+/// Les deux versions du fichier, ligne à ligne, dans la forme que tout le monde sait lire.
 ///
-/// `-` est ce qu'Ash écrirait, `+` ce que le fichier porte : le sens de lecture est celui
-/// de la question posée à l'utilisateur — « voici ce que j'allais mettre, voici ce que tu
-/// as mis ».
-pub fn compare(ash_would_write: &str, the_file_carries: &str) -> String {
-    let expected: Vec<&str> = ash_would_write.lines().collect();
-    let found: Vec<&str> = the_file_carries.lines().collect();
+/// `-` est le fichier tel qu'il est, `+` tel qu'Ash le laisserait : c'est le sens de lecture
+/// d'un diff que l'on s'apprête à appliquer, et celui de la question posée à l'utilisateur —
+/// « voici ce que j'ajouterais, et où ».
+///
+/// Les deux en-têtes sont en anglais parce qu'ils s'affichent (#68) ; le reste du fichier
+/// est commenté en français, comme tout le dépôt.
+pub fn preview(the_file_carries: &str, ash_would_leave: &str) -> String {
+    let expected: Vec<&str> = the_file_carries.lines().collect();
+    let found: Vec<&str> = ash_would_leave.lines().collect();
 
     let mut lines = vec![
-        "--- ce qu'Ash écrirait".to_owned(),
-        "+++ ce que le fichier porte".to_owned(),
+        "--- the file as it is".to_owned(),
+        "+++ what ash would write".to_owned(),
     ];
     lines.extend(walk(&expected, &found, &common_lengths(&expected, &found)));
     lines.join("\n")
@@ -68,40 +73,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn given_a_block_whose_middle_line_was_changed_when_it_is_compared_then_only_that_line_shows_up(
+    fn given_a_file_whose_middle_line_would_change_when_the_write_is_previewed_then_only_that_line_shows_up(
     ) {
-        // Given — l'utilisateur a retouché une commande de hook. Le diff n'a de valeur que
-        // s'il montre *sa* ligne : un diff qui réaffiche les vingt lignes du bloc ne lui
-        // dit pas ce qu'il a fait, et il l'effacera sans regarder.
-        let ash_would_write = "  \"hooks\": {\n    \"Stop\": \"ash-event done\"\n  }";
+        // Given — Ash réécrirait une commande de hook. Le diff n'a de valeur que s'il montre
+        // *cette* ligne : un diff qui réaffiche les vingt lignes du fichier ne dit pas ce
+        // qui va changer, et l'utilisateur l'acceptera sans regarder.
         let the_file_carries = "  \"hooks\": {\n    \"Stop\": \"mon script\"\n  }";
+        let ash_would_leave = "  \"hooks\": {\n    \"Stop\": \"ash-event done\"\n  }";
 
         // When
-        let diff = compare(ash_would_write, the_file_carries);
+        let diff = preview(the_file_carries, ash_would_leave);
 
         // Then
         assert_eq!(
             diff.lines().skip(2).collect::<Vec<_>>(),
             [
                 "    \"hooks\": {",
-                "-     \"Stop\": \"ash-event done\"",
-                "+     \"Stop\": \"mon script\"",
+                "-     \"Stop\": \"mon script\"",
+                "+     \"Stop\": \"ash-event done\"",
                 "    }",
             ]
         );
     }
 
     #[test]
-    fn given_a_block_with_a_line_added_by_hand_when_it_is_compared_then_the_untouched_lines_stay_common(
+    fn given_a_write_that_only_adds_a_line_when_it_is_previewed_then_the_untouched_lines_stay_common(
     ) {
-        // Given — le cas le plus fréquent : l'utilisateur ajoute son propre hook dans le
-        // bloc d'Ash. Le montrer comme un remplacement complet ferait croire à un conflit
-        // là où il n'a fait qu'ajouter.
-        let ash_would_write = "un\ndeux";
-        let the_file_carries = "un\nà moi\ndeux";
+        // Given — c'est exactement ce que fait la fusion : elle ajoute une entrée au milieu
+        // de celles de l'utilisateur. La montrer comme un remplacement complet ferait croire
+        // qu'Ash va écraser ce qui est là.
+        let the_file_carries = "un\ndeux";
+        let ash_would_leave = "un\nà moi\ndeux";
 
         // When
-        let diff = compare(ash_would_write, the_file_carries);
+        let diff = preview(the_file_carries, ash_would_leave);
 
         // Then
         assert_eq!(

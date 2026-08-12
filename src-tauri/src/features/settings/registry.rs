@@ -206,13 +206,18 @@ impl ToolRegistry {
         let Some(tool) = tools.iter().find(|tool| &tool.command == command) else {
             return Err(SettingsError::UnknownTool(command.clone()));
         };
-        let allowed = match asked {
+        // La ligne offre un geste, et le diff en offre d'autres : les deux comptent, et
+        // c'est **la même** liste que celle qui a allumé les boutons. Un conflit propose
+        // `see the diff` sur la ligne et `merge` dans le diff ; refuser le second parce
+        // qu'il n'est pas le premier rendrait le choix inatteignable — le défaut même que
+        // l'amendement du 2026-08-12 d'ADR-0007 est venu lever.
+        let offered = std::iter::once(tool.hooks.action)
+            .chain(tool.hooks.choices.iter().map(|choice| choice.action));
+        let allowed = offered.into_iter().any(|offer| match asked {
             // `update` est une installation : le geste est le même, seul le mot change.
-            HookAction::Install => {
-                matches!(tool.hooks.action, HookAction::Install | HookAction::Update)
-            }
-            other => tool.hooks.action == other,
-        };
+            HookAction::Install => matches!(offer, HookAction::Install | HookAction::Update),
+            other => offer == other,
+        });
         if !allowed || !tool.hooks.enabled {
             return Err(SettingsError::HooksRefused(tool.hooks.summary.clone()));
         }
@@ -852,7 +857,7 @@ mod tests {
             .carrying(
                 "/home/.claude",
                 Presence::HandEdited {
-                    diff: "- ash\n+ moi".to_owned(),
+                    diff: "- moi\n+ ash".to_owned(),
                 },
             )
             .assemble();
@@ -863,11 +868,17 @@ mod tests {
             .expect("la saisie est valide")
             .tools;
 
-        // Then
+        // Then — la ligne n'écrit pas d'elle-même : elle ouvre le diff
         assert_eq!(tools[0].hooks.state, HookState::Conflict);
-        assert_eq!(tools[0].hooks.diff.as_deref(), Some("- ash\n+ moi"));
-        assert!(registry.install_hooks(&named("claude")).is_err());
+        assert_eq!(tools[0].hooks.action, HookAction::SeeTheDiff);
+        assert_eq!(tools[0].hooks.diff.as_deref(), Some("- moi\n+ ash"));
         assert_eq!(blocks.written(), Vec::<String>::new());
+
+        // Et depuis le diff, l'utilisateur tranche : c'est son clic qui écrit, pas Ash
+        registry
+            .install_hooks(&named("claude"))
+            .expect("le diff offre de remettre les entrées d'Ash");
+        assert_eq!(blocks.written(), vec!["install claude-code /home/.claude"]);
     }
 
     #[test]

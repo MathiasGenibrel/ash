@@ -47,7 +47,7 @@ de la valeur à tester » a une réponse précise ici :
 | La remontée d'état vers la ligne de dépôt/worktree | `waiting` l'emporte sur tout — une régression rend un agent en attente invisible |
 | La résolution worktree → dépôt | `.git` fichier contre dossier, `gitdir:`, `commondir`. Cas limites nombreux, conséquences visibles |
 | Le parsing de l'état d'un rebase | Ash affiche `2/5` et `3 conflicted files` à partir de fichiers de contrôle. S'il se trompe, il ment sur un sujet qui ne pardonne pas |
-| L'écriture d'un bloc délimité | `.bak`, marqueurs, refus si édité à la main. C'est un fichier de l'utilisateur |
+| L'écriture chez l'utilisateur | `.bak`, marqueur par entrée, fusion qui ne perd rien, retrait à l'octet près. C'est un fichier de l'utilisateur |
 | La correspondance de repli du journal | `(author_date, subject)` après rebase — la règle est heuristique, donc elle a besoin d'exemples |
 | Chaque correction de bug | Le test vient avec le correctif, et décrit le symptôme |
 

@@ -19,7 +19,7 @@ src-tauri/src/
       adapters/          claude-code, codex, generic
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12
     journal/             attribution commit → agent → prompt       — ADR-0014
-    hooks/               installation du bloc dans les settings.json
+    hooks/               les entrées marquées d'Ash dans les settings.json
     theme/               l'apparence de la fenêtre — mode clair / sombre /
                          système, taille de police du terminal — et sa persistance
   shared/                réellement transverse, et justifié
@@ -61,7 +61,7 @@ pour un agent : la question « où vit la résolution du workspace ? » se répo
 | `agents` | [0006](../../docs/adr/0006-decouverte-automatique-des-agents.md), [0007](../../docs/adr/0007-etats-par-hooks.md), [0008](../../docs/adr/0008-abstraction-adapter.md) | le vocabulaire commun `idle/working/waiting/done/error`, le trait `Adapter`, le socket d'events |
 | `git` | [0011](../../docs/adr/0011-git-domaine-de-premier-plan.md), [0012](../../docs/adr/0012-worktree-unite-de-travail.md) | refs, worktrees, dépôt commun, état de rebase, couloirs du graphe |
 | `journal` | [0014](../../docs/adr/0014-attribution-locale-des-commits.md) | l'écriture et la relecture de l'attribution |
-| `hooks` | [0007](../../docs/adr/0007-etats-par-hooks.md), [0013](../../docs/adr/0013-fiche-de-branche-dans-le-depot.md) | le bloc délimité, le `.bak`, le refus d'écrire sur conflit |
+| `hooks` | [0007](../../docs/adr/0007-etats-par-hooks.md), [0013](../../docs/adr/0013-fiche-de-branche-dans-le-depot.md) | le marqueur par entrée, le `.bak`, le diff montré avant toute écriture |
 
 Le fait que `hooks` porte à la fois les `settings.json` et le bloc `<!-- ash:log -->`
 n'est pas un hasard : c'est la même règle transverse, et elle doit avoir un seul

@@ -114,7 +114,10 @@ impl HookBlocks for FakeBlocks {
                 .found
                 .get(config_dir.resolved())
                 .cloned()
-                .unwrap_or(Presence::Missing),
+                .unwrap_or(Presence::Missing {
+                    others: 0,
+                    diff: String::new(),
+                }),
         })
     }
 
