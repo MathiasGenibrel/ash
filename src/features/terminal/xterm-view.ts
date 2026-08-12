@@ -3,9 +3,10 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
-import { applyKeyAction, resolveKeyAction } from "./key-actions";
+import { applyKeyAction, resolveKeyAction, type ActionSurface } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 import type { TerminalSize, TerminalView, ThemeSignal, Unsubscribe } from "./ports";
+import { TerminalSearch } from "./terminal-search";
 import { readTerminalTheme } from "./theme";
 
 /**
@@ -31,6 +32,25 @@ export class XtermView implements TerminalView {
      * `term.dispose()` ne libère pas à notre place.
      */
     private readonly inputs: ((data: string) => void)[] = [];
+    /** La recherche de cet onglet, créée une fois la surface ouverte (voir le constructeur). */
+    private readonly search: TerminalSearch;
+    /**
+     * Ce sur quoi une action de `key-actions.ts` s'applique.
+     *
+     * `Terminal` porte le défilement, la vue porte la recherche : l'objet réunit les deux
+     * sans que la table de raccourcis ait à connaître xterm.js ni la boîte de recherche.
+     */
+    private readonly surface: ActionSurface = {
+        scrollPages: (pageCount) => {
+            this.term.scrollPages(pageCount);
+        },
+        scrollLines: (amount) => {
+            this.term.scrollLines(amount);
+        },
+        openSearch: () => {
+            this.search.open();
+        },
+    };
 
     /**
      * Crée sa propre surface dans `parent`, et la retire en se libérant.
@@ -118,8 +138,11 @@ export class XtermView implements TerminalView {
                 // renommage ferait échouer la compilation ; une **inversion du signe**,
                 // non — c'est le seul cas à vérifier à la main, et il tient en une frappe :
                 // dans un onglet qui a du scrollback, `⌘↑` doit remonter.
+                //
+                // La recherche, elle, n'est pas dans `Terminal` : d'où la surface composée
+                // ci-dessous, qui ajoute l'ouverture du champ aux deux méthodes de xterm.
                 event.preventDefault();
-                applyKeyAction(action, this.term);
+                applyKeyAction(action, this.surface);
                 return false;
             }
 
@@ -141,6 +164,12 @@ export class XtermView implements TerminalView {
         this.term.loadAddon(this.fit);
         this.refit();
         this.loadWebgl();
+
+        // Après `open` : la boîte est un enfant de la surface de l'onglet, posée à côté du
+        // terminal qu'elle fouille. C'est ce qui la rend solidaire de son onglet — elle se
+        // masque avec lui (`.terminal-pane` est en `visibility`) et meurt avec lui —, donc
+        // aucune recherche ne peut suivre d'un onglet à l'autre.
+        this.search = new TerminalSearch(this.pane, this.term);
 
         // Le terminal suit la fenêtre. `ResizeObserver` plutôt que l'event `resize` :
         // la sidebar et le panneau bas changeront la largeur sans que la fenêtre bouge.
@@ -183,6 +212,8 @@ export class XtermView implements TerminalView {
     dispose(): void {
         this.unfollowTheme();
         this.observer.disconnect();
+        // Avant `term.dispose()` : l'addon se détache d'un terminal encore vivant.
+        this.search.dispose();
         this.term.dispose();
         this.pane.remove();
         // Le gestionnaire de touches et `term.onData` passent tous deux par `emitInput` :

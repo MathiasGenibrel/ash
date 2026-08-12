@@ -41,7 +41,11 @@ export function paint(node: UiNode): Node {
 
     for (const [name, handler] of Object.entries(node.on)) {
         element.addEventListener(name, (event) => {
-            handler({ value: valueOf(event.currentTarget), key: keyOf(event) });
+            handler({
+                value: valueOf(event.currentTarget),
+                key: keyOf(event),
+                shiftKey: event instanceof KeyboardEvent && event.shiftKey,
+            });
         });
     }
 

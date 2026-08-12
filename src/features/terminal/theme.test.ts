@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { TERMINAL_THEME_TOKENS, toXtermTheme } from "./theme";
+import {
+    SEARCH_DECORATION_TOKENS,
+    TERMINAL_THEME_TOKENS,
+    toSearchDecorations,
+    toXtermTheme,
+} from "./theme";
 
 /**
  * La traduction des tokens en thème xterm, et elle seule.
@@ -83,5 +88,45 @@ describe("la palette du terminal", () => {
         // Then
         expect("cursor" in theme).toBe(false);
         expect(theme.background).toBe("#010203");
+    });
+});
+
+describe("le surlignage des occurrences", () => {
+    /** Une palette où seuls les deux tokens du surlignage sont définis. */
+    const decorationPalette = (rule: string, accent: string): ((token: string) => string) => {
+        const tokens = new Map<string, string>([
+            [SEARCH_DECORATION_TOKENS.match, rule],
+            [SEARCH_DECORATION_TOKENS.active, accent],
+        ]);
+        return (token) => tokens.get(token) ?? "";
+    };
+
+    it("Given the two search tokens, when the decorations are built, then the current match differs by its border and not by its background", () => {
+        // Given — le terminal garde la couleur de son texte, et Ash ne peut pas la
+        // connaître : repeindre le fond de l'occurrence courante avec l'accent la rendrait
+        // illisible dans au moins un des deux thèmes
+        const palette = decorationPalette("#c9c7c2", "#c8481f");
+
+        // When
+        const decorations = toSearchDecorations(palette);
+
+        // Then
+        expect(decorations?.activeMatchBackground).toBe("#c9c7c2");
+        expect(decorations?.matchBackground).toBe("#c9c7c2");
+        expect(decorations?.activeMatchBorder).toBe("#c8481f");
+    });
+
+    it("Given a token the stylesheet does not define, when the decorations are built, then nothing is decorated instead of a colour written here", () => {
+        // Given — les deux couleurs de la règle de défilement sont obligatoires pour
+        // l'addon : combler un token manquant par un défaut écrit en TypeScript survivrait
+        // à tout ajustement de la palette, et le surlignage mentirait sur le thème
+        const palette = decorationPalette("", "#c8481f");
+
+        // When
+        const decorations = toSearchDecorations(palette);
+
+        // Then — la recherche continue de sélectionner l'occurrence, elle ne la surligne
+        // plus : une dégradation lisible, pas une panne
+        expect(decorations).toBeUndefined();
     });
 });

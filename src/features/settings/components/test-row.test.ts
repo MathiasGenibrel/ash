@@ -143,7 +143,7 @@ describe("ce qu'un résultat ajoute sous la ligne test", () => {
         // When
         const described = testDetail(tool, actions);
         const buttons = described.flatMap((child) => findAll(child, "ui-button"));
-        buttons[0]?.on["click"]?.({ value: "", key: "" });
+        buttons[0]?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then
         expect(buttons.map(plainText)).toEqual(["choose another folder…"]);
