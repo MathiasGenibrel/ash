@@ -40,7 +40,7 @@ describe("un bouton", () => {
             .build();
 
         // When
-        described.on["click"]?.({ value: "" });
+        described.on["click"]?.({ value: "", key: "" });
 
         // Then
         expect(pressed).toBe(1);

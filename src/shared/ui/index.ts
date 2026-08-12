@@ -23,6 +23,7 @@
  */
 
 export { button, type ButtonBuilder } from "./button";
+export { choice, type ChoiceBuilder } from "./choice";
 export {
     banner,
     emptyState,
@@ -35,6 +36,7 @@ export { column, row, type Stack } from "./layout";
 export { badge, glyph, type BadgeBuilder, type GlyphBuilder } from "./marks";
 export {
     ElementBuilder,
+    SVG_NAMESPACE,
     text,
     toNode,
     type UiBuilder,

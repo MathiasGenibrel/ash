@@ -17,8 +17,16 @@ import type { UiNode } from "./node";
 export function paint(node: UiNode): Node {
     if (node.kind === "text") return document.createTextNode(node.text);
 
-    const element = document.createElement(node.tag);
-    if (node.classes.length > 0) element.className = node.classes.join(" ");
+    // `createElement("svg")` produirait un élément HTML inconnu — muet et invisible. Le
+    // namespace est la seule chose qu'un nom de balise ne porte pas.
+    const element =
+        node.namespace === null
+            ? document.createElement(node.tag)
+            : document.createElementNS(node.namespace, node.tag);
+
+    // `setAttribute` et non `className` : sur un `SVGElement`, `className` est une propriété
+    // en lecture seule, et l'affectation échouerait au premier tracé.
+    if (node.classes.length > 0) element.setAttribute("class", node.classes.join(" "));
 
     for (const [name, value] of Object.entries(node.attrs)) {
         element.setAttribute(name, value);
@@ -33,7 +41,7 @@ export function paint(node: UiNode): Node {
 
     for (const [name, handler] of Object.entries(node.on)) {
         element.addEventListener(name, (event) => {
-            handler({ value: valueOf(event.currentTarget) });
+            handler({ value: valueOf(event.currentTarget), key: keyOf(event) });
         });
     }
 
@@ -47,6 +55,11 @@ export function paint(node: UiNode): Node {
  * C'est le seul endroit du socle qui lit le DOM : sans cette extraction, `onInput` devrait
  * fouiller un `Event` depuis le composant, et le composant redeviendrait intestable.
  */
+/** La touche frappée, ou rien : un clic n'en a pas. */
+function keyOf(event: Event): string {
+    return event instanceof KeyboardEvent ? event.key : "";
+}
+
 function valueOf(target: EventTarget | null): string {
     if (target instanceof HTMLInputElement) return target.value;
     if (target instanceof HTMLSelectElement) return target.value;
