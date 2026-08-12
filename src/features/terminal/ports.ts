@@ -71,6 +71,25 @@ export interface ThemeSignal {
     subscribe(listener: () => void): Unsubscribe;
 }
 
+/**
+ * Ce que la feature attend de qui détient la taille de police — c'est-à-dire de `app/`.
+ *
+ * Un port pour la même raison que `ThemeSignal` : la taille est une préférence de
+ * l'**application**, retenue par le backend
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et la feature n'a
+ * aucune raison de savoir qu'elle vient d'un menu natif et d'un event Tauri. Elle vaut
+ * pour tous les onglets à la fois — voir `FontSize` côté Rust, qui porte la décision.
+ *
+ * `current` autant que `subscribe` : un onglet ouvert après un `⌘+` doit naître à la
+ * taille en cours, comme il naît déjà à la bonne palette.
+ */
+export interface FontSizeSignal {
+    /** La taille en cours, en points. */
+    readonly current: number;
+    /** S'abonne aux changements de taille. Rend de quoi se désabonner. */
+    subscribe(listener: (points: number) => void): Unsubscribe;
+}
+
 /** Ce que la feature attend du backend. */
 export interface PtyBridge {
     /** `cwd` à `null` vaut `~` — le `Cmd+Shift+T` de la spec §4.4. */
