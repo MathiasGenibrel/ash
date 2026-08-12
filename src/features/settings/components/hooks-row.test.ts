@@ -91,6 +91,29 @@ describe("la ligne hooks d'une carte", () => {
         expect(actions.asked).toEqual(["open claude"]);
     });
 
+    it("Given a line about to write, when the row is described, then the diff can be opened before anything is written", () => {
+        // Given — « un bouton ouvre le diff de ce qu'Ash écrirait, sur le fichier tel qu'il
+        // est, avant toute écriture ». Ça ne vaut pas que pour un conflit : `install` écrit
+        // aussi, et doit pouvoir dire ce qu'il écrira (ADR-0007, amendement du 2026-08-12)
+        const actions = recorder();
+        const tool = aTool({
+            hooks: aHooksReport({
+                state: "missing",
+                summary: "no ash hooks in this file",
+                action: "install",
+                diff: "-a\n+b",
+            }),
+        });
+
+        // When
+        const buttons = findAll(hooksRow(tool, actions).build(), "ui-button");
+        buttons[0]?.on["click"]?.({ value: "", key: "" });
+
+        // Then — le diff est le premier des deux, et c'est lui qui n'écrit rien
+        expect(buttons.map(plainText)).toEqual(["see the diff", "install"]);
+        expect(actions.asked).toEqual(["open claude"]);
+    });
+
     it("Given a hooks line whose action removes the block, when its button is pressed, then removal is what is asked for", () => {
         // Given — les trois autres actions passent par `installHooks` ; `remove` est la
         // seule qui retire, et elle n'est pas primaire à l'écran pour cette raison

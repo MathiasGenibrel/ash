@@ -50,11 +50,30 @@ export interface ToolDeclaration {
     hooks: HooksReport;
 }
 
-/** Les cinq états de la ligne `hooks`, et rien de plus. */
+/**
+ * Les cinq états de la ligne `hooks`, et rien de plus.
+ *
+ * `missing` est **l'absence** — rien n'est posé et rien ne s'y oppose ; `conflict` est « il
+ * y a là quelque chose que je n'ai pas mis » ; `blocked` est « ash ne peut pas écrire ici ».
+ * Les trois se ressemblaient à l'écran, et l'absence passait pour un refus
+ * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md), amendement du 2026-08-12).
+ */
 export type HookState = "installed" | "missing" | "outdated" | "conflict" | "blocked";
 
-/** Ce que le bouton de la ligne propose. Un seul, jamais deux. */
+/** Ce qu'un bouton de la ligne — ou du diff — déclenche. */
 export type HookAction = "install" | "update" | "remove" | "seeTheDiff";
+
+/**
+ * Une issue offerte depuis le diff, avec son libellé et sa conséquence.
+ *
+ * Le mot vient du backend : « merge » et « install » sont le même geste pour lui, et deux
+ * promesses différentes pour celui qui lit l'écran.
+ */
+export interface HookChoice {
+    action: HookAction;
+    label: string;
+    note: string;
+}
 
 /**
  * Ce que la ligne `hooks` d'une entrée affiche, et ce qu'elle laisse faire.
@@ -66,7 +85,7 @@ export type HookAction = "install" | "update" | "remove" | "seeTheDiff";
  */
 export interface HooksReport {
     state: HookState;
-    /** La phrase de la ligne — `installed · v1`, `missing`, `v1 · v2 available`… */
+    /** La phrase de la ligne — `installed · v1`, `no ash hooks in this file`… */
     summary: string;
     /** La conséquence, en prose : ce que l'état coûte ou ce que l'action fera. */
     note: string;
@@ -75,7 +94,9 @@ export interface HooksReport {
     action: HookAction;
     /** Le bouton est-il allumé ? Il reste **visible** dans tous les cas. */
     enabled: boolean;
-    /** Les lignes qui divergent — seulement en conflit, et c'est le refus lui-même. */
+    /** Ce que le diff propose de trancher, dans l'ordre. Vide quand rien ne s'écrira. */
+    choices: readonly HookChoice[];
+    /** Le diff de ce qu'Ash écrirait, sur le fichier **tel qu'il est** — avant d'écrire. */
     diff: string | null;
     /** La copie prise **avant** l'action, annoncée avant et non après. */
     backup: string | null;

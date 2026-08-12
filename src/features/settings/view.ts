@@ -70,7 +70,7 @@ export interface SettingsViewActions {
     installHooks(command: string): void;
     /** Le `remove` de l'état `installed`. */
     removeHooks(command: string): void;
-    /** `see the diff` — **n'écrit rien**, ouvre l'écran de conflit. */
+    /** `see the diff` — **n'écrit rien**, ouvre le diff de ce qu'Ash écrirait. */
     openConflict(command: string): void;
     /** `← back to the list`. */
     closeConflict(): void;
@@ -109,8 +109,8 @@ export interface SettingsScene {
     /**
      * L'entrée dont on regarde le conflit, ou `null`.
      *
-     * L'écran de conflit **remplace la liste** (§4.4) : ce n'est ni une modale ni un
-     * panneau. Rien n'y est écrit — c'est le refus lui-même qu'on affiche.
+     * L'écran du diff **remplace la liste** (§4.4) : ce n'est ni une modale ni un
+     * panneau. Rien ne s'y écrit tant que l'utilisateur n'a pas tranché.
      */
     conflict: string | null;
 }
@@ -142,7 +142,7 @@ export function settingsPanel(
     }
     const conflicting = scene.snapshot.tools.find((tool) => tool.command === scene.conflict);
     if (conflicting !== undefined) {
-        return conflictScreen(conflicting, () => {
+        return conflictScreen(conflicting, actions, () => {
             actions.closeConflict();
         });
     }

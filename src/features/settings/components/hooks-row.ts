@@ -38,8 +38,8 @@ export function hooksRow(tool: ToolDeclaration, actions: HooksRowActions): UiCom
         line.add(label("settings-hooks-file", hooks.file));
     }
 
-    // Un seul bouton, toujours présent, éteint quand il ne peut rien faire. La raison est
-    // celle du backend : c'est lui qui sait pourquoi la ligne ne laisse rien faire.
+    // Un bouton principal, toujours présent, éteint quand il ne peut rien faire. La raison
+    // est celle du backend : c'est lui qui sait pourquoi la ligne ne laisse rien faire.
     const action = button(hookActionLabel(hooks.action))
         .class("settings-button", hooks.action === "remove" ? "" : "is-primary")
         .onClick(() => {
@@ -49,7 +49,23 @@ export function hooksRow(tool: ToolDeclaration, actions: HooksRowActions): UiCom
         });
     if (!hooks.enabled) action.disabled(hooks.summary);
 
-    return line.add(spacer(), action);
+    line.add(spacer());
+
+    // **Le diff s'ouvre avant toute écriture, pas seulement devant un conflit.** Un bouton
+    // qui va écrire dans le fichier de quelqu'un doit pouvoir dire ce qu'il y écrira, et le
+    // backend porte ce diff dès qu'il y a quelque chose à écrire
+    // ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), amendement du 2026-08-12).
+    if (hooks.diff !== null && hooks.action !== "seeTheDiff") {
+        line.add(
+            button(hookActionLabel("seeTheDiff"))
+                .class("settings-button")
+                .onClick(() => {
+                    actions.openConflict(tool.command);
+                }),
+        );
+    }
+
+    return line.add(action);
 }
 
 /**
