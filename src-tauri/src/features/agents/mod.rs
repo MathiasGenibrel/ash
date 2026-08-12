@@ -50,7 +50,9 @@ mod socket;
 mod state;
 mod wire;
 
-pub use adapter::{Adapter, Instrumentation, RawEvent, SubagentSupport};
+pub use adapter::{
+    hook_mark, Adapter, HookEntry, Instrumentation, RawEvent, SubagentSupport, HOOK_MARK,
+};
 pub use adapters::{ClaudeCodeAdapter, GenericAdapter};
 pub use error::AgentError;
 pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};

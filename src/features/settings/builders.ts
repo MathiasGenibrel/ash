@@ -64,10 +64,17 @@ export function aHooksReport(overrides: Partial<HooksReport> = {}): HooksReport 
     return {
         state: "installed",
         summary: "installed · v1",
-        note: "remove deletes the block and its markers.",
+        note: "remove takes out the entries carrying ash's marker.",
         file: "/home/someone/.claude/settings.json",
         action: "remove",
         enabled: true,
+        choices: [
+            {
+                action: "remove",
+                label: "remove ash's hooks",
+                note: "the entries carrying ash's marker are taken out; yours stay.",
+            },
+        ],
         diff: null,
         backup: "/home/someone/.claude/settings.json.bak",
         ...overrides,

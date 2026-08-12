@@ -4,18 +4,18 @@ import { findAll, plainText } from "@/shared/ui";
 
 import { diffView } from "./diff-view";
 
-describe("le diff d'un conflit", () => {
+describe("le diff de ce qu'Ash écrirait", () => {
     it("Given the diff the backend sends, when it is displayed, then the legend reads it in the backend's direction", () => {
-        // Given — `−` est ce qu'Ash écrirait, `+` ce que le fichier porte. La maquette
-        // légende l'inverse ; suivre sa légende ferait lire chaque ligne à l'envers, la
-        // seule faute qu'un diff ne pardonne pas
-        const diff = "--- ash\n+++ file\n-  \"ash-event done\"\n+  \"ash-event done --quiet\"\n   \"hooks\": {";
+        // Given — `−` est le fichier tel qu'il est, `+` tel qu'Ash le laisserait : c'est le
+        // sens d'un diff qu'on s'apprête à appliquer. Légender l'inverse ferait lire chaque
+        // ligne à l'envers, la seule faute qu'un diff ne pardonne pas
+        const diff = "--- file\n+++ ash\n-  \"rtk hook claude\"\n+  \"ash-event waiting\"\n   \"hooks\": {";
 
         // When
         const legends = findAll(diffView(diff).build(), "settings-diff-legend").map(plainText);
 
         // Then
-        expect(legends).toEqual(["− the ash block", "+ this file"]);
+        expect(legends).toEqual(["− the file as it is", "+ what ash would write"]);
     });
 
     it("Given a diff whose header names two files, when it is displayed, then the header is not shown as a change", () => {
@@ -30,12 +30,14 @@ describe("le diff d'un conflit", () => {
         expect(lines).toEqual(["− old", "+ new"]);
     });
 
-    it("Given a conflict, when the diff is displayed, then it says that ash touches nothing until it is settled", () => {
-        // Given — l'écran de conflit est le refus lui-même : il n'écrit rien, et il le dit
-        // (ADR-0007)
+    it("Given a write to come, when the diff is displayed, then it says that nothing happens until the user chooses", () => {
+        // Given — le diff précède l'écriture, et ne la déclenche pas. « Jamais silencieux »
+        // veut dire que c'est le clic de l'utilisateur qui écrit, et l'écran doit le dire
+        // avant qu'il ne clique (ADR-0007, amendement du 2026-08-12)
         const said = plainText(diffView("-a\n+b"));
 
         // Then
-        expect(said).toContain("outside the ash block the file is untouched");
+        expect(said).toContain("nothing is written until you choose");
+        expect(said).toContain("entries carrying its own marker");
     });
 });

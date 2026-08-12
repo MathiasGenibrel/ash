@@ -63,7 +63,7 @@ mod values;
 mod verification;
 
 pub use error::SettingsError;
-pub use hooks::{BlockAt, HookAction, HookState, HooksReport};
+pub use hooks::{BlockAt, HookAction, HookChoice, HookState, HooksReport};
 pub use ports::{CommandRunner, ConfigFiles, HookBlocks};
 pub use registry::ToolRegistry;
 pub use system::{SystemCommands, SystemConfigFiles};

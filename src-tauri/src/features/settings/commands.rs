@@ -409,6 +409,7 @@ mod tests {
             file: None,
             action: HookAction::Install,
             enabled: false,
+            choices: Vec::new(),
             diff: None,
             backup: None,
         };

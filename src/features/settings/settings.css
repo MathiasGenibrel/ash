@@ -631,6 +631,27 @@
     color: var(--ash-fg-faint);
 }
 
+/* Les issues du diff : un bouton, et **à côté de lui** ce qu'il fait au fichier. Un bouton
+ * qui écrit chez quelqu'un ne se lit pas sans savoir ce qu'il y écrit. */
+.settings-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 12px 12px;
+}
+
+.settings-choice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-choice-note {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ash-fg-subtle);
+}
+
 .settings-button.is-nowrap {
     white-space: nowrap;
     flex: none;

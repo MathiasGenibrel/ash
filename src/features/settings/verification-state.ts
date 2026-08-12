@@ -181,7 +181,7 @@ const HOOK_PRESENTATIONS: Readonly<Record<HookState, HookPresentation>> = {
         showsFile: true,
     },
     conflict: {
-        label: "hook block edited by hand",
+        label: "something here isn't ash's",
         className: "is-invalid",
         rowClassName: "is-conflict",
         showsFile: true,

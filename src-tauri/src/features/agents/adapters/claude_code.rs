@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::features::agents::adapter::{Adapter, Instrumentation, RawEvent, SubagentSupport};
+use crate::features::agents::adapter::{
+    hook_mark, Adapter, HookEntry, Instrumentation, RawEvent, SubagentSupport,
+};
 use crate::features::agents::state::AgentState;
 
 /// La version du bloc que cet adaptateur compose.
@@ -99,11 +101,18 @@ impl ClaudeCodeAdapter {
     }
 
     /// La ligne de commande d'un hook, telle qu'un shell la lira.
+    ///
+    /// Elle finit par le **marqueur d'Ash**, en commentaire de shell : c'est à lui que la
+    /// feature `hooks` reconnaît ses propres entrées au milieu de celles de l'utilisateur,
+    /// et un `#` en fin de ligne ne change rien à ce que le shell exécute
+    /// ([ADR-0007](../../../../../docs/adr/0007-etats-par-hooks.md), amendement du
+    /// 2026-08-12).
     fn invocation(&self, state: AgentState) -> Option<String> {
         Some(format!(
-            "{} {} --tab \"$ASH_TAB_ID\"",
+            "{} {} --tab \"$ASH_TAB_ID\" {}",
             shell_quoted(&self.event_binary),
-            declared_word(state)?
+            declared_word(state)?,
+            hook_mark(BLOCK_VERSION),
         ))
     }
 }
@@ -124,14 +133,21 @@ impl Adapter for ClaudeCodeAdapter {
     /// d'`ash-event` finit dans une chaîne JSON, et c'est le sérialiseur qui doit décider
     /// comment y échapper un guillemet ou un antislash.
     fn instrumentation(&self, config_dir: &Path) -> Option<Instrumentation> {
-        let mut hooks = serde_json::Map::new();
+        let mut entries = Vec::with_capacity(HOOKS.len());
         for (hook, state) in HOOKS {
-            hooks.insert(hook.to_owned(), self.entry_for(hook, state)?);
+            entries.push(HookEntry {
+                // `settings.json` range les hooks de Claude Code sous `hooks`, une clé par
+                // événement, et chaque clé porte un **tableau** de groupes. C'est ce chemin
+                // que la feature `hooks` descend pour fusionner : elle n'a besoin de rien
+                // d'autre, et surtout pas de connaître Claude Code.
+                path: vec!["hooks".to_owned(), hook.to_owned()],
+                item: self.item_for(hook, state)?,
+            });
         }
 
         Some(Instrumentation {
             file: config_dir.join("settings.json"),
-            block: as_object_entries(&serde_json::json!({ "hooks": hooks }))?,
+            entries,
             version: BLOCK_VERSION,
         })
     }
@@ -172,8 +188,12 @@ impl Adapter for ClaudeCodeAdapter {
 }
 
 impl ClaudeCodeAdapter {
-    /// Une entrée de la table `hooks` de Claude Code, dans sa forme attendue.
-    fn entry_for(&self, hook: &str, state: AgentState) -> Option<serde_json::Value> {
+    /// Un groupe de la table `hooks` de Claude Code, dans sa forme attendue.
+    ///
+    /// **Sur une seule ligne, et compact.** C'est ce que la feature `hooks` insère dans le
+    /// tableau de l'utilisateur, à côté des siens : une ligne se retire exactement comme
+    /// elle a été posée, et ne réindente rien autour d'elle.
+    fn item_for(&self, hook: &str, state: AgentState) -> Option<String> {
         let command = serde_json::json!({
             "type": "command",
             "command": self.invocation(state)?,
@@ -186,9 +206,7 @@ impl ClaudeCodeAdapter {
         }
         group.insert("hooks".to_owned(), serde_json::Value::Array(vec![command]));
 
-        Some(serde_json::Value::Array(vec![serde_json::Value::Object(
-            group,
-        )]))
+        serde_json::to_string(&serde_json::Value::Object(group)).ok()
     }
 }
 
@@ -219,17 +237,6 @@ fn shell_quoted(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
 }
 
-/// Le corps d'un objet JSON — ses entrées, indentées de deux espaces, sans les accolades.
-///
-/// La feature `hooks` insère ce texte **tel quel** entre ses marqueurs, à l'intérieur de
-/// l'objet racine du `settings.json`. Rendre l'objet complet obligerait `hooks` à le
-/// rouvrir pour en retirer les accolades, donc à connaître le format de l'outil.
-fn as_object_entries(value: &serde_json::Value) -> Option<String> {
-    let pretty = serde_json::to_string_pretty(value).ok()?;
-    let body = pretty.strip_prefix("{\n")?.strip_suffix("\n}")?;
-    (!body.trim().is_empty()).then(|| body.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,7 +250,23 @@ mod tests {
         ))
     }
 
-    /// Les événements que ce bloc fera réellement remonter — la forme canonique de la
+    /// Tout ce que l'adaptateur fera écrire, en un seul texte — la façon la plus directe
+    /// de vérifier qu'un mot y figure.
+    fn written(adapter: &ClaudeCodeAdapter) -> String {
+        adapter
+            .instrumentation(Path::new("/home/someone/.claude"))
+            .map(|instrumentation| {
+                instrumentation
+                    .entries
+                    .iter()
+                    .map(|entry| entry.item.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    }
+
+    /// Les événements que ces entrées feront réellement remonter — la forme canonique de la
     /// spec §6.3, pas les noms de hooks de Claude Code.
     fn own_events() -> Vec<RawEvent> {
         ["working", "waiting", "done", "error"]
@@ -274,10 +297,7 @@ mod tests {
         // `interpret` ne saurait pas relire serait un état perdu en silence, et
         // introuvable : il faudrait lancer un vrai agent pour s'en apercevoir.
         let adapter = adapter();
-        let block = adapter
-            .instrumentation(Path::new("/home/someone/.claude"))
-            .map(|instrumentation| instrumentation.block)
-            .unwrap_or_default();
+        let written = written(&adapter);
 
         // When — les mots que la table peut écrire, relus tels qu'`ash-event` les postera
         let round_trip: Vec<Option<AgentState>> = HOOKS
@@ -285,8 +305,8 @@ mod tests {
             .map(|(_, state)| {
                 let word = declared_word(*state).unwrap_or("");
                 assert!(
-                    block.contains(&format!(r#"ash-event' {word} --tab \"$ASH_TAB_ID\""#)),
-                    "le bloc n'écrit pas « {word} » :\n{block}"
+                    written.contains(&format!(r#"ash-event' {word} --tab \"$ASH_TAB_ID\""#)),
+                    "les entrées n'écrivent pas « {word} » :\n{written}"
                 );
                 adapter.interpret(&RawEvent::new(word))
             })
@@ -354,7 +374,7 @@ mod tests {
         // seule apostrophe présente est celle, échappée, du nom du dossier.
         assert_eq!(
             line,
-            r#"'/Users/x/Ash'\''; rm -rf ~; '\''/ash-event' waiting --tab "$ASH_TAB_ID""#
+            r#"'/Users/x/Ash'\''; rm -rf ~; '\''/ash-event' waiting --tab "$ASH_TAB_ID" # ash:hook v1"#
         );
     }
 
@@ -366,21 +386,30 @@ mod tests {
         // ailleurs que là où l'outil les cherche, Claude Code l'ignorerait sans un mot et
         // aucun état ne remonterait jamais.
         let adapter = adapter();
-        let block = adapter
+        let instrumentation = adapter
             .instrumentation(Path::new("/home/someone/.claude"))
-            .map(|instrumentation| instrumentation.block)
-            .unwrap_or_default();
+            .unwrap_or_else(|| panic!("claude-code instrumente toujours"));
 
-        // When — les accolades que `hooks` remettra autour des entrées
-        let parsed: serde_json::Value =
-            serde_json::from_str(&format!("{{\n{block}\n}}")).unwrap_or(serde_json::Value::Null);
+        // When — chaque entrée, relue là où son chemin dit qu'elle ira
+        let mut hooks = serde_json::Map::new();
+        for entry in &instrumentation.entries {
+            let item: serde_json::Value = serde_json::from_str(&entry.item).unwrap_or_else(|why| {
+                panic!("l'entrée n'est pas du JSON ({why}) : {}", entry.item)
+            });
+            assert_eq!(
+                entry.path.first().map(String::as_str),
+                Some("hooks"),
+                "les hooks de Claude Code vivent sous `hooks`"
+            );
+            let event = entry.path.get(1).cloned().unwrap_or_default();
+            hooks.insert(event, serde_json::Value::Array(vec![item]));
+        }
 
         // Then
-        let hooks = &parsed["hooks"];
         for (hook, _) in HOOKS {
             assert!(
                 hooks[hook][0]["hooks"][0]["type"] == "command",
-                "le hook {hook} n'a pas la forme attendue : {parsed:#}"
+                "le hook {hook} n'a pas la forme attendue : {hooks:#?}"
             );
         }
         assert_eq!(hooks["PreToolUse"][0]["matcher"], "*");

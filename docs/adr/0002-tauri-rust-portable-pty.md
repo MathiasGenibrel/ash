@@ -27,7 +27,7 @@ src-tauri/src/        Rust
     agents/           trait Adapter, machine à états, socket unix ← ash-event
     git/              refs, worktrees, graphe, état de rebase     (ADR-0011)
     journal/          attribution commit → agent                  (ADR-0014)
-    hooks/            bloc délimité dans les settings.json
+    hooks/            entrées marquées dans les settings.json     (ADR-0007)
 src/                  TypeScript
   app/                composition root
   features/

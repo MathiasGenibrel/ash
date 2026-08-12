@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::block::Document;
+use super::document::Document;
 
 /// Les fichiers de configuration **de l'utilisateur**, derrière un trait que la feature
 /// possède.

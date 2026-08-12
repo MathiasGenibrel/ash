@@ -12,7 +12,7 @@
 
 use std::path::{Component, Path};
 
-use super::adapter::{Adapter, RawEvent};
+use super::adapter::{hook_mark, Adapter, RawEvent};
 use super::state::AgentState;
 
 /// Les invariants du contrat, un par un.
@@ -32,7 +32,9 @@ pub(crate) enum Invariant {
     InstrumentationIsACapability,
     InstrumentationIsDeterministic,
     InstrumentationStaysUnderTheConfigDir,
-    InstrumentationBlockIsNotEmpty,
+    InstrumentationDescribesAtLeastOneEntry,
+    InstrumentationEntriesCarryTheirMark,
+    InstrumentationEntriesNameWhereTheyGo,
     InstrumentationVersionStartsAtOne,
     InstrumentationIsPerConfigDir,
 }
@@ -76,9 +78,18 @@ impl Invariant {
                  donné : Ash écrit dans les fichiers de l'utilisateur, et la cible ne se \
                  négocie pas (ADR-0007)"
             }
-            Self::InstrumentationBlockIsNotEmpty => {
-                "instrumentation().block ne doit pas être vide : `hooks` écrirait des \
-                 marqueurs autour de rien"
+            Self::InstrumentationDescribesAtLeastOneEntry => {
+                "instrumentation() doit décrire au moins une entrée : sans elle, `hooks` \
+                 écrirait chez l'utilisateur sans rien y poser"
+            }
+            Self::InstrumentationEntriesCarryTheirMark => {
+                "chaque entrée doit porter le marqueur de sa version : c'est à lui seul \
+                 qu'Ash reconnaît ce qui est à lui dans le fichier de l'utilisateur, donc \
+                 ce qu'il a le droit de retirer (ADR-0007)"
+            }
+            Self::InstrumentationEntriesNameWhereTheyGo => {
+                "chaque entrée doit nommer le chemin de clés qui mène à son tableau : \
+                 `hooks` fusionne sans connaître un seul outil, et ne devine aucun chemin"
             }
             Self::InstrumentationVersionStartsAtOne => {
                 "instrumentation().version doit démarrer à 1 : la version 0 ne se distingue \
@@ -265,8 +276,21 @@ fn check_instrumentation(adapter: &dyn Adapter, report: &mut ContractReport) {
             Invariant::InstrumentationStaysUnderTheConfigDir,
         );
         report.require(
-            !instrumentation.block.trim().is_empty(),
-            Invariant::InstrumentationBlockIsNotEmpty,
+            !instrumentation.entries.is_empty(),
+            Invariant::InstrumentationDescribesAtLeastOneEntry,
+        );
+        report.require(
+            instrumentation
+                .entries
+                .iter()
+                .all(|entry| entry.item.contains(&hook_mark(instrumentation.version))),
+            Invariant::InstrumentationEntriesCarryTheirMark,
+        );
+        report.require(
+            instrumentation.entries.iter().all(|entry| {
+                !entry.path.is_empty() && entry.path.iter().all(|key| !key.is_empty())
+            }),
+            Invariant::InstrumentationEntriesNameWhereTheyGo,
         );
         report.require(
             instrumentation.version >= 1,
@@ -285,7 +309,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::features::agents::adapter::{Instrumentation, SubagentSupport};
+    use crate::features::agents::adapter::{HookEntry, Instrumentation, SubagentSupport};
 
     /// Un adaptateur de test, réglable défaut par défaut — c'est ce qui permet de vérifier
     /// que la suite contractuelle **attrape** ce qu'elle prétend attraper.
@@ -340,7 +364,10 @@ mod tests {
         fn instrumentation(&self, _config_dir: &Path) -> Option<Instrumentation> {
             self.instrumented_file.as_ref().map(|file| Instrumentation {
                 file: file.clone(),
-                block: "{}".to_owned(),
+                entries: vec![HookEntry {
+                    path: vec!["hooks".to_owned(), "Stop".to_owned()],
+                    item: format!("{{\"command\": \"fake {}\"}}", hook_mark(1)),
+                }],
                 version: 1,
             })
         }
