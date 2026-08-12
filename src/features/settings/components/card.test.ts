@@ -66,8 +66,8 @@ describe("la carte d'une entrée déclarée", () => {
         const field = find(toolCard(aTool(), context(), actions).build(), "settings-path");
 
         // When
-        field?.on["input"]?.({ value: "~/.claude/pro", key: "o" });
-        field?.on["keydown"]?.({ value: "~/.claude/pro", key: "Enter" });
+        field?.on["input"]?.({ value: "~/.claude/pro", key: "o", shiftKey: false });
+        field?.on["keydown"]?.({ value: "~/.claude/pro", key: "Enter", shiftKey: false });
 
         // Then
         expect(actions.asked).toEqual(["type claude ~/.claude/pro", "commit claude"]);
@@ -125,6 +125,7 @@ describe("la carte d'une entrée déclarée", () => {
         find(described, "settings-card-adapter")?.on["change"]?.({
             value: "claude-code",
             key: "",
+            shiftKey: false,
         });
 
         // Then
@@ -139,7 +140,7 @@ describe("la carte d'une entrée déclarée", () => {
 
         // When
         const was = find(toolCard(tool, context(), actions).build(), "settings-was");
-        find(was ?? text(""), "settings-link")?.on["click"]?.({ value: "", key: "" });
+        find(was ?? text(""), "settings-link")?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then
         expect(plainText(find(was ?? text(""), "settings-was-path") ?? text(""))).toBe("~/.claude/old");

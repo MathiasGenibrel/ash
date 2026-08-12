@@ -83,6 +83,27 @@ describe("une description d'interface", () => {
         expect(plainText(described)).toBe("claude");
     });
 
+    it("Given two handlers posed on the same event, when it fires, then both run in the order they were posed", () => {
+        // Given — les gestionnaires sont indexés par nom d'événement : une affectation nue
+        // perdrait le premier en silence, et la panne ne se verrait qu'à la souris. Le cas
+        // se produit dès qu'une primitive pose un `click` et que le composite qui l'emploie
+        // en pose un second — ou qu'un champ répond à `⏎` **et** à `⎋`, tous deux `keydown`.
+        const heard: string[] = [];
+        const built = button("install")
+            .onClick(() => {
+                heard.push("la primitive");
+            })
+            .on("click", () => {
+                heard.push("le composite");
+            });
+
+        // When
+        built.build().on["click"]?.({ value: "", key: "", shiftKey: false });
+
+        // Then
+        expect(heard).toEqual(["la primitive", "le composite"]);
+    });
+
     it("Given an attribute whose rule belongs to a primitive, when a component writes it by hand, then it does not compile", () => {
         // Given / When — `attr` est l'échappatoire du socle : si elle peut réécrire
         // `disabled`, la raison obligatoire d'un bouton éteint n'est plus qu'une convention.

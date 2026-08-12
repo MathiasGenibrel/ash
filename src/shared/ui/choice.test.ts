@@ -45,7 +45,7 @@ describe("un choix parmi une liste", () => {
             .build();
 
         // When
-        described.on["change"]?.({ value: "claude-code", key: "" });
+        described.on["change"]?.({ value: "claude-code", key: "", shiftKey: false });
 
         // Then
         expect(picked).toEqual(["claude-code"]);

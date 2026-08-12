@@ -15,7 +15,7 @@ describe("un champ de saisie", () => {
             .build();
 
         // When
-        described.on["input"]?.({ value: "~/.claude/settings.json", key: "" });
+        described.on["input"]?.({ value: "~/.claude/settings.json", key: "", shiftKey: false });
 
         // Then
         expect(typed).toEqual(["~/.claude/settings.json"]);
@@ -42,11 +42,53 @@ describe("un champ de saisie", () => {
             .build();
 
         // When
-        described.on["keydown"]?.({ value: "~/.cl", key: "l" });
-        described.on["keydown"]?.({ value: "~/.claude", key: "Enter" });
+        described.on["keydown"]?.({ value: "~/.cl", key: "l", shiftKey: false });
+        described.on["keydown"]?.({ value: "~/.claude", key: "Enter", shiftKey: false });
 
         // Then
         expect(done).toHaveLength(1);
+    });
+
+    it("Given a field whose submission has two directions, when Enter is pressed with and without Shift, then the same gesture is reported reversed", () => {
+        // Given — `⇧⏎` n'est pas un second geste : c'est le même, pris à l'envers. La
+        // recherche du scrollback (#79) en dépend, `⏎` allant à l'occurrence suivante et
+        // `⇧⏎` à la précédente
+        const directions: boolean[] = [];
+        const described = field("search")
+            .onSubmit(({ reversed }) => {
+                directions.push(reversed);
+            })
+            .build();
+
+        // When
+        described.on["keydown"]?.({ value: "todo", key: "Enter", shiftKey: false });
+        described.on["keydown"]?.({ value: "todo", key: "Enter", shiftKey: true });
+
+        // Then
+        expect(directions).toEqual([false, true]);
+    });
+
+    it("Given a field that both submits and cancels, when each of the two keys is pressed, then neither handler has replaced the other", () => {
+        // Given — les gestionnaires sont indexés par nom d'événement, et `⏎` comme `⎋`
+        // arrivent en `keydown` : sans table de touches, le second appel écraserait le
+        // premier et la panne ne se verrait qu'au clavier
+        const gestures: string[] = [];
+        const described = field("search")
+            .onSubmit(() => {
+                gestures.push("submit");
+            })
+            .onCancel(() => {
+                gestures.push("cancel");
+            })
+            .build();
+
+        // When
+        described.on["keydown"]?.({ value: "todo", key: "Escape", shiftKey: false });
+        described.on["keydown"]?.({ value: "todo", key: "Enter", shiftKey: false });
+        described.on["keydown"]?.({ value: "todo", key: "o", shiftKey: false });
+
+        // Then
+        expect(gestures).toEqual(["cancel", "submit"]);
     });
 
     it("Given a field, when it is described, then it names itself for a screen reader", () => {

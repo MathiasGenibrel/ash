@@ -168,6 +168,92 @@
     visibility: visible;
 }
 
+/* --- la recherche dans le scrollback (`⌘F`) ---------------------------------
+ *
+ * Ancrée sur la surface de **l'onglet**, et non sur la fenêtre : un onglet porte au plus un
+ * PTY, donc au plus un scrollback (ADR-0003). Elle se masque avec lui — `.terminal-pane`
+ * masqué emporte ses enfants — et aucune recherche ne suit d'un onglet à l'autre.
+ *
+ * Le conteneur est vide tant que le champ est fermé : sans `is-open`, il n'occupe rien et
+ * ne mange aucun clic. */
+.terminal-search {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    display: none;
+    /* Ne jamais déborder d'une fenêtre à 800 px de large, sidebar comprise : le champ se
+     * comprime, le compteur et les boutons gardent leur taille. */
+    max-width: calc(100% - 12px);
+}
+
+.terminal-search.is-open {
+    display: block;
+}
+
+.terminal-search .terminal-search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: var(--ash-bg-chrome);
+    border: 1px solid var(--ash-border);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+    font-size: 11px;
+    color: var(--ash-fg);
+}
+
+.terminal-search .terminal-search-field {
+    font: inherit;
+    /* Le champ est le seul élément élastique de la rangée. `min-width: 0` l'autorise à se
+     * comprimer sous sa largeur intrinsèque — sans lui, flex refuse et la boîte déborde. */
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 14ch;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--ash-fg);
+    background: var(--ash-bg);
+    border: 1px solid var(--ash-control-border);
+}
+
+.terminal-search .terminal-search-field:focus {
+    outline: none;
+    border-color: var(--ash-accent);
+}
+
+.terminal-search .terminal-search-tally {
+    flex: none;
+    color: var(--ash-fg-meta);
+    /* Sans ça, le compteur danse à chaque occurrence parcourue. */
+    font-variant-numeric: tabular-nums;
+}
+
+.terminal-search .terminal-search-step,
+.terminal-search .terminal-search-close {
+    font: inherit;
+    flex: none;
+    color: inherit;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    padding: 2px 5px;
+    cursor: pointer;
+}
+
+.terminal-search .terminal-search-step:hover:not([disabled]),
+.terminal-search .terminal-search-close:hover {
+    background: color-mix(in srgb, var(--ash-fg) 12%, transparent);
+}
+
+/* Éteint **avec sa raison**, jamais masqué : la règle est tenue par `disabled(reason)`,
+ * qui pose l'attribut et l'infobulle ensemble. Ici, on ne fait que la rendre visible. */
+.terminal-search .terminal-search-step[disabled] {
+    color: var(--ash-fg-disabled);
+    cursor: default;
+}
+
 /* La confirmation de fermeture (`⌘W` sur un onglet où quelque chose tourne). Ancrée sur
  * `.terminal-workbench`, pas sur la fenêtre : elle appartient à la zone terminal. */
 .ash-confirm {

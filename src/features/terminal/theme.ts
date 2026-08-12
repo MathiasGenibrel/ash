@@ -1,3 +1,4 @@
+import type { ISearchOptions } from "@xterm/addon-search";
 import type { ITheme } from "@xterm/xterm";
 
 /**
@@ -68,6 +69,68 @@ export function toXtermTheme(read: TokenReader): ITheme {
         if (color !== undefined && color !== "") theme[key] = color;
     }
     return theme;
+}
+
+/** Le surlignage des occurrences, tel que l'addon de recherche l'attend. */
+export type SearchDecorations = NonNullable<ISearchOptions["decorations"]>;
+
+/**
+ * Les couleurs du surlignage, prises dans la même table que le reste.
+ *
+ * Deux règles, et elles se voient dans le choix des tokens :
+ *
+ * - **le fond ne crie jamais.** Une occurrence est peinte avec `--ash-rule`, le gris des
+ *   filets, dans les deux palettes. Le terminal garde la couleur de son texte — Ash ne
+ *   peut pas la connaître, un `ls` colorié en décide ligne par ligne —, donc un fond vif
+ *   rendrait la ligne trouvée illisible dans au moins un des deux thèmes ;
+ * - **l'occurrence courante se distingue par sa bordure**, en `--ash-accent`. C'est la
+ *   seule marque qui ne touche pas au contraste du texte.
+ *
+ * Les deux tokens sont écrits en `#RRGGBB` dans les deux paliers de `app/styles.css`, ce
+ * que l'addon exige pour ses fonds — un `rgb(… / …)` y serait ignoré.
+ */
+export const SEARCH_DECORATION_TOKENS = {
+    /** Le fond de toutes les occurrences, courante comprise. */
+    match: "--ash-rule",
+    /** La bordure de la seule occurrence courante. */
+    active: "--ash-accent",
+} as const;
+
+/**
+ * Traduit les tokens résolus en options de surlignage — ou **rien**.
+ *
+ * Rien plutôt qu'un défaut : les deux couleurs de la règle de défilement sont obligatoires
+ * pour l'addon, et une couleur écrite ici pour combler un token manquant survivrait à tout
+ * ajustement de la palette. Sans décoration, la recherche continue de fonctionner — elle
+ * sélectionne l'occurrence — mais ne surligne plus, et ne compte plus : c'est une
+ * dégradation lisible, pas une panne silencieuse.
+ */
+export function toSearchDecorations(read: TokenReader): SearchDecorations | undefined {
+    const match = read(SEARCH_DECORATION_TOKENS.match)?.trim();
+    const active = read(SEARCH_DECORATION_TOKENS.active)?.trim();
+    if (match === undefined || match === "") return undefined;
+    if (active === undefined || active === "") return undefined;
+
+    return {
+        matchBackground: match,
+        matchBorder: match,
+        matchOverviewRuler: match,
+        activeMatchBackground: match,
+        activeMatchBorder: active,
+        activeMatchColorOverviewRuler: active,
+    };
+}
+
+/**
+ * Le surlignage tel que le document le porte **en ce moment**.
+ *
+ * Relu à chaque recherche, et non gardé : l'addon prend ses couleurs en paramètre de
+ * `findNext`, donc une bascule de thème pendant qu'un champ est ouvert se répercute à la
+ * frappe suivante sans qu'aucun abonnement ne soit nécessaire.
+ */
+export function readSearchDecorations(): SearchDecorations | undefined {
+    const style = getComputedStyle(document.documentElement);
+    return toSearchDecorations((token) => style.getPropertyValue(token));
 }
 
 /**

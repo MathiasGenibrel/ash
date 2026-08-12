@@ -34,18 +34,18 @@ import type { KeyChord } from "./key-bindings";
  * Ce qu'un accord déclenche dans la vue.
  *
  * Une union de chaînes plutôt qu'un `enum` : elle s'étend par ajout, et l'ajout se voit.
- * La recherche dans le scrollback (#79) viendra s'y greffer, et le `switch` exhaustif
- * d'`applyKeyAction` refusera alors de compiler tant que la nouvelle action n'aura pas
- * son effet — c'est le point de branchement prévu.
+ * Le `switch` exhaustif d'`applyKeyAction` refuse de compiler tant qu'une action nouvelle
+ * n'a pas son effet — c'est par là que `open-search` est arrivée.
  */
 export type KeyAction =
     | "scroll-page-up"
     | "scroll-page-down"
     | "scroll-line-up"
-    | "scroll-line-down";
+    | "scroll-line-down"
+    | "open-search";
 
 /** Les seules valeurs de `KeyboardEvent.key` que cette table nomme. */
-type ScrollKey = "ArrowUp" | "ArrowDown";
+type ActionKey = "ArrowUp" | "ArrowDown" | "f";
 
 /**
  * L'accord, écrit comme on le lit : ses modificateurs puis sa touche.
@@ -56,27 +56,36 @@ type ScrollKey = "ArrowUp" | "ArrowDown";
  * recouvrement silencieux, où la seconde ligne serait morte sans qu'aucun test ne le
  * dise, n'est pas représentable.
  */
-type Chord = `${"" | "⇧"}⌘${ScrollKey}`;
+type Chord = `${"" | "⇧"}⌘${ActionKey}`;
 
 /**
- * Les quatre raccourcis de défilement, et rien d'autre.
+ * Les raccourcis d'affichage du terminal, et rien d'autre.
  *
- * `⌘` seul pagine, `⌘⇧` avance d'une ligne : la modulation par ⇧ suit la convention de
- * Terminal.app et d'iTerm, où le modificateur supplémentaire affine le geste plutôt que
- * de l'inverser.
+ * Pour le défilement : `⌘` seul pagine, `⌘⇧` avance d'une ligne — la modulation par ⇧ suit
+ * la convention de Terminal.app et d'iTerm, où le modificateur supplémentaire affine le
+ * geste plutôt que de l'inverser.
  *
  * Les flèches **nues** n'y figurent pas, et ne doivent jamais y figurer : ce sont elles
  * qui parcourent l'historique de `zsh`. Ce sont deux navigations différentes — l'une dans
  * le tampon d'affichage, l'autre dans les commandes passées — et la seconde appartient au
  * shell.
+ *
+ * Une **seule** table, et non une par famille de raccourcis : c'est l'objet littéral qui
+ * porte la garantie de non-recouvrement — deux entrées pour le même accord n'y sont pas
+ * représentables. Deux tables fusionnées par un `...` la perdraient exactement là où elle
+ * sert, la seconde écrasant la première en silence.
  */
-const SCROLLING = {
+const DISPLAY_ACTIONS = {
     // Page précédente / suivante.
     "⌘ArrowUp": "scroll-page-up",
     "⌘ArrowDown": "scroll-page-down",
     // Une ligne vers le haut / vers le bas.
     "⇧⌘ArrowUp": "scroll-line-up",
     "⇧⌘ArrowDown": "scroll-line-down",
+    // La recherche dans le scrollback — `⌘F`, ce que tout le monde tape. `⇧⌘F` n'y est
+    // pas : `⇧` module la navigation **dans** le champ, une fois ouvert, pas son
+    // ouverture.
+    "⌘f": "open-search",
 } satisfies Partial<Record<Chord, KeyAction>>;
 
 /**
@@ -85,7 +94,7 @@ const SCROLLING = {
  * L'affectation élargit le type sans `as` : les clés restent vérifiées à l'écriture, et
  * la résolution peut y chercher n'importe quelle touche du clavier.
  */
-const BY_CHORD: Readonly<Record<string, KeyAction | undefined>> = SCROLLING;
+const BY_CHORD: Readonly<Record<string, KeyAction | undefined>> = DISPLAY_ACTIONS;
 
 /**
  * L'action qu'un accord déclenche, ou `null` s'il ne nous regarde pas.
@@ -98,8 +107,25 @@ export function resolveKeyAction(chord: KeyChord): KeyAction | null {
     if (chord.type !== "keydown") return null;
     if (chord.ctrlKey || chord.altKey) return null;
 
-    const pressed = `${chord.shiftKey ? "⇧" : ""}${chord.metaKey ? "⌘" : ""}${chord.key}`;
+    const pressed = `${chord.shiftKey ? "⇧" : ""}${chord.metaKey ? "⌘" : ""}${asTyped(chord.key)}`;
     return BY_CHORD[pressed] ?? null;
+}
+
+/**
+ * La touche telle que la table la nomme, verrou majuscules compris.
+ *
+ * `KeyboardEvent.key` porte le **caractère produit**, pas la touche pressée : verrou
+ * majuscules enfoncé, `⌘F` arrive en `"F"` avec `shiftKey` à `false`, et la table — qui
+ * dit `⌘f` — ne le reconnaîtrait pas. Le raccourci serait alors muet, sans rien qui
+ * l'explique.
+ *
+ * Seules les touches d'**un** caractère sont ramenées en bas de casse : les touches nommées
+ * (`ArrowUp`) en font plus d'un, et leur casse porte du sens. La modulation par ⇧ n'est pas
+ * perdue pour autant — elle est lue sur `shiftKey`, jamais sur la casse, donc `⇧⌘F` reste
+ * un accord distinct de `⌘F`.
+ */
+function asTyped(key: string): string {
+    return key.length === 1 ? key.toLowerCase() : key;
 }
 
 /**
@@ -116,13 +142,32 @@ export interface ScrollSurface {
 }
 
 /**
+ * Ce qu'il faut de plus pour ouvrir la recherche.
+ *
+ * Séparée du défilement parce que ce n'est pas la même chose qu'on tient : `Terminal`
+ * satisfait `ScrollSurface` de lui-même, alors qu'ouvrir un champ appartient à la vue.
+ * Les réunir en une interface unique ferait croire que xterm.js sait chercher.
+ */
+export interface SearchSurface {
+    /** Ouvre le champ de recherche de **cet** onglet, et lui donne le focus. */
+    openSearch(): void;
+}
+
+/** Tout ce qu'une action peut demander à l'onglet où elle est jouée. */
+export type ActionSurface = ScrollSurface & SearchSurface;
+
+/**
  * Exécute l'action sur la surface.
  *
  * Aucune borne n'est calculée ici : `scrollLines` et `scrollPages` bornent `ydisp` entre
  * le haut et le bas du tampon, donc arrivé au bout, l'appel ne fait simplement rien.
  * Recalculer cette limite ici la dupliquerait, et la ferait diverger.
+ *
+ * **Rien n'écrit dans le PTY**, ni ici ni dans ce que la surface déclenche : ce sont des
+ * gestes d'affichage, et ils appartiennent à l'onglet
+ * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)).
  */
-export function applyKeyAction(action: KeyAction, surface: ScrollSurface): void {
+export function applyKeyAction(action: KeyAction, surface: ActionSurface): void {
     switch (action) {
         case "scroll-page-up":
             surface.scrollPages(-1);
@@ -135,6 +180,9 @@ export function applyKeyAction(action: KeyAction, surface: ScrollSurface): void 
             return;
         case "scroll-line-down":
             surface.scrollLines(1);
+            return;
+        case "open-search":
+            surface.openSearch();
             return;
     }
 }
