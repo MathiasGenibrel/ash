@@ -43,8 +43,7 @@ impl ThemeState {
     /// simplement pas au redémarrage. Refuser la bascule pour cette raison serait
     /// incompréhensible.
     pub fn set_mode(&self, mode: ThemeMode) -> bool {
-        self.change(|appearance| appearance.mode = mode)
-            .is_some()
+        self.change(|appearance| appearance.mode = mode).is_some()
     }
 
     /// Joue un pas de taille de police. Rend la nouvelle taille, ou `None` si rien n'a
@@ -181,7 +180,10 @@ mod tests {
         let next = ThemeState::restore(store as Arc<dyn ThemeStore>);
 
         // Then
-        assert_eq!(next.font_size(), FontSize::DEFAULT.stepped(FontStep::Bigger));
+        assert_eq!(
+            next.font_size(),
+            FontSize::DEFAULT.stepped(FontStep::Bigger)
+        );
     }
 
     #[test]

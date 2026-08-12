@@ -155,7 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn given_a_size_the_user_has_changed_when_the_default_step_is_asked_then_it_is_thirteen_again() {
+    fn given_a_size_the_user_has_changed_when_the_default_step_is_asked_then_it_is_thirteen_again()
+    {
         // Given
         let grown = FontSize::DEFAULT
             .stepped(FontStep::Bigger)

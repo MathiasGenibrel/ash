@@ -5,7 +5,13 @@ import "@xterm/xterm/css/xterm.css";
 
 import { applyKeyAction, resolveKeyAction, type ActionSurface } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
-import type { TerminalSize, TerminalView, ThemeSignal, Unsubscribe } from "./ports";
+import type {
+    FontSizeSignal,
+    TerminalSize,
+    TerminalView,
+    ThemeSignal,
+    Unsubscribe,
+} from "./ports";
 import { TerminalSearch } from "./terminal-search";
 import { readTerminalTheme } from "./theme";
 
@@ -51,6 +57,8 @@ export class XtermView implements TerminalView {
             this.search.open();
         },
     };
+    private readonly unfollowFontSize: Unsubscribe;
+    private disposed = false;
 
     /**
      * Crée sa propre surface dans `parent`, et la retire en se libérant.
@@ -58,14 +66,17 @@ export class XtermView implements TerminalView {
      * C'est la vue qui possède son élément, et pas l'appelant : plusieurs onglets
      * partagent le même parent, et il faut bien que chacun sache retirer le sien.
      */
-    constructor(parent: HTMLElement, theme: ThemeSignal) {
+    constructor(parent: HTMLElement, theme: ThemeSignal, fontSize: FontSizeSignal) {
         this.pane = document.createElement("div");
         this.pane.className = "terminal-pane";
         parent.append(this.pane);
 
         this.term = new Terminal({
             fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-            fontSize: 13,
+            // La taille en cours, et non une constante : un onglet ouvert après un `⌘+`
+            // naît déjà à la bonne taille, sans attendre le changement suivant. Elle est
+            // détenue par le backend — voir `src-tauri/src/features/theme/font_size.rs`.
+            fontSize: fontSize.current,
             // La palette du document, résolue maintenant : xterm.js ne comprend pas les
             // `var(--ash-…)`. Un onglet ouvert après une bascule naît donc déjà à la
             // bonne palette, sans attendre le prochain changement de thème.
@@ -160,6 +171,14 @@ export class XtermView implements TerminalView {
             this.term.options.theme = readTerminalTheme();
         });
 
+        // Même forme que le thème, et pour la même raison : la ressource est ici, donc sa
+        // libération aussi (voir `dispose`). Chaque onglet suit la taille pour son compte —
+        // elle vaut pour l'application entière, y compris pour les onglets masqués, dont la
+        // grille doit être juste **avant** qu'on y revienne.
+        this.unfollowFontSize = fontSize.subscribe((points) => {
+            this.setFontSize(points);
+        });
+
         this.term.open(this.pane);
         this.term.loadAddon(this.fit);
         this.refit();
@@ -210,7 +229,9 @@ export class XtermView implements TerminalView {
     }
 
     dispose(): void {
+        this.disposed = true;
         this.unfollowTheme();
+        this.unfollowFontSize();
         this.observer.disconnect();
         // Avant `term.dispose()` : l'addon se détache d'un terminal encore vivant.
         this.search.dispose();
@@ -245,6 +266,27 @@ export class XtermView implements TerminalView {
     }
 
     /**
+     * Change la taille de police **et refait la grille**.
+     *
+     * Les deux lignes ne se séparent pas, et c'est tout l'enjeu du réglage : une cellule
+     * plus grande veut dire moins de colonnes et moins de lignes, mais xterm.js ne
+     * redimensionne pas de lui-même. Sans le `refit`, l'affichage paraît juste — le texte
+     * est plus gros — et le PTY reste sur l'ancienne grille : `vim`, `htop` ou une TUI
+     * d'agent se dessinent alors de travers, jusqu'à ce que la fenêtre bouge.
+     *
+     * C'est aussi par là que le backend l'apprend, et par nulle part ailleurs : `fit()`
+     * appelle `Terminal.resize`, qui déclenche `onResize`, que `session.ts` traduit en
+     * `pty_resize` — exactement le chemin qu'emprunte déjà le `ResizeObserver` de la
+     * fenêtre. Rien de particulier n'est envoyé au PTY ici, et c'est voulu : deux chemins
+     * de redimensionnement finiraient par ne plus dire la même grille.
+     */
+    private setFontSize(points: number): void {
+        if (this.disposed || this.term.options.fontSize === points) return;
+        this.term.options.fontSize = points;
+        this.refit();
+    }
+
+    /**
      * Recalcule la grille — sauf quand la surface n'a pas de taille.
      *
      * C'est le piège des onglets masqués : le `FitAddon` divise la place disponible par
@@ -258,6 +300,7 @@ export class XtermView implements TerminalView {
      * réduite, panneau replié à zéro, onglet retiré du DOM.
      */
     private refit(): void {
+        if (this.disposed) return;
         const { width, height } = this.pane.getBoundingClientRect();
         if (width < 1 || height < 1) return;
         this.fit.fit();
