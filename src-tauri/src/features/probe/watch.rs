@@ -90,17 +90,6 @@ impl TabWatch {
             Err(silence) => self.last.clone().ok_or(silence),
         }
     }
-
-    /// Une passe de la boucle des ~300 ms, qui ne rend **que ce qui a changé**.
-    ///
-    /// `None` veut dire « rien de neuf à annoncer » — que l'onglet n'ait pas bougé ou
-    /// que le système se soit tu, l'appelant n'a rien à émettre dans les deux cas. Un
-    /// onglet posé à son invite serait sinon annoncé trois fois par seconde, pour rien.
-    pub fn observe_change(&mut self, probe: &dyn Probe) -> Option<TabObservation> {
-        let before = self.last.clone();
-        let now = self.observe(probe).ok()?;
-        (before.as_ref() != Some(&now)).then_some(now)
-    }
 }
 
 #[cfg(test)]
@@ -283,43 +272,5 @@ mod tests {
 
         // Then
         assert_eq!(seen.unwrap_err(), ProbeError::Vanished(SHELL));
-    }
-
-    #[test]
-    fn given_a_tab_that_has_not_moved_when_the_loop_polls_again_then_it_announces_nothing() {
-        // Given
-        let system = SystemBuilder::new().build();
-        let mut watch = watch();
-        assert!(
-            watch.observe_change(&system).is_some(),
-            "la première passe découvre l'onglet"
-        );
-
-        // When
-        let again = watch.observe_change(&system);
-
-        // Then — sans ça, un onglet immobile serait annoncé trois fois par seconde
-        assert!(again.is_none());
-    }
-
-    #[test]
-    fn given_a_tab_at_its_prompt_when_a_program_takes_the_foreground_then_the_loop_announces_the_change(
-    ) {
-        // Given
-        let mut watch = watch();
-        watch.observe_change(&SystemBuilder::new().build());
-
-        // When
-        let running = SystemBuilder::new()
-            .with_process(AGENT, "claude", "/dev/ash/worktrees/probe")
-            .handed_over_to(AGENT)
-            .build();
-        let announced = watch.observe_change(&running);
-
-        // Then
-        assert_eq!(
-            announced.map(|seen| seen.cwd),
-            Some(PathBuf::from("/dev/ash/worktrees/probe"))
-        );
     }
 }

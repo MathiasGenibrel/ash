@@ -5,6 +5,7 @@
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : le frontend
 //! rend ce que le registre détient.
 
+mod agent_states;
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte
 // pas. C'est aussi cohérent avec l'architecture — `commands.rs` *est* la surface
@@ -20,6 +21,7 @@ mod registry;
 mod session;
 mod sweep;
 
+pub use agent_states::AgentStates;
 pub use error::PtyError;
 pub use locate::{RepoRef, TabLocation, WorktreeLocator};
 pub use registry::PtyRegistry;

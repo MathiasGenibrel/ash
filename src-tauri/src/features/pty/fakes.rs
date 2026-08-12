@@ -13,10 +13,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::agent_states::AgentStates;
 use super::error::PtyError;
 use super::locate::{RepoRef, TabLocation, WorktreeLocator};
-use super::registry::PtyRegistry;
+use super::registry::{PtyRegistry, TabId};
 use super::session::{OpenPty, PtySession, PtySpawner, PtySpec, Terminal};
+use crate::features::agents::{AgentState, Presence};
 use crate::features::probe::{Pid, Probe, ProbeError, ProcessInfo};
 
 /// Le terminal que les faux onglets annoncent. Aucun appel système ne le touche : le
@@ -167,6 +169,48 @@ impl WorktreeLocator for CountingLocator {
     }
 }
 
+/// Un décideur d'états qu'on peut faire parler — la moitié de l'histoire que `pty` ne
+/// détient pas.
+///
+/// Par défaut il répond ce que la sonde seule permet de dire (`working` si un programme
+/// tient l'avant-plan, `idle` sinon), parce que c'est ce que le registre transportait avant
+/// que la feature `agents` n'existe et que la plupart de ses règles n'ont rien à voir avec
+/// les agents. [`FakeAgentStates::declare`] pose l'état qu'un hook aurait produit : c'est
+/// ainsi qu'un scénario du registre peut faire changer un onglet **sans que rien ne bouge
+/// dans le terminal**, ce qui est exactement le chemin qu'ADR-0007 ouvre.
+#[derive(Default)]
+pub struct FakeAgentStates {
+    declared: Mutex<Option<AgentState>>,
+    forgotten: Mutex<Vec<TabId>>,
+}
+
+impl FakeAgentStates {
+    /// Un hook a parlé : c'est cet état-là que tous les onglets montrent désormais.
+    pub fn declare(&self, state: AgentState) {
+        *self.declared.lock().unwrap() = Some(state);
+    }
+
+    pub fn forgotten(&self) -> Vec<TabId> {
+        self.forgotten.lock().unwrap().clone()
+    }
+}
+
+impl AgentStates for FakeAgentStates {
+    fn state(&self, _tab_id: &TabId, seen: Presence) -> AgentState {
+        if let Some(declared) = *self.declared.lock().unwrap() {
+            return declared;
+        }
+        match seen {
+            Presence::Program => AgentState::Working,
+            Presence::Prompt | Presence::Unknown => AgentState::Idle,
+        }
+    }
+
+    fn forget(&self, tab_id: &TabId) {
+        self.forgotten.lock().unwrap().push(tab_id.clone());
+    }
+}
+
 #[derive(Default)]
 pub struct FakeSession {
     killed: Arc<AtomicBool>,
@@ -273,6 +317,7 @@ pub fn registry(spawner: FakeSpawner) -> PtyRegistry {
         Box::new(spawner),
         Arc::new(FakeProbe::silent()),
         Arc::new(CountingLocator::default()),
+        Arc::new(FakeAgentStates::default()),
     )
 }
 
@@ -284,12 +329,27 @@ pub fn observed_registry(cwd: &str) -> (PtyRegistry, Arc<FakeProbe>) {
 
 /// Idem, plus la résolution de worktree — pour ce qui se joue à la frontière d'ADR-0012.
 pub fn located_registry(cwd: &str) -> (PtyRegistry, Arc<FakeProbe>, Arc<CountingLocator>) {
+    let (registry, probe, locator, _) = supervised_registry(cwd);
+    (registry, probe, locator)
+}
+
+/// Idem, plus le décideur d'états — pour ce qui se joue à la frontière d'ADR-0007.
+pub fn supervised_registry(
+    cwd: &str,
+) -> (
+    PtyRegistry,
+    Arc<FakeProbe>,
+    Arc<CountingLocator>,
+    Arc<FakeAgentStates>,
+) {
     let probe = Arc::new(FakeProbe::reporting(cwd));
     let locator = Arc::new(CountingLocator::default());
+    let agents = Arc::new(FakeAgentStates::default());
     let registry = PtyRegistry::new(
         Box::new(FakeSpawner::observable()),
         Arc::clone(&probe) as Arc<dyn Probe>,
         Arc::clone(&locator) as Arc<dyn WorktreeLocator>,
+        Arc::clone(&agents) as Arc<dyn AgentStates>,
     );
-    (registry, probe, locator)
+    (registry, probe, locator, agents)
 }

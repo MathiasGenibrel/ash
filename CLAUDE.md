@@ -14,11 +14,17 @@ métadonnées git lues par surveillance de fichiers, une ligne de statut, et tro
 Le spike xterm.js a levé le risque de [ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md)
 — voir son amendement.
 
-**Ce qui n'existe pas encore : tout ce qui touche aux agents.** Les cinq états
-(`working`, `waiting`, `done`, `idle`, `error`) sont modélisés et la sidebar sait les
-afficher, mais seuls `idle` et `working` ont un producteur — la sonde. `waiting`, `done`
-et `error` viendront des **hooks** au jalon J2 ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)),
-et ne se déduisent **jamais** de la sortie du PTY. N'invente aucune source d'état.
+**Les cinq états ont désormais tous un producteur.** `idle` et `working` viennent de la
+sonde ; `waiting`, `done` et `error` viennent des **hooks**
+([ADR-0007](./docs/adr/0007-etats-par-hooks.md)), traduits par l'adaptateur de l'outil puis
+arbitrés par une machine à états — une par onglet, tenue par `features/agents`, que
+`features/pty` consulte par son port `AgentStates`. Un état ne se déduit **jamais** de la
+sortie du PTY, et `waiting` n'a **jamais** d'autre source qu'un hook. N'invente aucune
+source d'état.
+
+Ce qui reste à faire du côté des agents : la notification macOS, la remontée d'état dans la
+sidebar, les subagents, et la reconnaissance d'une commande d'agent par son nom (ADR-0006),
+sans laquelle Ash ne distingue pas `claude` de `vim` dans l'avant-plan d'un onglet.
 
 Ne prends pas les durées de la maquette (`working · 15m22s`) pour un manque : rien ne
 date encore l'entrée dans un état.
