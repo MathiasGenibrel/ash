@@ -98,6 +98,14 @@ seul.
   côtés produit une divergence silencieuse au premier changement de champ. `ts-rs` ou
   `tauri-specta` génèrent le `.d.ts` depuis les structures Rust — **rien n'est
   installé**, c'est une piste à évaluer à la première commande écrite.
+- **Un refus traverse en chaîne, et ça se teste.** `PtyError` et `SettingsError`
+  sérialisent tous deux `self.to_string()`, et le frontend en fait
+  `error instanceof Error ? error.message : String(error)`. Un `Serialize` dérivé —
+  donc un objet balisé — y donnerait `[object Object]` **à l'écran**, sans que `strict`,
+  `noUncheckedIndexedAccess` ni un générateur de types ne s'en aperçoivent : le `catch`
+  reçoit un `unknown`, et `String()` accepte tout. Un type d'erreur qui traverse la
+  frontière garde donc un test qui assert la **forme sur le fil**, pas seulement la
+  phrase (`settings/error.rs` en a un).
 
 ### Aucun état d'agent ne vit uniquement côté TypeScript
 

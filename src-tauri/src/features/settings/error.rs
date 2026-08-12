@@ -14,19 +14,39 @@
 //! | [`Display`](fmt::Display), et la sérialisation qui en découle | la fenêtre, **verbatim** | **texte d'interface : en anglais**, minuscule, sans point final, comme tout le reste de la fenêtre |
 //! | [`Debug`] | une sortie d'erreur, un rapport de panique, l'échec d'un test | le nom de la variante et ses données — **jamais traduit, et jamais montré** |
 //!
-//! D'où la règle qui évite la rechute : **ce qui part vers un journal s'écrit `{:?}`, ce qui
-//! part vers l'écran s'écrit `{}`**. C'est déjà la pratique du dépôt — le `eprintln!` de
-//! [`commands::open`](super::commands) parle français sur la sortie d'erreur pendant que
-//! [`HooksReport`](super::hooks::HooksReport) parle anglais à l'écran ; ce fichier était le
-//! seul endroit où les deux se confondaient.
+//! La question qui évite la rechute n'est donc pas « est-ce une erreur ? » — elles le sont
+//! toutes — mais **qui lit cette phrase-là**. Le `eprintln!` de
+//! [`commands::open`](super::commands) parle français sur la sortie d'erreur,
+//! [`HooksReport`](super::hooks::HooksReport) parle anglais à l'écran, et les deux ont
+//! raison : ce fichier était le seul endroit où ils se confondaient. La même question reste
+//! ouverte pour `PtyError` et `GitError`, restés en français : elle se tranche message par
+//! message, selon qu'il atteint la fenêtre ou meurt dans un journal — pas par une traduction
+//! en bloc.
 //!
-//! Ces phrases sont donc du **texte d'interface écrit en Rust**, assumé comme tel : c'est ce
-//! que fait déjà `HooksReport`, qui compose ici `installed · v1` ou
-//! `already written by claude in this file`, et ce que fait `TestDescription`, dont les
-//! libellés « voyagent du backend vers l'écran ». Deux d'entre elles ont même un jumeau
-//! littéral dans `model.ts`, que le frontend prononce quand il refuse sans appeler le backend
+//! # Une variante ou une phrase ?
+//!
+//! Ces phrases sont du **texte d'interface écrit en Rust**, et c'est la règle du dépôt, pas
+//! une exception : [`verification`](super::verification) y compose `nothing at {raw}` et
+//! `use the {other} adapter instead?`, `HooksReport` y compose `installed · v1`, et les
+//! libellés de [`TestDescription`](super::commands::TestDescription) « voyagent du backend
+//! vers l'écran ».
+//!
+//! Le partage est net, et c'est lui qui décide : **une variante quand l'écran doit trancher,
+//! une phrase quand il ne fait que lire**. [`HookState`](super::hooks::HookState) est une
+//! variante parce que la fenêtre en tire une forme d'icône,
+//! [`HookAction`](super::hooks::HookAction) parce qu'elle en tire le mot d'un bouton ; un
+//! refus, lui, n'est qu'affiché. Quand les deux sont nécessaires, ils voyagent **côte à
+//! côte** plutôt que l'un à la place de l'autre — c'est
+//! [`SuggestedFix`](super::verification::SuggestedFix), dont la `question` est lue et l'`apply`
+//! est agi. Le jour où la fenêtre devrait agir sur une raison précise, c'est cette forme-là
+//! qu'il faudrait donner à un refus, et non remplacer la phrase par un code.
+//!
+//! Deux de ces phrases ont un **jumeau littéral** dans `model.ts`, que le frontend prononce
+//! quand il refuse sans appeler le backend
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md) : la règle est en Rust,
-//! l'écran n'en garde qu'une copie pour ce qu'il peut trancher seul).
+//! l'écran n'en garde qu'une copie pour ce qu'il peut trancher seul). Les deux arbres sont
+//! marqués dans [`Display`](fmt::Display) — rien ne les fait tomber ensemble, seul le
+//! commentaire relie les deux côtés.
 
 use std::fmt;
 
@@ -56,6 +76,13 @@ pub enum SettingsError {
     /// L'entrée à oublier n'est pas — ou n'est plus — déclarée.
     UnknownTool(Command),
     /// L'entrée n'a jamais été valide : la réinitialisation n'a rien où revenir (spec §9.1).
+    ///
+    /// **Sa phrase dit « never been verified », et c'est inexact** : le déclencheur est
+    /// `last_valid_config.is_none()`, que [`ToolDeclaration::verified_by`](super::tool::ToolDeclaration::verified_by)
+    /// ne remplit que sur `Valid` — une entrée vérifiée et **invalide** tombe donc ici tout
+    /// en ayant été vérifiée. L'écran n'y mène pas de lui-même : `describeReset` éteint le
+    /// `↺` avec sa propre phrase, exacte celle-là — `no verified folder to go back to yet`.
+    /// Corriger le mot change le sens du refus, donc appartient à sa propre tâche.
     NothingToRestore(Command),
     /// Rien n'a été réinitialisé, donc rien à annuler.
     NothingToUndo(Command),
@@ -80,9 +107,11 @@ impl fmt::Display for SettingsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SettingsError::EmptyCommand => write!(f, "an entry must name a command"),
-            // Le jumeau littéral de `blockedReason` dans `model.ts` : le même refus, selon
-            // qu'il est attrapé par l'écran ou par le registre. Deux formulations en
-            // feraient lire deux refus différents pour une seule et même saisie.
+            // Les deux jumeaux littéraux de `blockedReason`, dans
+            // `src/features/settings/model.ts` : le même refus, selon qu'il est attrapé par
+            // l'écran ou par le registre. Deux formulations en feraient lire deux refus
+            // différents pour une seule et même saisie. Aucun test ne relie les deux côtés —
+            // changer une de ces deux phrases, c'est changer aussi celle de `model.ts`.
             SettingsError::NotACommandName(command) => {
                 write!(f, "{command} is not a command name")
             }

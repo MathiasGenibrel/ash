@@ -189,7 +189,10 @@ function blockedReason(
     if (command === "") return "name the command first";
     // Les mêmes deux refus que le backend, et pour la même raison : un `match` est comparé
     // à un nom de processus (ADR-0005/0006), et deux entrées homonymes désigneraient le
-    // même processus.
+    // même processus. Les deux phrases sont **mot pour mot** celles de `NotACommandName` et
+    // `DuplicateCommand` dans `src-tauri/src/features/settings/error.rs`, parce que
+    // l'utilisateur ne sait pas lequel des deux a parlé. Aucun test ne relie les deux
+    // côtés : en changer une ici sans changer l'autre là-bas laisse la suite verte.
     if (command.includes("/") || /\s/.test(command)) return `${command} is not a command name`;
     if (declared.some((tool) => tool.command === command)) return `${command} is already declared`;
     // La patience : les tests n'ont pas fini de parler. Le bouton reste à sa place, éteint,
