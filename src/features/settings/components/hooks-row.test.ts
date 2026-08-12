@@ -107,7 +107,7 @@ describe("la ligne hooks d'une carte", () => {
 
         // When
         const buttons = findAll(hooksRow(tool, actions).build(), "ui-button");
-        buttons[0]?.on["click"]?.({ value: "", key: "" });
+        buttons[0]?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then — le diff est le premier des deux, et c'est lui qui n'écrit rien
         expect(buttons.map(plainText)).toEqual(["see the diff", "install"]);

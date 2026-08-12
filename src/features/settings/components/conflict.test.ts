@@ -65,8 +65,8 @@ describe("l'écran du diff", () => {
         // When
         const screen = conflictScreen(conflicting, actions, () => undefined);
         const buttons = screen.flatMap((child) => findAll(child, "ui-button"));
-        buttons[1]?.on["click"]?.({ value: "", key: "" });
-        buttons[2]?.on["click"]?.({ value: "", key: "" });
+        buttons[1]?.on["click"]?.({ value: "", key: "", shiftKey: false });
+        buttons[2]?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then
         expect(actions.asked).toEqual(["install claude", "remove claude"]);
