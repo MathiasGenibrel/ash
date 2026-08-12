@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::features::agents::AgentState;
+use crate::features::agents::{AgentState, Presence};
 
+use super::agent_states::AgentStates;
 use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
@@ -38,6 +39,12 @@ pub struct PtyRegistry {
     probe: Arc<dyn Probe>,
     /// La résolution `cwd` → worktree + dépôt, injectée elle aussi (voir [`super::locate`]).
     locator: Arc<dyn WorktreeLocator>,
+    /// Qui décide de l'état d'agent d'un onglet (voir [`super::agent_states`]).
+    ///
+    /// Le registre pose la question et transporte la réponse ; il ne la calcule pas. C'est
+    /// ce qui l'empêche de connaître les hooks, les adaptateurs et l'horloge des trente
+    /// secondes — trois choses qu'un tenancier de PTY n'a pas à savoir.
+    agents: Arc<dyn AgentStates>,
     /// L'âge des localisations retenues (voir [`Self::invalidate_locations`]).
     revision: AtomicU64,
     tabs: Mutex<Vec<Tab>>,
@@ -62,6 +69,13 @@ struct Tab {
     watch: SharedWatch,
     /// La dernière localisation résolue, et le répertoire pour lequel elle l'a été.
     place: SharedPlace,
+    /// Le dernier `TabInfo` que la boucle a poussé vers la webview.
+    ///
+    /// C'est lui qui garde la frontière Tauri muette au repos : un onglet n'est annoncé que
+    /// si quelque chose de ce qu'il montre a changé. Le comparer entier — et non le seul
+    /// `cwd` de la sonde — est ce qui laisse un état venu d'un **hook** traverser sans que
+    /// l'onglet ait bougé d'un caractère.
+    announced: SharedAnnouncement,
 }
 
 /// La sonde d'un onglet, tenue à part du verrou du registre.
@@ -87,6 +101,10 @@ type SharedWatch = Arc<Mutex<Option<TabWatch>>>;
 /// Tenue à part du verrou du registre, pour la même raison que la sonde : une frappe
 /// clavier n'a pas à attendre derrière une lecture de fichier.
 type SharedPlace = Arc<Mutex<Option<Located>>>;
+
+/// Ce que la webview sait déjà d'un onglet, tenu à part du verrou du registre pour la même
+/// raison que la sonde et la localisation.
+type SharedAnnouncement = Arc<Mutex<Option<TabInfo>>>;
 
 struct Located {
     cwd: PathBuf,
@@ -136,11 +154,13 @@ impl PtyRegistry {
         spawner: Box<dyn PtySpawner>,
         probe: Arc<dyn Probe>,
         locator: Arc<dyn WorktreeLocator>,
+        agents: Arc<dyn AgentStates>,
     ) -> Self {
         Self {
             spawner,
             probe,
             locator,
+            agents,
             revision: AtomicU64::new(0),
             tabs: Mutex::new(Vec::new()),
         }
@@ -182,6 +202,7 @@ impl PtyRegistry {
             shell_name: shell_name(&spec),
             watch,
             place: Arc::new(Mutex::new(None)),
+            announced: Arc::new(Mutex::new(None)),
         });
 
         Ok(Opened {
@@ -209,49 +230,38 @@ impl PtyRegistry {
 
     /// Une passe de la boucle d'ADR-0005 : ce qui a **changé** depuis la précédente.
     ///
-    /// Rien pour un onglet immobile, rien pour un onglet que le système ne sait plus
-    /// décrire. C'est ce que la boucle émet vers le frontend, et c'est ce qui fait suivre
+    /// Rien pour un onglet dont rien n'a changé — ni son répertoire, ni son avant-plan, ni
+    /// sa place, ni son état. C'est ce que la boucle émet vers le frontend, et ce qui fait suivre
     /// le titre d'un onglet à travers les `cd` — y compris pendant qu'un programme tourne,
     /// là où OSC 7 se tairait. C'est aussi ce qui fait migrer un onglet d'un dépôt à
     /// l'autre dans la sidebar : la localisation voyage avec l'onglet.
     ///
-    /// Un onglet peut changer de place **sans bouger** : c'est le cas quand son dépôt gagne
-    /// ou perd un worktree lié (voir [`Self::invalidate_locations`]). Ces onglets-là sont
-    /// annoncés eux aussi, et seulement si leur localisation a réellement changé.
+    /// Un onglet peut changer **sans bouger** : c'est le cas quand son dépôt gagne ou perd
+    /// un worktree lié (voir [`Self::invalidate_locations`]), et c'est aussi le cas d'un
+    /// agent dont un hook vient de déclarer l'état alors que rien du tout n'a remué dans le
+    /// terminal ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)). Ces onglets-là
+    /// sont annoncés eux aussi.
+    ///
+    /// Ce qui décide, c'est donc la **description entière** : un onglet passe la frontière
+    /// si et seulement si ce qu'il montre diffère de ce que la webview a déjà. Comparer la
+    /// seule sonde laisserait un `waiting` sans producteur visible attendre indéfiniment le
+    /// prochain `cd`.
     pub fn changes(&self) -> Result<Vec<TabInfo>, PtyError> {
         Ok(self
             .snapshot()?
             .into_iter()
-            .filter_map(|tab| match self.observe_change(&tab.watch) {
-                Some(seen) => Some(self.describe(tab, Some(seen))),
-                None => self.relocated(tab),
+            .filter_map(|tab| {
+                let announced = Arc::clone(&tab.announced);
+                let seen = self.observe(&tab.watch);
+                let now = self.describe(tab, seen);
+
+                let mut announced = announced.lock().ok()?;
+                (announced.as_ref() != Some(&now)).then(|| {
+                    *announced = Some(now.clone());
+                    now
+                })
             })
             .collect())
-    }
-
-    /// Un onglet immobile dont le **dépôt** a changé de forme depuis sa dernière résolution.
-    ///
-    /// `None` tant que rien n'a été signalé : c'est ce qui garde la boucle muette et sans
-    /// disque au repos. `None` aussi quand la résolution rend la même réponse qu'avant —
-    /// une entrée écrite dans `worktrees/` ne veut pas dire que cet onglet-ci a bougé de
-    /// groupe, et réveiller la webview pour un état identique est ce que [`Self::changes`]
-    /// évite partout ailleurs.
-    fn relocated(&self, tab: TabHandle) -> Option<TabInfo> {
-        let known = self.stale_location(&tab.place)?;
-        let seen = self.observe(&tab.watch);
-        let announced = self.describe(tab, seen);
-        (announced.location != known).then_some(announced)
-    }
-
-    /// La localisation retenue d'un onglet, **si** elle date d'avant le dernier signal.
-    ///
-    /// Le `Option` extérieur dit « il y a quelque chose à redemander », l'intérieur porte la
-    /// réponse d'alors — qui peut légitimement être « je n'ai pas su le situer ».
-    fn stale_location(&self, place: &SharedPlace) -> Option<Option<TabLocation>> {
-        let place = place.lock().ok()?;
-        let located = place.as_ref()?;
-        (located.revision != self.revision.load(Ordering::Acquire))
-            .then(|| located.location.clone())
     }
 
     /// Les racines de worktree où vit au moins un onglet, sans doublon et **sans rien
@@ -348,6 +358,7 @@ impl PtyRegistry {
                 shell_name: tab.shell_name.clone(),
                 watch: Arc::clone(&tab.watch),
                 place: Arc::clone(&tab.place),
+                announced: Arc::clone(&tab.announced),
             })
             .collect())
     }
@@ -362,19 +373,23 @@ impl PtyRegistry {
             .as_ref()
             .map_or_else(|| tab.start_dir.clone(), |seen| seen.cwd.clone());
 
-        // Un onglet que la sonde ne sait pas décrire est à son invite jusqu'à preuve du
-        // contraire : rien ne permet d'affirmer qu'un programme y tourne.
-        let (process, state) = seen.map_or_else(
-            || (tab.shell_name.clone(), AgentState::Idle),
+        // Un onglet que la sonde ne sait pas décrire garde le nom de son shell : rien ne
+        // permet d'affirmer qu'un programme y tourne, ni le contraire.
+        let (process, presence) = seen.map_or_else(
+            || (tab.shell_name.clone(), Presence::Unknown),
             |seen| {
-                let state = if seen.foreground.is_shell {
-                    AgentState::Idle
+                let presence = if seen.foreground.is_shell {
+                    Presence::Prompt
                 } else {
-                    AgentState::Working
+                    Presence::Program
                 };
-                (seen.foreground.name, state)
+                (seen.foreground.name, presence)
             },
         );
+
+        // Le registre **demande** l'état, il ne le déduit pas : ce que la sonde voit est une
+        // présence, et une présence n'est pas un état d'agent (ADR-0007).
+        let state = self.agents.state(&tab.id, presence);
 
         TabInfo {
             tab_id: tab.id,
@@ -431,12 +446,6 @@ impl PtyRegistry {
         watch.as_mut()?.observe(self.probe.as_ref()).ok()
     }
 
-    /// Idem, mais silencieux tant que rien n'a bougé — la passe de la boucle de fond.
-    fn observe_change(&self, watch: &SharedWatch) -> Option<TabObservation> {
-        let mut watch = watch.lock().ok()?;
-        watch.as_mut()?.observe_change(self.probe.as_ref())
-    }
-
     fn take(&self, tab_id: &str) -> Result<Option<Tab>, PtyError> {
         let removed = {
             let mut tabs = self.lock()?;
@@ -454,6 +463,9 @@ impl PtyRegistry {
             if let Ok(mut watch) = tab.watch.lock() {
                 *watch = None;
             }
+            // L'état d'agent de l'onglet part avec lui : rien n'est restauré, et un
+            // identifiant réattribué ne doit pas hériter d'un agent fantôme (ADR-0009).
+            self.agents.forget(&tab.id);
         }
 
         Ok(removed)
@@ -491,6 +503,7 @@ struct TabHandle {
     shell_name: String,
     watch: SharedWatch,
     place: SharedPlace,
+    announced: SharedAnnouncement,
 }
 
 /// Le nom du shell d'un onglet — `zsh`, `bash`. Le chemin entier pour seul repli.
@@ -506,8 +519,8 @@ mod tests {
     use super::*;
     use crate::features::probe::{Pid, ProbeError, ProcessInfo};
     use crate::features::pty::fakes::{
-        located_registry, observed_registry, registry, spec, CountingLocator, FakeSpawner,
-        SpecBuilder,
+        located_registry, observed_registry, registry, spec, supervised_registry, CountingLocator,
+        FakeAgentStates, FakeSpawner, SpecBuilder,
     };
     use std::os::fd::RawFd;
     use std::sync::atomic::Ordering;
@@ -836,9 +849,9 @@ mod tests {
     #[test]
     fn given_a_shell_at_its_prompt_when_a_program_takes_the_foreground_then_the_tab_stops_being_idle(
     ) {
-        // Given — les cinq états d'agent viennent des hooks ([ADR-0007]), mais l'onglet
-        // lui-même sait qui tient son avant-plan : c'est le seul état honnête à ce jalon,
-        // et la sidebar ne doit pas le déduire de son côté ([ADR-0009]).
+        // Given — l'onglet sait qui tient son avant-plan, et c'est tout ce que la sonde a le
+        // droit de dire ([ADR-0007]). L'état, lui, est **demandé** : le registre n'en déduit
+        // plus aucun, et la sidebar n'en déduit pas davantage de son côté ([ADR-0009]).
         let (registry, probe, _) = located_registry("/dev/ash");
         registry.open(spec(), "A".to_owned()).unwrap();
         let at_prompt = registry.tabs().unwrap();
@@ -858,6 +871,45 @@ mod tests {
             running.first().map(|tab| (tab.state, tab.process.clone())),
             Some((AgentState::Working, "claude".to_owned()))
         );
+    }
+
+    #[test]
+    fn given_a_tab_that_nothing_disturbs_when_a_hook_declares_an_agent_state_then_the_loop_announces_it(
+    ) {
+        // Given — c'est le chemin qu'ADR-0007 ouvre, et le seul qui produise `waiting` : un
+        // hook parle alors que rien ne remue dans le terminal — même `cwd`, même processus
+        // en avant-plan. Sans ceci, l'état décidé par la feature `agents` attendrait le
+        // prochain `cd` pour atteindre l'écran, c'est-à-dire indéfiniment.
+        let (registry, _probe, _locator, agents) = supervised_registry("/dev/ash");
+        registry.open(spec(), "A".to_owned()).unwrap();
+        registry.changes().unwrap(); // la passe qui découvre l'onglet
+
+        // When
+        agents.declare(AgentState::Waiting);
+        let announced = registry.changes().unwrap();
+        let settled = registry.changes().unwrap();
+
+        // Then — annoncé une fois, et pas trois fois par seconde
+        assert_eq!(
+            announced.iter().map(|tab| tab.state).collect::<Vec<_>>(),
+            vec![AgentState::Waiting]
+        );
+        assert_eq!(settled, vec![]);
+    }
+
+    #[test]
+    fn given_a_tab_that_is_closed_when_it_leaves_the_registry_then_its_agent_state_is_forgotten_too(
+    ) {
+        // Given — l'état d'un agent ne survit pas à son onglet ([ADR-0009]) : un ulid
+        // réattribué hériterait sinon d'un agent que plus aucun processus ne porte.
+        let (registry, _probe, _locator, agents) = supervised_registry("/dev/ash");
+        registry.open(spec(), "A".to_owned()).unwrap();
+
+        // When
+        registry.close("A").unwrap();
+
+        // Then
+        assert_eq!(agents.forgotten(), vec!["A".to_owned()]);
     }
 
     #[test]
@@ -959,6 +1011,7 @@ mod tests {
                 release: Mutex::new(wait_for_release),
             }),
             Arc::new(CountingLocator::default()),
+            Arc::new(FakeAgentStates::default()),
         ));
         registry.open(spec(), "A".to_owned()).unwrap();
 

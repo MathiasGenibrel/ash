@@ -43,6 +43,24 @@ pub enum Declared {
     Error,
 }
 
+impl Declared {
+    /// Ce qu'un état traduit par un adaptateur devient dans le vocabulaire de la machine.
+    ///
+    /// `None` pour `idle`, et c'est la porte que ce type existe pour tenir : un outil qui
+    /// parle est la preuve qu'il est là, donc il ne peut pas déclarer son absence. La
+    /// traduction inverse est [`state_of`] ; les deux vivent côte à côte pour qu'un état
+    /// ajouté ne puisse pas être oublié d'un seul côté.
+    pub fn of(state: AgentState) -> Option<Self> {
+        match state {
+            AgentState::Working => Some(Declared::Working),
+            AgentState::Waiting => Some(Declared::Waiting),
+            AgentState::Done => Some(Declared::Done),
+            AgentState::Error => Some(Declared::Error),
+            AgentState::Idle => None,
+        }
+    }
+}
+
 /// Comment un processus s'est terminé.
 ///
 /// C'est la seule chose que la sonde ajoute à ce qu'elle sait déjà, et elle ne sert qu'à
@@ -52,6 +70,20 @@ pub enum Exit {
     Code(i32),
     /// Tué par un signal — `SIGSEGV`, `SIGKILL`, `Ctrl-C`. Jamais une fin normale.
     Signal(i32),
+    /// Parti, et personne ne sait comment.
+    ///
+    /// C'est le cas **normal** de la sonde d'[ADR-0005](../../../../docs/adr/0005-sonde-cwd-libproc.md) :
+    /// Ash n'a pas lancé l'agent — c'est l'utilisateur qui l'a tapé dans son shell
+    /// ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)) — donc
+    /// aucun `wait()` ne lui rendra jamais son code de sortie. Tout ce que `tcgetpgrp`
+    /// apprend, c'est que l'avant-plan est revenu au shell.
+    ///
+    /// Ça vaut **échec**, et c'est une décision de produit : un agent instrumenté déclare sa
+    /// fin lui-même (`SessionEnd` → `done`), donc disparaître sans l'avoir dite est
+    /// anormal — plantage, `kill`, `Ctrl-C` en plein travail. Dire `done` à sa place
+    /// annoncerait un travail terminé là où il a été interrompu, ce qui est la seule des
+    /// deux erreurs qui trompe l'utilisateur sur ce qu'il lui reste à faire.
+    Unseen,
 }
 
 impl Exit {
@@ -236,30 +268,7 @@ fn has_finished(state: AgentState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Une horloge qu'on avance à la main.
-    ///
-    /// C'est tout ce qu'il faut pour prouver « 30 s » et « une heure sans rien » sans
-    /// qu'aucun test ne dorme une milliseconde.
-    struct ManualClock(Mutex<Instant>);
-
-    impl ManualClock {
-        fn new() -> Arc<Self> {
-            Arc::new(Self(Mutex::new(Instant::now())))
-        }
-
-        fn advance(&self, seconds: u64) {
-            let mut now = self.0.lock().unwrap();
-            *now += Duration::from_secs(seconds);
-        }
-    }
-
-    impl Clock for ManualClock {
-        fn now(&self) -> Instant {
-            *self.0.lock().unwrap()
-        }
-    }
+    use crate::features::agents::fakes::ManualClock;
 
     /// Test Data Builder : une machine posée dans l'état que le scénario veut décrire.
     ///
