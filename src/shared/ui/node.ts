@@ -31,6 +31,15 @@
  */
 export interface UiEvent {
     readonly value: string;
+    /**
+     * La touche, quand l'événement en porte une — `""` sinon.
+     *
+     * Elle est ici pour la même raison que `value` : un champ qui veut reconnaître `⏎` ne
+     * doit pas avoir à fouiller un `KeyboardEvent`, sans quoi il redevient intestable.
+     * `paint` est le seul extracteur, et [`FieldBuilder.onSubmit`](./field.ts) le seul
+     * lecteur — un composant ne filtre pas une touche à la main.
+     */
+    readonly key: string;
 }
 
 export type UiHandler = (event: UiEvent) => void;
@@ -40,9 +49,21 @@ export interface UiTextNode {
     readonly text: string;
 }
 
+/**
+ * L'espace de noms d'un `<svg>` et de ses tracés.
+ *
+ * Un document HTML n'a qu'un seul cas où le nom d'une balise ne suffit pas à la créer, et
+ * c'est celui-là : `createElement("svg")` produit un élément HTML inconnu, muet et
+ * invisible. Les icônes de `features/settings/verification-state.ts` sont des `<svg>` parce
+ * qu'à 13 px la forme d'un état ne peut pas dépendre de la police installée.
+ */
+export const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
 export interface UiElementNode {
     readonly kind: "element";
     readonly tag: string;
+    /** `null` pour du HTML — le cas de tout le dépôt sauf les icônes. */
+    readonly namespace: string | null;
     readonly classes: readonly string[];
     readonly attrs: Readonly<Record<string, string>>;
     readonly on: Readonly<Record<string, UiHandler>>;
@@ -54,6 +75,18 @@ export type UiNode = UiTextNode | UiElementNode;
 /** Tout ce qui sait se réduire à une description. */
 export interface UiBuilder {
     build(): UiNode;
+}
+
+/**
+ * Un composant : ce qui rend un **élément**, et pas un morceau de texte nu.
+ *
+ * C'est le type que rendent les composites d'une feature, et il n'existe que pour leurs
+ * tests : `build()` y donne un `UiElementNode`, donc un test lit `attrs`, `classes` et
+ * `children` sans avoir à écarter d'abord le cas d'un nœud texte qui ne peut pas se
+ * produire.
+ */
+export interface UiComponent extends UiBuilder {
+    build(): UiElementNode;
 }
 
 /**
@@ -105,6 +138,7 @@ export abstract class ElementBuilder implements UiBuilder {
     private readonly attributes: Record<string, string> = {};
     private readonly handlers: Record<string, UiHandler> = {};
     private readonly kids: UiNode[] = [];
+    private ns: string | null = null;
 
     protected constructor(
         private readonly tag: string,
@@ -113,9 +147,30 @@ export abstract class ElementBuilder implements UiBuilder {
         this.classNames = [...classes];
     }
 
-    /** L'échappatoire : les classes propres à la feature qui pose le composant. */
+    /**
+     * La porte intérieure de l'espace de noms — `svg`, `path`.
+     *
+     * Elle est `protected` comme [`mark`](#mark) : le namespace n'est pas une décoration
+     * qu'une vue pose au passage, c'est ce qui distingue un élément dessiné d'un élément de
+     * texte, et la primitive qui produit l'un des deux est seule à le savoir.
+     */
+    protected inNamespace(uri: string): this {
+        this.ns = uri;
+        return this;
+    }
+
+    /**
+     * L'échappatoire : les classes propres à la feature qui pose le composant.
+     *
+     * Une chaîne à plusieurs mots vaut plusieurs classes — les tables de présentation du
+     * dépôt en rendent (`settings-tile is-passed`), et une classe composée serait posée
+     * telle quelle dans la liste : le DOM la découperait à la peinture, mais `find` et
+     * `findAll`, eux, chercheraient un nom qui n'y est pas. Le test croirait alors à une
+     * absence.
+     */
     class(...names: readonly string[]): this {
-        this.classNames.push(...names.filter((name) => name.length > 0));
+        const split = names.flatMap((name) => name.split(" "));
+        this.classNames.push(...split.filter((name) => name.length > 0));
         return this;
     }
 
@@ -160,6 +215,7 @@ export abstract class ElementBuilder implements UiBuilder {
         return {
             kind: "element",
             tag: this.tag,
+            namespace: this.ns,
             classes: [...this.classNames],
             attrs: { ...this.attributes },
             on: { ...this.handlers },

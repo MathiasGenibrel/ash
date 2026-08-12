@@ -46,6 +46,28 @@ class FieldBuilder extends ElementBuilder {
             handler(event.value);
         });
     }
+
+    /**
+     * `⏎` — « j'ai fini de taper », et **rien de plus**.
+     *
+     * Ash ne valide jamais à la place de l'utilisateur
+     * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)) : ce geste
+     * n'envoie rien, il abrège seulement une attente. Le nom du gestionnaire dit la
+     * frappe, pas la touche : c'est le socle qui sait laquelle, donc un composant ne
+     * compare jamais une chaîne à `"Enter"`.
+     */
+    onSubmit(handler: () => void): this {
+        return this.on("keydown", (event) => {
+            if (event.key === "Enter") handler();
+        });
+    }
+
+    /** La perte de focus — l'autre façon de dire qu'on a fini de taper. */
+    onBlur(handler: () => void): this {
+        return this.on("blur", () => {
+            handler();
+        });
+    }
 }
 
 export function field(name: string): FieldBuilder {
