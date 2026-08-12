@@ -72,8 +72,8 @@ export interface SearchBoxActions {
  */
 export const SEARCH_FOCUS_KEY = "terminal-search";
 
-/** La classe de la boîte, posée ici parce que c'est ici qu'on la lit dans les tests. */
-export const SEARCH_BOX_CLASS = "terminal-search-box";
+/** La classe de la rangée, lue par `terminal.css` — et par personne d'autre. */
+const SEARCH_BOX_CLASS = "terminal-search-box";
 
 /** Le compteur, tel qu'un œil doit le lire — et `""` quand il n'y a rien à dire. */
 export function searchTally(state: SearchBoxState): string {
