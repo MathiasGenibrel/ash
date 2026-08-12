@@ -65,8 +65,28 @@ export interface UiBuilder {
 export type UiChild = UiNode | UiBuilder;
 
 export function toNode(child: UiChild): UiNode {
-    return "kind" in child ? child : child.build();
+    // On reconnaît le constructeur à ce qu'il sait faire, pas la description à ce qu'elle
+    // porte : une sous-classe de `ElementBuilder` posée dans `features/x/components/` a le
+    // droit de nommer un champ `kind` — une carte a un genre d'outil — et un test négatif
+    // l'aurait alors prise pour une description, silencieusement, en produisant un arbre
+    // faux plutôt qu'une erreur.
+    return "build" in child ? child.build() : child;
 }
+
+/**
+ * Les noms d'attributs dont la règle vit ailleurs dans ce dossier.
+ *
+ * `attr` est l'échappatoire du socle, et une échappatoire qui peut réécrire un invariant
+ * n'en est plus une : `button("install").attr("disabled", "")` rendrait exactement le
+ * bouton éteint et muet que [`disabled(reason)`](./button.ts) a été conçu pour rendre
+ * impossible. Les gestionnaires ont de la même façon leur propre canal — un `on…` posé en
+ * attribut serait du code transporté par une valeur, alors que tout l'intérêt de cette
+ * couche est qu'une description ne s'exécute pas.
+ */
+type ReservedAttribute = "disabled" | "aria-disabled" | `on${string}`;
+
+/** Le nom refusé devient `never`, donc l'appel ne compile pas. */
+type FreeAttribute<Name extends string> = Name extends ReservedAttribute ? never : string;
 
 /** Un morceau de texte nu — la seule primitive qui n'a rien à configurer. */
 export function text(content: string): UiTextNode {
@@ -99,7 +119,24 @@ export abstract class ElementBuilder implements UiBuilder {
         return this;
     }
 
-    attr(name: string, value: string): this {
+    /**
+     * L'échappatoire des attributs — sauf ceux dont la règle appartient à une primitive.
+     *
+     * Un nom réservé ne compile pas ; un nom calculé (`data-${key}`) reste permis, parce
+     * qu'il n'est jamais un `on…` ni un `disabled` en pratique et que l'interdire coûterait
+     * plus que ce qu'il protège.
+     */
+    attr<Name extends string>(name: Name & FreeAttribute<Name>, value: string): this {
+        return this.mark(name, value);
+    }
+
+    /**
+     * La porte intérieure : les noms réservés, posés par la primitive qui en porte la règle.
+     *
+     * `ButtonBuilder.disabled(reason)` passe par ici — c'est lui qui exige la raison, donc
+     * c'est lui qui a le droit d'écrire l'attribut.
+     */
+    protected mark(name: string, value: string): this {
         this.attributes[name] = value;
         return this;
     }

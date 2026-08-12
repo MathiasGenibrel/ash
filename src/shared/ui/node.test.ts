@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
 import { badge } from "./marks";
+import { button } from "./button";
 import { column, row } from "./layout";
 import { plainText } from "./read";
-import { text, toNode } from "./node";
+import { ElementBuilder, text, toNode } from "./node";
 
 describe("une description d'interface", () => {
     it("Given a container built from other builders, when it is described, then the children are resolved without an explicit build", () => {
@@ -59,5 +60,42 @@ describe("une description d'interface", () => {
 
         // Then
         expect(resolved).toBe(node);
+    });
+
+    it("Given a component that carries a field named kind, when a container takes it as a child, then it is still built", () => {
+        // Given — une carte d'outil de `features/settings/components/` a le droit de nommer
+        // un champ `kind` ; un conteneur qui reconnaîtrait la description à ce champ la
+        // prendrait pour une description et produirait un arbre faux, sans rien signaler.
+        class ToolCard extends ElementBuilder {
+            readonly kind = "claude-code";
+
+            constructor() {
+                super("div", "tool-card");
+                this.add(text("claude"));
+            }
+        }
+
+        // When
+        const described = row(new ToolCard()).build();
+
+        // Then
+        expect(described.children.map((child) => child.kind)).toEqual(["element"]);
+        expect(plainText(described)).toBe("claude");
+    });
+
+    it("Given an attribute whose rule belongs to a primitive, when a component writes it by hand, then it does not compile", () => {
+        // Given / When — `attr` est l'échappatoire du socle : si elle peut réécrire
+        // `disabled`, la raison obligatoire d'un bouton éteint n'est plus qu'une convention.
+        // `@ts-expect-error` casse le jour où le nom redevient permis.
+        // @ts-expect-error un bouton ne s'éteint que par `disabled(reason)`
+        const muted = button("install").attr("disabled", "");
+        // @ts-expect-error un gestionnaire passe par `on`, jamais par un attribut
+        const inline = badge("claude").attr("onclick", "alert(1)");
+
+        // Then — un nom calculé, lui, reste permis
+        const key = `data-${"tool"}`;
+        const tagged = badge("claude").attr(key, "claude-code");
+        expect(tagged.build().attrs[key]).toBe("claude-code");
+        expect([muted, inline]).toHaveLength(2);
     });
 });

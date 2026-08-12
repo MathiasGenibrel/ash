@@ -37,7 +37,7 @@ class ButtonBuilder extends ElementBuilder {
      * même raison en clair à côté du bouton.
      */
     disabled(reason: string): this {
-        return this.attr("disabled", "").attr("aria-disabled", "true").title(reason);
+        return this.mark("disabled", "").mark("aria-disabled", "true").title(reason);
     }
 }
 
