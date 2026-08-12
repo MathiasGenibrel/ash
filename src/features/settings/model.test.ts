@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { aDraft, aTool, aVerification } from "./builders";
 import {
+    ADAPTER_DEFAULT,
     countProblems,
     degradedFixSubject,
     degradedModeSubject,
@@ -37,7 +38,7 @@ describe("ce qu'une carte d'outil dit", () => {
         const heading = describeTool(tool);
 
         // Then
-        expect(heading.config).toBe("adapter default");
+        expect(heading.config).toBe(ADAPTER_DEFAULT);
     });
 });
 

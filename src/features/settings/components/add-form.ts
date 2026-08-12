@@ -2,6 +2,7 @@ import { button, choice, field, row, type UiComponent, type UiChild } from "@/sh
 
 import type { SettingsSnapshot, ToolDraft, Verification } from "../contract";
 import {
+    ADAPTER_DEFAULT,
     type AddAction,
     degradedModeSubject,
     describeAddAction,
@@ -60,7 +61,7 @@ export function addForm(
             "optional",
         ),
         ...adapterField(draft, snapshot.adapters, actions),
-        ...formField("config", draft.config, "adapter default", (value) => {
+        ...formField("config", draft.config, ADAPTER_DEFAULT, (value) => {
             actions.editDraft({ config: value });
         }),
         label("settings-form-key", "test"),
