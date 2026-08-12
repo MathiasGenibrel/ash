@@ -1,6 +1,7 @@
 import "./styles.css";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
+import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
 import { onMenuAction, type MenuAction } from "./menu";
 import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
@@ -17,7 +18,7 @@ import { createTitleBar } from "./titlebar";
  * feature terminal. La feature ne connaît pas le menu, et le menu ne connaît pas la
  * feature.
  */
-function mount(root: HTMLElement, theme: ThemeChanges): void {
+function mount(root: HTMLElement, theme: ThemeChanges, fontSize: FontSizeChanges): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
     // largeur — c'est ce qui la laisse saisissable à droite des pastilles, et ce qui la
     // rend indifférente à `⌘B`.
@@ -29,10 +30,12 @@ function mount(root: HTMLElement, theme: ThemeChanges): void {
     const host = document.createElement("div");
     host.className = "terminal-host";
 
-    // Le thème est passé, pas cherché : la table de tokens et sa bascule appartiennent à
-    // l'application, et un terminal ne peint pas en CSS — il lui faut l'avis pour relire la
-    // palette et se repeindre, onglets déjà ouverts compris.
-    const terminals = mountTerminals(host, theme);
+    // Le thème et la taille de police sont passés, pas cherchés : ce sont deux préférences
+    // d'apparence de l'**application**, détenues par le backend
+    // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et un terminal ne peint
+    // pas en CSS — il lui faut l'avis pour relire la palette, changer de taille et refaire
+    // sa grille, onglets déjà ouverts compris.
+    const terminals = mountTerminals(host, theme, fontSize);
 
     // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
     // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
@@ -139,10 +142,17 @@ if (root === null) {
 const theme = followThemeMode(document.documentElement);
 theme.ready.catch(() => undefined);
 
+// Même forme, et pour la même raison : la taille gardée de la session précédente arrive
+// par un aller-retour, et les premiers terminaux naissent avant sa réponse — ils s'y
+// ajusteront comme à un `⌘+`. Un échec du raccordement laisse la taille par défaut, ce
+// qui est exactement ce qu'un premier démarrage donne : il n'y a rien à rattraper.
+const fontSize = followTerminalFontSize();
+fontSize.ready.catch(() => undefined);
+
 if (import.meta.env.VITE_SPIKE === "1") {
     mountSpike(root).catch((error: unknown) => {
         root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
     });
 } else {
-    mount(root, theme.changes);
+    mount(root, theme.changes, fontSize.changes);
 }

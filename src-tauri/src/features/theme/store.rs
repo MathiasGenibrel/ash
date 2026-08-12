@@ -1,23 +1,16 @@
 use std::path::PathBuf;
 
+use super::appearance::Appearance;
 use super::error::ThemeError;
-use super::mode::ThemeMode;
 
-/// Où le choix de thème se garde d'une session à l'autre.
+/// Où les préférences d'apparence se gardent d'une session à l'autre.
 ///
 /// Un trait, comme tous les effets système de ce dépôt : sans lui, vérifier qu'un choix
 /// survit au redémarrage demanderait d'écrire dans le `$HOME` de qui lance les tests.
 pub trait ThemeStore: Send + Sync {
-    /// Le choix gardé, ou `None` — première ouverture, fichier absent, fichier abîmé.
-    fn load(&self) -> Option<ThemeMode>;
-    fn save(&self, mode: ThemeMode) -> Result<(), ThemeError>;
-}
-
-/// Ce que le fichier contient. Un objet, et pas une chaîne nue : le jour où une seconde
-/// préférence d'apparence s'y ajoute (#22), le fichier n'a pas à changer de forme.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Stored {
-    mode: ThemeMode,
+    /// Ce qui est gardé, ou `None` — première ouverture, fichier absent, fichier abîmé.
+    fn load(&self) -> Option<Appearance>;
+    fn save(&self, appearance: Appearance) -> Result<(), ThemeError>;
 }
 
 /// Le choix dans `~/.ash/theme.json`.
@@ -44,13 +37,13 @@ impl FileThemeStore {
 
 impl ThemeStore for FileThemeStore {
     /// **Tolérante à tout.** Un fichier absent, tronqué, vide ou rempli d'autre chose rend
-    /// `None`, et Ash repart sur le mode système. Une préférence d'apparence n'est jamais
-    /// une raison d'empêcher une fenêtre d'ouvrir.
-    fn load(&self) -> Option<ThemeMode> {
+    /// `None`, et Ash repart sur le mode système et la taille par défaut. Une préférence
+    /// d'apparence n'est jamais une raison d'empêcher une fenêtre d'ouvrir.
+    fn load(&self) -> Option<Appearance> {
         decode(&std::fs::read_to_string(&self.path).ok()?)
     }
 
-    fn save(&self, mode: ThemeMode) -> Result<(), ThemeError> {
+    fn save(&self, appearance: Appearance) -> Result<(), ThemeError> {
         let io = |why: std::io::Error| ThemeError::Io {
             path: self.path.clone(),
             why: why.to_string(),
@@ -59,23 +52,21 @@ impl ThemeStore for FileThemeStore {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(io)?;
         }
-        std::fs::write(&self.path, encode(mode)).map_err(io)
+        std::fs::write(&self.path, encode(appearance)).map_err(io)
     }
 }
 
 /// Le contenu du fichier, ou `None` s'il ne dit rien qu'on comprenne.
-fn decode(content: &str) -> Option<ThemeMode> {
-    serde_json::from_str::<Stored>(content)
-        .ok()
-        .map(|stored| stored.mode)
+fn decode(content: &str) -> Option<Appearance> {
+    serde_json::from_str::<Appearance>(content).ok()
 }
 
-fn encode(mode: ThemeMode) -> String {
-    // `to_string` et non `to_string_pretty` : trente octets sur une ligne, terminés par un
-    // saut de ligne pour que le fichier reste lisible dans un terminal.
+fn encode(appearance: Appearance) -> String {
+    // `to_string` et non `to_string_pretty` : quelques dizaines d'octets sur une ligne,
+    // terminés par un saut de ligne pour que le fichier reste lisible dans un terminal.
     format!(
         "{}\n",
-        serde_json::to_string(&Stored { mode }).unwrap_or_else(|_| String::from("{}"))
+        serde_json::to_string(&appearance).unwrap_or_else(|_| String::from("{}"))
     )
 }
 
@@ -83,17 +74,74 @@ fn encode(mode: ThemeMode) -> String {
 mod tests {
     use super::*;
 
+    use super::super::font_size::{FontSize, FontStep};
+    use super::super::mode::ThemeMode;
+
     #[test]
     fn given_a_stored_choice_when_it_is_read_back_then_it_is_the_same_choice() {
         // Given — le fichier est le seul lien entre deux sessions ; sa forme est un
         // contrat avec la version d'Ash de demain
-        let written = encode(ThemeMode::Dark);
+        let written = encode(Appearance {
+            mode: ThemeMode::Dark,
+            font_size: FontSize::DEFAULT.stepped(FontStep::Bigger),
+        });
 
         // When
         let read = decode(&written);
 
         // Then
-        assert_eq!(read, Some(ThemeMode::Dark));
+        assert_eq!(
+            read,
+            Some(Appearance {
+                mode: ThemeMode::Dark,
+                font_size: FontSize::DEFAULT.stepped(FontStep::Bigger),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_preference_file_written_before_the_font_size_existed_when_it_is_read_then_the_theme_survives(
+    ) {
+        // Given — le fichier des versions d'Ash où la taille n'était pas réglable
+        let previous_version = "{\"mode\":\"dark\"}";
+
+        // When
+        let read = decode(previous_version);
+
+        // Then — la mise à jour d'Ash ne perd pas le thème, et ouvre à la taille par défaut
+        assert_eq!(
+            read,
+            Some(Appearance {
+                mode: ThemeMode::Dark,
+                font_size: FontSize::DEFAULT,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_preference_file_written_by_a_later_ash_when_it_is_read_then_both_preferences_survive(
+    ) {
+        // Given — l'autre sens de la migration, celui qu'on ne peut pas jouer en revenant
+        // en arrière : un fichier portant une troisième préférence d'apparence, ou lu par
+        // une version d'Ash qui ne connaît pas encore `font_size`. Revenir d'une version à
+        // la précédente n'a rien d'hypothétique — il suffit de rebasculer de branche.
+        let later_version = "{\"mode\":\"dark\",\"font_size\":15,\"cursor\":\"bar\"}";
+
+        // When
+        let read = decode(later_version);
+
+        // Then — un champ qu'on ne connaît pas se laisse tomber ; il ne rend pas le fichier
+        // illisible et ne remet pas le thème sur le système. C'est ce que `deny_unknown_fields`
+        // détruirait, et c'est pour ça qu'il n'est nulle part dans ce dépôt.
+        assert_eq!(
+            read,
+            Some(Appearance {
+                mode: ThemeMode::Dark,
+                font_size: FontSize::DEFAULT
+                    .stepped(FontStep::Bigger)
+                    .stepped(FontStep::Bigger),
+            })
+        );
     }
 
     #[test]
@@ -103,7 +151,7 @@ mod tests {
         let broken = ["", "{", "{\"mode\":\"solarized\"}", "null", "[]"];
 
         // When
-        let read: Vec<Option<ThemeMode>> = broken.iter().map(|c| decode(c)).collect();
+        let read: Vec<Option<Appearance>> = broken.iter().map(|c| decode(c)).collect();
 
         // Then — une préférence d'apparence n'empêche jamais une fenêtre d'ouvrir
         assert_eq!(read, vec![None; broken.len()]);
@@ -116,13 +164,17 @@ mod tests {
             .join(format!("ash-theme-{}", std::process::id()))
             .join("theme.json");
         let store = FileThemeStore::at(path.clone());
+        let chosen = Appearance {
+            mode: ThemeMode::Light,
+            font_size: FontSize::DEFAULT.stepped(FontStep::Smaller),
+        };
 
         // When
-        store.save(ThemeMode::Light).unwrap();
+        store.save(chosen).unwrap();
         let next_session = FileThemeStore::at(path.clone()).load();
 
-        // Then
-        assert_eq!(next_session, Some(ThemeMode::Light));
+        // Then — la taille suit le même chemin que le thème, et survit au redémarrage
+        assert_eq!(next_session, Some(chosen));
         let _ = std::fs::remove_file(&path);
     }
 

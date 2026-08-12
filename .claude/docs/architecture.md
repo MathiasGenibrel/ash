@@ -20,7 +20,8 @@ src-tauri/src/
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12
     journal/             attribution commit → agent → prompt       — ADR-0014
     hooks/               installation du bloc dans les settings.json
-    theme/               le mode clair / sombre / système, et sa persistance
+    theme/               l'apparence de la fenêtre — mode clair / sombre /
+                         système, taille de police du terminal — et sa persistance
   shared/                réellement transverse, et justifié
 src/
   app/                   composition root du frontend

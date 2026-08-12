@@ -57,7 +57,7 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::features::settings::commands as settings;
-use crate::features::theme::{commands as theme, ThemeMode};
+use crate::features::theme::{commands as theme, FontStep, ThemeMode};
 
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
 const MENU_ACTION_EVENT: &str = "ash://menu-action";
@@ -210,6 +210,47 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
         true,
         Some("Cmd+B"),
     )?;
+    // La taille de police du terminal — `Cmd++`, `Cmd+-`, `Cmd+0`.
+    //
+    // Dans « View » et non dans « Terminal », parce que c'est un réglage de **toute
+    // l'application** et non de l'onglet actif : voir `features::theme::FontSize`, qui
+    // porte cette décision et ses bornes. Les trois entrées existent en permanence, même
+    // quand la taille est déjà à une borne — une entrée qui s'active et se désactive au
+    // fil des frappes ferait vivre l'état de la taille à deux endroits, et le pas sans
+    // effet est déjà ignoré par la feature.
+    //
+    // **`Cmd+0` est libre** : les positions d'onglet s'arrêtent à `Cmd+9` (`DIRECT_TABS`),
+    // et `Action::from_id` refuse `tab:select:0`.
+    //
+    // L'accélérateur de « Bigger » s'écrit `Cmd+NumpadAdd`, et ce n'est pas le pavé
+    // numérique : sur macOS, un accélérateur de menu est un **caractère**, pas une touche
+    // physique, et `NumpadAdd` est le seul nom que l'analyseur de `muda` traduit en `+`.
+    // L'entrée affiche donc « ⌘+ » et répond au `+` du clavier principal — celui qui se
+    // tape avec ⇧, comme dans tous les navigateurs.
+    //
+    // **Limite connue, et à laisser visible : `Cmd+=` n'est pas lié.** C'est pourtant la
+    // touche que la moitié des gens presse pour agrandir, parce qu'elle porte le `+` sans ⇧
+    // sur un clavier américain — et sur un AZERTY, ni `+` ni `=` ne sont là où on les
+    // imagine. AppKit sait donner un second key equivalent à une entrée (`alternate item`) ;
+    // `muda` ne l'expose pas, donc un second accélérateur demanderait de descendre à AppKit
+    // sous l'arbre que `muda` construit. À rouvrir si la plainte remonte, pas avant.
+    let font_sizes: Vec<MenuItem<R>> = FontStep::ALL
+        .into_iter()
+        .map(|step| {
+            MenuItem::with_id(
+                app,
+                Action::ResizeFont(step).id(),
+                step.label(),
+                true,
+                Some(match step {
+                    FontStep::Bigger => "Cmd+NumpadAdd",
+                    FontStep::Smaller => "Cmd+Minus",
+                    FontStep::Default => "Cmd+0",
+                }),
+            )
+        })
+        .collect::<tauri::Result<_>>()?;
+
     // Les trois thèmes, en coches exclusives. C'est le **seul** point d'entrée du choix à
     // ce jalon : la fenêtre de réglages existe, mais sa section `appearance` est l'issue
     // #22 — elle n'y montre pour l'instant que d'où le thème se choisit.
@@ -238,7 +279,18 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
             .collect::<Vec<_>>(),
     )?;
 
-    let view = Submenu::with_items(app, "View", true, &[&toggle_sidebar, &theme_menu])?;
+    let view_separator = PredefinedMenuItem::separator(app)?;
+    let mut view_items: Vec<&dyn tauri::menu::IsMenuItem<R>> =
+        vec![&toggle_sidebar, &view_separator];
+    view_items.extend(
+        font_sizes
+            .iter()
+            .map(|item| item as &dyn tauri::menu::IsMenuItem<R>),
+    );
+    view_items.push(&view_separator);
+    view_items.push(&theme_menu);
+
+    let view = Submenu::with_items(app, "View", true, &view_items)?;
 
     // Pas de « Close Window » ici : son `Cmd+W` prendrait le pas sur celui des onglets.
     let window = Submenu::with_items(
@@ -277,6 +329,11 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
             // donc, et le menu n'aurait plus aucun mode coché.
             check_only(app, mode);
         }
+        // La taille de police est un **état**, comme le thème : elle est retenue par
+        // `features::theme` — donc gardée d'une session à l'autre — avant d'être annoncée à
+        // la webview, qui n'a plus qu'à réajuster ses grilles
+        // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+        Action::ResizeFont(step) => theme::resize_terminal_font(app, step),
         // Une fenêtre est un objet du backend, comme le thème : l'ouvrir depuis la webview
         // demanderait à la fenêtre principale d'exister pour que la seconde puisse naître.
         Action::OpenSettings => settings::open(app),
@@ -344,8 +401,11 @@ enum Action {
     PreviousTab,
     /// Replie ou déplie la sidebar — `Cmd+B`.
     ToggleSidebar,
-    /// Choisit le thème de la fenêtre — l'une des deux qui ne partent pas vers la webview.
+    /// Choisit le thème de la fenêtre — l'une de celles qui ne partent pas vers la webview.
     ChooseTheme(ThemeMode),
+    /// Change la taille de police du terminal — `Cmd++`, `Cmd+-`, `Cmd+0`. Retenue en
+    /// Rust comme le thème : c'est un état, pas un ordre d'affichage.
+    ResizeFont(FontStep),
     /// Ouvre la fenêtre de réglages — `Cmd+,`. Traitée ici, comme le thème.
     OpenSettings,
 }
@@ -362,6 +422,7 @@ impl Action {
             Action::PreviousTab => "tab:previous".to_owned(),
             Action::ToggleSidebar => "view:toggle-sidebar".to_owned(),
             Action::ChooseTheme(mode) => format!("view:theme:{}", mode.as_id()),
+            Action::ResizeFont(step) => format!("view:font:{}", step.as_id()),
             Action::OpenSettings => "app:settings".to_owned(),
         }
     }
@@ -376,9 +437,13 @@ impl Action {
             "tab:previous" => Some(Action::PreviousTab),
             "view:toggle-sidebar" => Some(Action::ToggleSidebar),
             "app:settings" => Some(Action::OpenSettings),
-            other => match other.strip_prefix("view:theme:") {
-                Some(mode) => ThemeMode::from_id(mode).map(Action::ChooseTheme),
-                None => other
+            other => match (
+                other.strip_prefix("view:theme:"),
+                other.strip_prefix("view:font:"),
+            ) {
+                (Some(mode), _) => ThemeMode::from_id(mode).map(Action::ChooseTheme),
+                (_, Some(step)) => FontStep::from_id(step).map(Action::ResizeFont),
+                _ => other
                     .strip_prefix("tab:select:")
                     .and_then(|position| position.parse().ok())
                     .filter(|position| (1..=DIRECT_TABS).contains(position))
@@ -409,6 +474,9 @@ mod tests {
             Action::ChooseTheme(ThemeMode::Light),
             Action::ChooseTheme(ThemeMode::Dark),
             Action::ChooseTheme(ThemeMode::System),
+            Action::ResizeFont(FontStep::Bigger),
+            Action::ResizeFont(FontStep::Smaller),
+            Action::ResizeFont(FontStep::Default),
             Action::OpenSettings,
         ];
 
@@ -437,6 +505,17 @@ mod tests {
         // de menu : un identifiant de thème inconnu ne doit ni être joué, ni retomber sur
         // la lecture d'une position d'onglet
         let unknown = Action::from_id("view:theme:solarized");
+
+        // Then
+        assert_eq!(unknown, None);
+    }
+
+    #[test]
+    fn given_a_font_identifier_no_step_carries_when_it_is_read_then_it_is_not_an_action() {
+        // Given / When — `view:font:`, `view:theme:` et `view:toggle-sidebar` partagent le
+        // même préfixe : un pas inconnu ne doit ni changer la taille, ni retomber sur une
+        // autre action de « View »
+        let unknown = Action::from_id("view:font:huge");
 
         // Then
         assert_eq!(unknown, None);
