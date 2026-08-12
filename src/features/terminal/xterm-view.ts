@@ -3,6 +3,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import { resolveKeyBinding } from "./key-bindings";
 import type { TerminalSize, TerminalView, ThemeSignal, Unsubscribe } from "./ports";
 import { readTerminalTheme } from "./theme";
 
@@ -20,6 +21,15 @@ export class XtermView implements TerminalView {
     private readonly observer: ResizeObserver;
     private readonly pane: HTMLElement;
     private readonly unfollowTheme: Unsubscribe;
+    /**
+     * Les abonnés à la saisie, appelés par xterm.js **et** par la table de raccourcis.
+     *
+     * La liste est tenue ici plutôt que déléguée à `term.onData` parce qu'il y a désormais
+     * deux sources de saisie pour un même onglet, et qu'une seule est celle de xterm. Elle
+     * est donc aussi vidée dans `dispose` : c'est la seule ressource de cette vue que
+     * `term.dispose()` ne libère pas à notre place.
+     */
+    private readonly inputs: ((data: string) => void)[] = [];
 
     /**
      * Crée sa propre surface dans `parent`, et la retire en se libérant.
@@ -41,7 +51,43 @@ export class XtermView implements TerminalView {
             theme: readTerminalTheme(),
             scrollback: 10_000,
             allowProposedApi: true,
-            macOptionIsMeta: true,
+            // ⌥ **compose**, il n'est pas Meta. À `true`, xterm.js transformait toute
+            // frappe avec ⌥ en `ESC`+touche avant que macOS n'ait composé quoi que ce
+            // soit : sur un clavier AZERTY, `|` (⌥⇧L) était intapable, comme `~`, `\`,
+            // `{`, `}`, `[`, `]` et `€`. À `false`, ces frappes passent par le chemin
+            // « third level shift » de xterm.js, qui ne les annule pas et laisse la
+            // webview livrer le caractère composé.
+            //
+            // Ce que ⌥ était censé apporter en échange — la navigation par mot — n'était
+            // relié nulle part : c'est maintenant la table de `key-bindings.ts`, posée
+            // ci-dessous, qui l'assure explicitement.
+            //
+            // À relire en montant xterm.js de version : ce chemin est **interne** à
+            // xterm.js (`_keyDown` consulte `_isThirdLevelShift`, vérifié sur 6.0.0) et
+            // aucun test ne le couvre — `bun test` n'a ni WKWebView ni clavier, et les
+            // tests de `key-bindings.test.ts` protègent la table, pas le comportement de
+            // xterm.js. La vérification est manuelle et tient en une frappe : sur un
+            // clavier AZERTY, ⌥⇧L doit écrire `|` dans un onglet.
+            macOptionIsMeta: false,
+        });
+
+        // Le gestionnaire est branché avant `open` : xterm.js le consulte pour chaque
+        // `keydown` et `keyup`, et `false` veut dire « xterm ne traite pas cet
+        // événement ». Il ne rend `false` que pour les accords qu'il a **effectivement**
+        // envoyés ; tout le reste — un caractère composé, un `Ctrl-A` tapé directement,
+        // un accélérateur que macOS n'aurait pas consommé — repart intact.
+        this.term.onData((data) => {
+            this.emitInput(data);
+        });
+
+        this.term.attachCustomKeyEventHandler((event) => {
+            const bytes = resolveKeyBinding(event);
+            if (bytes === null) return true;
+            // WKWebView garde des défauts à lui pour ces accords — `Cmd+←` y est encore
+            // « page précédente ». Rendre `false` arrête xterm.js, pas le navigateur.
+            event.preventDefault();
+            this.emitInput(bytes);
+            return false;
         });
 
         // Repeindre à chaud, et non recréer : `options.theme` remplace les couleurs et
@@ -77,7 +123,7 @@ export class XtermView implements TerminalView {
     }
 
     onInput(handler: (data: string) => void): void {
-        this.term.onData(handler);
+        this.inputs.push(handler);
     }
 
     onResize(handler: (size: TerminalSize) => void): void {
@@ -103,6 +149,15 @@ export class XtermView implements TerminalView {
         this.observer.disconnect();
         this.term.dispose();
         this.pane.remove();
+        // Le gestionnaire de touches et `term.onData` passent tous deux par `emitInput` :
+        // laisser la liste garnie après la fermeture retiendrait la session, son `tabId` et
+        // son pont pour un onglet dont le PTY n'existe plus.
+        this.inputs.length = 0;
+    }
+
+    /** Pousse une saisie vers les abonnés, qu'elle vienne de xterm.js ou d'un raccourci. */
+    private emitInput(data: string): void {
+        for (const handler of this.inputs) handler(data);
     }
 
     /**
