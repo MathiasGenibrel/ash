@@ -227,6 +227,13 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     // physique, et `NumpadAdd` est le seul nom que l'analyseur de `muda` traduit en `+`.
     // L'entrée affiche donc « ⌘+ » et répond au `+` du clavier principal — celui qui se
     // tape avec ⇧, comme dans tous les navigateurs.
+    //
+    // **Limite connue, et à laisser visible : `Cmd+=` n'est pas lié.** C'est pourtant la
+    // touche que la moitié des gens presse pour agrandir, parce qu'elle porte le `+` sans ⇧
+    // sur un clavier américain — et sur un AZERTY, ni `+` ni `=` ne sont là où on les
+    // imagine. AppKit sait donner un second key equivalent à une entrée (`alternate item`) ;
+    // `muda` ne l'expose pas, donc un second accélérateur demanderait de descendre à AppKit
+    // sous l'arbre que `muda` construit. À rouvrir si la plainte remonte, pas avant.
     let font_sizes: Vec<MenuItem<R>> = FontStep::ALL
         .into_iter()
         .map(|step| {

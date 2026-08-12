@@ -119,6 +119,32 @@ mod tests {
     }
 
     #[test]
+    fn given_a_preference_file_written_by_a_later_ash_when_it_is_read_then_both_preferences_survive(
+    ) {
+        // Given — l'autre sens de la migration, celui qu'on ne peut pas jouer en revenant
+        // en arrière : un fichier portant une troisième préférence d'apparence, ou lu par
+        // une version d'Ash qui ne connaît pas encore `font_size`. Revenir d'une version à
+        // la précédente n'a rien d'hypothétique — il suffit de rebasculer de branche.
+        let later_version = "{\"mode\":\"dark\",\"font_size\":15,\"cursor\":\"bar\"}";
+
+        // When
+        let read = decode(later_version);
+
+        // Then — un champ qu'on ne connaît pas se laisse tomber ; il ne rend pas le fichier
+        // illisible et ne remet pas le thème sur le système. C'est ce que `deny_unknown_fields`
+        // détruirait, et c'est pour ça qu'il n'est nulle part dans ce dépôt.
+        assert_eq!(
+            read,
+            Some(Appearance {
+                mode: ThemeMode::Dark,
+                font_size: FontSize::DEFAULT
+                    .stepped(FontStep::Bigger)
+                    .stepped(FontStep::Bigger),
+            })
+        );
+    }
+
+    #[test]
     fn given_a_preference_file_that_says_nothing_understandable_when_it_is_read_then_ash_falls_back_to_the_system(
     ) {
         // Given — un fichier tronqué par une coupure, vidé, ou édité à la main

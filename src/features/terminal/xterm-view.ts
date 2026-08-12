@@ -279,6 +279,16 @@ export class XtermView implements TerminalView {
      * `pty_resize` — exactement le chemin qu'emprunte déjà le `ResizeObserver` de la
      * fenêtre. Rien de particulier n'est envoyé au PTY ici, et c'est voulu : deux chemins
      * de redimensionnement finiraient par ne plus dire la même grille.
+     *
+     * **Ces deux lignes tiennent sur une hypothèse de version.** Poser `options.fontSize`
+     * remesure la cellule de façon **synchrone** — `@xterm/xterm` 6.0.0 branche
+     * `onMultipleOptionChange(["fontFamily", "fontSize"])` sur sa mesure, qui met à jour les
+     * dimensions du renderer avant que `FitAddon.proposeDimensions()` ne les relise — donc
+     * le `fit()` de la ligne suivante voit déjà la nouvelle cellule. Si une version d'xterm
+     * différait cette mesure, l'appel ne casserait pas : il calculerait la grille avec
+     * l'**ancienne** taille de cellule, et le défaut ressemblerait trait pour trait à un
+     * `refit` oublié — visible à l'usage, dans aucun test. Qui monte `@xterm/xterm` de
+     * version relit ce paragraphe, et vérifie dans une TUI plein écran.
      */
     private setFontSize(points: number): void {
         if (this.disposed || this.term.options.fontSize === points) return;

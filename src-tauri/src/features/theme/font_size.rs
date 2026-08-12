@@ -71,6 +71,21 @@ impl<'de> serde::Deserialize<'de> for FontSize {
     ///
     /// C'est le seul chemin par lequel une valeur arbitraire entre dans le type, donc le
     /// seul endroit où la borner ait un sens.
+    ///
+    /// **C'est l'inverse de ce que fait [`Command::parse`](crate::features::settings::Command),
+    /// et la différence est voulue.** `Command` n'a délibérément pas de `Deserialize` : c'est
+    /// une saisie de l'utilisateur *et* une frontière de sécurité — un chemin déguisé en nom
+    /// de commande ferait exécuter un fichier désigné à la main — donc rien ne doit pouvoir
+    /// en fabriquer un sans passer par la règle, et une saisie fautive se **refuse**, pour
+    /// qu'on puisse la corriger.
+    ///
+    /// Une taille de police n'est ni l'un ni l'autre. Ce qu'on relit est un fichier
+    /// qu'**Ash a écrit lui-même**, il n'y a personne devant l'écran pour lire un refus au
+    /// démarrage, et une valeur hors bornes n'ouvre rien : le pire qu'un `400` puisse faire
+    /// est de mal afficher. Refuser coûterait le choix de thème, écrit dans le même objet ;
+    /// ramener dans l'intervalle ne coûte rien, et se voit — le terminal s'ouvre au plafond
+    /// au lieu de la taille demandée. Le fichier, lui, n'est pas réécrit : la correction se
+    /// rejoue à chaque démarrage tant que l'utilisateur n'a pas retouché sa préférence.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,

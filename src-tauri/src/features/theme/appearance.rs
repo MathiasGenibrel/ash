@@ -14,6 +14,13 @@ use super::mode::ThemeMode;
 /// taille par défaut, pas un fichier illisible. `mode`, lui, reste obligatoire : c'est ce
 /// qui distingue un fichier de préférence d'un fichier qui ne dit rien qu'on comprenne, et
 /// un fichier incompréhensible retombe sur les défauts sans en inventer la moitié.
+///
+/// **Le contrat vaut dans les deux sens**, et le second se rate facilement : un champ
+/// inconnu se laisse tomber, donc un fichier écrit ici se relit par une version d'Ash qui
+/// ignore `font_size` — revenir d'une branche à la précédente ne coûte pas le thème. C'est
+/// exactement ce qu'un `#[serde(deny_unknown_fields)]` détruirait, en croyant bien faire :
+/// il n'y en a nulle part dans ce dépôt, et les deux sens sont tenus par un test dans
+/// `store.rs`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Appearance {
     pub mode: ThemeMode,
