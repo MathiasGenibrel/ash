@@ -3,11 +3,13 @@ import { describe, expect, it } from "bun:test";
 import {
     HOOK_STATES,
     hookShapes,
+    hooksGlyph,
     presentHooks,
     presentVerification,
     testTileClass,
     testTileLabel,
     VERIFICATION_STATES,
+    verificationGlyph,
 } from "./verification-state";
 
 describe("la présentation des cinq états de vérification", () => {
@@ -100,6 +102,36 @@ describe("la présentation des cinq états de la ligne hooks", () => {
 
         // Then
         expect(shown).toEqual(["installed", "missing", "outdated", "conflict"]);
+    });
+});
+
+describe("les glyphes, maintenant qu'ils sont des descriptions", () => {
+    it("Given the state that is happening now, when its glyph is described, then it carries the movement that only it has", () => {
+        // Given — le mouvement distingue `verifying` d'`unverified` sans lire un mot. Il
+        // était posé dans un `SVGElement` : rien ne pouvait le vérifier
+        // When
+        const moving = VERIFICATION_STATES.filter((state) =>
+            verificationGlyph(state).build().classes.includes("is-spinning"),
+        );
+
+        // Then
+        expect(moving).toEqual(["verifying"]);
+    });
+
+    it("Given a hooks glyph, when a screen reader reaches it, then it hears the state rather than a drawing", () => {
+        // Given — un `<svg>` sans mot est invisible pour un lecteur d'écran, et il n'y a
+        // aucun texte autour de lui sur la ligne
+        const described = hooksGlyph("blocked").build();
+
+        // When
+        const drawn = described.children.map((path) =>
+            path.kind === "element" ? path.attrs["d"] : null,
+        );
+
+        // Then
+        expect(described.attrs["aria-label"]).toBe("hooks unavailable");
+        expect(described.namespace).toBe("http://www.w3.org/2000/svg");
+        expect(drawn).toEqual([...hookShapes("blocked")]);
     });
 });
 

@@ -1,3 +1,5 @@
+import { ElementBuilder, SVG_NAMESPACE, type UiBuilder } from "@/shared/ui";
+
 import type { HookState, TestOutcome, VerificationState } from "./contract";
 
 /**
@@ -107,22 +109,20 @@ const SHAPES: Readonly<Record<VerificationState, readonly string[]>> = {
     invalid: ["M18 6 6 18", "m6 6 12 12"],
 };
 
-const SVG = "http://www.w3.org/2000/svg";
-
 /**
- * Le glyphe d'un état, prêt à poser dans le DOM.
+ * Le glyphe d'un état — **une description**, comme le reste de l'écran.
  *
  * Il vit ici plutôt que dans la vue parce que quatre décisions y tiennent ensemble : la
  * forme, la classe qui la peint, le mot que lit un lecteur d'écran, et le mouvement qui
  * distingue `verifying` du reste. Écrit à plusieurs endroits, il finit par ne plus dire la
- * même chose des deux côtés — et aucun test ne rattraperait la divergence, le dépôt ne
- * montant pas de DOM dans `bun test`.
+ * même chose des deux côtés.
  */
-export function verificationGlyph(state: VerificationState, size = 14): SVGElement {
+export function verificationGlyph(state: VerificationState, size = 14): UiBuilder {
     const shown = PRESENTATIONS[state];
     const svg = glyph(SHAPES[state], size, shown.className, shown.label);
-    if (shown.spinning) svg.classList.add("is-spinning");
-    return svg;
+    // Le mouvement n'appartient qu'à `verifying`, et c'est ce qui le distingue
+    // d'`unverified` sans lire un mot.
+    return shown.spinning ? svg.class("is-spinning") : svg;
 }
 
 /**
@@ -226,17 +226,50 @@ const HOOK_SHAPES: Readonly<Record<HookState, readonly string[]>> = {
  *
  * Ils sont lisibles hors de `hooksGlyph` parce que le choix des formes est une décision et
  * non un détail de rendu : c'est elle qui garantit que deux états gris ne se confondent
- * pas. Le dépôt ne monte pas de DOM dans `bun test` ; sans cette porte, la seule chose qui
- * distingue `missing` de `blocked` ne serait vérifiable nulle part.
+ * pas. Depuis que le glyphe est une description, un test pourrait aussi bien lire ses
+ * tracés dans son arbre ; cette porte reste la façon la plus directe de comparer deux
+ * états entre eux, ce qui est précisément ce que la règle demande.
  */
 export function hookShapes(state: HookState): readonly string[] {
     return HOOK_SHAPES[state];
 }
 
-/** Le glyphe d'un état de hooks, prêt à poser dans le DOM. */
-export function hooksGlyph(state: HookState, size = 13): SVGElement {
+/** Le glyphe d'un état de hooks — une description, elle aussi. */
+export function hooksGlyph(state: HookState, size = 13): UiBuilder {
     const shown = HOOK_PRESENTATIONS[state];
     return glyph(HOOK_SHAPES[state], size, shown.className, shown.label);
+}
+
+/**
+ * Un `<svg>` et ses tracés, dans l'espace de noms qui les rend visibles.
+ *
+ * C'est le seul endroit de la fenêtre qui sorte du HTML : à 13 px, la forme d'un état ne
+ * peut pas dépendre de la police installée, et c'est justement la forme qui porte l'état.
+ */
+class Glyph extends ElementBuilder {
+    constructor(shapes: readonly string[], size: number, className: string, label: string) {
+        super("svg", "settings-verify-glyph", className);
+        this.inNamespace(SVG_NAMESPACE)
+            .attr("viewBox", "0 0 24 24")
+            .attr("width", String(size))
+            .attr("height", String(size))
+            .attr("fill", "none")
+            .attr("stroke", "currentColor")
+            .attr("stroke-width", "1.75")
+            .attr("stroke-linecap", "round")
+            .attr("stroke-linejoin", "round")
+            // Une image qui se nomme : sans le mot, un lecteur d'écran ne lit qu'un dessin.
+            .attr("role", "img")
+            .attr("aria-label", label)
+            .add(...shapes.map((shape) => new Path(shape)));
+    }
+}
+
+class Path extends ElementBuilder {
+    constructor(shape: string) {
+        super("path");
+        this.inNamespace(SVG_NAMESPACE).attr("d", shape);
+    }
 }
 
 function glyph(
@@ -244,25 +277,8 @@ function glyph(
     size: number,
     className: string,
     label: string,
-): SVGElement {
-    const svg = document.createElementNS(SVG, "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("width", String(size));
-    svg.setAttribute("height", String(size));
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", "1.75");
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("class", `settings-verify-glyph ${className}`);
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", label);
-    for (const shape of shapes) {
-        const path = document.createElementNS(SVG, "path");
-        path.setAttribute("d", shape);
-        svg.append(path);
-    }
-    return svg;
+): Glyph {
+    return new Glyph(shapes, size, className, label);
 }
 
 /**
