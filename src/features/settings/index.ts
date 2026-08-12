@@ -237,6 +237,13 @@ export function mountSettings(
             if (draft !== asked) return;
             draftVerification = verification;
         } catch {
+            // Le refus est soumis à la **même** règle de fraîcheur que la réponse : le
+            // backend refuse désormais une saisie dont le champ `command` n'est pas un nom
+            // de processus, donc ce chemin se prend en tapant. Sans cette garde, le refus
+            // d'une saisie qu'on a déjà corrigée effacerait la vérification de celle qui
+            // l'a remplacée, et la rangée de pastilles resterait vide jusqu'à la frappe
+            // suivante.
+            if (draft !== asked) return;
             draftVerification = null;
         }
         draw();
