@@ -45,6 +45,7 @@ const SETTINGS_PAGE: &str = "settings.html";
 /// c'est ici que les tests existent, donc c'est ici qu'ils se nomment. Une liste recopiée
 /// dans la vue finirait par décrire un test que la séquence ne lance plus.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TestDescription {
     pub number: u8,
@@ -63,6 +64,7 @@ pub struct TestDescription {
 /// possible — et deux commandes laisseraient la fenêtre afficher un instant l'une sans
 /// l'autre.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
     pub tools: Vec<ToolDeclaration>,
@@ -101,6 +103,7 @@ impl SettingsSnapshot {
 
 /// Ce que le second temps rapporte, pour une entrée nommée.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Verified {
     pub command: Command,

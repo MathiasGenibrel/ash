@@ -87,25 +87,65 @@ le découpage n'est qu'un renommage de dossiers.
 
 ### La frontière Rust ↔ TypeScript
 
-C'est la plus importante du projet, et la seule que l'outillage ne vérifie pas tout
-seul.
+C'est la plus importante du projet.
 
 - Une feature Rust n'expose au frontend que ses `#[tauri::command]` et ses events,
   déclarés dans son `commands.rs`. Le reste du module est privé au crate.
 - Le TypeScript ne connaît que les noms de commandes et les types de `shared/ipc/`. Il
   n'a aucune connaissance de la structure interne du backend.
-- Les types du contrat sont écrits **une fois**. Les redéclarer à la main des deux
-  côtés produit une divergence silencieuse au premier changement de champ. `ts-rs` ou
-  `tauri-specta` génèrent le `.d.ts` depuis les structures Rust — **rien n'est
-  installé**, c'est une piste à évaluer à la première commande écrite.
 - **Un refus traverse en chaîne, et ça se teste.** `PtyError` et `SettingsError`
   sérialisent tous deux `self.to_string()`, et le frontend en fait
   `error instanceof Error ? error.message : String(error)`. Un `Serialize` dérivé —
   donc un objet balisé — y donnerait `[object Object]` **à l'écran**, sans que `strict`,
-  `noUncheckedIndexedAccess` ni un générateur de types ne s'en aperçoivent : le `catch`
-  reçoit un `unknown`, et `String()` accepte tout. Un type d'erreur qui traverse la
-  frontière garde donc un test qui assert la **forme sur le fil**, pas seulement la
-  phrase (`settings/error.rs` en a un).
+  `noUncheckedIndexedAccess` ni le générateur de types ci-dessous ne s'en aperçoivent :
+  le `catch` reçoit un `unknown`, et `String()` accepte tout. `ts-rs` synchronise la
+  forme d'un type **déclaré**, pas la valeur qu'un `catch` reçoit. Un type d'erreur qui
+  traverse la frontière garde donc un test qui assert la **forme sur le fil**, pas
+  seulement la phrase (`settings/error.rs` en a un).
+
+#### Les types du contrat sont écrits deux fois, et confrontés par le compilateur
+
+Le contrat est **écrit deux fois**, et c'est assumé : les interfaces à la main portent
+la prose qui explique le produit — pourquoi `location` peut être `null`, ce que
+`upstream` absent veut dire — et une génération pure les remplacerait par des formes
+muettes. Ce qui ne se défendait pas, c'est que rien ne les rattachait aux `struct` : un
+champ renommé côté Rust laissait le TypeScript compiler, et rendait `undefined` à
+l'exécution. Le dépôt l'a payé deux fois (#16, #48).
+
+Le dispositif tient en trois pièces :
+
+- **`ts-rs`**, en `[dev-dependencies]` uniquement. Chaque forme sérialisée porte
+  `#[cfg_attr(test, derive(ts_rs::TS), ts(export))]` — donc sous `cfg(test)`, donc
+  l'application livrée ne lie rien. `cargo test` écrit les types dans
+  `src/shared/ipc/generated/`, qui est **versionné** ; le chemin est dans
+  `src-tauri/.cargo/config.toml` plutôt que répété trente fois.
+- **`src/shared/ipc/mirroring.ts`** : `Mirrors<Rust, HandWritten>`, une comparaison de
+  types dans les **deux sens** — un champ oublié à la main se voit dans un sens, un
+  champ inventé dans l'autre.
+- **Un `mirror.ts` par endroit qui recopie une forme** — `shared/ipc/`,
+  `features/settings/`, `features/terminal/`, `app/`. C'est la feature qui recopie qui
+  prouve qu'elle recopie encore. Ces fichiers ne produisent aucun JavaScript.
+
+**L'ordre des vérifications compte** : `cargo test` régénère, `bun run typecheck`
+compare. Les deux sont déjà obligatoires ; les inverser laisse comparer un contrat
+périmé, et c'est la seule maille du filet. `src/shared/ipc/mirror.test.ts` prouve que le
+filet mord — il donne à `tsc` les vrais fichiers, puis les mêmes avec un champ Rust
+renommé.
+
+Deux autres voies ont été instruites et écartées :
+
+- **`tauri-specta`** — sa seule ligne compatible Tauri 2 est en `2.0.0-rc`, et le dépôt
+  refuse déjà les `rc` ailleurs (voir le commentaire de `notify` dans `Cargo.toml`). Il
+  aurait de plus fallu réécrire le composition root, que rien ne teste.
+- **Une description JSON produite de chaque côté et comparée** — sans dépendance, mais
+  elle ne peut décrire que ce qu'un exemplaire montre. Mesuré sur `TabInfo` : les cinq
+  états d'agent s'y réduisent à `state: string`, et un `location` absent à
+  `location: null`. Il aurait fallu un exemplaire par variante et par branche
+  d'`Option`, écrit à la main — c'est-à-dire le test artisanal d'`AgentState`, répété
+  trente fois.
+
+Le test artisanal d'`AgentState` (`features/agents/state.rs`) est **conservé** : son
+`match` exhaustif force à nommer un état ajouté, ce que `ts-rs` ne fait pas.
 
 ### Aucun état d'agent ne vit uniquement côté TypeScript
 

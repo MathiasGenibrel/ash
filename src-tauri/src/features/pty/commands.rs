@@ -23,6 +23,7 @@ pub const TAB_CHANGED_EVENT: &str = "ash://tab-changed";
 
 /// Ce que le PTY envoie à la webview.
 #[derive(Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PtyFrame {
     /// Sortie du shell, déjà recollée en UTF-8 valide.

@@ -37,8 +37,15 @@ use super::ports::expand_home;
 /// règle sans que le compilateur le dise.
 ///
 /// Sérialisé **transparent** : sur le fil c'est une chaîne, exactement comme avant.
+///
+/// `ts(as = "String")` dit la même chose au générateur de types : le `Command.ts` produit est
+/// `export type Command = string`, donc **structurellement une chaîne** — les interfaces
+/// écrites à la main qui déclarent `command: string` continuent de correspondre. Sans cet
+/// attribut, `ts-rs` refuse de compiler la forme qui contient un `Command`, faute de savoir
+/// quoi en dire.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 #[serde(transparent)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(as = "String"))]
 pub struct Command(String);
 
 impl Command {
@@ -89,7 +96,14 @@ impl fmt::Display for Command {
 ///
 /// Sérialisé comme **la forme déclarée**, une chaîne : c'est ce que la fenêtre affiche dans
 /// son champ de chemin, et le contrat sur le fil ne bouge pas d'un caractère.
+///
+/// `ts(as = "String")` dit la même chose au générateur de types, et ici l'attribut fait plus
+/// que débloquer la compilation : dérivé nu, `ts-rs` annoncerait au TypeScript les **deux**
+/// champs de la structure, alors que le `Serialize` manuel n'en écrit qu'un — le type généré
+/// décrirait une forme que le fil ne porte pas. Avec lui, `ConfigTarget.ts` est
+/// `export type ConfigTarget = string`, qui est exactement ce qui traverse.
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(as = "String"))]
 pub struct ConfigTarget {
     declared: String,
     resolved: PathBuf,

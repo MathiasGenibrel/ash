@@ -1,0 +1,16 @@
+# Où `ts-rs` dépose les types qu'il tire des `struct` sérialisées.
+#
+# Ici et non répété sur chaque type : le chemin est le même pour les trente formes qui
+# traversent la frontière, et trente copies d'une même chaîne finiraient par ne plus être
+# la même. `relative = true` l'ancre sur le dossier parent de ce fichier — `src-tauri/` —
+# et non sur le répertoire d'où `cargo` est lancé, qui n'est pas toujours celui-là.
+#
+# Seul `ts-rs` lit cette variable, et seulement pendant `cargo test` : les dérivations sont
+# sous `cfg(test)`, donc la compilation de l'application ne la regarde jamais.
+#
+# **`cargo` cherche ce fichier en remontant depuis le répertoire courant, pas depuis le
+# manifeste** : lancé depuis la racine du dépôt avec `--manifest-path`, il ne le lit pas et
+# `ts-rs` écrit alors dans `src-tauri/bindings/`, en silence. Le test `contract_export` de
+# `src/shared/mod.rs` est ce qui transforme cette panne en `cargo test` rouge.
+[env]
+TS_RS_EXPORT_DIR = { value = "../src/shared/ipc/generated", relative = true }

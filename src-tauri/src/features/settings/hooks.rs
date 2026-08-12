@@ -30,6 +30,7 @@ use crate::features::hooks::Presence;
 /// La fenêtre les distingue **par la forme** avant la couleur : coche, cercle vide, flèche
 /// vers le haut, croix, cadenas. La discipline est celle de `shared/agent-state`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum HookState {
     /// Le bloc en place est celui qu'Ash écrirait.
@@ -46,6 +47,7 @@ pub enum HookState {
 
 /// Ce que le bouton de la ligne propose. Un seul, jamais deux.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum HookAction {
     Install,
@@ -62,6 +64,7 @@ pub enum HookAction {
 /// entrée dont le chemin change change d'état de hooks au même instant, et deux tables
 /// séparées laisseraient un intervalle où l'écran montrerait l'un sous l'autre.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct HooksReport {
     pub state: HookState,

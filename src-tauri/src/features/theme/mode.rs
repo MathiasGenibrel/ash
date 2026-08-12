@@ -5,6 +5,7 @@
 /// savoir de quelle humeur est le système et à l'apprendre quand il change — voir
 /// `src/app/theme.ts`. Ici, on ne détient que le choix.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
     Light,
