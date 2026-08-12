@@ -1,28 +1,54 @@
 import { describe, expect, it } from "bun:test";
 
-import type { ToolDeclaration, ToolDraft } from "./contract";
+import type { ToolDeclaration, ToolDraft, Verification, VerificationState } from "./contract";
 import {
+    countProblems,
     degradedModeSubject,
     describeAddAction,
+    describeHooksAvailability,
+    describeStop,
     describeTool,
     describeToolCount,
+    NOTHING_VERIFIED_YET,
 } from "./model";
 
 /**
- * Test Data Builders : une entrée déclarée, et une saisie de formulaire.
+ * Test Data Builders : une vérification, une entrée déclarée, et une saisie de formulaire.
  *
  * Les défauts sont valides et déterministes — une entrée `claude` sur l'adaptateur de
- * repli, non vérifiée, comme toute entrée à ce jalon. Un scénario ne surcharge que ce
- * qu'il regarde.
+ * repli, dont les quatre tests sont passés. Un scénario ne surcharge que ce qu'il regarde.
+ *
+ * `aVerification` dérive `allowsHooks` de l'état plutôt que de le laisser surcharger : la
+ * règle est celle du backend, et un test qui la contredirait dans son `Given` prouverait
+ * quelque chose qui ne peut pas arriver.
  */
+function aVerification(
+    state: VerificationState = "valid",
+    overrides: Partial<Verification> = {},
+): Verification {
+    return {
+        state,
+        tests: ["passed", "passed", "passed", "passed"],
+        summary: "folder recognised · claude answers with this folder",
+        stoppedAt: null,
+        detail: null,
+        fix: null,
+        launched: null,
+        allowsHooks: state === "valid" || state === "caveat" || state === "verifying",
+        ...overrides,
+    };
+}
+
 function aTool(overrides: Partial<ToolDeclaration> = {}): ToolDeclaration {
+    const verification = overrides.verification ?? aVerification();
     return {
         command: "claude",
         label: null,
         adapter: "generic",
         config: null,
-        verified: false,
         ...overrides,
+        verification,
+        verified: overrides.verified ?? verification.allowsHooks,
     };
 }
 
@@ -66,16 +92,99 @@ describe("le compteur de la section", () => {
         expect(counted).toBe("none");
     });
 
-    it("Given three tools none of which passed the four tests, when the header is counted, then it says how many are verified", () => {
-        // Given — le format `<n> declared · <n> verified` est normatif. Rien n'est vérifié
-        // à ce jalon, et c'est précisément ce que le compteur doit dire
-        const tools = [aTool(), aTool({ command: "codex" }), aTool({ command: "kimi" })];
+    it("Given three tools of which one has never proved anything, when the header is counted, then it says how many are verified", () => {
+        // Given — le format `<n> declared · <n> verified` est normatif
+        const tools = [
+            aTool(),
+            aTool({ command: "codex" }),
+            aTool({ command: "kimi", verification: aVerification("unverified") }),
+        ];
 
         // When
         const counted = describeToolCount(tools);
 
         // Then
-        expect(counted).toBe("3 declared · 0 verified");
+        expect(counted).toBe("3 declared · 2 verified");
+    });
+
+    it("Given one entry ash refuses to write to, when the header is counted, then the problem is what it announces", () => {
+        // Given — la maquette `3e` : le compteur passe à `<n> declared · <n> invalid`, et
+        // la ligne `tools` de la navigation porte le même chiffre. Compter les vérifiées à
+        // côté ferait chercher lesquelles manquent
+        const tools = [
+            aTool(),
+            aTool({ command: "codex", verification: aVerification("invalid") }),
+            aTool({ command: "kimi" }),
+        ];
+
+        // When
+        const counted = describeToolCount(tools);
+
+        // Then
+        expect(counted).toBe("3 declared · 1 invalid");
+    });
+});
+
+describe("le chiffre que l'en-tête et la colonne montrent ensemble", () => {
+    it("Given a list whose entries are unverified, valid with a caveat and invalid, when its problems are counted, then only the invalid one counts", () => {
+        // Given — la colonne de navigation et l'en-tête de section montrent le même chiffre
+        // au même instant (maquette `3e`). Une réserve n'en est pas un : ash y écrit quand
+        // même. Comptés séparément, les deux finiraient par ne plus dire la même chose
+        const tools = [
+            aTool({ command: "kimi", verification: aVerification("unverified") }),
+            aTool({ command: "codex", verification: aVerification("caveat") }),
+            aTool({ command: "claude", verification: aVerification("invalid") }),
+        ];
+
+        // When
+        const problems = countProblems(tools);
+
+        // Then
+        expect([problems, describeToolCount(tools)]).toEqual([1, "3 declared · 1 invalid"]);
+    });
+});
+
+describe("où la chaîne s'est arrêtée", () => {
+    it("Given an invalid entry, when its test line is described, then it names the test the sequence stopped at", () => {
+        // Given — « l'erreur nomme le test échoué » : c'est le numéro qui désigne la chose à
+        // corriger
+        const verification = aVerification("invalid", { stoppedAt: 2 });
+
+        // When
+        const stop = describeStop(verification);
+
+        // Then
+        expect(stop).toBe("stopped at test 2");
+    });
+
+    it("Given an entry valid with a caveat, when its test line is described, then it says nothing about stopping", () => {
+        // Given — la séquence pose `stoppedAt` sur une réserve aussi, et son résumé dit déjà
+        // ce qui manque. Répéter `stopped at test 3` à côté ferait lire un échec là où le
+        // dossier a été reconnu
+        const verification = aVerification("caveat", { stoppedAt: 3 });
+
+        // When
+        const stop = describeStop(verification);
+
+        // Then
+        expect(stop).toBeNull();
+    });
+});
+
+describe("la saisie que rien n'a encore jugée", () => {
+    it("Given a form whose tests have not answered, when its test line is drawn, then nothing it shows authorises a write", () => {
+        // Given — c'est la vue qui fabriquait cette vérification, hors de portée de tout
+        // test. `allowsHooks` y est faux comme partout ailleurs : une saisie que rien n'a
+        // jugée n'autorise jamais ash à écrire chez l'utilisateur
+        // When
+        const shown = NOTHING_VERIFIED_YET;
+
+        // Then
+        expect([shown.state, shown.allowsHooks, shown.tests]).toEqual([
+            "unverified",
+            false,
+            ["pending", "pending", "pending", "pending"],
+        ]);
     });
 });
 
@@ -85,7 +194,7 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "codex" });
 
         // When
-        const action = describeAddAction(draft, [aTool()], null);
+        const action = describeAddAction(draft, [aTool()], null, aVerification());
 
         // Then — la barre n'est jamais muette : sans refus, elle annonce la suite
         expect(action).toEqual({
@@ -100,7 +209,7 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "  " });
 
         // When
-        const action = describeAddAction(draft, [], null);
+        const action = describeAddAction(draft, [], null, aVerification());
 
         // Then
         expect(action).toEqual({ reason: "name the command first", enabled: false });
@@ -112,7 +221,7 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: " claude " });
 
         // When
-        const action = describeAddAction(draft, [aTool({ command: "claude" })], null);
+        const action = describeAddAction(draft, [aTool({ command: "claude" })], null, aVerification());
 
         // Then
         expect(action).toEqual({ reason: "claude is already declared", enabled: false });
@@ -124,7 +233,7 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "/usr/local/bin/claude" });
 
         // When
-        const action = describeAddAction(draft, [], null);
+        const action = describeAddAction(draft, [], null, aVerification());
 
         // Then
         expect(action).toEqual({
@@ -140,7 +249,7 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "" });
 
         // When
-        const action = describeAddAction(draft, [], "« claude » est déjà déclarée");
+        const action = describeAddAction(draft, [], "« claude » est déjà déclarée", aVerification());
 
         // Then
         expect(action.reason).toBe("name the command first");
@@ -153,10 +262,104 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: "codex" });
 
         // When
-        const action = describeAddAction(draft, [], "registre des outils empoisonné");
+        const action = describeAddAction(draft, [], "registre des outils empoisonné", aVerification());
 
         // Then
         expect(action).toEqual({ reason: "registre des outils empoisonné", enabled: true });
+    });
+
+    it("Given a draft whose tests have not answered yet, when the action bar is described, then add stays visible, off, with what it is waiting for", () => {
+        // Given — « add est désactivé tant que les quatre tests n'ont pas répondu » (§3.8).
+        // C'est de la patience, pas un jugement : rien ne dit encore que la saisie est
+        // mauvaise
+        const draft = aDraft({ command: "codex" });
+
+        // When
+        const action = describeAddAction(draft, [], null, null);
+
+        // Then
+        expect(action).toEqual({ reason: "waiting on the four tests", enabled: false });
+    });
+
+    it("Given a draft whose first three tests have passed while the command is still answering, when the action bar is described, then it names the test it waits on", () => {
+        // Given — le second temps : les tests 1 à 3 ont parlé, le quatrième lance un
+        // programme. Le mot affiché est `test 4 of 4`, jamais un pourcentage
+        const draft = aDraft({ command: "codex" });
+
+        // When
+        const action = describeAddAction(draft, [], null, aVerification("verifying"));
+
+        // Then
+        expect(action).toEqual({ reason: "waiting on test 4 of 4", enabled: false });
+    });
+
+    it("Given a draft the tests found invalid, when the action bar is described, then adding is still allowed", () => {
+        // Given — la maquette `3e` montre une entrée invalide **dans la liste**, avec sa
+        // correction à portée : Ash n'empêche pas de déclarer, il refuse d'écrire. Éteindre
+        // `add` ici ferait disparaître l'entrée qu'on cherche justement à corriger
+        const draft = aDraft({ command: "codex" });
+
+        // When
+        const action = describeAddAction(draft, [], null, aVerification("invalid"));
+
+        // Then
+        expect(action.enabled).toBe(true);
+    });
+});
+
+describe("ce qui autorise l'écriture des hooks", () => {
+    it("Given an entry the tests found invalid, when the hooks line is described, then the button stays visible, off, with its reason", () => {
+        // Given — « the block stays visible: button present, disabled, with its reason —
+        // never hidden ». Le masquer ferait croire que les hooks n'existent pas pour cet
+        // outil
+        const verification = aVerification("invalid");
+
+        // When
+        const hooks = describeHooksAvailability(verification);
+
+        // Then
+        expect(hooks).toEqual({
+            reason: "unavailable until the path is verified",
+            enabled: false,
+        });
+    });
+
+    it("Given an entry nothing has verified yet, when the hooks line is described, then it is off for a different reason than an invalid one", () => {
+        // Given — les deux sont éteintes et ne disent pas la même chose : l'une attend, à
+        // l'autre on a répondu non
+        const verification = aVerification("unverified");
+
+        // When
+        const hooks = describeHooksAvailability(verification);
+
+        // Then
+        expect(hooks).toEqual({ reason: "install unavailable", enabled: false });
+    });
+
+    it("Given the first three tests passing while the command is still answering, when the hooks line is described, then it already lights up", () => {
+        // Given — c'est la conséquence fonctionnelle du résultat en deux temps : « as soon
+        // as tests 1–3 pass it lights up — without waiting for test 4 ». La règle est
+        // calculée en Rust ; ce qui est vérifié ici est que la fenêtre l'annonce sans la
+        // rejouer
+        const verification = aVerification("verifying");
+
+        // When
+        const hooks = describeHooksAvailability(verification);
+
+        // Then
+        expect(hooks.enabled).toBe(true);
+    });
+
+    it("Given an entry valid with a caveat, when the hooks line is described, then ash still writes if you insist", () => {
+        // Given — « the folder is right, the pair isn't. ash still writes if you insist,
+        // and says so »
+        const verification = aVerification("caveat");
+
+        // When
+        const hooks = describeHooksAvailability(verification);
+
+        // Then
+        expect(hooks.enabled).toBe(true);
     });
 });
 

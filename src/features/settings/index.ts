@@ -4,26 +4,52 @@
  * Le reste du frontend n'importe que ce fichier : ni `view`, ni `model`, ni `sections`,
  * ni `bridge` ne sont des points d'entrée.
  *
- * La fenêtre **rend** les commandes déclarées ; elle ne les détient pas. La liste vit en
- * Rust, où ses autres lecteurs la trouveront — la sonde qui reconnaît un agent (ADR-0006)
- * et l'installation des hooks
+ * La fenêtre **rend** les commandes déclarées et ce que les quatre tests en ont dit ; elle
+ * ne les détient pas. La liste et la vérification vivent en Rust, où leurs autres lecteurs
+ * les trouveront — la sonde qui reconnaît un agent (ADR-0006) et l'installation des hooks
  * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)) ne passent pas par cette fenêtre.
  */
 
 import "./settings.css";
 
-import type { SettingsPorts, SettingsSnapshot, ToolDraft } from "./contract";
+import type {
+    FixAction,
+    SettingsPorts,
+    SettingsSnapshot,
+    ToolDraft,
+    Verification,
+} from "./contract";
 import { GENERIC_ADAPTER } from "./model";
+import { createRelaunch, type Timer, windowTimer } from "./relaunch";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
 
-export type { SettingsPorts, SettingsSnapshot, ToolDeclaration, ToolDraft } from "./contract";
+export type {
+    SettingsPorts,
+    SettingsSnapshot,
+    ToolDeclaration,
+    ToolDraft,
+    Verification,
+} from "./contract";
 export { tauriSettings } from "./bridge";
+export { describeHooksAvailability } from "./model";
+export { RELAUNCH_DELAY, type Timer } from "./relaunch";
 export { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
+export {
+    presentVerification,
+    VERIFICATION_STATES,
+    verificationGlyph,
+} from "./verification-state";
 
 export interface Settings {
     readonly element: HTMLElement;
 }
+
+/** La clé de report du formulaire d'ajout — il n'a pas encore de commande à son nom. */
+// Une barre oblique ne peut pas figurer dans un nom de commande — `tool.rs` la refuse,
+// parce que la sonde compare un nom de processus. La clé du brouillon ne peut donc entrer
+// en collision avec aucune entrée déclarée, et elle reste lisible dans un diff.
+const DRAFT = "/draft";
 
 /** Une saisie vierge. `generic` est le premier adaptateur proposé, à défaut d'un autre. */
 function emptyDraft(adapters: readonly string[]): ToolDraft {
@@ -34,14 +60,43 @@ function emptyDraft(adapters: readonly string[]): ToolDraft {
  * Monte la fenêtre de réglages dans `root`.
  *
  * Ce que cette fonction détient est **ce qu'on regarde**, et rien d'autre : la section
- * ouverte, la saisie en cours, et le dernier refus du backend. La liste des outils, elle,
- * n'est jamais modifiée ici — chaque appel en rapporte une neuve.
+ * ouverte, la saisie en cours, le texte des champs entre une frappe et la vérification
+ * qu'elle déclenche, et le dernier refus du backend. La liste des outils et ce que les
+ * quatre tests en disent, eux, ne sont jamais modifiés ici — chaque appel en rapporte une
+ * version neuve ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ *
+ * `timer` est injecté pour la même raison que l'horloge de `shared/time.rs` : le debounce
+ * de 400 ms est une règle, et une règle se prouve sans faire dormir un test.
  */
-export function mountSettings(root: HTMLElement, ports: SettingsPorts): Settings {
+export function mountSettings(
+    root: HTMLElement,
+    ports: SettingsPorts,
+    timer: Timer = windowTimer,
+): Settings {
     let section: SettingsSection = "tools";
-    let snapshot: SettingsSnapshot = { tools: [], adapters: [] };
+    let snapshot: SettingsSnapshot = { tools: [], adapters: [], tests: [] };
     let draft: ToolDraft | null = null;
+    let draftVerification: Verification | null = null;
     let failure: string | null = null;
+    /** Ce qui est tapé dans le champ de chemin d'une carte, tant qu'il n'a pas été jugé. */
+    const edits = new Map<string, string>();
+
+    /**
+     * La relance automatique : 400 ms après la dernière frappe, tout de suite autrement.
+     *
+     * Elle est **par entrée** — deux cartes se vérifient indépendamment — et elle sert
+     * aussi bien une carte que le formulaire d'ajout, qui n'ont ni la même commande à
+     * appeler ni le même endroit où poser la réponse.
+     */
+    const relaunch = createRelaunch((key) => {
+        if (key === DRAFT) {
+            void verifyDraft();
+            return;
+        }
+        const tool = snapshot.tools.find((one) => one.command === key);
+        if (tool === undefined) return;
+        void apply(ports.retargetTool(key, tool.adapter, edits.get(key) ?? tool.config ?? ""));
+    }, timer);
 
     const view = new SettingsView({
         selectSection: (next) => {
@@ -50,12 +105,12 @@ export function mountSettings(root: HTMLElement, ports: SettingsPorts): Settings
         },
         startAdding: () => {
             draft = emptyDraft(snapshot.adapters);
+            draftVerification = null;
             failure = null;
             draw();
         },
         cancelAdding: () => {
-            draft = null;
-            failure = null;
+            closeDraft();
             draw();
         },
         editDraft: (patch) => {
@@ -64,21 +119,99 @@ export function mountSettings(root: HTMLElement, ports: SettingsPorts): Settings
             // Un refus du backend porte sur la saisie qu'on vient de corriger : le garder
             // à l'écran ferait lire une erreur qui ne décrit plus rien.
             failure = null;
+            // Et ce que les tests ont dit décrivait l'ancienne saisie : `add` retombe sur
+            // sa patience plutôt que sur un verdict périmé.
+            draftVerification = null;
+            // Le menu d'adaptateur ne sera suivi d'aucune frappe ; le reste, si.
+            if (patch.adapter === undefined) relaunch.soon(DRAFT);
+            else relaunch.now(DRAFT);
             draw();
         },
         submitDraft: () => {
             if (draft === null) return;
             void apply(ports.declareTool(draft), () => {
-                draft = null;
+                closeDraft();
             });
         },
         forgetTool: (command) => {
+            // Le report en cours désigne une carte qui va disparaître : le laisser courir
+            // ferait vérifier une entrée qui n'est plus là.
+            relaunch.cancel(command);
+            edits.delete(command);
             void apply(ports.forgetTool(command));
+        },
+        typePath: (command, value) => {
+            edits.set(command, value);
+            relaunch.soon(command);
+            // Pas de redessin : le champ est déjà à jour, et refaire le DOM sous les doigts
+            // de celui qui tape n'apporterait rien.
+        },
+        commitPath: (command) => {
+            // `⏎` et la perte de focus disent « j'ai fini de taper » ; ils n'ajoutent pas
+            // de vérification quand il n'y a rien de nouveau à juger.
+            const tool = snapshot.tools.find((one) => one.command === command);
+            if (tool === undefined) return;
+            if ((edits.get(command) ?? tool.config ?? "") === (tool.config ?? "")) {
+                relaunch.cancel(command);
+                return;
+            }
+            relaunch.now(command);
+        },
+        selectAdapter: (command, adapter) => {
+            relaunch.cancel(command);
+            const tool = snapshot.tools.find((one) => one.command === command);
+            void apply(
+                ports.retargetTool(command, adapter, edits.get(command) ?? tool?.config ?? ""),
+            );
+        },
+        verifyTool: (command) => {
+            relaunch.cancel(command);
+            void apply(ports.verifyTool(command));
+        },
+        verifyAll: () => {
+            relaunch.cancelAll();
+            void apply(ports.verifyAll());
+        },
+        applyFix: (command, fix) => {
+            void apply(retarget(command, fix));
         },
     });
 
+    /** Ce qu'`apply` fait d'une correction proposée — un seul champ change à la fois. */
+    function retarget(command: string, fix: FixAction): Promise<SettingsSnapshot> {
+        const tool = snapshot.tools.find((one) => one.command === command);
+        const config = edits.get(command) ?? tool?.config ?? "";
+        if (fix.kind === "useAdapter") {
+            return ports.retargetTool(command, fix.adapter, config);
+        }
+        edits.set(command, fix.path);
+        return ports.retargetTool(command, tool?.adapter ?? GENERIC_ADAPTER, fix.path);
+    }
+
+    function closeDraft(): void {
+        relaunch.cancel(DRAFT);
+        draft = null;
+        draftVerification = null;
+        failure = null;
+    }
+
+    async function verifyDraft(): Promise<void> {
+        if (draft === null) return;
+        const asked = draft;
+        try {
+            const verification = await ports.verifyDraft(asked);
+            // La saisie a pu changer pendant l'aller-retour : une réponse à une question
+            // qu'on ne pose plus n'a rien à afficher.
+            if (draft !== asked) return;
+            draftVerification = verification;
+        } catch {
+            draftVerification = null;
+        }
+        draw();
+    }
+
     function draw(): void {
-        view.render({ section, snapshot, draft, failure });
+        view.render({ section, snapshot, draft, draftVerification, failure, edits });
     }
 
     /**
@@ -91,6 +224,9 @@ export function mountSettings(root: HTMLElement, ports: SettingsPorts): Settings
     async function apply(call: Promise<SettingsSnapshot>, onSuccess?: () => void): Promise<void> {
         try {
             snapshot = await call;
+            // Le backend a jugé ce qui était tapé : les champs repartent de ce qu'il
+            // détient, sauf ceux qu'on est en train de modifier ailleurs.
+            for (const tool of snapshot.tools) edits.delete(tool.command);
             failure = null;
             onSuccess?.();
         } catch (error: unknown) {
@@ -104,8 +240,7 @@ export function mountSettings(root: HTMLElement, ports: SettingsPorts): Settings
     // de vrais boutons.
     root.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && draft !== null) {
-            draft = null;
-            failure = null;
+            closeDraft();
             draw();
             return;
         }
@@ -122,6 +257,29 @@ export function mountSettings(root: HTMLElement, ports: SettingsPorts): Settings
 
     draw();
     void apply(ports.tools());
+
+    /**
+     * Le **second temps** : le test 4 a répondu, parfois plusieurs secondes après le
+     * premier.
+     *
+     * La charge utile est celle que le backend détient — il l'a déjà posée sur son entrée
+     * avant de l'émettre. La recopier ici est du rendu, pas de la détention : la fenêtre ne
+     * la calcule ni ne la corrige, et une entrée qu'elle ne connaît pas est ignorée.
+     */
+    void ports.onVerified(({ command, verification, verified }) => {
+        if (draft !== null && draft.command.trim() === command) {
+            draftVerification = verification;
+            draw();
+            return;
+        }
+        snapshot = {
+            ...snapshot,
+            tools: snapshot.tools.map((tool) =>
+                tool.command === command ? { ...tool, verification, verified } : tool,
+            ),
+        };
+        draw();
+    });
 
     root.append(view.element);
     return { element: view.element };

@@ -64,6 +64,14 @@
 }
 
 /* Poussé en bas par la marge automatique — le `flex: 1` de la maquette, sans nœud vide. */
+/* Le compteur de problèmes d'une ligne de navigation. Il n'apparaît que si la section en
+ * a un — un `0` permanent apprendrait à ne plus regarder cet endroit. */
+.settings-nav-count {
+    flex: none;
+    font-size: 10px;
+    color: var(--ash-error);
+}
+
 .settings-nav-hint {
     margin-top: auto;
     padding: 8px 12px;
@@ -186,9 +194,41 @@
     color: var(--ash-fg-muted);
 }
 
+/* La bordure teintée est la **seconde façon** de dire l'état, celle qui ne passe ni par
+ * un mot ni par un glyphe. Elle ne teint que ce qui est joué : `unverified` et `verifying`
+ * gardent la bordure neutre, parce qu'il ne s'est encore rien passé. */
+.settings-card.is-valid {
+    border-color: var(--ash-done-border);
+}
+.settings-card.is-caveat {
+    border-color: var(--ash-warning-border);
+}
+.settings-card.is-invalid {
+    border-color: var(--ash-error-border-strong);
+}
+
+/* Modifiable depuis #15 : en changer relance la séquence, et un changement de menu ne peut
+ * pas être suivi d'une frappe — il ne passe donc pas par les 400 ms. Sans apparence
+ * système, comme tous les contrôles de cette fenêtre. */
 .settings-card-adapter {
-    font-size: 9.5px;
-    color: var(--ash-fg-dim);
+    appearance: none;
+    padding: 2px 7px;
+    border: 1px solid var(--ash-control-border);
+    border-radius: 4px;
+    background: none;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--ash-fg-muted);
+    cursor: pointer;
+    transition:
+        background 90ms,
+        border-color 90ms,
+        color 90ms;
+}
+
+.settings-card-adapter:hover {
+    background: var(--ash-bg-selected);
+    color: var(--ash-fg-done);
 }
 
 .settings-icon-button {
@@ -224,8 +264,14 @@
 
 .settings-card-key {
     font-size: 9.5px;
+    /* L'interligne aligne le libellé sur le contrôle d'en face, ligne par ligne : 21 px
+     * pour le champ de chemin, 16 px pour la ligne `test`, qui est plus basse. */
     line-height: 21px;
     color: var(--ash-fg-faint);
+}
+
+.settings-card-key.is-test {
+    line-height: 16px;
 }
 
 .settings-field {
@@ -242,13 +288,159 @@
 }
 
 /* Un chemin trop long se coupe, il ne pousse pas la carte : la fenêtre ne défile jamais
- * horizontalement. */
+ * horizontalement. C'est un vrai `input` depuis #15 — il porte donc son propre curseur, et
+ * l'animation de caret de la maquette n'a pas à être portée (§7.4). */
 .settings-path {
     flex: 1;
     min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    text-overflow: ellipsis;
+}
+
+.settings-path:focus {
+    outline: none;
+}
+
+/* Le champ lui-même prend la marque de l'erreur, pas seulement la carte : c'est lui qu'on
+ * doit corriger, et c'est vers lui que l'anneau conduit l'œil. */
+.settings-field:focus-within {
+    border-color: var(--ash-working);
+    box-shadow: 0 0 0 3px var(--ash-tile-running-bg);
+}
+
+.settings-field.is-invalid {
+    border-color: var(--ash-error);
+    box-shadow: 0 0 0 3px var(--ash-error-ring);
+    color: var(--ash-fg-strong);
+}
+
+/* --- la ligne `test` ------------------------------------------------------- */
+
+.settings-test {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    line-height: 16px;
+}
+
+.settings-verify-glyph {
+    flex: none;
+    display: block;
+}
+
+.settings-test-summary {
+    min-width: 0;
+    font-size: 11px;
+    color: var(--ash-fg-done);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.settings-stopped {
+    flex: none;
+    font-size: 11px;
+    color: var(--ash-fg-dim);
+}
+
+/* La rangée de pastilles. 13 px dans une carte — la planche des états les dessine à 17 px,
+ * mais ce cadre-là est un catalogue, pas un écran du produit (§7.1). */
+.settings-tiles {
+    display: flex;
+    flex: none;
+    gap: 3px;
+}
+
+.settings-tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    font-size: 8.5px;
+    line-height: 1;
+}
+
+/* --- ce qu'un état invalide ajoute sous la ligne -------------------------- */
+
+/* Le filet gauche de 2 px est ce qui rattache la précision à l'erreur — pas la couleur du
+ * texte, qui reste lisible pour tout le monde. */
+.settings-recall {
+    padding-left: 9px;
+    border-left: 2px solid var(--ash-error-rule);
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: var(--ash-fg-subtle);
+}
+
+.settings-recall-expected {
+    color: var(--ash-fg-muted);
+}
+
+/* La commande réellement lancée, montrée pendant l'attente du test 4 : ce qui part sans
+ * qu'on l'ait tapé doit rester lisible en entier, d'où le `break-all`. */
+.settings-inset {
+    padding: 6px 8px;
+    border: 1px solid var(--ash-border-soft);
+    border-radius: 4px;
+    background: var(--ash-bg);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ash-fg-subtle);
+}
+
+.settings-inset.is-command {
+    word-break: break-all;
+}
+
+/* La ligne `hooks`, éteinte. Ses cinq états sont l'issue #16 ; ce qui est ici est le seul
+ * que la planche `3e` demande à celle-ci — le bouton reste à sa place, éteint, sa raison à
+ * sa gauche. */
+.settings-hooks {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 10px;
+    border: 1px solid var(--ash-border-soft);
+    border-radius: 5px;
+    background: var(--ash-bg);
+    line-height: 1;
+}
+
+.settings-verify-glyph.is-blocked {
+    color: var(--ash-fg-dim);
+}
+
+.settings-hooks-reason {
+    font-size: 12.5px;
+    color: var(--ash-fg-done);
+}
+
+.settings-card-key.is-hooks {
+    line-height: 19px;
+}
+
+/* La correction proposée : la question à gauche, ce qu'on peut en faire à droite. */
+.settings-fix {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 9px;
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    background: var(--ash-bg-inset);
+}
+
+.settings-fix-question {
+    font-size: 11px;
+    color: var(--ash-fg-subtle);
 }
 
 /* « Modifié, non enregistré » — l'entrée n'a pas passé les quatre tests, donc rien n'est
@@ -382,6 +574,12 @@
         background 90ms,
         border-color 90ms,
         color 90ms;
+}
+
+/* Dans une ligne plutôt que dans un en-tête : la maquette y descend d'un cran. */
+.settings-button.is-small {
+    padding: 2px 8px;
+    font-size: 10px;
 }
 
 .settings-button:hover {
