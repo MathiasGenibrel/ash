@@ -1,5 +1,6 @@
 use super::error::SettingsError;
 use super::hooks::HooksReport;
+use super::values::{optional, Command, ConfigTarget};
 use super::verification::{Verification, VerificationState};
 
 /// Une commande reconnue, telle que la spec §9 et
@@ -23,7 +24,10 @@ use super::verification::{Verification, VerificationState};
 #[serde(rename_all = "camelCase")]
 pub struct ToolDeclaration {
     /// Le `match` : le nom du processus, tel qu'on le tape dans le shell.
-    pub command: String,
+    ///
+    /// [`Command`] et non `String` : la règle qui en fait un nom de processus est vérifiée
+    /// une fois, et le type la porte ensuite dans chaque signature qu'elle traverse.
+    pub command: Command,
     /// Le libellé d'affichage — `Pro`, `Perso`. Absent est le cas courant.
     pub label: Option<String>,
     /// L'identifiant de l'adaptateur ([`Adapter::id`](crate::features::agents::Adapter::id)).
@@ -58,7 +62,11 @@ pub struct ToolDeclaration {
     /// `None` veut dire « cette entrée n'a jamais été valide » : il n'y a alors rien à
     /// restaurer, et le bouton reste visible et éteint avec sa raison — la même règle que
     /// celle des hooks.
-    pub last_valid_config: Option<String>,
+    ///
+    /// C'est une [`ConfigTarget`] : la mémoire est un **dossier**, et le comparer à la cible
+    /// du jour est la même question que celle du doublon. Elle se sérialise comme la forme
+    /// déclarée — la chaîne que la fenêtre remet dans son champ.
+    pub last_valid_config: Option<ConfigTarget>,
 
     /// Ce que la réinitialisation vient de remplacer, tant qu'on peut encore l'annuler.
     ///
@@ -66,14 +74,14 @@ pub struct ToolDeclaration {
     /// qu'« annuler la réinitialisation » ne veut plus rien dire une fois qu'on a retapé le
     /// chemin à la main. C'est ce qui distingue la ligne `was` — juste après un retour en
     /// arrière — de l'étiquette de doublon, qui existe dès que deux entrées collisionnent.
-    pub reset_from: Option<String>,
+    pub reset_from: Option<ConfigTarget>,
 
     /// Les autres entrées qui visent le même dossier.
     ///
     /// **Dérivé de la liste entière**, donc recalculé à chaque fois qu'elle change : une
     /// entrée ne peut pas savoir seule qu'elle fait doublon. Le doublon est signalé sur
     /// **les deux** lignes (spec §9.1), pas seulement sur celle qu'on vient de toucher.
-    pub duplicates: Vec<String>,
+    pub duplicates: Vec<Command>,
 
     /// Où en est le bloc de hooks de cette entrée.
     ///
@@ -95,7 +103,11 @@ impl ToolDeclaration {
     /// `declared` est ce que l'entrée désigne réellement, défaut de l'adaptateur compris —
     /// la mémoire est un **dossier**, pas la présence ou l'absence d'un champ.
     #[must_use]
-    pub fn verified_by(mut self, verification: Verification, declared: Option<String>) -> Self {
+    pub fn verified_by(
+        mut self,
+        verification: Verification,
+        declared: Option<ConfigTarget>,
+    ) -> Self {
         if verification.state == VerificationState::Valid {
             self.last_valid_config = declared;
         }
@@ -146,18 +158,12 @@ impl NewTool {
         adapters: &[String],
         declared: &[ToolDeclaration],
     ) -> Result<ToolDeclaration, SettingsError> {
-        let command = self.command.trim();
-        if command.is_empty() {
-            return Err(SettingsError::EmptyCommand);
-        }
-        // Un `match` est comparé au nom du processus en avant-plan (ADR-0005/0006) : une
-        // espace ou une barre oblique n'y apparaît jamais, donc une telle entrée ne
-        // correspondrait à rien — et se lirait pourtant comme une entrée valide.
-        if command.contains(char::is_whitespace) || command.contains('/') {
-            return Err(SettingsError::NotACommandName(command.to_owned()));
-        }
+        // Un `match` est comparé au nom du processus en avant-plan (ADR-0005/0006) : la
+        // règle vit dans [`Command`], donc elle est vérifiée ici **et portée ensuite** par
+        // tout ce que ce nom traverse.
+        let command = Command::parse(&self.command)?;
         if declared.iter().any(|tool| tool.command == command) {
-            return Err(SettingsError::DuplicateCommand(command.to_owned()));
+            return Err(SettingsError::DuplicateCommand(command));
         }
 
         let adapter = self.adapter.trim();
@@ -166,7 +172,7 @@ impl NewTool {
         }
 
         Ok(ToolDeclaration {
-            command: command.to_owned(),
+            command,
             label: optional(self.label.as_deref()),
             adapter: adapter.to_owned(),
             config: optional(self.config.as_deref()),
@@ -185,17 +191,6 @@ impl NewTool {
             hooks: HooksReport::until_verified(),
         })
     }
-}
-
-/// Un champ facultatif : rendu vide, il est absent — pas vide.
-///
-/// La différence compte pour `config` : une chaîne vide se lirait « ce dossier-là », alors
-/// que l'absence veut dire « celui de l'adaptateur », que l'adaptateur est seul à savoir.
-fn optional(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -322,12 +317,21 @@ mod tests {
 
         // When
         let remembered = entry
-            .verified_by(passed, Some("~/.claude-perso".to_owned()))
-            .verified_by(reserved, Some("~/dev/notes".to_owned()));
+            .verified_by(
+                passed,
+                Some(ConfigTarget::at("~/.claude-perso", "/h/.claude-perso")),
+            )
+            .verified_by(
+                reserved,
+                Some(ConfigTarget::at("~/dev/notes", "/h/dev/notes")),
+            );
 
         // Then
         assert_eq!(
-            remembered.last_valid_config.as_deref(),
+            remembered
+                .last_valid_config
+                .as_ref()
+                .map(ConfigTarget::declared),
             Some("~/.claude-perso")
         );
     }
@@ -351,7 +355,7 @@ mod tests {
         // Then
         assert_eq!(
             second.unwrap_err(),
-            SettingsError::DuplicateCommand("claude".to_owned())
+            SettingsError::DuplicateCommand(Command::parse("claude").expect("un nom valide"))
         );
     }
 
@@ -385,5 +389,41 @@ mod tests {
             declared.unwrap_err(),
             SettingsError::UnknownAdapter("kimi-code".to_owned())
         );
+    }
+
+    #[test]
+    fn given_an_entry_whose_name_and_folders_carry_types_when_it_crosses_the_wire_then_they_are_still_plain_strings(
+    ) {
+        // Given — les quatre champs que les valeurs ont typés. Un newtype sérialise
+        // autrement si l'on n'y prend pas garde : `{"declared":…,"resolved":…}` au lieu de
+        // `"~/.claude"` ferait mentir le contrat de `src/features/settings/contract.ts`,
+        // et cette régression-là ne se voit qu'à l'exécution dans la webview
+        let mut passed = Verification::unverified();
+        passed.state = VerificationState::Valid;
+        let mut tool = DraftBuilder::new()
+            .command("claude-perso")
+            .adapter("claude-code")
+            .config("~/.claude-perso")
+            .build()
+            .declare(&adapters(), &[])
+            .expect("la saisie est valide")
+            .verified_by(
+                passed,
+                Some(ConfigTarget::at("~/.claude-perso", "/h/.claude-perso")),
+            );
+        tool.reset_from = Some(ConfigTarget::at("~/.claude", "/h/.claude"));
+        tool.duplicates = vec![Command::parse("claude").expect("un nom valide")];
+
+        // When
+        let json = serde_json::to_value(&tool).expect("une déclaration se sérialise");
+
+        // Then
+        assert_eq!(json["command"], serde_json::json!("claude-perso"));
+        assert_eq!(
+            json["lastValidConfig"],
+            serde_json::json!("~/.claude-perso")
+        );
+        assert_eq!(json["resetFrom"], serde_json::json!("~/.claude"));
+        assert_eq!(json["duplicates"], serde_json::json!(["claude"]));
     }
 }

@@ -1,5 +1,7 @@
 use std::fmt;
 
+use super::values::Command;
+
 /// Erreurs de la feature `settings`.
 ///
 /// Un type par feature, comme `PtyError` : le frontend n'a pas à distinguer une erreur de
@@ -14,18 +16,18 @@ pub enum SettingsError {
     NotACommandName(String),
     /// `match` est la clé de la spec §9 : deux entrées homonymes désigneraient le même
     /// processus, et Ash ne saurait laquelle instrumenter.
-    DuplicateCommand(String),
+    DuplicateCommand(Command),
     /// L'adaptateur nommé n'est pas de ceux que cette version d'Ash embarque
     /// ([ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md)).
     UnknownAdapter(String),
     /// L'entrée à oublier n'est pas — ou n'est plus — déclarée.
-    UnknownTool(String),
+    UnknownTool(Command),
     /// L'entrée n'a jamais été valide : la réinitialisation n'a rien où revenir (spec §9.1).
-    NothingToRestore(String),
+    NothingToRestore(Command),
     /// Rien n'a été réinitialisé, donc rien à annuler.
-    NothingToUndo(String),
+    NothingToUndo(Command),
     /// L'entrée ne désigne aucun dossier, et son adaptateur n'en propose pas.
-    NoConfigFolder(String),
+    NoConfigFolder(Command),
     /// Ash a refusé d'écrire, et dit pourquoi.
     ///
     /// C'est le refus le plus important du produit : il porte la phrase que la ligne `hooks`

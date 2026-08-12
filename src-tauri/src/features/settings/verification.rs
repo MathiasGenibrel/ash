@@ -20,12 +20,12 @@
 //! même si on insiste, et le dit — c'est la « réserve » de la maquette. Cette ligne de
 //! partage est portée par [`ToolTest::decisive`], une fois, et tout le reste en découle.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::permits::Permits;
-use super::ports::{expand_home, CommandRunner, ConfigFiles, Folder, Launch};
+use super::ports::{CommandRunner, ConfigFiles, Folder, Launch};
+use super::values::{Command, ConfigTarget};
 
 /// Au-delà, la commande du test 4 est tuée.
 ///
@@ -338,31 +338,36 @@ impl Verifier {
         self.profiles.iter().map(|p| p.id.clone()).collect()
     }
 
-    /// Le dossier qu'une entrée désigne, **tel qu'elle l'écrit** — le sien, ou celui de son
-    /// adaptateur.
+    /// **Le dossier qu'une entrée vise — et le seul endroit qui le décide.**
     ///
-    /// C'est la mémoire du dernier dossier valide (spec §9.1) et le doublon qui en ont
-    /// besoin : deux entrées « sur le même dossier » ne s'écrivent pas forcément pareil, et
-    /// une entrée qui n'en nomme aucun désigne quand même celui de son adaptateur.
-    pub fn declared_config(&self, adapter: &str, config: Option<&str>) -> Option<String> {
-        let profile = self.profiles.iter().find(|p| p.id == adapter);
-        config
-            .map(str::to_owned)
-            .or_else(|| profile.and_then(|p| p.default_config.clone()))
-    }
-
-    /// Le dossier réellement visé, `~` résolu — la clé qui fait qu'il y a doublon.
+    /// « L'entrée, sinon le défaut de l'adaptateur » a un unique propriétaire, et c'est
+    /// celui-ci : le `Verifier` est le seul à porter les profils, donc le seul à savoir ce
+    /// que « rien » veut dire pour un adaptateur donné. La résolution du `~` se fait dans la
+    /// foulée, parce que les deux formes du chemin sont **une seule valeur** : la vérification
+    /// lit la forme résolue, l'écran montre la forme déclarée, le doublon compare, et la
+    /// mémoire retient — les quatre sur la même chose.
     ///
-    /// Deux entrées écrites `~/.claude` et `/Users/moi/.claude` pointent le même dossier et
-    /// écriraient donc dans le même fichier. Comparer les chaînes brutes laisserait passer
-    /// exactement le cas que le doublon existe pour attraper.
-    pub fn config_dir(&self, adapter: &str, config: Option<&str>) -> Option<PathBuf> {
-        let raw = self.declared_config(adapter, config)?;
-        Some(expand_home(&raw, self.files.home().as_deref()))
+    /// `None` veut dire « cette entrée ne vise aucun dossier » : elle n'en nomme pas, et son
+    /// adaptateur n'en propose pas. Ce n'est pas un dossier vide, et c'est le test 1 qui le
+    /// dit à l'utilisateur.
+    pub fn target(&self, adapter: &str, config: Option<&str>) -> Option<ConfigTarget> {
+        let declared = match config {
+            Some(named) => named,
+            None => self
+                .profiles
+                .iter()
+                .find(|p| p.id == adapter)?
+                .default_config
+                .as_deref()?,
+        };
+        Some(ConfigTarget::resolving(
+            declared,
+            self.files.home().as_deref(),
+        ))
     }
 
     /// Le premier temps : les tests 1 à 3. **Ne lance rien.**
-    pub fn first_pass(&self, command: &str, adapter: &str, config: Option<&str>) -> FirstPass {
+    pub fn first_pass(&self, command: &Command, adapter: &str, config: Option<&str>) -> FirstPass {
         let Some(profile) = self.profiles.iter().find(|p| p.id == adapter) else {
             // La composition root n'assemble que des adaptateurs connus, et `declare` les
             // refuse autrement : ce cas n'arrive qu'à un `config.toml` édité à la main, que
@@ -386,8 +391,10 @@ impl Verifier {
             );
         };
 
-        // Test 1 — le dossier existe et se lit.
-        let Some(raw) = config.or(profile.default_config.as_deref()) else {
+        // Test 1 — le dossier existe et se lit. Ce que l'entrée vise vient d'un seul
+        // endroit ([`Verifier::target`]), sous ses deux formes : celle qu'on montre, et
+        // celle qu'on lit.
+        let Some(target) = self.target(adapter, config) else {
             return FirstPass::Settled(
                 invalid(
                     ToolTest::FolderReadable,
@@ -401,9 +408,9 @@ impl Verifier {
                 .fixed_by("name the folder this tool reads?".to_owned(), None),
             );
         };
-        let path = expand_home(raw, self.files.home().as_deref());
+        let raw = target.declared();
 
-        let entries = match self.files.read_folder(&path) {
+        let entries = match self.files.read_folder(target.resolved()) {
             Folder::Readable(entries) => entries,
             Folder::Missing => {
                 return FirstPass::Settled(
@@ -534,7 +541,7 @@ impl Verifier {
         let launch = Launch {
             program,
             args: profile.probe_args.clone(),
-            env: vec![(variable.to_owned(), path.display().to_string())],
+            env: vec![(variable.to_owned(), target.resolved().display().to_string())],
             timeout: PROBE_TIMEOUT,
         };
         let shown = Verification::of(
@@ -555,7 +562,7 @@ impl Verifier {
     /// Le second temps : lancer la commande, et rapporter ce qu'elle a répondu.
     ///
     /// **Bloque tant qu'aucun jeton n'est libre** : c'est ce qui borne `re-verify all`.
-    pub fn second_pass(&self, command: &str, launch: &Launch) -> Verification {
+    pub fn second_pass(&self, command: &Command, launch: &Launch) -> Verification {
         let _permit = self.permits.acquire();
         let answered = self.commands.run(launch);
         drop(_permit);
@@ -685,8 +692,15 @@ fn summarise(entries: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::features::settings::fakes::{FakeCommands, FakeFolders};
+
+    /// Un nom de commande valide, tel que `NewTool::declare` en produit.
+    fn named(command: &str) -> Command {
+        Command::parse(command).unwrap_or_else(|why| panic!("{command} est un nom valide : {why}"))
+    }
 
     /// Test Data Builder : un profil d'adaptateur dédié, dont on ne surcharge que ce que
     /// le scénario regarde.
@@ -764,7 +778,7 @@ mod tests {
         let (verifier, _) = VerifierBuilder::new().build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/.claude"));
+        let first = verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude"));
 
         // Then
         let shown = first.shown();
@@ -794,7 +808,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/dev/notes"));
+        let first = verifier.first_pass(&named("claude"), "claude-code", Some("~/dev/notes"));
 
         // Then — « l'erreur nomme le test échoué, ce qui était attendu et ce qui a été
         // trouvé »
@@ -819,7 +833,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/dev/notes"));
+        let first = verifier.first_pass(&named("claude"), "claude-code", Some("~/dev/notes"));
 
         // Then
         assert_eq!(
@@ -843,7 +857,11 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/.claude/settings.json"));
+        let first = verifier.first_pass(
+            &named("claude"),
+            "claude-code",
+            Some("~/.claude/settings.json"),
+        );
 
         // Then
         assert_eq!(
@@ -864,7 +882,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/.claude"));
+        let first = verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude"));
 
         // Then
         let fix = first.shown().fix.clone().expect("une question est posée");
@@ -882,7 +900,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude-perso", "claude-code", Some("~/.claude"));
+        let first = verifier.first_pass(&named("claude-perso"), "claude-code", Some("~/.claude"));
 
         // Then
         let shown = first.shown();
@@ -903,8 +921,8 @@ mod tests {
             .build();
 
         // When
-        let caveat = verifier.first_pass("claude", "claude-code", Some("~/.claude"));
-        let invalid = verifier.first_pass("claude", "claude-code", Some("~/nowhere"));
+        let caveat = verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude"));
+        let invalid = verifier.first_pass(&named("claude"), "claude-code", Some("~/nowhere"));
 
         // Then
         assert!(caveat.shown().allows_hooks);
@@ -923,7 +941,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/.claude"));
+        let first = verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude"));
 
         // Then
         let shown = first.shown();
@@ -944,8 +962,8 @@ mod tests {
             .build();
 
         // When
-        let second = match verifier.first_pass("claude", "claude-code", Some("~/.claude")) {
-            FirstPass::Pending { launch, .. } => verifier.second_pass("claude", &launch),
+        let second = match verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude")) {
+            FirstPass::Pending { launch, .. } => verifier.second_pass(&named("claude"), &launch),
             FirstPass::Settled(_) => panic!("le test 4 devait rester à lancer"),
         };
 
@@ -966,8 +984,8 @@ mod tests {
             .build();
 
         // When
-        let second = match verifier.first_pass("claude", "claude-code", Some("~/.claude")) {
-            FirstPass::Pending { launch, .. } => verifier.second_pass("claude", &launch),
+        let second = match verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude")) {
+            FirstPass::Pending { launch, .. } => verifier.second_pass(&named("claude"), &launch),
             FirstPass::Settled(_) => panic!("le test 4 devait rester à lancer"),
         };
 
@@ -988,7 +1006,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("kimi", "generic", Some("~/notes"));
+        let first = verifier.first_pass(&named("kimi"), "generic", Some("~/notes"));
 
         // Then
         let shown = first.shown();
@@ -1008,7 +1026,7 @@ mod tests {
             .build();
 
         // When
-        let first = verifier.first_pass("claude", "claude-code", Some("~/.claude"));
+        let first = verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude"));
 
         // Then
         assert!(matches!(first, FirstPass::Settled(_)));
@@ -1027,7 +1045,7 @@ mod tests {
             .build();
 
         // When
-        let launch = match verifier.first_pass("claude", "claude-code", Some("~/.claude")) {
+        let launch = match verifier.first_pass(&named("claude"), "claude-code", Some("~/.claude")) {
             FirstPass::Pending { launch, .. } => launch,
             FirstPass::Settled(_) => panic!("le test 4 devait rester à lancer"),
         };
@@ -1061,7 +1079,7 @@ mod tests {
             .build();
 
         // When
-        let launch = match verifier.first_pass("claude", "claude-code", Some(hostile)) {
+        let launch = match verifier.first_pass(&named("claude"), "claude-code", Some(hostile)) {
             FirstPass::Pending { launch, .. } => launch,
             FirstPass::Settled(_) => panic!("le test 4 devait rester à lancer"),
         };

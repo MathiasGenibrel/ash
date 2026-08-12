@@ -7,10 +7,11 @@
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command as Process, Stdio};
 use std::sync::mpsc;
 
 use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, Launch};
+use super::values::Command;
 
 /// Au-delà, on cesse de lire la sortie de la commande.
 ///
@@ -54,11 +55,13 @@ impl ConfigFiles for SystemConfigFiles {
 /// Six contraintes tiennent la frontière décrite par [`Launch`], et elles sont ici parce
 /// que c'est ici qu'elles s'exercent :
 ///
-/// 1. **Aucun shell.** [`Command`] prend le programme et ses arguments séparément : ni le
-///    chemin de configuration ni le nom de commande ne peuvent être relus comme du code.
+/// 1. **Aucun shell.** [`Process`](std::process::Command) prend le programme et ses
+///    arguments séparément : ni le chemin de configuration ni le nom de commande ne peuvent
+///    être relus comme du code.
 /// 2. **Le programme est celui que le `PATH` a résolu** ([`Self::locate`]), jamais un
 ///    chemin recomposé à partir d'une saisie. Ash ne lance donc que ce que taper le nom
-///    dans un shell aurait lancé.
+///    dans un shell aurait lancé — et [`Command`] garantit dès la signature que ce nom n'est
+///    ni un chemin, ni une ligne de commande, ni vide.
 /// 3. **L'environnement est remplacé, pas complété** (`env_clear`). Ce qui traîne dans
 ///    celui d'Ash — jusqu'à `ASH_SOCK`, qu'un hook interpréterait — ne fuit pas dans un
 ///    programme qu'on lance pour lui poser une question.
@@ -71,23 +74,20 @@ impl ConfigFiles for SystemConfigFiles {
 pub struct SystemCommands;
 
 impl CommandRunner for SystemCommands {
-    fn locate(&self, command: &str) -> Option<PathBuf> {
-        // La saisie a déjà été refusée si elle porte une barre oblique ou une espace
-        // (`SettingsError::NotACommandName`). On le revérifie ici : ce fichier est le
-        // dernier avant le processus, et un chemin absolu déguisé en nom de commande y
-        // ferait sortir la résolution du `PATH`.
-        if command.is_empty() || command.contains('/') || command.contains(char::is_whitespace) {
-            return None;
-        }
-
+    fn locate(&self, command: &Command) -> Option<PathBuf> {
+        // Aucune revérification ici, et ce n'est pas un oubli : ce fichier est le dernier
+        // avant le processus, et un chemin absolu déguisé en nom de commande ferait sortir
+        // la résolution du `PATH`. La garde est passée du corps à la signature — un
+        // [`Command`] ne se fabrique qu'en validant, donc rien ne peut atteindre cette ligne
+        // sans l'avoir passée.
         let path = std::env::var_os("PATH")?;
         std::env::split_paths(&path)
-            .map(|dir| dir.join(command))
+            .map(|dir| dir.join(command.as_str()))
             .find(|candidate| is_executable_file(candidate))
     }
 
     fn run(&self, launch: &Launch) -> Result<Answer, String> {
-        let mut child = Command::new(&launch.program)
+        let mut child = Process::new(&launch.program)
             .args(&launch.args)
             .env_clear()
             .envs(launch.env.iter().map(|(n, v)| (n.as_str(), v.as_str())))
@@ -144,26 +144,6 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn given_a_command_name_that_hides_a_path_when_it_is_looked_up_then_the_path_lookup_refuses_it()
-    {
-        // Given — **frontière de sécurité** : `locate` est le seul producteur du programme
-        // qui sera lancé. Laisser passer un chemin ici ferait sortir Ash du `PATH` et lui
-        // ferait exécuter un fichier désigné à la main dans un champ de réglages
-        let runner = SystemCommands;
-
-        // When
-        let found = [
-            runner.locate("/usr/local/bin/claude"),
-            runner.locate("../claude"),
-            runner.locate("claude --dangerously"),
-            runner.locate(""),
-        ];
-
-        // Then
-        assert_eq!(found, [None, None, None, None]);
-    }
 
     #[test]
     fn given_a_folder_that_does_not_exist_when_it_is_read_then_it_is_missing_and_not_unreadable() {

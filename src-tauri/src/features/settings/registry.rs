@@ -1,10 +1,10 @@
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::error::SettingsError;
 use super::hooks::{report, BlockAt, HookAction};
 use super::ports::{HookBlocks, Launch};
 use super::tool::{NewTool, ToolDeclaration};
+use super::values::{optional, Command, ConfigTarget};
 use super::verification::{FirstPass, Verification, Verifier};
 
 /// Les commandes déclarées, ce qu'elles ont prouvé, et les adaptateurs qu'on peut leur
@@ -40,7 +40,7 @@ pub struct ToolRegistry {
 /// écraserait celle qui la remplace.
 #[derive(Debug, Clone)]
 pub struct SecondPass {
-    pub command: String,
+    pub command: Command,
     pub adapter: String,
     pub config: Option<String>,
     pub launch: Launch,
@@ -101,22 +101,19 @@ impl ToolRegistry {
     /// suit est la même.
     pub fn retarget(
         &self,
-        command: &str,
+        command: &Command,
         adapter: &str,
         config: Option<&str>,
     ) -> Result<Changed, SettingsError> {
         {
             let mut tools = self.lock()?;
-            let Some(tool) = tools.iter_mut().find(|tool| tool.command == command) else {
-                return Err(SettingsError::UnknownTool(command.to_owned()));
+            let Some(tool) = tools.iter_mut().find(|tool| &tool.command == command) else {
+                return Err(SettingsError::UnknownTool(command.clone()));
             };
             if !self.adapters().iter().any(|known| known == adapter) {
                 return Err(SettingsError::UnknownAdapter(adapter.to_owned()));
             }
-            let folder = config
-                .map(str::trim)
-                .filter(|c| !c.is_empty())
-                .map(str::to_owned);
+            let folder = optional(config);
             // L'entrée retombe à `unverified` **avant** que quoi que ce soit ne soit
             // relancé : entre la frappe et la réponse, ce que l'écran montrait décrivait
             // l'ancien chemin.
@@ -135,27 +132,26 @@ impl ToolRegistry {
     /// revenir les rendrait identiques — le doublon deviendrait la conséquence mécanique du
     /// geste au lieu d'un accident. Une entrée qui n'a jamais rien prouvé n'a donc rien à
     /// restaurer, et le dire vaut mieux que de la renvoyer quelque part au hasard.
-    pub fn reset(&self, command: &str) -> Result<Changed, SettingsError> {
+    pub fn reset(&self, command: &Command) -> Result<Changed, SettingsError> {
         {
             let mut tools = self.lock()?;
-            let Some(tool) = tools.iter_mut().find(|tool| tool.command == command) else {
-                return Err(SettingsError::UnknownTool(command.to_owned()));
+            let Some(tool) = tools.iter_mut().find(|tool| &tool.command == command) else {
+                return Err(SettingsError::UnknownTool(command.clone()));
             };
             let Some(memory) = tool.last_valid_config.clone() else {
-                return Err(SettingsError::NothingToRestore(command.to_owned()));
+                return Err(SettingsError::NothingToRestore(command.clone()));
             };
             let adapter = tool.adapter.clone();
             // Ce qu'on remplace est le dossier **désigné**, défaut de l'adaptateur compris :
             // la ligne `was` montre un chemin, et « rien » ne se barre pas d'un trait.
-            let previous = self
-                .verifier
-                .declared_config(&adapter, tool.config.as_deref());
+            let previous = self.verifier.target(&adapter, tool.config.as_deref());
             let mut restored = tool
                 .clone()
-                .retargeted(&adapter, Some(memory.clone()))
+                .retargeted(&adapter, Some(memory.declared().to_owned()))
                 .verified_by(Verification::unverified(), None);
             // Rien à annuler quand rien n'a changé : offrir « annuler » ferait chercher ce
-            // que le geste a fait.
+            // que le geste a fait. « Rien n'a changé » est la question du doublon, posée sur
+            // la même valeur — deux écritures du même dossier ne sont pas un déplacement.
             restored.reset_from = previous.filter(|before| *before != memory);
             *tool = restored;
         }
@@ -167,19 +163,19 @@ impl ToolRegistry {
     /// C'est le `undo the reset` de la bannière de doublon : le geste qui vient de créer la
     /// collision est celui qu'on défait, et il reste **à portée** plutôt que d'obliger à
     /// retaper un chemin qu'on n'a plus sous les yeux.
-    pub fn undo_reset(&self, command: &str) -> Result<Changed, SettingsError> {
+    pub fn undo_reset(&self, command: &Command) -> Result<Changed, SettingsError> {
         {
             let mut tools = self.lock()?;
-            let Some(tool) = tools.iter_mut().find(|tool| tool.command == command) else {
-                return Err(SettingsError::UnknownTool(command.to_owned()));
+            let Some(tool) = tools.iter_mut().find(|tool| &tool.command == command) else {
+                return Err(SettingsError::UnknownTool(command.clone()));
             };
             let Some(before) = tool.reset_from.clone() else {
-                return Err(SettingsError::NothingToUndo(command.to_owned()));
+                return Err(SettingsError::NothingToUndo(command.clone()));
             };
             let adapter = tool.adapter.clone();
             *tool = tool
                 .clone()
-                .retargeted(&adapter, Some(before))
+                .retargeted(&adapter, Some(before.declared().to_owned()))
                 .verified_by(Verification::unverified(), None);
         }
         self.verify(command)
@@ -192,23 +188,23 @@ impl ToolRegistry {
     /// fichier qui porte déjà d'autres hooks ont tous éteint le bouton — et le backend
     /// refuse pour la même raison qu'il l'a éteint. Recopier la condition en ferait deux,
     /// dont une seule protège vraiment le fichier de l'utilisateur.
-    pub fn install_hooks(&self, command: &str) -> Result<Vec<ToolDeclaration>, SettingsError> {
+    pub fn install_hooks(&self, command: &Command) -> Result<Vec<ToolDeclaration>, SettingsError> {
         self.write_hooks(command, HookAction::Install)
     }
 
     /// Retire le bloc et ses marqueurs — le `remove` de l'état `installed`.
-    pub fn remove_hooks(&self, command: &str) -> Result<Vec<ToolDeclaration>, SettingsError> {
+    pub fn remove_hooks(&self, command: &Command) -> Result<Vec<ToolDeclaration>, SettingsError> {
         self.write_hooks(command, HookAction::Remove)
     }
 
     fn write_hooks(
         &self,
-        command: &str,
+        command: &Command,
         asked: HookAction,
     ) -> Result<Vec<ToolDeclaration>, SettingsError> {
         let tools = self.tools()?;
-        let Some(tool) = tools.iter().find(|tool| tool.command == command) else {
-            return Err(SettingsError::UnknownTool(command.to_owned()));
+        let Some(tool) = tools.iter().find(|tool| &tool.command == command) else {
+            return Err(SettingsError::UnknownTool(command.clone()));
         };
         let allowed = match asked {
             // `update` est une installation : le geste est le même, seul le mot change.
@@ -220,11 +216,8 @@ impl ToolRegistry {
         if !allowed || !tool.hooks.enabled {
             return Err(SettingsError::HooksRefused(tool.hooks.summary.clone()));
         }
-        let Some(folder) = self
-            .verifier
-            .config_dir(&tool.adapter, tool.config.as_deref())
-        else {
-            return Err(SettingsError::NoConfigFolder(command.to_owned()));
+        let Some(folder) = self.verifier.target(&tool.adapter, tool.config.as_deref()) else {
+            return Err(SettingsError::NoConfigFolder(command.clone()));
         };
 
         match asked {
@@ -237,11 +230,11 @@ impl ToolRegistry {
     }
 
     /// Relance la séquence sur une entrée — le bouton `re-verify` d'une carte.
-    pub fn verify(&self, command: &str) -> Result<Changed, SettingsError> {
+    pub fn verify(&self, command: &Command) -> Result<Changed, SettingsError> {
         let (stored, pending) = {
             let mut tools = self.lock()?;
-            let Some(index) = tools.iter().position(|tool| tool.command == command) else {
-                return Err(SettingsError::UnknownTool(command.to_owned()));
+            let Some(index) = tools.iter().position(|tool| &tool.command == command) else {
+                return Err(SettingsError::UnknownTool(command.clone()));
             };
             let pending = verify_at(&self.verifier, &mut tools, index);
             (tools.clone(), pending.into_iter().collect())
@@ -300,9 +293,7 @@ impl ToolRegistry {
             if tool.adapter != next.adapter || tool.config != next.config {
                 return Ok(None);
             }
-            let declared = self
-                .verifier
-                .declared_config(&tool.adapter, tool.config.as_deref());
+            let declared = self.verifier.target(&tool.adapter, tool.config.as_deref());
             *tool = tool.clone().verified_by(verification, declared);
             tools.clone()
         };
@@ -313,28 +304,27 @@ impl ToolRegistry {
     ///
     /// Elle ne touche pas le registre : le bouton `add` a besoin de savoir ce que les
     /// quatre tests disent **avant** qu'il n'y ait quoi que ce soit à ajouter.
-    pub fn verify_draft(&self, draft: &NewTool) -> (Verification, Option<SecondPass>) {
-        let command = draft.command.trim();
-        let config = draft
-            .config
-            .as_deref()
-            .map(str::trim)
-            .filter(|c| !c.is_empty());
+    pub fn verify_draft(
+        &self,
+        draft: &NewTool,
+    ) -> Result<(Verification, Option<SecondPass>), SettingsError> {
+        let command = Command::parse(&draft.command)?;
+        let config = optional(draft.config.as_deref());
         let first = self
             .verifier
-            .first_pass(command, draft.adapter.trim(), config);
+            .first_pass(&command, draft.adapter.trim(), config.as_deref());
         let shown = first.shown().clone();
         let pending = match first {
             FirstPass::Pending { launch, .. } => Some(SecondPass {
-                command: command.to_owned(),
+                command,
                 adapter: draft.adapter.trim().to_owned(),
-                config: config.map(str::to_owned),
+                config,
                 launch,
                 stored: false,
             }),
             FirstPass::Settled(_) => None,
         };
-        (shown, pending)
+        Ok((shown, pending))
     }
 
     /// Oublie une entrée — le `✕` de l'en-tête de carte.
@@ -342,13 +332,13 @@ impl ToolRegistry {
     /// C'est aussi ce qui rend l'état vide atteignable autrement qu'au premier démarrage :
     /// une liste où l'on ajoute sans pouvoir revenir en arrière ferait d'une faute de
     /// frappe une entrée définitive.
-    pub fn forget(&self, command: &str) -> Result<Vec<ToolDeclaration>, SettingsError> {
+    pub fn forget(&self, command: &Command) -> Result<Vec<ToolDeclaration>, SettingsError> {
         let stored = {
             let mut tools = self.lock()?;
             let before = tools.len();
-            tools.retain(|tool| tool.command != command);
+            tools.retain(|tool| &tool.command != command);
             if tools.len() == before {
-                return Err(SettingsError::UnknownTool(command.to_owned()));
+                return Err(SettingsError::UnknownTool(command.clone()));
             }
             tools.clone()
         };
@@ -369,13 +359,12 @@ impl ToolRegistry {
     /// **Hors du verrou** : la lecture d'un fichier de configuration n'a pas à figer le
     /// registre pour les autres fils, dont ceux du second temps de la vérification.
     fn enrich(&self, mut tools: Vec<ToolDeclaration>) -> Vec<ToolDeclaration> {
-        let aimed: Vec<(String, Option<PathBuf>)> = tools
+        let aimed: Vec<(Command, Option<ConfigTarget>)> = tools
             .iter()
             .map(|tool| {
                 (
                     tool.command.clone(),
-                    self.verifier
-                        .config_dir(&tool.adapter, tool.config.as_deref()),
+                    self.verifier.target(&tool.adapter, tool.config.as_deref()),
                 )
             })
             .collect();
@@ -386,7 +375,7 @@ impl ToolRegistry {
             // Qui tient le fichier : **la première entrée déclarée**. Il en faut une, et
             // celle-là ne dépend ni de l'ordre des clics ni du contenu du disque — donc
             // l'écran ne change pas d'avis d'un affichage à l'autre.
-            let mut taken_by: Option<String> = None;
+            let mut taken_by: Option<Command> = None;
             for (position, (name, dir)) in aimed.iter().enumerate() {
                 if position == index || dir.is_none() || *dir != mine {
                     continue;
@@ -404,12 +393,7 @@ impl ToolRegistry {
                 _ => None,
             };
 
-            tool.hooks = report(
-                &tool.verification,
-                &tool.adapter,
-                taken_by.as_deref(),
-                found,
-            );
+            tool.hooks = report(&tool.verification, &tool.adapter, taken_by.as_ref(), found);
             tool.duplicates = duplicates;
         }
         tools
@@ -439,7 +423,7 @@ fn verify_at(
         }),
         FirstPass::Settled(_) => None,
     };
-    let declared = verifier.declared_config(&tool.adapter, tool.config.as_deref());
+    let declared = verifier.target(&tool.adapter, tool.config.as_deref());
     *tool = tool.clone().verified_by(shown, declared);
     pending
 }
@@ -524,6 +508,11 @@ mod tests {
         }
     }
 
+    /// Un nom de commande valide, tel que `NewTool::declare` en produit.
+    fn named(command: &str) -> Command {
+        Command::parse(command).unwrap_or_else(|why| panic!("{command} est un nom valide : {why}"))
+    }
+
     fn draft(command: &str, adapter: &str, config: Option<&str>) -> NewTool {
         NewTool {
             command: command.to_owned(),
@@ -587,7 +576,7 @@ mod tests {
 
         // When — `generic` ne signe rien : le même dossier lui convient
         let changed = registry
-            .retarget("claude", "generic", Some("/home/notes"))
+            .retarget(&named("claude"), "generic", Some("/home/notes"))
             .expect("l'entrée existe");
 
         // Then
@@ -615,7 +604,7 @@ mod tests {
             .cloned()
             .expect("le test 4 reste à lancer");
         registry
-            .retarget("claude", "claude-code", Some("/home/other"))
+            .retarget(&named("claude"), "claude-code", Some("/home/other"))
             .expect("l'entrée existe");
 
         // When
@@ -684,7 +673,7 @@ mod tests {
             .expect("la saisie est valide");
 
         // When
-        let after = registry.forget("claude").unwrap();
+        let after = registry.forget(&named("claude")).unwrap();
 
         // Then
         assert_eq!(after, vec![]);
@@ -715,19 +704,48 @@ mod tests {
             .tools;
 
         // When
-        let flagged: Vec<(&str, &[String])> = tools
+        let flagged: Vec<(&str, Vec<&str>)> = tools
             .iter()
-            .map(|tool| (tool.command.as_str(), tool.duplicates.as_slice()))
+            .map(|tool| {
+                (
+                    tool.command.as_str(),
+                    tool.duplicates.iter().map(Command::as_str).collect(),
+                )
+            })
             .collect();
 
         // Then
         assert_eq!(
             flagged,
             vec![
-                ("claude", ["claude-perso".to_owned()].as_slice()),
-                ("claude-perso", ["claude".to_owned()].as_slice()),
+                ("claude", vec!["claude-perso"]),
+                ("claude-perso", vec!["claude"]),
             ]
         );
+    }
+
+    #[test]
+    fn given_two_entries_that_write_the_same_folder_differently_when_the_list_is_read_then_the_duplicate_still_shows(
+    ) {
+        // Given — `~/.claude` et `/home/.claude` sont le même dossier, donc le même fichier
+        // de hooks. C'est le cas que la bannière de doublon existe pour attraper, et celui
+        // qu'elle raterait si un lecteur comparait les chemins tels qu'ils sont écrits
+        // pendant qu'un autre comparait les chemins résolus
+        let registry = two_claude_accounts().build();
+        registry
+            .declare(draft("claude", "claude-code", Some("~/.claude")))
+            .expect("la saisie est valide");
+
+        // When
+        let tools = registry
+            .declare(draft("claude-perso", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide")
+            .tools;
+
+        // Then — signalé sur les deux lignes, et la seconde n'écrit pas par-dessus la première
+        assert_eq!(tools[0].duplicates, vec![named("claude-perso")]);
+        assert_eq!(tools[1].duplicates, vec![named("claude")]);
+        assert_eq!(tools[1].hooks.state, HookState::Blocked);
     }
 
     #[test]
@@ -768,7 +786,7 @@ mod tests {
             .expect("la saisie est valide");
 
         // When
-        let refused = registry.install_hooks("claude-perso");
+        let refused = registry.install_hooks(&named("claude-perso"));
 
         // Then
         assert_eq!(
@@ -791,7 +809,7 @@ mod tests {
             .expect("la saisie est valide");
 
         // When
-        let refused = registry.install_hooks("claude");
+        let refused = registry.install_hooks(&named("claude"));
 
         // Then
         assert!(matches!(refused, Err(SettingsError::HooksRefused(_))));
@@ -814,7 +832,7 @@ mod tests {
 
         // When
         let after = registry
-            .install_hooks("claude-perso")
+            .install_hooks(&named("claude-perso"))
             .expect("elle est vérifiée");
 
         // Then
@@ -848,7 +866,7 @@ mod tests {
         // Then
         assert_eq!(tools[0].hooks.state, HookState::Conflict);
         assert_eq!(tools[0].hooks.diff.as_deref(), Some("- ash\n+ moi"));
-        assert!(registry.install_hooks("claude").is_err());
+        assert!(registry.install_hooks(&named("claude")).is_err());
         assert_eq!(blocks.written(), Vec::<String>::new());
     }
 
@@ -866,12 +884,12 @@ mod tests {
             .expect("la saisie est valide");
 
         // When
-        let refused = registry.reset("claude");
+        let refused = registry.reset(&named("claude"));
 
         // Then
         assert_eq!(
             refused.err(),
-            Some(SettingsError::NothingToRestore("claude".to_owned()))
+            Some(SettingsError::NothingToRestore(named("claude")))
         );
     }
 
@@ -899,16 +917,21 @@ mod tests {
             .settle(&pending, verification)
             .expect("le registre répond");
         registry
-            .retarget("claude-perso", "claude-code", Some("/home/notes"))
+            .retarget(&named("claude-perso"), "claude-code", Some("/home/notes"))
             .expect("l'entrée existe");
 
         // When
-        let after = registry.reset("claude-perso").expect("elle a été valide");
+        let after = registry
+            .reset(&named("claude-perso"))
+            .expect("elle a été valide");
 
         // Then
         let tool = after.tools.first().expect("l'entrée est là");
         assert_eq!(tool.config.as_deref(), Some("/home/.claude-perso"));
-        assert_eq!(tool.reset_from.as_deref(), Some("/home/notes"));
+        assert_eq!(
+            tool.reset_from.as_ref().map(ConfigTarget::declared),
+            Some("/home/notes")
+        );
     }
 
     #[test]
@@ -930,13 +953,13 @@ mod tests {
             .settle(&pending, verification)
             .expect("le registre répond");
         registry
-            .retarget("claude", "claude-code", Some("/home/.claude-perso"))
+            .retarget(&named("claude"), "claude-code", Some("/home/.claude-perso"))
             .expect("l'entrée existe");
-        registry.reset("claude").expect("elle a été valide");
+        registry.reset(&named("claude")).expect("elle a été valide");
 
         // When
         let after = registry
-            .undo_reset("claude")
+            .undo_reset(&named("claude"))
             .expect("elle vient d'être réinitialisée");
 
         // Then
@@ -964,20 +987,20 @@ mod tests {
             .settle(&pending, verification)
             .expect("le registre répond");
         registry
-            .retarget("claude", "claude-code", Some("/home/.claude-perso"))
+            .retarget(&named("claude"), "claude-code", Some("/home/.claude-perso"))
             .expect("l'entrée existe");
-        registry.reset("claude").expect("elle a été valide");
+        registry.reset(&named("claude")).expect("elle a été valide");
 
         // When
         registry
-            .retarget("claude", "claude-code", Some("/home/notes"))
+            .retarget(&named("claude"), "claude-code", Some("/home/notes"))
             .expect("l'entrée existe");
-        let refused = registry.undo_reset("claude");
+        let refused = registry.undo_reset(&named("claude"));
 
         // Then
         assert_eq!(
             refused.err(),
-            Some(SettingsError::NothingToUndo("claude".to_owned()))
+            Some(SettingsError::NothingToUndo(named("claude")))
         );
     }
 
@@ -987,12 +1010,12 @@ mod tests {
         let registry = RegistryBuilder::new().build();
 
         // When
-        let forgotten = registry.forget("codex");
+        let forgotten = registry.forget(&named("codex"));
 
         // Then
         assert_eq!(
             forgotten.unwrap_err(),
-            SettingsError::UnknownTool("codex".to_owned())
+            SettingsError::UnknownTool(named("codex"))
         );
     }
 }
