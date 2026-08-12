@@ -42,15 +42,16 @@ import {
  * champ qui a le focus et la position du curseur sont **rendus** après coup — sans ça, la
  * relance de la vérification arracherait le curseur des mains de celui qui tape.
  *
- * **Ce que cette vue laisse volontairement vide**, et où :
+ * **Rien n'est décidé dans ce fichier, et c'est une règle du dépôt** : `bun test` n'y monte
+ * pas de DOM, donc tout ce qui s'y glisse échappe aux tests. Les cinq états de la ligne
+ * `hooks`, la précédence de leurs raisons et le droit d'écrire viennent du backend ; le
+ * découpage du diff, la bannière de doublon et ce que le `↺` peut faire viennent de
+ * [`model`](./model.ts). Ce fichier pose des nœuds et des chaînes littérales.
  *
- * - la ligne `hooks` prend sa place dans la grille `44px 1fr` de [`toolCard`], sous la
- *   ligne `test`, mais **seulement dans sa forme éteinte** : c'est ce que la planche `3e`
- *   exige de cette issue-ci. Ses cinq états, son diff de conflit et son bouton allumé sont
- *   l'issue #16, qui remplacera [`blockedHooksRow`] au même endroit ;
- * - l'encart de découverte de l'état vide (« ash found these commands in your PATH ») et le
- *   bouton `Browse…` attendent que quelque chose sache lire le `PATH` et ouvrir le Finder :
- *   inventer des candidats serait afficher les données d'exemple de la maquette.
+ * **Ce qu'il laisse volontairement vide** : l'encart de découverte de l'état vide (« ash
+ * found these commands in your PATH ») et le bouton `Browse…` attendent que quelque chose
+ * sache lire le `PATH` et ouvrir le Finder — inventer des candidats serait afficher les
+ * données d'exemple de la maquette.
  */
 export interface SettingsViewActions {
     selectSection(section: SettingsSection): void;
