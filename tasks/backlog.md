@@ -76,7 +76,8 @@ son environnement dès maintenant — même si rien ne les lit encore.
 
 `feat` · spec §4.2, §4.4 · source : spec
 
-- [ ] `Cmd+N`, `Cmd+Shift+N`, `Cmd+W`, `Cmd+1..9`, `Cmd+K` font ce que dit la spec §4.4
+- [ ] `Cmd+T`, `Cmd+Shift+T`, `Cmd+W`, `Cmd+1..9`, `Ctrl+Tab`, `Cmd+K` font ce que dit la
+      spec §4.4
 - [ ] `Cmd+W` demande confirmation si un processus tourne dans l'onglet
 - [ ] chaque action est aussi atteignable à la souris
 - [ ] un seul terminal visible à la fois ([ADR-0003](../docs/adr/0003-zone-terminal-unique.md))

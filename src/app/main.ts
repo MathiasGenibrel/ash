@@ -2,6 +2,7 @@ import "./styles.css";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { onMenuAction, type MenuAction } from "./menu";
+import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
 
@@ -62,9 +63,15 @@ function mount(root: HTMLElement, theme: ThemeChanges): void {
     // Le premier onglet part de `~`, faute d'onglet actif dont reprendre le répertoire.
     terminals.openTab("home").catch(fail);
 
-    onMenuAction((action) => {
+    const play = (action: MenuAction): void => {
         dispatch(terminals, sidebar, action).catch(fail);
-    }).catch(fail);
+    };
+
+    onMenuAction(play).catch(fail);
+    // `⌃⇥` et `⌃⇧⇥` arrivent par le clavier de la webview, faute d'être captées par le
+    // menu natif — voir `shortcuts.ts`. Elles produisent les mêmes actions, et sont donc
+    // jouées par la même table : il n'y a qu'un seul chemin d'effet.
+    installShortcuts(document, play);
 }
 
 function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): Promise<void> {
@@ -79,6 +86,10 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
             return terminals.clearActiveScrollback();
         case "select-tab":
             return terminals.selectTabAt(action.position);
+        case "next-tab":
+            return terminals.cycleTab(1);
+        case "previous-tab":
+            return terminals.cycleTab(-1);
         case "toggle-sidebar":
             // Repliée, la sidebar ne porte plus le contexte : la zone terminal le reprend
             // — un onglet s'intitule `omelette-web/claude`, et la ligne de statut nomme

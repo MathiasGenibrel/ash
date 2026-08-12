@@ -183,12 +183,12 @@ export class SidebarView {
         add.type = "button";
         add.className = "ash-sidebar-add";
         add.textContent = "+ tab";
-        add.title = "Nouvel onglet dans le worktree courant (⌘N)";
+        add.title = "Nouvel onglet dans le worktree courant (⌘T)";
         add.addEventListener("click", () => {
             this.actions.newTab();
         });
 
-        foot.append(add, text("span", "⌘N", "ash-sidebar-hint"));
+        foot.append(add, text("span", "⌘T", "ash-sidebar-hint"));
         return foot;
     }
 }

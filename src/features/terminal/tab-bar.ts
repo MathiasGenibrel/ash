@@ -104,10 +104,10 @@ export class TabBar {
         group.className = "terminal-bar-controls";
 
         group.append(
-            button("+", "Nouvel onglet dans le worktree courant (⌘N)", () => {
+            button("+", "Nouvel onglet dans le worktree courant (⌘T)", () => {
                 this.actions.openInCurrentWorktree();
             }),
-            button("+~", "Nouvel onglet à ~ (⇧⌘N)", () => {
+            button("+~", "Nouvel onglet à ~ (⇧⌘T)", () => {
                 this.actions.openAtHome();
             }),
         );

@@ -206,7 +206,7 @@ describe("un seul terminal visible", () => {
 });
 
 describe("l'origine d'un nouvel onglet", () => {
-    it("Given the active tab has been cd'ed elsewhere since it opened, when Cmd+N opens a tab, then the new shell starts in the directory the tab is in now", async () => {
+    it("Given the active tab has been cd'ed elsewhere since it opened, when Cmd+T opens a tab, then the new shell starts in the directory the tab is in now", async () => {
         // Given — un `cd /tmp` dans l'onglet actif : le backend le sait, l'atelier non
         const app = bench();
         await app.workbench.openTab("home");
@@ -218,11 +218,11 @@ describe("l'origine d'un nouvel onglet", () => {
         await app.workbench.openTab("current-worktree");
 
         // Then — le répertoire *courant* de l'onglet actif, redemandé au backend au
-        // moment du `Cmd+N` ; celui d'il y a une ouverture d'onglet n'a plus cours
+        // moment du `Cmd+T` ; celui d'il y a une ouverture d'onglet n'a plus cours
         expect(app.backend.opened[0]?.cwd).toBe("/tmp");
     });
 
-    it("Given any active tab, when Cmd+Shift+N opens a tab, then the new shell starts at home", async () => {
+    it("Given any active tab, when Cmd+Shift+T opens a tab, then the new shell starts at home", async () => {
         // Given
         const app = bench();
         await app.workbench.openTab("home");
@@ -238,7 +238,7 @@ describe("l'origine d'un nouvel onglet", () => {
 
 describe("le répertoire courant d'un onglet", () => {
     it("Given an open tab, when the backend's probe announces a cd, then the tab bar is re-rendered with the new directory without any tab being opened or closed", async () => {
-        // Given — le titre d'un onglet ne doit pas attendre le prochain `Cmd+N` pour
+        // Given — le titre d'un onglet ne doit pas attendre le prochain `Cmd+T` pour
         // suivre un `cd` : la boucle de sonde d'ADR-0005 est le seul mécanisme prévu
         const app = bench();
         await app.workbench.openTab("home");
@@ -268,8 +268,8 @@ describe("le répertoire courant d'un onglet", () => {
         expect(app.rendered).toHaveLength(before);
     });
 
-    it("Given the active tab has moved, when Cmd+N opens a tab from it, then it starts in the announced directory", async () => {
-        // Given — même chemin que `Cmd+N`, mais l'atelier a déjà appris le `cd`
+    it("Given the active tab has moved, when Cmd+T opens a tab from it, then it starts in the announced directory", async () => {
+        // Given — même chemin que `Cmd+T`, mais l'atelier a déjà appris le `cd`
         const app = bench();
         await app.workbench.openTab("home");
         const tabId = app.backend.opened[0]?.tabId ?? "";
@@ -357,7 +357,7 @@ describe("la fermeture d'un onglet", () => {
         // When
         await app.workbench.closeActive();
 
-        // Then — la fenêtre reste, vide, et `⌘N` rouvre un onglet
+        // Then — la fenêtre reste, vide, et `⌘T` rouvre un onglet
         expect(app.workbench.tabs.tabs).toEqual([]);
         expect(app.workbench.tabs.activeTabId).toBeNull();
         expect(app.visible()).toBe(0);

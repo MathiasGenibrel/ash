@@ -73,7 +73,7 @@ export interface ThemeSignal {
 
 /** Ce que la feature attend du backend. */
 export interface PtyBridge {
-    /** `cwd` à `null` vaut `~` — le `Cmd+Shift+N` de la spec §4.4. */
+    /** `cwd` à `null` vaut `~` — le `Cmd+Shift+T` de la spec §4.4. */
     open(
         size: TerminalSize,
         cwd: string | null,
