@@ -349,7 +349,9 @@ l'utilisateur.
 Les états viennent des **hooks de l'outil**, pas d'une analyse de la sortie
 ([ADR-0007](./adr/0007-etats-par-hooks.md)).
 
-- Ash écrit un bloc délimité dans le `settings.json` de chaque commande reconnue.
+- Ash écrit ses propres entrées, chacune marquée, dans le `settings.json` de chaque
+  commande reconnue — à côté de celles que l'utilisateur y a déjà mises
+  ([ADR-0007](./adr/0007-etats-par-hooks.md), amendement du 2026-08-12).
 - Les hooks appellent un petit binaire `ash-event` qui poste sur `$ASH_SOCK`.
 - La corrélation hook → onglet se fait par `ASH_TAB_ID`, variable d'environnement
   posée par Ash à la création du bash et héritée par toute la descendance.
@@ -583,7 +585,7 @@ fiches de branche dans les dépôts où il a servi — c'est assumé, et c'est l
 
 | Ce qu'Ash touche | Pourquoi | Réversible |
 |---|---|---|
-| `settings.json` de chaque commande reconnue | poser les hooks | Oui — bloc délimité `ash:begin` / `ash:end`, versionné (`ash block v3`), sauvegarde `.bak` avant écriture, désinstallation en un geste |
+| `settings.json` de chaque commande reconnue | poser les hooks | Oui — une entrée par événement, chacune marquée et versionnée (`# ash:hook v1`), fusionnée avec les hooks déjà là, sauvegarde `.bak` avant écriture, désinstallation en un geste qui rend le fichier à l'octet près |
 | `<worktree>/.ash/worktree.md` | la fiche de branche, committée avec la branche | Oui — suppression du fichier, mais **elle est passée dans l'historique git** ([ADR-0013](./adr/0013-fiche-de-branche-dans-le-depot.md)) |
 | Environnement des bash qu'il crée | `ASH_TAB_ID`, `ASH_SOCK` | Oui — n'existe que dans les process enfants d'Ash |
 | `~/.ash/` | config, état, journal d'attribution | Oui — suppression du dossier |

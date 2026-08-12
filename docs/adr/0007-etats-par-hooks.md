@@ -1,6 +1,6 @@
 # ADR-0007 — Les états viennent des hooks de l'outil, pas de la sortie
 
-- **Statut** : accepté (2026-08-07), précisé le 2026-08-11
+- **Statut** : accepté (2026-08-07), précisé le 2026-08-11, amendé le 2026-08-12
 - **Complété par** : [ADR-0008](./0008-abstraction-adapter.md)
 
 ## Contexte
@@ -59,6 +59,62 @@ un faux positif y détruirait la confiance dans la notification.
 
 Voir l'[amendement correspondant d'ADR-0008](./0008-abstraction-adapter.md).
 
+### Amendement du 2026-08-12 — des marqueurs **par entrée**, plus un bloc délimité
+
+La rédaction initiale disait « un **bloc délimité** », et l'implémentation l'a tenue au
+mot : `ash:begin` / `ash:end` encadraient une région du `settings.json`, et rien n'était
+jamais écrit hors de cette région.
+
+**Ce que le code a montré.** Le premier utilisateur réel avait déjà un hook dans son
+`~/.claude/settings.json` — un `PreToolUse` posé par un autre outil. Ash refusait alors
+d'écrire, avec raison : ajouter une seconde clé `"hooks"` au même objet JSON aurait
+désactivé la sienne en silence, puisque le dernier arrivé l'emporte. Mais la seule issue
+offerte était « déplace-les toi-même dans le bloc d'Ash, ou vise un autre dossier ». La
+fonction centrale du produit devenait donc **inatteignable** pour exactement le public
+qu'il vise : celui qui outille déjà son agent. Un refus n'est pas une impasse ; il l'était
+devenu.
+
+**Ce qui est décidé.** Ash n'encadre plus une région du fichier : il marque **ses propres
+objets** dans les tableaux de l'utilisateur. Chaque entrée qu'il écrit porte son marqueur,
+donc se reconnaît elle-même, donc peut cohabiter ligne à ligne avec celles de
+l'utilisateur et se retirer sans toucher au reste.
+
+```
+→ dans chaque settings.json, dans les tableaux d'événements de l'outil :
+  "hooks": { "PreToolUse": [
+      {"hooks":[{"command":"… ash-event working --tab \"$ASH_TAB_ID\" # ash:hook v1"}]},
+      { … le hook de l'utilisateur, intact … } ] }
+```
+
+Le marqueur vit **dans la ligne de commande**, en commentaire de shell, et non dans une
+clé JSON de plus. La commande d'un hook est déjà une ligne de shell — elle contient
+`"$ASH_TAB_ID"` —, donc un `#` en fin de ligne n'y change rien ; une clé inconnue posée au
+milieu d'un objet de hooks serait, elle, à la merci d'un schéma strict, et l'utilisateur
+perdrait alors tous ses réglages à cause d'Ash. L'asymétrie des deux risques tranche.
+
+**La garantie est reformulée, pas retirée :**
+
+| Avant | Après |
+|---|---|
+| Ash n'écrit que **dans son bloc** | Ash n'écrit que **ce qui lui appartient**, et sait le reconnaître |
+
+C'est un affaiblissement du **mécanisme**, pas de la **promesse**, et la promesse vit
+toujours dans les types plutôt que dans la prudence des appelants
+(`features/hooks/document.rs`) : un document ne se compose que de modifications qui
+retirent ou remplacent une plage **portant le marqueur**, ou qui ajoutent un texte **le
+portant**. Ce qui est retiré n'est retiré que si Ash sait le réécrire à l'octet près.
+
+**« Jamais silencieux » ne change pas, et devient plus vrai.** Un fichier qui porte des
+hooks qui ne sont pas ceux d'Ash n'est plus un refus : c'est un **conflit**, au même titre
+qu'une entrée d'Ash éditée à la main — du point de vue de celui qui regarde, ce sont deux
+fois « il y a là quelque chose que je n'ai pas mis, montre-le-moi ». L'écran le nomme,
+ouvre le **diff de ce qu'Ash écrirait sur le fichier tel qu'il est**, et laisse trancher :
+fusionner en gardant tout, ou retirer les entrées d'Ash. Rien ne s'écrit sans ce geste, et
+la copie `.bak` le précède toujours.
+
+**Ce qui reste un refus** : un fichier qui n'est pas un objet JSON, un chemin occupé par
+autre chose qu'un conteneur, un fichier illisible. On ne devine pas où écrire.
+
 ## Conséquences
 
 - Les états sont exacts, y compris `waiting`, qui est indevinable de l'extérieur et
@@ -66,8 +122,9 @@ Voir l'[amendement correspondant d'ADR-0008](./0008-abstraction-adapter.md).
 - Ça marche même quand `claude` est lancé hors d'Ash — le bloc vit dans la
   configuration de l'outil, pas dans l'environnement.
 - **Ash écrit dans les fichiers de l'utilisateur.** C'est assumé, et encadré :
-  sauvegarde `.bak` avant écriture, bloc délimité, désinstallation en un geste, et
-  refus d'écrire silencieusement si le bloc a été modifié à la main.
+  sauvegarde `.bak` avant écriture, marqueur sur chacune de ses entrées (amendement du
+  2026-08-12), désinstallation en un geste qui rend le fichier à l'octet près, et rien
+  d'écrit sans que le diff ait été montré et un choix fait.
 - Les deux comptes Claude nécessitent deux installations de bloc, une par dossier de
   configuration. Le modèle `[[command]]` le couvre nativement, et s'étend à `n`
   comptes.
