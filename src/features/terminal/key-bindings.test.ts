@@ -1,54 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { resolveKeyBinding, type KeyChord } from "./key-bindings";
-
-/**
- * Test Data Builder : un accord de touches, décrit par ce qu'on presse.
- *
- * Les défauts sont ceux d'une frappe nue — un `keydown`, aucun modificateur — parce que
- * c'est le cas qui doit rester intact : tout ce que la table ne nomme pas repart vers
- * xterm.js.
- */
-class ChordBuilder {
-    private constructor(private readonly chord: KeyChord) {}
-
-    static press(key: string): ChordBuilder {
-        return new ChordBuilder({
-            type: "keydown",
-            key,
-            altKey: false,
-            ctrlKey: false,
-            metaKey: false,
-            shiftKey: false,
-        });
-    }
-
-    withOption(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, altKey: true });
-    }
-
-    withCommand(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, metaKey: true });
-    }
-
-    withControl(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, ctrlKey: true });
-    }
-
-    withShift(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, shiftKey: true });
-    }
-
-    released(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, type: "keyup" });
-    }
-
-    build(): KeyChord {
-        return this.chord;
-    }
-}
-
-const press = (key: string): ChordBuilder => ChordBuilder.press(key);
+import { menuAccelerators, press } from "./builders";
+import { resolveKeyBinding } from "./key-bindings";
 
 describe("les raccourcis d'édition de ligne", () => {
     it("Given the six line editing chords of the spec, when they are resolved, then each one sends the sequence readline expects", () => {
@@ -113,19 +66,7 @@ describe("les raccourcis d'édition de ligne", () => {
         // Given — la liste de `src-tauri/src/menu.rs`. macOS les consomme avant la webview,
         // mais ce test est le garde-fou du jour où la table grandira (#77 à #80) : une
         // entrée qui recouvrirait un accélérateur casserait le menu sans bruit.
-        const accelerators = [
-            press("n").withCommand(),
-            press("n").withCommand().withShift(),
-            press("w").withCommand(),
-            press("k").withCommand(),
-            press("b").withCommand(),
-            press(",").withCommand(),
-            press("c").withCommand(),
-            press("v").withCommand(),
-            ...["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) =>
-                press(digit).withCommand(),
-            ),
-        ];
+        const accelerators = menuAccelerators();
 
         // When
         const sent = accelerators.map((chord) => resolveKeyBinding(chord.build()));
