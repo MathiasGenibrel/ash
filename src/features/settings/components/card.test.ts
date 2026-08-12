@@ -89,6 +89,20 @@ describe("la carte d'une entrée déclarée", () => {
         );
     });
 
+    it("Given an entry that can go back to a folder that worked, when its reset button is described, then it names that folder rather than staying silent", () => {
+        // Given — un bouton allumé ne passe pas par `disabled(reason)`, donc rien ne pose sa
+        // raison à sa place : `back to ~/.claude` est le seul endroit visible où le dossier
+        // de destination est nommé, et il disparaîtrait au moment où il sert
+        const tool = aTool({ config: "~/.claude/pro", lastValidConfig: "~/.claude" });
+
+        // When
+        const reset = findAll(toolCard(tool, context(), recorder()).build(), "settings-icon-button");
+
+        // Then
+        expect(reset[0]?.attrs["disabled"]).toBeUndefined();
+        expect(reset[0]?.attrs["title"]).toBe("back to ~/.claude");
+    });
+
     it("Given an entry that has not been verified since it changed, when its card is described, then the dot says nothing is written to config.toml", () => {
         // Given — tant qu'une entrée n'a pas prouvé son dossier, elle vit en mémoire. La
         // pastille est la seule chose qui le dit

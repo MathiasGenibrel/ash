@@ -1,7 +1,7 @@
 import { badge, button, choice, field, row, type UiComponent, type UiChild } from "@/shared/ui";
 
 import type { TestDescription, ToolDeclaration } from "../contract";
-import { describeReset, describeTool, type ToolHeading } from "../model";
+import { ADAPTER_DEFAULT, describeReset, describeTool, type ToolHeading } from "../model";
 import { presentVerification } from "../verification-state";
 import { cell, label, spacer, tag } from "./atoms";
 import { hooksNote, hooksRow, type HooksRowActions } from "./hooks-row";
@@ -120,8 +120,12 @@ function resetButton(tool: ToolDeclaration, actions: CardActions): UiComponent {
         });
     if (!reset.enabled) control.disabled(reset.reason);
     // L'infobulle dit ce qui vient de se passer quand il s'est passé quelque chose, et la
-    // raison sinon : juste après une réinitialisation, « reset just now » est l'information.
-    return tool.resetFrom === null ? control : control.title("reset just now");
+    // raison sinon : juste après une réinitialisation, « reset just now » est l'information ;
+    // le reste du temps, c'est `back to ~/.claude` — le dossier où le geste ramène, et le
+    // seul endroit visible où il est nommé. Un bouton **allumé** ne passe pas par
+    // `disabled(reason)`, donc sa raison ne voyage que s'il la pose lui-même : la poser
+    // seulement quand il est éteint la ferait disparaître au moment précis où elle sert.
+    return control.title(tool.resetFrom === null ? reset.reason : "reset just now");
 }
 
 function deleteButton(command: string, actions: CardActions): UiComponent {
@@ -158,9 +162,9 @@ function pathField(
         .class("settings-path")
         .value(edits.get(tool.command) ?? shown.path)
         // La chaîne affichée quand rien n'est saisi n'est pas un chemin : c'est ce que
-        // l'absence veut dire. La mettre dans la valeur en ferait un dossier nommé
-        // « adapter default ».
-        .placeholder("adapter default")
+        // l'absence veut dire, et le modèle en est le propriétaire. La mettre dans la valeur
+        // en ferait un dossier nommé « adapter default ».
+        .placeholder(ADAPTER_DEFAULT)
         .focusKey(pathFocusKey(tool.command))
         .onInput((value) => {
             actions.typePath(tool.command, value);
