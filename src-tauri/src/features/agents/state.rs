@@ -39,10 +39,14 @@ mod tests {
     fn given_the_five_agent_states_when_they_cross_the_boundary_then_they_keep_the_names_the_frontend_knows(
     ) {
         // Given — le même modèle est déclaré des deux côtés de la frontière : `AgentState`
-        // ici, `AgentState` dans `src/shared/ipc/index.ts`. Rien ne les tient ensemble à
-        // la compilation, et un état renommé ici ferait silencieusement tomber la sidebar
-        // sur `undefined`. Le `match` est exhaustif : un état ajouté ne compile pas tant
-        // que son nom n'a pas été décidé — et donc reporté côté TypeScript.
+        // ici, `AgentState` dans `src/shared/ipc/index.ts`. Depuis #67, `mirror.ts` les
+        // tient ensemble à la compilation : un état **renommé** ici fait échouer
+        // `bun run typecheck`, et ce test n'a plus à s'en charger.
+        //
+        // Il reste parce qu'il garde autre chose, que la génération ne sait pas garder :
+        // le `match` ci-dessous est exhaustif, donc un état **ajouté** ne compile pas tant
+        // que son mot sur le fil n'a pas été décidé ici, à la main. `ts-rs` se contenterait
+        // de l'exporter — le nouveau nom traverserait sans que personne ne l'ait choisi.
         let states = [
             AgentState::Idle,
             AgentState::Working,
