@@ -1,5 +1,6 @@
 use super::error::SettingsError;
-use super::verification::Verification;
+use super::hooks::HooksReport;
+use super::verification::{Verification, VerificationState};
 
 /// Une commande reconnue, telle que la spec §9 et
 /// [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) la décrivent.
@@ -45,16 +46,73 @@ pub struct ToolDeclaration {
     /// change de vérification au même instant, et deux tables séparées laisseraient un
     /// intervalle où l'écran montrerait le résultat de l'ancien chemin sous le nouveau.
     pub verification: Verification,
+
+    /// Le dernier dossier qui a passé **les quatre** tests, et rien d'autre.
+    ///
+    /// C'est la mémoire que la spec §9.1 exige : « réinitialiser une entrée la ramène à sa
+    /// dernière valeur valide, pas au défaut de son adaptateur ». La nuance décide du sens
+    /// de tout l'écran — `claude` et `claude-perso` sont toutes deux en `claude-code`, donc
+    /// revenir au défaut de l'adaptateur les rendrait identiques et ferait du doublon la
+    /// conséquence mécanique du geste au lieu d'un accident.
+    ///
+    /// `None` veut dire « cette entrée n'a jamais été valide » : il n'y a alors rien à
+    /// restaurer, et le bouton reste visible et éteint avec sa raison — la même règle que
+    /// celle des hooks.
+    pub last_valid_config: Option<String>,
+
+    /// Ce que la réinitialisation vient de remplacer, tant qu'on peut encore l'annuler.
+    ///
+    /// Il ne survit qu'à ce geste-là : toute autre modification de l'entrée l'efface, parce
+    /// qu'« annuler la réinitialisation » ne veut plus rien dire une fois qu'on a retapé le
+    /// chemin à la main. C'est ce qui distingue la ligne `was` — juste après un retour en
+    /// arrière — de l'étiquette de doublon, qui existe dès que deux entrées collisionnent.
+    pub reset_from: Option<String>,
+
+    /// Les autres entrées qui visent le même dossier.
+    ///
+    /// **Dérivé de la liste entière**, donc recalculé à chaque fois qu'elle change : une
+    /// entrée ne peut pas savoir seule qu'elle fait doublon. Le doublon est signalé sur
+    /// **les deux** lignes (spec §9.1), pas seulement sur celle qu'on vient de toucher.
+    pub duplicates: Vec<String>,
+
+    /// Où en est le bloc de hooks de cette entrée.
+    ///
+    /// Dérivé lui aussi : il compose ce que la vérification autorise, ce que les autres
+    /// entrées ont déjà pris, et ce que le fichier de l'utilisateur porte. Le registre le
+    /// repose à chaque fois qu'il rend la liste.
+    pub hooks: HooksReport,
 }
 
 impl ToolDeclaration {
-    /// Attache un résultat de vérification à une entrée.
+    /// Attache un résultat de vérification à une entrée, et **retient le dossier s'il a
+    /// tout prouvé**.
     ///
-    /// Le seul chemin par lequel [`ToolDeclaration::verified`] change de valeur.
+    /// Le seul chemin par lequel [`ToolDeclaration::verified`] change de valeur, et le seul
+    /// par lequel la mémoire du dossier se remplit. Elle ne retient que `valid` : une
+    /// réserve dit que la commande ne lit pas ce dossier, et y ramener une entrée plus tard
+    /// restaurerait quelque chose qui n'a jamais fonctionné.
+    ///
+    /// `declared` est ce que l'entrée désigne réellement, défaut de l'adaptateur compris —
+    /// la mémoire est un **dossier**, pas la présence ou l'absence d'un champ.
     #[must_use]
-    pub fn verified_by(mut self, verification: Verification) -> Self {
+    pub fn verified_by(mut self, verification: Verification, declared: Option<String>) -> Self {
+        if verification.state == VerificationState::Valid {
+            self.last_valid_config = declared;
+        }
         self.verified = verification.allows_hooks;
         self.verification = verification;
+        self
+    }
+
+    /// L'entrée après une modification quelconque de sa cible.
+    ///
+    /// Elle oublie la réinitialisation : « annuler la réinitialisation » ne veut plus rien
+    /// dire une fois que le chemin a été retapé.
+    #[must_use]
+    pub fn retargeted(mut self, adapter: &str, config: Option<String>) -> Self {
+        self.adapter = adapter.to_owned();
+        self.config = config;
+        self.reset_from = None;
         self
     }
 }
@@ -118,6 +176,13 @@ impl NewTool {
             // qu'elle exige — `declare` ne juge que la **saisie**.
             verified: false,
             verification: Verification::unverified(),
+            // Rien n'a jamais été valide, personne n'a rien réinitialisé, et ce que les
+            // autres entrées font n'est pas de la compétence d'une saisie. Le registre pose
+            // les trois dernières valeurs dès qu'il rend la liste.
+            last_valid_config: None,
+            reset_from: None,
+            duplicates: Vec::new(),
+            hooks: HooksReport::until_verified(),
         })
     }
 }
@@ -234,6 +299,36 @@ mod tests {
         assert_eq!(
             (tool.command.as_str(), tool.label.as_deref()),
             ("claude-perso", Some("Perso"))
+        );
+    }
+
+    #[test]
+    fn given_an_entry_that_proved_a_folder_when_a_later_check_only_gives_a_caveat_then_the_memory_keeps_the_folder_that_worked(
+    ) {
+        // Given — la mémoire est ce que « réinitialiser » restaure (spec §9.1). Si une
+        // réserve l'écrasait, le geste ramènerait l'entrée sur un dossier dont on vient
+        // justement d'apprendre que la commande ne le lit pas
+        let entry = DraftBuilder::new()
+            .command("claude-perso")
+            .adapter("claude-code")
+            .config("~/.claude-perso")
+            .build()
+            .declare(&adapters(), &[])
+            .expect("la saisie est valide");
+        let mut passed = Verification::unverified();
+        passed.state = VerificationState::Valid;
+        let mut reserved = Verification::unverified();
+        reserved.state = VerificationState::Caveat;
+
+        // When
+        let remembered = entry
+            .verified_by(passed, Some("~/.claude-perso".to_owned()))
+            .verified_by(reserved, Some("~/dev/notes".to_owned()));
+
+        // Then
+        assert_eq!(
+            remembered.last_valid_config.as_deref(),
+            Some("~/.claude-perso")
         );
     }
 

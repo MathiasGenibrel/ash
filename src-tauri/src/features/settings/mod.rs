@@ -22,15 +22,20 @@
 //! |---|---|---|
 //! | `ConfigFiles` | `SystemConfigFiles` | `FakeFolders` |
 //! | `CommandRunner` | `SystemCommands` | `FakeCommands` |
+//! | `HookBlocks` | `AdapterHooks` (composition root) | `FakeBlocks` |
 //!
-//! **Ce qui n'y est pas encore, et pourquoi :**
+//! **L'installation des hooks passe par le troisième**, et c'est ce qui fait que la feature
+//! écrit chez l'utilisateur sans connaître un seul adaptateur ni un seul format de fichier
+//! ([ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md)). Ce qu'elle décide, elle,
+//! est **quand** : [`Verification::allows_hooks`] autorise, le doublon bloque la seconde
+//! écriture, et [`hooks::report`] compose les deux avec ce que le fichier porte pour donner
+//! l'un des cinq états de la ligne.
 //!
-//! - l'**écriture dans `~/.ash/config.toml`**, qui n'a lieu que pour une entrée vérifiée.
-//!   La vérification vient de la débloquer ; la persistance appartient à la tâche qui la
-//!   porte, et un registre en mémoire dit exactement la vérité du produit d'ici là ;
-//! - l'**installation des hooks** (issue #16), qui lira `config` sur une entrée que
-//!   [`Verification::allows_hooks`] autorise. La règle qui décide est déjà là — c'est
-//!   elle, le garde-fou ; ce qui manque est ce qu'elle protège.
+//! **Ce qui n'y est pas encore, et pourquoi :** l'**écriture dans `~/.ash/config.toml`**,
+//! qui n'a lieu que pour une entrée vérifiée. La vérification l'a débloquée ; la persistance
+//! appartient à la tâche qui la porte, et un registre en mémoire dit exactement la vérité du
+//! produit d'ici là. Les hooks, eux, sont déjà écrits sur le disque de l'utilisateur : ils
+//! ne se déduisent pas d'un souvenir, mais du fichier, relu à chaque affichage.
 
 // `commands` est public pour la même raison que dans les autres features : les macros de
 // `#[tauri::command]` ne survivent pas à un `pub use`.
@@ -39,6 +44,7 @@ pub mod commands;
 mod error;
 #[cfg(test)]
 mod fakes;
+mod hooks;
 mod permits;
 mod ports;
 mod registry;
@@ -47,7 +53,8 @@ mod tool;
 mod verification;
 
 pub use error::SettingsError;
-pub use ports::{CommandRunner, ConfigFiles};
+pub use hooks::{BlockAt, HookAction, HookState, HooksReport};
+pub use ports::{CommandRunner, ConfigFiles, HookBlocks};
 pub use registry::ToolRegistry;
 pub use system::{SystemCommands, SystemConfigFiles};
 pub use tool::{NewTool, ToolDeclaration};

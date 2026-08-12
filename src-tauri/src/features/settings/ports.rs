@@ -13,6 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::hooks::BlockAt;
+
 /// Ce qu'on trouve à un chemin de configuration — le test 1, en entier.
 ///
 /// Les trois façons d'échouer sont distinguées parce que **la correction qui a une chance
@@ -122,6 +124,31 @@ pub trait CommandRunner: Send + Sync {
 
     /// Lance ce que [`Launch`] décrit, ou dit pourquoi rien n'a répondu (test 4).
     fn run(&self, launch: &Launch) -> Result<Answer, String>;
+}
+
+/// Poser le bloc de hooks, le retirer, et savoir où il en est — **sans connaître un seul
+/// adaptateur**.
+///
+/// C'est le troisième effet système de la feature, et le seul qui **écrive chez
+/// l'utilisateur**. Il est derrière un trait pour la raison habituelle — aucun test de
+/// `settings` ne doit toucher au `~/.claude` de qui lance `cargo test` — mais aussi pour une
+/// raison propre à ce port : `settings` n'a pas le droit de connaître `ClaudeCodeAdapter`
+/// ([ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md)), et l'instrumentation
+/// d'un outil est justement ce que son adaptateur seul sait décrire. La traduction
+/// « identifiant d'adaptateur + dossier → fichier et bloc » se fait donc **dans la
+/// composition root**, qui est le seul endroit à connaître les deux côtés.
+///
+/// Le dossier passé est **déjà résolu** : `~` est étendu, le défaut de l'adaptateur est
+/// appliqué. Le port n'a aucune convention de chemin à connaître.
+pub trait HookBlocks: Send + Sync {
+    /// Où en est le bloc, sans rien écrire. `None` quand cet adaptateur n'instrumente rien.
+    fn inspect(&self, adapter: &str, config_dir: &Path) -> Option<BlockAt>;
+
+    /// Pose ou met à jour le bloc. Rend la raison du refus, telle qu'on la montre.
+    fn install(&self, adapter: &str, config_dir: &Path) -> Result<(), String>;
+
+    /// Retire le bloc et ses marqueurs.
+    fn remove(&self, adapter: &str, config_dir: &Path) -> Result<(), String>;
 }
 
 /// Résout le `~` de tête d'un chemin de configuration.

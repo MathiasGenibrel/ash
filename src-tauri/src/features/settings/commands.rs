@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : sept commandes, un event, et l'ouverture de
+//! La surface de la feature vers le frontend : onze commandes, un event, et l'ouverture de
 //! sa fenêtre.
 //!
 //! Le frontend ne connaît de `settings` que ces noms et la forme de [`SettingsSnapshot`].
@@ -182,6 +182,56 @@ pub fn settings_verify_all<R: Runtime>(
 ) -> Result<SettingsSnapshot, SettingsError> {
     let changed = registry.verify_all()?;
     answer(app, &registry, changed)
+}
+
+/// Ramène une entrée à son dernier dossier valide — le `↺` de l'en-tête de carte.
+#[tauri::command]
+pub fn settings_reset_tool<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.reset(&command)?;
+    answer(app, &registry, changed)
+}
+
+/// Annule la réinitialisation — le `undo the reset` de la bannière de doublon.
+#[tauri::command]
+pub fn settings_undo_reset<R: Runtime>(
+    app: AppHandle<R>,
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let changed = registry.undo_reset(&command)?;
+    answer(app, &registry, changed)
+}
+
+/// Pose ou met à jour le bloc de hooks — le bouton `install` / `update` de la ligne.
+///
+/// **C'est le seul geste du frontend qui écrive dans un fichier de l'utilisateur.** Il ne
+/// porte aucune condition : celle qui décide est en Rust, et elle est la même qui a allumé
+/// le bouton ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+#[tauri::command]
+pub fn settings_install_hooks(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    Ok(SettingsSnapshot::around(
+        registry.install_hooks(&command)?,
+        &registry,
+    ))
+}
+
+/// Retire le bloc et ses marqueurs — le `remove` de l'état `installed`.
+#[tauri::command]
+pub fn settings_remove_hooks(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    command: String,
+) -> Result<SettingsSnapshot, SettingsError> {
+    Ok(SettingsSnapshot::around(
+        registry.remove_hooks(&command)?,
+        &registry,
+    ))
 }
 
 /// Vérifie une saisie du formulaire d'ajout, sans rien ajouter.
