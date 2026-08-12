@@ -12,11 +12,15 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::state::ThemeState;
 
 /// Nom de l'event qui porte le mode choisi. Contrat avec `src/app/theme.ts`.
 pub const THEME_MODE_EVENT: &str = "ash://theme-mode";
+
+/// Nom de l'event qui porte la taille de police. Contrat avec `src/app/font-size.ts`.
+pub const TERMINAL_FONT_SIZE_EVENT: &str = "ash://terminal-font-size";
 
 /// Le mode courant, lu par la webview en s'affichant.
 ///
@@ -34,7 +38,7 @@ pub fn choose<R: Runtime>(app: &AppHandle<R>, mode: ThemeMode) -> bool {
     let Some(state) = app.try_state::<Arc<ThemeState>>() else {
         return false;
     };
-    if !state.set(mode) {
+    if !state.set_mode(mode) {
         return false;
     }
 
@@ -42,4 +46,29 @@ pub fn choose<R: Runtime>(app: &AppHandle<R>, mode: ThemeMode) -> bool {
     // rattraper, et surtout pas de panique dans un gestionnaire d'event de menu.
     let _ = app.emit(THEME_MODE_EVENT, mode);
     true
+}
+
+/// La taille de police du terminal, lue par la webview en s'affichant.
+///
+/// Ensuite, c'est l'event qui la tient à jour : elle ne redemande jamais. Même contrat que
+/// [`theme_mode`], parce que c'est la même sorte de préférence.
+#[tauri::command]
+pub fn terminal_font_size(state: tauri::State<'_, Arc<ThemeState>>) -> FontSize {
+    state.font_size()
+}
+
+/// Joue un pas de taille de police et l'annonce à la webview.
+///
+/// Rien n'est émis quand la taille n'a pas bougé — une borne atteinte, ou `Cmd+0` sur une
+/// taille déjà par défaut : chaque annonce fait relire la grille à **tous** les terminaux
+/// ouverts, et la faire pour rien serait un `SIGWINCH` gratuit dans chaque PTY.
+pub fn resize_terminal_font<R: Runtime>(app: &AppHandle<R>, step: FontStep) {
+    let Some(state) = app.try_state::<Arc<ThemeState>>() else {
+        return;
+    };
+    let Some(size) = state.step_font(step) else {
+        return;
+    };
+
+    let _ = app.emit(TERMINAL_FONT_SIZE_EVENT, size);
 }

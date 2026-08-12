@@ -151,8 +151,9 @@ pub fn run() -> tauri::Result<()> {
         Arc::new(GitWorktrees),
     ));
 
-    // Le thème est relu **avant** la construction du menu : ses trois coches disent le
-    // mode en cours, et le menu est bâti une seule fois, avant que la webview n'existe.
+    // L'apparence — le thème et la taille de police du terminal — est relue **avant** la
+    // construction du menu : ses trois coches disent le mode en cours, et le menu est bâti
+    // une seule fois, avant que la webview n'existe.
     let theme = Arc::new(ThemeState::restore(
         Arc::new(FileThemeStore::in_home()) as Arc<dyn ThemeStore>
     ));
@@ -242,6 +243,7 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_has_foreground_process,
             features::git::commands::git_metadata,
             features::theme::commands::theme_mode,
+            features::theme::commands::terminal_font_size,
             features::settings::commands::settings_tools,
             features::settings::commands::settings_declare_tool,
             features::settings::commands::settings_forget_tool,
