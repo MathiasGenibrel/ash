@@ -1,6 +1,16 @@
 import type { PtyBridge, TabId, TabInfo, TerminalViewFactory } from "./ports";
 import { TerminalSession } from "./session";
-import { activeTab, adopt, noTabs, select, selectAt, withUpdates, type TabsState } from "./tabs";
+import {
+    activeTab,
+    adopt,
+    cycle,
+    noTabs,
+    select,
+    selectAt,
+    withUpdates,
+    type Step,
+    type TabsState,
+} from "./tabs";
 
 /**
  * Ce dont l'atelier a besoin, et rien de plus.
@@ -28,7 +38,7 @@ export type Origin = "current-worktree" | "home";
  * Ce qu'il tient, c'est ce que le backend n'a pas — les surfaces de rendu, et la
  * sélection.
  *
- * Toutes les actions passent par une file : un `Cmd+N` maintenu enfoncé, ou une
+ * Toutes les actions passent par une file : un `Cmd+T` maintenu enfoncé, ou une
  * fermeture pendant une ouverture, entrelaceraient sinon deux relectures d'ordre et la
  * sélection sauterait.
  */
@@ -51,10 +61,10 @@ export class TerminalWorkbench {
             });
     }
 
-    /** Ouvre un onglet et le sélectionne. `Cmd+N` / `Cmd+Shift+N`, et le bouton `+`. */
+    /** Ouvre un onglet et le sélectionne. `Cmd+T` / `Cmd+Shift+T`, et le bouton `+`. */
     openTab(origin: Origin): Promise<void> {
         return this.serialize(async () => {
-            // `Cmd+N` part du répertoire **courant** de l'onglet actif, pas de celui
+            // `Cmd+T` part du répertoire **courant** de l'onglet actif, pas de celui
             // qu'il avait à sa dernière ouverture d'onglet : le `cwd` bouge à chaque `cd`
             // et vit dans le backend, donc on le lui redemande maintenant
             // ([ADR-0005](../../../docs/adr/0005-sonde-cwd-libproc.md)).
@@ -94,6 +104,15 @@ export class TerminalWorkbench {
     selectAt(position: number): Promise<void> {
         return this.serialize(() => {
             this.state = selectAt(this.state, position);
+            this.render();
+            return Promise.resolve();
+        });
+    }
+
+    /** `Ctrl+Tab` et `Ctrl+Shift+Tab` : l'onglet voisin, en bouclant. */
+    cycle(step: Step): Promise<void> {
+        return this.serialize(() => {
+            this.state = cycle(this.state, step);
             this.render();
             return Promise.resolve();
         });

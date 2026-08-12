@@ -200,8 +200,10 @@ sous une TUI plein écran est un point à vérifier au jalon J5.
 | Raccourci | Effet |
 |---|---|
 | `Cmd+1` … `Cmd+9` | Sélectionne le n-ième onglet (ordre d'affichage de la sidebar) |
-| `Cmd+N` | Nouvel onglet dans le worktree courant |
-| `Cmd+Shift+N` | Nouvel onglet à `~` (donc, jusqu'au premier `cd`, un worktree `~`) |
+| `Ctrl+Tab` | Onglet suivant, en bouclant après le dernier |
+| `Ctrl+Shift+Tab` | Onglet précédent, en bouclant avant le premier |
+| `Cmd+T` | Nouvel onglet dans le worktree courant |
+| `Cmd+Shift+T` | Nouvel onglet à `~` (donc, jusqu'au premier `cd`, un worktree `~`) |
 | `Cmd+W` | Ferme l'onglet (confirmation si un agent y tourne) |
 | `Cmd+B` | Replie / déplie la sidebar |
 | `Cmd+K` | Efface le scrollback de l'onglet courant |
@@ -210,6 +212,22 @@ sous une TUI plein écran est un point à vérifier au jalon J5.
 | `Cmd+Ctrl+W` | Worktrees |
 | `Cmd+Ctrl+M` | Onglet de merge — seulement pendant un rebase ou un merge arrêté |
 | `Cmd+Ctrl+I` | Fiche de branche |
+
+`Cmd+T` ouvre un onglet, et non `Cmd+N` — amendé le 2026-08-12. Sur macOS, `Cmd+N`
+ouvre une **fenêtre** partout ailleurs, et `Cmd+T` un onglet : Safari, Terminal.app,
+iTerm et Chrome sont d'accord entre eux. Ash n'a pas de seconde fenêtre de terminal à
+offrir, donc `Cmd+N` et `Cmd+Shift+N` ne font plus rien du tout, plutôt que de rester
+des doublons — deux gestes pour une action, c'est celui qu'on ne connaît pas qui gagne.
+
+`Cmd+1`…`Cmd+9` s'arrête toujours à neuf, et c'est justement pourquoi `Ctrl+Tab`
+existe : au-delà du neuvième onglet, ou simplement pour aller voir à côté, il n'y avait
+rien. Les deux sens bouclent, sans quoi il faudrait regarder où l'on est avant de savoir
+si le raccourci va faire quelque chose. C'est la convention des navigateurs et d'iTerm2.
+
+`Ctrl+Tab` est la seule de ces touches dont le terminal a un usage propre — `Tab` seul
+complète dans `zsh`. Elle n'est retenue que si `Control` est enfoncé, et sans `Cmd` ni
+`Option` : `Tab` nu, `Cmd+Tab` (le commutateur d'applications de macOS) et `Option+Tab`
+partent au shell inchangés.
 
 Le groupe git utilise `Cmd+Ctrl` parce que ces cinq lettres sont libres sur macOS et
 ne sont pas interceptées par le terminal, contrairement à `Ctrl+B` seul que tmux
@@ -587,7 +605,7 @@ règle vaut pour les `settings.json` comme pour `<!-- ash:log -->`.
 
 | Jalon | Contenu | Critère de sortie |
 |---|---|---|
-| **J1 — Terminal** | Tauri + portable-pty + xterm.js, onglets, `Cmd+N`/`Cmd+Shift+N`/`Cmd+1..9`, sidebar groupée par dépôt et worktree, sonde cwd | Ash remplace le terminal quotidien de l'utilisateur. Aucun état d'agent. |
+| **J1 — Terminal** | Tauri + portable-pty + xterm.js, onglets, `Cmd+T`/`Cmd+Shift+T`/`Cmd+1..9`/`Ctrl+Tab`, sidebar groupée par dépôt et worktree, sonde cwd | Ash remplace le terminal quotidien de l'utilisateur. Aucun état d'agent. |
 | **J2 — États** | Socket + `ash-event` + trait `Adapter` + adaptateur `claude-code` + installation des hooks + écran de réglages « Outils » | `working` / `waiting` / `done` fiables sur `claude` et `claude-perso` |
 | **J3 — Attention** | Notifications macOS, subagents, compteur agrégé, remontée d'état | Un agent en `waiting` est vu en < 10 s même hors d'Ash |
 | **J4 — Ouverture** | Épinglage, second adaptateur (codex ou kimi), désinstallation propre, reste des réglages | Un deuxième outil supporté sans toucher au cœur |

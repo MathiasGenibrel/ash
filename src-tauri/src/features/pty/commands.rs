@@ -34,7 +34,7 @@ pub enum PtyFrame {
 
 /// Ouvre un onglet : un PTY, un shell, un lecteur.
 ///
-/// `cwd` absent vaut `~` — c'est le `Cmd+Shift+N` de la spec §4.4. `Cmd+N`, lui, passe
+/// `cwd` absent vaut `~` — c'est le `Cmd+Shift+T` de la spec §4.4. `Cmd+T`, lui, passe
 /// le répertoire de départ de l'onglet actif, que `pty_tabs` lui a rendu.
 ///
 /// Rend l'identifiant d'onglet — un ulid, que le shell voit dans `ASH_TAB_ID`.

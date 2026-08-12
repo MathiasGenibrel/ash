@@ -2,7 +2,16 @@ import { describe, expect, it } from "bun:test";
 
 import { TabBuilder } from "@/shared/ipc/builders";
 import type { TabInfo } from "./ports";
-import { activeTab, adopt, noTabs, select, selectAt, withUpdates, type TabsState } from "./tabs";
+import {
+    activeTab,
+    adopt,
+    cycle,
+    noTabs,
+    select,
+    selectAt,
+    withUpdates,
+    type TabsState,
+} from "./tabs";
 
 /**
  * Test Data Builder : un état d'onglets décrit par l'ordre que le backend rendrait, et
@@ -96,7 +105,7 @@ describe("la sélection après une fermeture", () => {
         // When
         const adopted = adopt(state, []);
 
-        // Then — la fenêtre reste ouverte, sans terminal : `⌘N` en rouvre un
+        // Then — la fenêtre reste ouverte, sans terminal : `⌘T` en rouvre un
         expect(adopted.activeTabId).toBeNull();
         expect(activeTab(adopted)).toBeNull();
     });
@@ -135,6 +144,75 @@ describe("Cmd+1..9", () => {
 
         // Then
         expect(selected.activeTabId).toBe("A");
+    });
+});
+
+describe("Ctrl+Tab", () => {
+    it("Given the tab in the middle of the bar, when the next one is asked for, then the selection moves one to the right", () => {
+        // Given
+        const state = TabsBuilder.create().inOrder("A", "B", "C").looking("B").build();
+
+        // When
+        const cycled = cycle(state, 1);
+
+        // Then
+        expect(cycled.activeTabId).toBe("C");
+    });
+
+    it("Given the last tab of the bar, when the next one is asked for, then it wraps around to the first", () => {
+        // Given — c'est là tout l'intérêt du raccourci : il ne s'arrête pas au bout
+        const state = TabsBuilder.create().inOrder("A", "B", "C").looking("C").build();
+
+        // When
+        const cycled = cycle(state, 1);
+
+        // Then
+        expect(cycled.activeTabId).toBe("A");
+    });
+
+    it("Given the first tab of the bar, when the previous one is asked for, then it wraps around to the last", () => {
+        // Given
+        const state = TabsBuilder.create().inOrder("A", "B", "C").looking("A").build();
+
+        // When
+        const cycled = cycle(state, -1);
+
+        // Then
+        expect(cycled.activeTabId).toBe("C");
+    });
+
+    it("Given a single open tab, when cycling in either direction, then the selection stays on it", () => {
+        // Given
+        const state = TabsBuilder.create().inOrder("A").looking("A").build();
+
+        // When
+        const forwards = cycle(state, 1);
+        const backwards = cycle(state, -1);
+
+        // Then — le suivant du seul onglet, c'est lui-même : rien ne clignote
+        expect(forwards.activeTabId).toBe("A");
+        expect(backwards.activeTabId).toBe("A");
+    });
+
+    it("Given the tabs are cycled through in the backend order, when going forwards then backwards, then the selection comes back where it was", () => {
+        // Given — l'ordre affiché est « A, C, D » après la fermeture de « B », et c'est
+        // celui-là que le cycle suit ([ADR-0009])
+        const state = TabsBuilder.create().inOrder("A", "C", "D").looking("C").build();
+
+        // When
+        const visited = [cycle(state, 1), cycle(cycle(state, 1), -1)];
+
+        // Then
+        expect(visited.map((each) => each.activeTabId)).toEqual(["D", "C"]);
+    });
+
+    it("Given no tab is open at all, when the next one is asked for, then nothing is selected", () => {
+        // Given — la fenêtre reste ouverte quand le dernier shell est sorti
+        // When
+        const cycled = cycle(noTabs, 1);
+
+        // Then
+        expect(cycled.activeTabId).toBeNull();
     });
 });
 

@@ -913,7 +913,7 @@ mod tests {
         let listed = registry.tabs().unwrap();
 
         // Then — chaque lecture sonde à nouveau. Rendre la valeur de la lecture
-        // précédente ferait partir `Cmd+N` du répertoire d'il y a une ouverture d'onglet.
+        // précédente ferait partir `Cmd+T` du répertoire d'il y a une ouverture d'onglet.
         assert_eq!(listed[0].cwd, "/tmp");
     }
 
