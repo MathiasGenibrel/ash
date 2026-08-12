@@ -62,6 +62,7 @@ describe("l'écran de conflit", () => {
         screen.flatMap((child) => findAll(child, "ui-button"))[0]?.on["click"]?.({
             value: "",
             key: "",
+            shiftKey: false,
         });
 
         // Then

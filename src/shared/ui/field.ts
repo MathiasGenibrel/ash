@@ -1,4 +1,4 @@
-import { ElementBuilder } from "./node";
+import { ElementBuilder, type UiEvent } from "./node";
 
 /**
  * L'attribut qui identifie un champ **à travers un rendu**.
@@ -15,12 +15,35 @@ import { ElementBuilder } from "./node";
 export const FOCUS_KEY = "data-focus-key";
 
 /**
+ * Ce qu'une validation dit de plus que « j'ai fini de taper ».
+ *
+ * Un objet plutôt qu'un booléen nu : `onSubmit(({ reversed }) => …)` se lit sans aller
+ * chercher la signature, là où `onSubmit((flag) => …)` demande de deviner ce que porte le
+ * drapeau. Et un gestionnaire écrit `() => …` reste valide — les vues qui n'ont qu'un sens
+ * de validation ne changent pas.
+ */
+export interface Submission {
+    /** ⇧ était enfoncé : la même intention, prise à l'envers. */
+    readonly reversed: boolean;
+}
+
+/**
  * Un champ de saisie.
  *
  * `onInput` reçoit la valeur tapée, pas un `Event` : c'est ce qui permet à une vue de
  * s'écrire — et de se tester — sans jamais nommer le DOM. `paint` fait l'extraction.
  */
 class FieldBuilder extends ElementBuilder {
+    /**
+     * Les touches que ce champ reconnaît, et l'unique écoute qui les distribue.
+     *
+     * `on("keydown", …)` **remplace** le gestionnaire précédent — les gestionnaires sont un
+     * dictionnaire indexé par nom d'événement. Sans cette table, un champ qui répond à `⏎`
+     * **et** à `⎋` perdrait silencieusement celui des deux posé en premier, et la panne ne
+     * se verrait qu'au clavier. La table rend l'ordre des appels sans effet.
+     */
+    private readonly keys = new Map<string, (event: UiEvent) => void>();
+
     constructor(name: string) {
         super("input", "ui-field");
         // Le nom sert d'étiquette accessible : un champ posé dans une grille n'a pas de
@@ -55,10 +78,37 @@ class FieldBuilder extends ElementBuilder {
      * n'envoie rien, il abrège seulement une attente. Le nom du gestionnaire dit la
      * frappe, pas la touche : c'est le socle qui sait laquelle, donc un composant ne
      * compare jamais une chaîne à `"Enter"`.
+     *
+     * `⇧⏎` appelle le même gestionnaire, avec `reversed`. C'est un seul geste et non deux :
+     * un champ qui aurait un `onSubmit` et un `onSubmitBackwards` laisserait représentable
+     * l'état où l'un des deux est branché et l'autre non — c'est-à-dire un `⇧⏎` muet.
      */
-    onSubmit(handler: () => void): this {
+    onSubmit(handler: (submission: Submission) => void): this {
+        return this.bindKey("Enter", (event) => {
+            handler({ reversed: event.shiftKey });
+        });
+    }
+
+    /**
+     * `⎋` — « laisse tomber ».
+     *
+     * Le pendant d'`onSubmit`, et la seule autre touche qu'un champ a le droit de nommer :
+     * les deux disent que la saisie est finie, l'une en la gardant, l'autre en l'abandonnant.
+     * Ce que « laisser tomber » veut dire — refermer, vider, rendre le focus ailleurs —
+     * appartient à la vue ; le socle ne fait que reconnaître la frappe.
+     */
+    onCancel(handler: () => void): this {
+        return this.bindKey("Escape", () => {
+            handler();
+        });
+    }
+
+    /** Pose la touche dans la table, et l'écoute unique la première fois. */
+    private bindKey(key: string, handler: (event: UiEvent) => void): this {
+        this.keys.set(key, handler);
+        if (this.keys.size > 1) return this;
         return this.on("keydown", (event) => {
-            if (event.key === "Enter") handler();
+            this.keys.get(event.key)?.(event);
         });
     }
 

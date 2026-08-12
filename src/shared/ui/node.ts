@@ -40,6 +40,17 @@ export interface UiEvent {
      * lecteur — un composant ne filtre pas une touche à la main.
      */
     readonly key: string;
+    /**
+     * ⇧ était-il enfoncé — `false` quand l'événement ne porte pas de touche.
+     *
+     * C'est le seul modificateur que ce socle transporte, et il n'est pas là par symétrie :
+     * `⇧` **module** un geste sans le changer de nature. `⏎` cherche l'occurrence suivante,
+     * `⇧⏎` la précédente ; c'est la même intention, prise à l'envers. Les autres
+     * modificateurs, eux, désignent des raccourcis d'application — ils appartiennent à
+     * `features/terminal/key-actions.ts`, qui lit de vrais événements clavier, et un champ
+     * n'a rien à en faire.
+     */
+    readonly shiftKey: boolean;
 }
 
 export type UiHandler = (event: UiEvent) => void;

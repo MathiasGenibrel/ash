@@ -62,7 +62,7 @@ describe("le formulaire d'ajout", () => {
         const described = addForm(aDraft(), aSnapshot(), aVerification("invalid"), null, actions);
 
         // When
-        addButton(described)?.on["click"]?.({ value: "", key: "" });
+        addButton(described)?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then — une entrée invalide se déclare : Ash n'empêche pas de déclarer, il refuse
         // d'écrire
