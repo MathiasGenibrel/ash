@@ -5,6 +5,12 @@ description = "Un shell entouré, qui supervise les agents de code et rend git c
 edition = "2021"
 rust-version = "1.97"
 publish = false
+# Le crate porte deux binaires depuis que `ash-event` existe ([[bin]] plus bas), et la CLI
+# Tauri refuse d'empaqueter tant qu'on ne lui dit pas lequel est l'application : sans cette
+# ligne, `bun run tauri build` s'arrête sur « failed to find main binary » et ne produit
+# aucun bundle. `cargo build` et `bun run tauri dev` ne s'en plaignent pas — c'est pour ça
+# que le défaut a vécu plusieurs jalons sans se voir.
+default-run = "ash"
 
 [lib]
 # Nom distinct du binaire : sur macOS, une bibliothèque et un exécutable qui portent le
