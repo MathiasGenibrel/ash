@@ -15,6 +15,20 @@
 //!   ici n'a **volontairement pas** d'entrée « Close Window » : `Cmd+W` ferme un onglet,
 //!   comme dans tout émulateur de terminal.
 //!
+//! **Une exception, et une seule : `Ctrl+Tab` et `Ctrl+Shift+Tab`.** `muda` traduit
+//! `Key::Tab` en équivalent clavier `⇥` (U+21E5), le **glyphe** d'affichage, alors que
+//! `NSEvent` rend `\t` (U+0009) quand on presse Tab. `-[NSMenu performKeyEquivalent:]`
+//! compare ces chaînes : l'entrée s'affiche donc correctement, mais ne s'allume jamais au
+//! clavier. Mesuré sur cette machine avec un `NSMenu` monté à la main et un `NSEvent`
+//! synthétisé (`⇥`+ctrl ne correspond pas à Ctrl+Tab, `\t`+ctrl correspond).
+//!
+//! La conséquence est heureuse pour nous : la touche traverse jusqu'à la webview, où
+//! `src/app/shortcuts.ts` la capte — et c'est de toute façon le côté qu'il fallait pour
+//! `Tab`, la seule touche de cette table dont le shell a un usage propre. Un
+//! **accélérateur** ne se confond pas avec une touche nue : `Tab` seul n'a pas le drapeau
+//! `Control`, donc ni AppKit ni notre gestionnaire ne le retiennent, et la complétion de
+//! `zsh` reste intacte.
+//!
 //! Le prix est que la liste des accélérateurs est en Rust et leur effet en TypeScript.
 //! C'est assumé : le frontend rend les onglets, il ne les détient pas
 //! ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et faire l'inverse —
@@ -88,16 +102,45 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
         ],
     )?;
 
-    let new_tab = MenuItem::with_id(app, Action::NewTab.id(), "New Tab", true, Some("Cmd+N"))?;
+    // `Cmd+T`, et non `Cmd+N` : c'est le geste que macOS a posé pour « nouvel onglet »
+    // dans Safari, Terminal.app, iTerm et Chrome, où `Cmd+N` ouvre une **fenêtre**. Ash
+    // n'a pas de seconde fenêtre de terminal à ouvrir, donc `Cmd+N` ne fait plus rien
+    // plutôt que de rester un doublon : deux conventions pour le même geste, c'est celle
+    // qu'on ne connaît pas qui gagne.
+    let new_tab = MenuItem::with_id(app, Action::NewTab.id(), "New Tab", true, Some("Cmd+T"))?;
     let new_home_tab = MenuItem::with_id(
         app,
         Action::NewHomeTab.id(),
         "New Tab at ~",
         true,
-        Some("Cmd+Shift+N"),
+        Some("Cmd+Shift+T"),
     )?;
     let close_tab =
         MenuItem::with_id(app, Action::CloseTab.id(), "Close Tab", true, Some("Cmd+W"))?;
+
+    // `Ctrl+Tab` / `Ctrl+Shift+Tab` : la convention des navigateurs et d'iTerm2 pour
+    // circuler, là où `Cmd+1`…`Cmd+9` s'arrête à neuf et ne dit rien du « suivant ».
+    //
+    // **Ces deux accélérateurs-là ne sont pas joués par le menu**, contrairement à tous
+    // les autres de ce module — voir la note d'en-tête. Ils figurent ici pour être vus
+    // (⌃⇥ dans le menu) et cliquables à la souris ; la touche, elle, est captée par
+    // `src/app/shortcuts.ts`. Les garder déclarés fait aussi que le jour où `muda`
+    // corrigera son équivalent clavier, le chemin natif reprendra la main tout seul, sans
+    // double déclenchement : un accélérateur capté par AppKit n'atteint jamais la webview.
+    let next_tab = MenuItem::with_id(
+        app,
+        Action::NextTab.id(),
+        "Select Next Tab",
+        true,
+        Some("Ctrl+Tab"),
+    )?;
+    let previous_tab = MenuItem::with_id(
+        app,
+        Action::PreviousTab.id(),
+        "Select Previous Tab",
+        true,
+        Some("Ctrl+Shift+Tab"),
+    )?;
     let clear = MenuItem::with_id(
         app,
         Action::ClearScrollback.id(),
@@ -126,6 +169,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
         &new_tab,
         &new_home_tab,
         &close_tab,
+        &separator,
+        &next_tab,
+        &previous_tab,
         &separator,
         &clear,
         &separator,
@@ -276,6 +322,10 @@ enum Action {
     ClearScrollback,
     /// Sélectionne le n-ième onglet, à partir de 1.
     SelectTab(u8),
+    /// `Ctrl+Tab` : l'onglet suivant, en bouclant après le dernier.
+    NextTab,
+    /// `Ctrl+Shift+Tab` : l'onglet précédent, en bouclant avant le premier.
+    PreviousTab,
     /// Replie ou déplie la sidebar — `Cmd+B`.
     ToggleSidebar,
     /// Choisit le thème de la fenêtre — l'une des deux qui ne partent pas vers la webview.
@@ -292,6 +342,8 @@ impl Action {
             Action::CloseTab => "tab:close".to_owned(),
             Action::ClearScrollback => "tab:clear".to_owned(),
             Action::SelectTab(position) => format!("tab:select:{position}"),
+            Action::NextTab => "tab:next".to_owned(),
+            Action::PreviousTab => "tab:previous".to_owned(),
             Action::ToggleSidebar => "view:toggle-sidebar".to_owned(),
             Action::ChooseTheme(mode) => format!("view:theme:{}", mode.as_id()),
             Action::OpenSettings => "app:settings".to_owned(),
@@ -304,6 +356,8 @@ impl Action {
             "tab:new-home" => Some(Action::NewHomeTab),
             "tab:close" => Some(Action::CloseTab),
             "tab:clear" => Some(Action::ClearScrollback),
+            "tab:next" => Some(Action::NextTab),
+            "tab:previous" => Some(Action::PreviousTab),
             "view:toggle-sidebar" => Some(Action::ToggleSidebar),
             "app:settings" => Some(Action::OpenSettings),
             other => match other.strip_prefix("view:theme:") {
@@ -333,6 +387,8 @@ mod tests {
             Action::ClearScrollback,
             Action::SelectTab(1),
             Action::SelectTab(9),
+            Action::NextTab,
+            Action::PreviousTab,
             Action::ToggleSidebar,
             Action::ChooseTheme(ThemeMode::Light),
             Action::ChooseTheme(ThemeMode::Dark),
