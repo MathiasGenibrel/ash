@@ -1,59 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
+import { menuAccelerators, press } from "./builders";
 import { applyKeyAction, resolveKeyAction, type ScrollSurface } from "./key-actions";
-import { resolveKeyBinding, type KeyChord } from "./key-bindings";
-
-/**
- * Test Data Builder : un accord de touches, décrit par ce qu'on presse.
- *
- * Les défauts sont ceux d'une frappe nue — un `keydown`, aucun modificateur — parce que
- * c'est le cas qui doit rester intact : une flèche seule appartient à l'historique de
- * `zsh`, pas au défilement.
- *
- * Il est écrit ici plutôt que partagé avec `key-bindings.test.ts` : importer un fichier
- * `*.test.ts` depuis un autre ferait réenregistrer ses `describe` dans les deux, et
- * chaque test de la saisie tournerait deux fois.
- */
-class ChordBuilder {
-    private constructor(private readonly chord: KeyChord) {}
-
-    static press(key: string): ChordBuilder {
-        return new ChordBuilder({
-            type: "keydown",
-            key,
-            altKey: false,
-            ctrlKey: false,
-            metaKey: false,
-            shiftKey: false,
-        });
-    }
-
-    withOption(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, altKey: true });
-    }
-
-    withCommand(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, metaKey: true });
-    }
-
-    withControl(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, ctrlKey: true });
-    }
-
-    withShift(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, shiftKey: true });
-    }
-
-    released(): ChordBuilder {
-        return new ChordBuilder({ ...this.chord, type: "keyup" });
-    }
-
-    build(): KeyChord {
-        return this.chord;
-    }
-}
-
-const press = (key: string): ChordBuilder => ChordBuilder.press(key);
+import { resolveKeyBinding } from "./key-bindings";
 
 /** Les quatre accords de la spec, dans l'ordre où l'issue #78 les écrit. */
 const scrollingChords = [
@@ -63,17 +12,34 @@ const scrollingChords = [
     press("ArrowDown").withCommand().withShift(),
 ];
 
-/** Une surface qui note ce qu'on lui demande, pour lire le geste et son sens. */
+/**
+ * Une surface qui note ce qu'on lui demande — **en français, pas en signes**.
+ *
+ * La convention de xterm.js est écrite ici une fois, et à l'endroit où elle se vérifie :
+ * `scrollLines(amount)` documente « the number of lines to scroll **down** (negative
+ * scroll up) », et `scrollPages(pageCount)` de même (`@xterm/xterm` 6.0.0,
+ * `typings/xterm.d.ts`). Un lecteur de l'assertion n'a donc pas à connaître xterm.js pour
+ * juger : il lit « une page vers le haut » en face de `scroll-page-up`.
+ *
+ * La traduction n'affaiblit pas le test — c'est la seule chose qu'on veut protéger. Un
+ * `-1` écrit `+1` dans `applyKeyAction` fait dire « une page vers le bas » à la surface,
+ * et l'assertion tombe.
+ */
 class RecordingSurface implements ScrollSurface {
     readonly moves: string[] = [];
 
     scrollPages(pageCount: number): void {
-        this.moves.push(`pages:${pageCount}`);
+        this.moves.push(describeMove(pageCount, "page"));
     }
 
     scrollLines(amount: number): void {
-        this.moves.push(`lines:${amount}`);
+        this.moves.push(describeMove(amount, "ligne"));
     }
+}
+
+function describeMove(amount: number, unit: "page" | "ligne"): string {
+    const direction = amount < 0 ? "vers le haut" : "vers le bas";
+    return `${Math.abs(amount)} ${unit} ${direction}`;
 }
 
 describe("les raccourcis de défilement du scrollback", () => {
@@ -152,19 +118,7 @@ describe("les raccourcis de défilement du scrollback", () => {
         // Given — la liste de `src-tauri/src/menu.rs`. macOS les consomme avant la webview,
         // mais ce test est le garde-fou du jour où la table grandira (#79) : une entrée qui
         // recouvrirait un accélérateur casserait le menu sans bruit.
-        const accelerators = [
-            press("n").withCommand(),
-            press("n").withCommand().withShift(),
-            press("w").withCommand(),
-            press("k").withCommand(),
-            press("b").withCommand(),
-            press(",").withCommand(),
-            press("c").withCommand(),
-            press("v").withCommand(),
-            ...["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) =>
-                press(digit).withCommand(),
-            ),
-        ];
+        const accelerators = menuAccelerators();
 
         // When
         const actions = accelerators.map((chord) => resolveKeyAction(chord.build()));
@@ -185,6 +139,11 @@ describe("les raccourcis de défilement du scrollback", () => {
         applyKeyAction("scroll-line-down", surface);
 
         // Then
-        expect(surface.moves).toEqual(["pages:-1", "pages:1", "lines:-1", "lines:1"]);
+        expect(surface.moves).toEqual([
+            "1 page vers le haut",
+            "1 page vers le bas",
+            "1 ligne vers le haut",
+            "1 ligne vers le bas",
+        ]);
     });
 });

@@ -52,9 +52,11 @@ export class XtermView implements TerminalView {
             theme: readTerminalTheme(),
             scrollback: 10_000,
             // `scrollOnUserInput` n'est pas réglé ici, et ce n'est pas un oubli : il vaut
-            // `true` par défaut, donc une frappe ordinaire ramène déjà l'affichage en bas
-            // après une remontée dans le scrollback. L'écrire ne changerait rien et
-            // laisserait croire qu'Ash tient ce comportement — voir `key-actions.ts`.
+            // `true` par défaut, donc une frappe qu'xterm.js traite lui-même ramène déjà
+            // l'affichage en bas après une remontée dans le scrollback. L'écrire ne
+            // changerait rien. Ce qu'il ne couvre pas — les octets qu'Ash écrit pour un
+            // raccourci, qui ne passent pas par son chemin clavier — est rattrapé dans
+            // `emitInput`.
             allowProposedApi: true,
             // ⌥ **compose**, il n'est pas Meta. À `true`, xterm.js transformait toute
             // frappe avec ⌥ en `ESC`+touche avant que macOS n'ait composé quoi que ce
@@ -105,6 +107,17 @@ export class XtermView implements TerminalView {
                 // d'affichage du terminal, qui appartient à cet onglet et à lui seul
                 // (ADR-0003). `⌘↑` est « début de document » dans WKWebView, d'où le
                 // `preventDefault` — sans lui, la page entière se déplacerait.
+                //
+                // `Terminal` est passé comme `ScrollSurface` : il satisfait ses deux
+                // méthodes **structurellement**, sans adaptateur, et c'est ce qui met la
+                // convention de signe sous test sans DOM ni WebGL. Le prix est un couplage
+                // qu'aucun type ne réaffirme, à relire en montant xterm.js de version, au
+                // même titre que `macOptionIsMeta` ci-dessus : `scrollPages(pageCount)` et
+                // `scrollLines(amount)` sont publiques et documentées « negative scrolls
+                // up » sur 6.0.0, comme `scrollToBottom()` qu'`emitInput` appelle. Un
+                // renommage ferait échouer la compilation ; une **inversion du signe**,
+                // non — c'est le seul cas à vérifier à la main, et il tient en une frappe :
+                // dans un onglet qui a du scrollback, `⌘↑` doit remonter.
                 event.preventDefault();
                 applyKeyAction(action, this.term);
                 return false;
@@ -178,8 +191,25 @@ export class XtermView implements TerminalView {
         this.inputs.length = 0;
     }
 
-    /** Pousse une saisie vers les abonnés, qu'elle vienne de xterm.js ou d'un raccourci. */
+    /**
+     * Pousse une saisie vers les abonnés, qu'elle vienne de xterm.js ou d'un raccourci.
+     *
+     * Et **ramène l'affichage en bas**, parce que taper est ce qui l'y ramène dans un
+     * terminal. xterm.js le fait déjà pour ce qu'il traite lui-même (`scrollOnUserInput`
+     * vaut `true`), mais les raccourcis d'édition de ligne de `key-bindings.ts` — `⌥←`,
+     * `⌘⌫`… — n'empruntent pas son chemin clavier : ils rendent `false` et écrivent ici.
+     * Sans ce rappel, l'utilisateur qui remonte au clavier avec `⌘↑` puis corrige sa
+     * commande avec `⌥←` ne voit pas ce qu'il édite. Le défaut existait depuis #75 ; il
+     * n'était pas atteignable avant que #78 ne donne le moyen de remonter.
+     *
+     * C'est ici et nulle part ailleurs : c'est le seul chemin par lequel des octets
+     * partent vers le PTY, donc toute source de saisie future — la recherche de #79, une
+     * composition d'ADR-0015 — hérite du même retour sans y penser. Le geste de
+     * défilement, lui, ne passe pas par ici : `applyKeyAction` n'envoie rien, et
+     * l'affichage reste où l'utilisateur l'a mis.
+     */
     private emitInput(data: string): void {
+        this.term.scrollToBottom();
         for (const handler of this.inputs) handler(data);
     }
 
