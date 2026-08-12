@@ -10,7 +10,7 @@ import type {
 } from "./contract";
 
 /**
- * L'implémentation réelle du pont vers `features::settings` : sept commandes, un event, et
+ * L'implémentation réelle du pont vers `features::settings` : onze commandes, un event, et
  * rien d'autre.
  *
  * Le pendant de `pty-bridge.ts` et de `git-bridge.ts`, posé pour la même raison : la
@@ -50,6 +50,12 @@ export const tauriSettings: SettingsPorts = {
     verifyAll: () => invoke<SettingsSnapshot>("settings_verify_all"),
     verifyDraft: (draft: ToolDraft) =>
         invoke<Verification>("settings_verify_draft", { tool: draft }),
+    resetTool: (command: string) => invoke<SettingsSnapshot>("settings_reset_tool", { command }),
+    undoReset: (command: string) => invoke<SettingsSnapshot>("settings_undo_reset", { command }),
+    installHooks: (command: string) =>
+        invoke<SettingsSnapshot>("settings_install_hooks", { command }),
+    removeHooks: (command: string) =>
+        invoke<SettingsSnapshot>("settings_remove_hooks", { command }),
     onVerified: async (listener) => {
         const stop = await listen<Verified>(SETTINGS_VERIFIED, (event) => {
             listener(event.payload);

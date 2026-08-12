@@ -32,10 +32,12 @@ export type {
     Verification,
 } from "./contract";
 export { tauriSettings } from "./bridge";
-export { describeHooksAvailability } from "./model";
 export { RELAUNCH_DELAY, type Timer } from "./relaunch";
 export { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 export {
+    HOOK_STATES,
+    hooksGlyph,
+    presentHooks,
     presentVerification,
     VERIFICATION_STATES,
     verificationGlyph,
@@ -78,6 +80,8 @@ export function mountSettings(
     let draft: ToolDraft | null = null;
     let draftVerification: Verification | null = null;
     let failure: string | null = null;
+    /** L'entrée dont on regarde le conflit — un écran, pas un état d'outil. */
+    let conflict: string | null = null;
     /** Ce qui est tapé dans le champ de chemin d'une carte, tant qu'il n'a pas été jugé. */
     const edits = new Map<string, string>();
 
@@ -175,6 +179,34 @@ export function mountSettings(
         applyFix: (command, fix) => {
             void apply(retarget(command, fix));
         },
+        resetTool: (command) => {
+            relaunch.cancel(command);
+            // Ce qui était tapé décrivait l'ancien dossier : le garder ferait réapparaître
+            // le chemin qu'on vient justement d'abandonner.
+            edits.delete(command);
+            void apply(ports.resetTool(command));
+        },
+        undoReset: (command) => {
+            relaunch.cancel(command);
+            edits.delete(command);
+            void apply(ports.undoReset(command));
+        },
+        installHooks: (command) => {
+            void apply(ports.installHooks(command));
+        },
+        removeHooks: (command) => {
+            void apply(ports.removeHooks(command));
+        },
+        openConflict: (command) => {
+            // `see the diff` n'écrit rien : elle ouvre un écran, et c'est ce qui la
+            // distingue des trois autres actions de la ligne.
+            conflict = command;
+            draw();
+        },
+        closeConflict: () => {
+            conflict = null;
+            draw();
+        },
     });
 
     /** Ce qu'`apply` fait d'une correction proposée — un seul champ change à la fois. */
@@ -211,7 +243,12 @@ export function mountSettings(
     }
 
     function draw(): void {
-        view.render({ section, snapshot, draft, draftVerification, failure, edits });
+        // Le conflit se referme tout seul quand il n'y en a plus : une installation réussie
+        // ailleurs, une entrée oubliée, un fichier remis d'aplomb. Garder l'écran ouvert sur
+        // un diff que le backend ne rapporte plus montrerait un refus qui n'existe plus.
+        const shown = snapshot.tools.find((tool) => tool.command === conflict);
+        if (shown === undefined || shown.hooks.state !== "conflict") conflict = null;
+        view.render({ section, snapshot, draft, draftVerification, failure, edits, conflict });
     }
 
     /**

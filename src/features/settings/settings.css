@@ -400,18 +400,34 @@
     word-break: break-all;
 }
 
-/* La ligne `hooks`, éteinte. Ses cinq états sont l'issue #16 ; ce qui est ici est le seul
- * que la planche `3e` demande à celle-ci — le bouton reste à sa place, éteint, sa raison à
- * sa gauche. */
+/* La ligne `hooks`, dans ses cinq états. Le bouton est **toujours** là, éteint quand il ne
+ * peut rien faire, sa raison à sa gauche : le masquer ferait croire que les hooks n'existent
+ * pas pour cet outil.
+ *
+ * L'encadré teinté est la seconde façon de dire l'état, après la forme du glyphe. `missing`
+ * garde la bordure neutre : il ne s'est rien passé, et il n'y a rien à signaler. */
 .settings-hooks {
     display: flex;
     align-items: center;
     gap: 9px;
     padding: 9px 10px;
-    border: 1px solid var(--ash-border-soft);
+    border: 1px solid var(--ash-border);
     border-radius: 5px;
     background: var(--ash-bg);
     line-height: 1;
+}
+
+.settings-hooks.is-installed {
+    border-color: var(--ash-done-border);
+}
+.settings-hooks.is-outdated {
+    border-color: var(--ash-warning-border);
+}
+.settings-hooks.is-conflict {
+    border-color: var(--ash-error-border);
+}
+.settings-hooks.is-blocked {
+    border-color: var(--ash-border-soft);
 }
 
 .settings-verify-glyph.is-blocked {
@@ -419,8 +435,205 @@
 }
 
 .settings-hooks-reason {
+    flex: 1;
+    min-width: 0;
     font-size: 12.5px;
     color: var(--ash-fg-done);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Le fichier concerné, à droite de la phrase : il est la première question qu'on se pose
+ * devant un état de hooks, et la dernière qu'on veut avoir à chercher. */
+.settings-hooks-file {
+    flex: none;
+    font-size: 11px;
+    color: var(--ash-fg-dim);
+}
+
+/* La conséquence, et la copie annoncée **avant** l'action. Plus d'une ligne, donc
+ * `--ash-fg-subtle` : c'est la règle de contraste que `styles.test.ts` verrouille. */
+.settings-hooks-note {
+    font-size: 11px;
+    line-height: 1.65;
+    color: var(--ash-fg-subtle);
+}
+
+/* --- le doublon (§3.7) ------------------------------------------------------ */
+
+/* La bannière est **de section** : le doublon n'appartient à aucune des deux entrées. */
+.settings-banner {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 16px 10px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+}
+
+.settings-banner.is-warning {
+    border: 1px solid var(--ash-warning-border);
+    background: var(--ash-warning-bg);
+}
+
+.settings-banner.is-error {
+    border: 1px solid var(--ash-error-border);
+    background: var(--ash-error-bg);
+    margin: 0;
+}
+
+.settings-banner-text {
+    color: var(--ash-fg-done);
+}
+
+.settings-card.is-duplicate {
+    border-color: var(--ash-warning-border);
+}
+
+.settings-card.is-duplicate .settings-card-head {
+    background: var(--ash-warning-header-bg);
+    border-bottom-color: var(--ash-warning-header-rule);
+}
+
+/* Le champ prend la teinte la plus marquée : c'est **le dossier** qui est en cause, et
+ * c'est lui qu'on va corriger. */
+.settings-field.is-duplicate {
+    border-color: var(--ash-warning-border-strong);
+}
+
+.settings-duplicate-tag {
+    flex: none;
+    padding: 2px 6px;
+    border: 1px solid var(--ash-warning-border);
+    border-radius: 3px;
+    font-size: 9.5px;
+    color: var(--ash-warning);
+}
+
+.settings-icon-button.is-warning {
+    color: var(--ash-warning);
+}
+
+.settings-icon-button:disabled {
+    color: var(--ash-fg-disabled);
+    cursor: default;
+}
+
+.settings-icon-button:disabled:hover {
+    background: none;
+    color: var(--ash-fg-disabled);
+}
+
+/* La ligne `was` — elle n'existe **que** juste après une réinitialisation, et le trait qui
+ * barre l'ancien chemin dit ce qui a été remplacé sans avoir à l'écrire. */
+.settings-was {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    line-height: 19px;
+}
+
+.settings-was-path {
+    color: var(--ash-fg-icon);
+    text-decoration: line-through;
+    text-decoration-color: var(--ash-border-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- le conflit et son diff (§4.4) ------------------------------------------ */
+
+.settings-body.is-conflict {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 16px 12px;
+    min-height: 0;
+}
+
+.settings-locate {
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-locate-path {
+    color: var(--ash-fg-muted);
+}
+
+.settings-diff {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--ash-border);
+    border-radius: 6px;
+    background: var(--ash-bg-disabled);
+    overflow: hidden;
+}
+
+.settings-diff-head {
+    display: flex;
+    gap: 14px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--ash-border-soft);
+    background: var(--ash-bg-card-header);
+    font-size: 10px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-diff-legend.is-removed {
+    color: var(--ash-diff-removed-fg);
+}
+
+.settings-diff-legend.is-added {
+    color: var(--ash-diff-added-fg);
+}
+
+.settings-diff-body {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 10px 0;
+    overflow: auto;
+    font-family: inherit;
+    font-size: 11.5px;
+    line-height: 1.75;
+    color: var(--ash-fg-muted);
+    white-space: pre;
+}
+
+.settings-diff-line {
+    display: block;
+    padding: 0 12px;
+}
+
+.settings-diff-line.is-removed {
+    background: var(--ash-diff-removed-bg);
+    color: var(--ash-diff-removed-fg);
+}
+
+.settings-diff-line.is-added {
+    background: var(--ash-diff-added-bg);
+    color: var(--ash-diff-added-fg);
+}
+
+.settings-diff-line.is-context {
+    color: var(--ash-fg-subtle);
+}
+
+.settings-diff-foot {
+    padding: 8px 12px;
+    font-size: 10px;
+    color: var(--ash-fg-faint);
+}
+
+.settings-button.is-nowrap {
+    white-space: nowrap;
+    flex: none;
 }
 
 .settings-card-key.is-hooks {

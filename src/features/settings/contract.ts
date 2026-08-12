@@ -34,6 +34,51 @@ export interface ToolDeclaration {
     verified: boolean;
     /** Ce que les quatre tests de la spec §9.1 ont dit de cette entrée. */
     verification: Verification;
+    /**
+     * Le dernier dossier qui a passé les quatre tests, ou `null` s'il n'y en a jamais eu.
+     *
+     * C'est ce que « réinitialiser » restaure (spec §9.1) — **pas** le défaut de
+     * l'adaptateur. `null` veut dire qu'il n'y a rien à restaurer : le bouton reste alors
+     * visible et éteint, avec sa raison.
+     */
+    lastValidConfig: string | null;
+    /** Le dossier que la réinitialisation vient de remplacer, tant qu'on peut l'annuler. */
+    resetFrom: string | null;
+    /** Les autres entrées qui visent le même dossier. Signalé **sur les deux lignes**. */
+    duplicates: readonly string[];
+    /** Où en est le bloc de hooks de cette entrée. **Calculé en Rust.** */
+    hooks: HooksReport;
+}
+
+/** Les cinq états de la ligne `hooks`, et rien de plus. */
+export type HookState = "installed" | "missing" | "outdated" | "conflict" | "blocked";
+
+/** Ce que le bouton de la ligne propose. Un seul, jamais deux. */
+export type HookAction = "install" | "update" | "remove" | "seeTheDiff";
+
+/**
+ * Ce que la ligne `hooks` d'une entrée affiche, et ce qu'elle laisse faire.
+ *
+ * Miroir de `HooksReport` en Rust, et **entièrement calculé là-bas** : composer ce que la
+ * vérification autorise, ce qu'une autre entrée a déjà pris et ce que le fichier de
+ * l'utilisateur porte est la règle qui décide d'écrire chez lui, et elle n'a qu'un
+ * propriétaire ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+ */
+export interface HooksReport {
+    state: HookState;
+    /** La phrase de la ligne — `installed · v1`, `missing`, `v1 · v2 available`… */
+    summary: string;
+    /** La conséquence, en prose : ce que l'état coûte ou ce que l'action fera. */
+    note: string;
+    /** Le fichier concerné, quand il y en a un. */
+    file: string | null;
+    action: HookAction;
+    /** Le bouton est-il allumé ? Il reste **visible** dans tous les cas. */
+    enabled: boolean;
+    /** Les lignes qui divergent — seulement en conflit, et c'est le refus lui-même. */
+    diff: string | null;
+    /** La copie prise **avant** l'action, annoncée avant et non après. */
+    backup: string | null;
 }
 
 /** L'état d'une pastille de la rangée de tests. */
@@ -145,6 +190,20 @@ export interface SettingsPorts {
     verifyAll(): Promise<SettingsSnapshot>;
     /** Vérifie une saisie du formulaire d'ajout, sans rien ajouter. */
     verifyDraft(draft: ToolDraft): Promise<Verification>;
+    /** Ramène une entrée à son dernier dossier valide (spec §9.1). */
+    resetTool(command: string): Promise<SettingsSnapshot>;
+    /** Défait la réinitialisation qui vient d'avoir lieu. */
+    undoReset(command: string): Promise<SettingsSnapshot>;
+    /**
+     * Pose ou met à jour le bloc de hooks — **le seul geste de cette fenêtre qui écrive
+     * dans un fichier de l'utilisateur**.
+     *
+     * Il ne porte aucune condition : celle qui décide est en Rust, et c'est la même qui a
+     * allumé le bouton ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+     */
+    installHooks(command: string): Promise<SettingsSnapshot>;
+    /** Retire le bloc et ses marqueurs. */
+    removeHooks(command: string): Promise<SettingsSnapshot>;
     /**
      * S'abonne au **second temps** : le test 4 a répondu.
      *
