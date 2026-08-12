@@ -10,13 +10,13 @@
 //! Rien ne se décide après l'étape 3. Une sauvegarde prise « au passage », pendant qu'on
 //! écrit, ne sauvegarde plus rien.
 
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use super::block::{self, Document, Located};
 use super::diff;
 use super::error::HookError;
 use super::ports::ConfigFiles;
+use super::presence::{presence, Presence};
 use crate::features::agents::Instrumentation;
 
 /// Ce qu'une installation a fait, pour que l'écran de réglages le dise (#16).
@@ -127,6 +127,9 @@ pub fn uninstall(files: &dyn ConfigFiles, file: &Path) -> Result<Removal, HookEr
     let remaining = Document::splicing(&content, span, "");
 
     if block::is_an_empty_object(&remaining) {
+        // Le fichier ne portait que le bloc : Ash l'avait créé pour lui seul. Il n'y a rien
+        // de l'utilisateur à sauvegarder, et un `.bak` laissé derrière serait exactement la
+        // trace que la spec §10 refuse.
         files.remove(file).map_err(|why| HookError::Io {
             path: file.to_owned(),
             why,
@@ -137,6 +140,10 @@ pub fn uninstall(files: &dyn ConfigFiles, file: &Path) -> Result<Removal, HookEr
         });
     }
 
+    // « Toute écriture est précédée d'une copie » (spec §10) vaut aussi pour celle-ci, et
+    // c'est même ici qu'elle compte le plus : le bloc est retiré **qu'il ait été édité ou
+    // non**, donc ce geste peut emporter des lignes que l'utilisateur y avait ajoutées.
+    back_up(files, file)?;
     write(files, file, &remaining)?;
     Ok(Removal::Removed {
         file: file.to_owned(),
@@ -146,84 +153,60 @@ pub fn uninstall(files: &dyn ConfigFiles, file: &Path) -> Result<Removal, HookEr
 
 /// Le fichier tel qu'il devrait être — ou `None` s'il n'y a rien à faire.
 ///
-/// Toute la prudence de la feature tient dans cette fonction, et elle n'écrit rien : c'est
-/// ce qui permet de prouver chaque refus sans qu'un seul octet ne parte sur le disque. Le
-/// [`Document`] qu'elle rend est le seul lien entre la décision et l'écriture, et il ne se
-/// fabrique qu'autour d'une plage.
+/// Elle n'écrit rien, et **elle ne classe rien non plus** : le classement est celui de
+/// [`presence`], le seul du code, que l'écran de réglages interroge sans écrire (#16).
+/// Deux classements diraient un jour deux choses différentes, et l'écran promettrait alors
+/// une installation que cette fonction refuserait.
+///
+/// Ce qu'elle ajoute est la **traduction en gestes** : un verdict devient un [`Document`],
+/// qui est le seul lien entre la décision et l'écriture, et qui ne se fabrique qu'autour
+/// d'une plage.
 fn decide(
     content: &str,
     instrumentation: &Instrumentation,
     file: &Path,
 ) -> Result<Option<Document>, HookError> {
-    let hand_edited = |carried: &str| HookError::HandEdited {
-        file: file.to_owned(),
-        diff: diff::compare(&instrumentation.block, carried),
-    };
-
-    match block::locate(content) {
-        Located::Damaged => Err(hand_edited(content)),
-
-        Located::Present(block) if !block.intact => Err(hand_edited(&block.payload)),
-
-        Located::Present(block) => {
-            refuse_foreign_hooks(content, Some(block.span.clone()), file)?;
-            // Un bloc intact, de la version courante, au contenu identique : c'est le
-            // démarrage ordinaire d'Ash, et le fichier de l'utilisateur ne doit pas bouger.
-            if block.version == instrumentation.version && block.payload == instrumentation.block {
-                return Ok(None);
-            }
-            let rest = content.get(block.span.end..).unwrap_or("");
-            let comma = block::is_followed_by_an_entry(rest);
-            Ok(Some(Document::splicing(
-                content,
-                block.span,
-                &block::render(instrumentation, comma),
-            )))
-        }
-
-        Located::Absent => {
-            refuse_foreign_hooks(content, None, file)?;
-            let at = block::insertion_point(content).ok_or(HookError::NotAnObject {
+    match presence(content, instrumentation) {
+        Presence::Current { .. } => Ok(None),
+        Presence::HandEdited { diff } => Err(HookError::HandEdited {
+            file: file.to_owned(),
+            diff,
+        }),
+        Presence::ForeignHooks => Err(HookError::ForeignHooks {
+            file: file.to_owned(),
+        }),
+        Presence::NotAnObject => Err(HookError::NotAnObject {
+            file: file.to_owned(),
+        }),
+        // `presence` ne rend ce cas qu'à la lecture d'un fichier, et le texte est déjà lu ici.
+        Presence::Unreadable { why } => Err(HookError::Io {
+            path: file.to_owned(),
+            why,
+        }),
+        Presence::Missing | Presence::Superseded { .. } => spliced(content, instrumentation)
+            .map(Some)
+            .ok_or(HookError::NotAnObject {
                 file: file.to_owned(),
-            })?;
-            let rest = content.get(at..).unwrap_or("");
-            let comma = block::is_followed_by_an_entry(rest);
-            Ok(Some(Document::splicing(
-                content,
-                at..at,
-                &block::render(instrumentation, comma),
-            )))
-        }
+            }),
     }
 }
 
-/// Ash n'écrit pas dans un fichier qui a déjà des hooks à lui.
-///
-/// **La détection est délibérément grossière** : toute occurrence de `"hooks"` hors du bloc
-/// suffit à refuser, même dans une chaîne ou une clé imbriquée. Se tromper dans ce sens fait
-/// perdre une installation, et l'utilisateur l'apprend ; se tromper dans l'autre écrit une
-/// seconde clé `"hooks"` dans son objet racine, où le dernier arrivé l'emporte — donc
-/// désactive silencieusement les hooks qu'il avait écrits lui-même.
-///
-/// Fusionner les deux configurations serait la vraie réponse, mais elle demande de modifier
-/// du texte **hors** des marqueurs : c'est précisément ce que toute cette feature interdit,
-/// et ça mérite sa propre décision.
-fn refuse_foreign_hooks(
-    content: &str,
-    ours: Option<Range<usize>>,
-    file: &Path,
-) -> Result<(), HookError> {
-    let ours = ours.unwrap_or(0..0);
-    let foreign = content
-        .match_indices("\"hooks\"")
-        .any(|(at, _)| !ours.contains(&at));
-
-    if foreign {
-        return Err(HookError::ForeignHooks {
-            file: file.to_owned(),
-        });
-    }
-    Ok(())
+/// Le fichier avec le bloc à sa place — posé où il était, ou inséré s'il n'y était pas.
+fn spliced(content: &str, instrumentation: &Instrumentation) -> Option<Document> {
+    let span = match block::locate(content) {
+        Located::Present(block) => block.span,
+        _ => {
+            let at = block::insertion_point(content)?;
+            at..at
+        }
+    };
+    let rest = content.get(span.end..).unwrap_or("");
+    let comma = block::is_followed_by_an_entry(rest);
+    Some(Document::splicing(
+        content,
+        span,
+        &block::render(instrumentation, comma),
+    ))
 }
 
 /// La sauvegarde, **avant** toute écriture, et une seule fois.
@@ -590,6 +573,46 @@ mod tests {
             })
         );
         assert_eq!(files.content_of(&instrumentation.file), None);
+    }
+
+    #[test]
+    fn given_a_block_someone_added_their_own_line_to_when_it_is_removed_then_a_copy_was_taken_first(
+    ) {
+        // Given — la désinstallation retire le bloc **même édité**, donc ce geste peut
+        // emporter des lignes que l'utilisateur y avait ajoutées. C'est exactement le cas où
+        // « toute écriture est précédée d'une copie » (spec §10) n'est pas une formalité :
+        // le `.bak` est la seule chose qui les lui rende.
+        let theirs = "{\n  \"model\": \"opus\"\n}\n";
+        let files = FakeConfigFiles::new().carrying("/home/someone/.claude/settings.json", theirs);
+        let instrumentation = instrumentation("/home/someone/.claude");
+        install(&files, &instrumentation).unwrap_or_else(|why| panic!("{why}"));
+        // Le `.bak` d'avant Ash est déjà là : on l'écarte pour observer celui de ce geste-ci.
+        files
+            .remove(Path::new("/home/someone/.claude/settings.json.bak"))
+            .unwrap_or_else(|why| panic!("{why}"));
+        let edited = files
+            .content_of(&instrumentation.file)
+            .unwrap_or_default()
+            .replace("\"Stop\"", "\"MonHook\"");
+        files.replace(&instrumentation.file, &edited);
+        files.forget_the_journal();
+
+        // When
+        let removed = uninstall(&files, &instrumentation.file);
+
+        // Then
+        assert!(matches!(removed, Ok(Removal::Removed { .. })));
+        let journal = files.journal();
+        let copied = journal.iter().position(|step| step.starts_with("copy"));
+        let written = journal.iter().position(|step| step.starts_with("write"));
+        assert!(
+            copied < written && copied.is_some(),
+            "la copie doit précéder l'écriture : {journal:?}"
+        );
+        assert!(files
+            .content_of(Path::new("/home/someone/.claude/settings.json.bak"))
+            .unwrap_or_default()
+            .contains("MonHook"));
     }
 
     #[test]

@@ -7,6 +7,7 @@
 //! | La règle | Où elle vit |
 //! |---|---|
 //! | bloc délimité `ash:begin` / `ash:end`, versionné | [`block`] |
+//! | un seul classement de l'état d'un fichier, pour agir **et** pour l'afficher | [`presence`] |
 //! | rien n'est modifié hors marqueurs | [`block`] — le fichier est du texte, jamais un arbre relu, et le port n'accepte qu'un [`Document`] |
 //! | `.bak` **avant** l'écriture, et jamais écrasé | [`install`] |
 //! | refus d'écrire sur un bloc édité à la main, avec son diff | [`install`], [`diff`] |
@@ -36,6 +37,7 @@ mod diff;
 mod error;
 mod install;
 mod ports;
+mod presence;
 mod system_files;
 
 /// Le double du port `ConfigFiles`, réservé aux tests de la feature.
@@ -46,4 +48,5 @@ pub use block::Document;
 pub use error::HookError;
 pub use install::{install, uninstall, Installation, Removal};
 pub use ports::ConfigFiles;
+pub use presence::{inspect, Presence};
 pub use system_files::SystemConfigFiles;
