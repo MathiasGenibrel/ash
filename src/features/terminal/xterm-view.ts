@@ -3,6 +3,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import { applyKeyAction, resolveKeyAction } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 import type { TerminalSize, TerminalView, ThemeSignal, Unsubscribe } from "./ports";
 import { readTerminalTheme } from "./theme";
@@ -50,6 +51,10 @@ export class XtermView implements TerminalView {
             // bonne palette, sans attendre le prochain changement de thème.
             theme: readTerminalTheme(),
             scrollback: 10_000,
+            // `scrollOnUserInput` n'est pas réglé ici, et ce n'est pas un oubli : il vaut
+            // `true` par défaut, donc une frappe ordinaire ramène déjà l'affichage en bas
+            // après une remontée dans le scrollback. L'écrire ne changerait rien et
+            // laisserait croire qu'Ash tient ce comportement — voir `key-actions.ts`.
             allowProposedApi: true,
             // ⌥ **compose**, il n'est pas Meta. À `true`, xterm.js transformait toute
             // frappe avec ⌥ en `ESC`+touche avant que macOS n'ait composé quoi que ce
@@ -80,14 +85,32 @@ export class XtermView implements TerminalView {
             this.emitInput(data);
         });
 
+        // Saisie d'abord, action ensuite. L'ordre est celui du coût d'une erreur : la
+        // saisie est le chemin nominal du terminal, et les deux tables sont disjointes —
+        // un test de `key-actions.test.ts` le vérifie plutôt que de le supposer.
         this.term.attachCustomKeyEventHandler((event) => {
             const bytes = resolveKeyBinding(event);
-            if (bytes === null) return true;
-            // WKWebView garde des défauts à lui pour ces accords — `Cmd+←` y est encore
-            // « page précédente ». Rendre `false` arrête xterm.js, pas le navigateur.
-            event.preventDefault();
-            this.emitInput(bytes);
-            return false;
+            if (bytes !== null) {
+                // WKWebView garde des défauts à lui pour ces accords — `Cmd+←` y est
+                // encore « page précédente ». Rendre `false` arrête xterm.js, pas le
+                // navigateur.
+                event.preventDefault();
+                this.emitInput(bytes);
+                return false;
+            }
+
+            const action = resolveKeyAction(event);
+            if (action !== null) {
+                // Rien ne part vers le PTY : `applyKeyAction` ne touche qu'à la fenêtre
+                // d'affichage du terminal, qui appartient à cet onglet et à lui seul
+                // (ADR-0003). `⌘↑` est « début de document » dans WKWebView, d'où le
+                // `preventDefault` — sans lui, la page entière se déplacerait.
+                event.preventDefault();
+                applyKeyAction(action, this.term);
+                return false;
+            }
+
+            return true;
         });
 
         // Repeindre à chaud, et non recréer : `options.theme` remplace les couleurs et
