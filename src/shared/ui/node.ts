@@ -159,9 +159,18 @@ export abstract class ElementBuilder implements UiBuilder {
         return this;
     }
 
-    /** L'échappatoire : les classes propres à la feature qui pose le composant. */
+    /**
+     * L'échappatoire : les classes propres à la feature qui pose le composant.
+     *
+     * Une chaîne à plusieurs mots vaut plusieurs classes — les tables de présentation du
+     * dépôt en rendent (`settings-tile is-passed`), et une classe composée serait posée
+     * telle quelle dans la liste : le DOM la découperait à la peinture, mais `find` et
+     * `findAll`, eux, chercheraient un nom qui n'y est pas. Le test croirait alors à une
+     * absence.
+     */
     class(...names: readonly string[]): this {
-        this.classNames.push(...names.filter((name) => name.length > 0));
+        const split = names.flatMap((name) => name.split(" "));
+        this.classNames.push(...split.filter((name) => name.length > 0));
         return this;
     }
 

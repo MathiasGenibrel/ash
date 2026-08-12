@@ -14,7 +14,10 @@ import { ElementBuilder, text, type UiChild } from "@/shared/ui";
  */
 class Tag extends ElementBuilder {
     constructor(tag: string, ...classes: readonly string[]) {
-        super(tag, ...classes);
+        // Par `class` et non par le constructeur : c'est elle qui découpe une chaîne à
+        // plusieurs mots, et les tables de présentation en rendent.
+        super(tag);
+        this.class(...classes);
     }
 }
 
