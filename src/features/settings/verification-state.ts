@@ -145,22 +145,53 @@ export interface HookPresentation {
     readonly className: string;
     /** La classe qui teinte la bordure de la ligne — la seconde façon de dire l'état. */
     readonly rowClassName: string;
+    /**
+     * La ligne montre-t-elle le fichier en pastille, à côté de sa phrase ?
+     *
+     * **Non pour `blocked`, et c'est une décision, pas un oubli** : les trois blocages qui
+     * portent un fichier sont des refus qui le nomment déjà dans leur phrase — « ash can't
+     * read /home/… ». La pastille l'écrirait une seconde fois sur la même ligne. Les trois
+     * autres blocages, eux, n'ont pas de fichier du tout : ils précèdent la lecture.
+     *
+     * Elle vit dans la table et non dans la vue parce que c'est le backend qui décide de
+     * nommer le fichier, et que `bun test` ne monte pas de DOM : posée dans le rendu, la
+     * règle serait le seul endroit du chemin où une information venue du backend disparaît
+     * sans que rien ne le vérifie.
+     */
+    readonly showsFile: boolean;
 }
 
 const HOOK_PRESENTATIONS: Readonly<Record<HookState, HookPresentation>> = {
-    installed: { label: "hooks installed", className: "is-valid", rowClassName: "is-installed" },
-    missing: { label: "hooks missing", className: "is-unverified", rowClassName: "" },
+    installed: {
+        label: "hooks installed",
+        className: "is-valid",
+        rowClassName: "is-installed",
+        showsFile: true,
+    },
+    missing: {
+        label: "hooks missing",
+        className: "is-unverified",
+        rowClassName: "",
+        showsFile: true,
+    },
     outdated: {
         label: "hooks from an older version",
         className: "is-caveat",
         rowClassName: "is-outdated",
+        showsFile: true,
     },
     conflict: {
         label: "hook block edited by hand",
         className: "is-invalid",
         rowClassName: "is-conflict",
+        showsFile: true,
     },
-    blocked: { label: "hooks unavailable", className: "is-blocked", rowClassName: "is-blocked" },
+    blocked: {
+        label: "hooks unavailable",
+        className: "is-blocked",
+        rowClassName: "is-blocked",
+        showsFile: false,
+    },
 };
 
 /**

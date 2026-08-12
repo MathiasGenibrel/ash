@@ -89,6 +89,18 @@ describe("la présentation des cinq états de la ligne hooks", () => {
         // Then
         expect(drawn.size).toBe(5);
     });
+
+    it("Given a blocked hooks line whose refusal already names its file, when it is presented, then the file is not written twice on the same row", () => {
+        // Given — les trois blocages qui portent un fichier sont des refus qui le nomment
+        // dans leur phrase (« ash can't read /home/… ») ; les trois autres n'ont pas de
+        // fichier du tout. Les quatre autres états, eux, ont une phrase courte et le fichier
+        // en pastille à côté. La règle vivait dans la vue, que `bun test` ne monte pas
+        // When
+        const shown = HOOK_STATES.filter((state) => presentHooks(state).showsFile);
+
+        // Then
+        expect(shown).toEqual(["installed", "missing", "outdated", "conflict"]);
+    });
 });
 
 describe("les pastilles de la rangée de tests", () => {

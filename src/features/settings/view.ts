@@ -402,7 +402,7 @@ export class SettingsView {
             hooksGlyph(hooks.state),
             text("span", hooks.summary, "settings-hooks-reason"),
         );
-        if (hooks.file !== null && hooks.state !== "blocked") {
+        if (hooks.file !== null && shown.showsFile) {
             line.append(text("span", hooks.file, "settings-hooks-file"));
         }
 

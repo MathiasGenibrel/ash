@@ -29,8 +29,12 @@
 //! |---|---|---|
 //! | `ConfigFiles` (`ports.rs`) | `SystemConfigFiles` (`system_files.rs`) | `FakeConfigFiles` (`fakes.rs`) |
 //!
-//! Rien n'est encore exposé au frontend : il n'y a pas d'écran de réglages, donc pas de
-//! geste d'installation à offrir. Le `commands.rs` de cette feature naîtra avec lui (#16).
+//! **Cette feature n'a pas de `commands.rs`, et n'en aura pas** : l'écran de réglages est le
+//! seul geste d'installation du produit (#16), et il appelle `settings`, qui sait de quel
+//! outil il s'agit et si son entrée a prouvé son dossier. Exposer `install` directement au
+//! frontend ouvrirait un second chemin vers l'écriture — celui qui contourne la garde.
+//! `settings` traverse cette frontière par le port `HookBlocks`, que la composition root
+//! relie ici en traduisant un identifiant d'adaptateur en instrumentation.
 
 mod block;
 mod diff;

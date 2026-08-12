@@ -161,6 +161,18 @@ export interface Verified {
      * second propriétaire ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
      */
     verified: boolean;
+    /**
+     * La ligne `hooks` de l'entrée **après** ce résultat, telle que le registre la repose.
+     *
+     * Elle voyage avec lui parce que le test 4 peut la changer : une entrée qui attendait
+     * sa réponse laissait déjà écrire, et un test 4 en échec la rend invalide. Sans elle,
+     * la fenêtre garderait celle du premier temps — un bouton `install` allumé sur une
+     * entrée que le backend refuse désormais.
+     *
+     * `null` pour une saisie du formulaire d'ajout : elle n'est pas au registre, et le
+     * formulaire ne montre aucune ligne `hooks`.
+     */
+    hooks: HooksReport | null;
 }
 
 /** Ce que le formulaire d'ajout envoie : du texte, pas encore une déclaration. */

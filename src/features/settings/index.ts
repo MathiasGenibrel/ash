@@ -300,10 +300,16 @@ export function mountSettings(
      * premier.
      *
      * La charge utile est celle que le backend détient — il l'a déjà posée sur son entrée
-     * avant de l'émettre. La recopier ici est du rendu, pas de la détention : la fenêtre ne
-     * la calcule ni ne la corrige, et une entrée qu'elle ne connaît pas est ignorée.
+     * avant de l'émettre, et il ne l'émet pas quand il l'a jetée. La recopier ici est du
+     * rendu, pas de la détention : la fenêtre ne la calcule ni ne la corrige, et une entrée
+     * qu'elle ne connaît pas est ignorée.
+     *
+     * **La ligne `hooks` voyage avec le résultat**, et remplace celle du premier temps : le
+     * test 4 peut retirer à une entrée le droit d'écrire qu'elle avait pendant qu'elle
+     * l'attendait. La garder ferait montrer un bouton `install` allumé sur une entrée que
+     * le backend refuse désormais.
      */
-    void ports.onVerified(({ command, verification, verified }) => {
+    void ports.onVerified(({ command, verification, verified, hooks }) => {
         if (draft !== null && draft.command.trim() === command) {
             draftVerification = verification;
             draw();
@@ -312,7 +318,9 @@ export function mountSettings(
         snapshot = {
             ...snapshot,
             tools: snapshot.tools.map((tool) =>
-                tool.command === command ? { ...tool, verification, verified } : tool,
+                tool.command === command
+                    ? { ...tool, verification, verified, hooks: hooks ?? tool.hooks }
+                    : tool,
             ),
         };
         draw();
