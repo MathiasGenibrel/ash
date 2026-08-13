@@ -3,6 +3,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import { DeadKeyRepair } from "./dead-keys";
 import { applyKeyAction, resolveKeyAction, type ActionSurface } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 import type {
@@ -58,6 +59,14 @@ export class XtermView implements TerminalView {
         },
     };
     private readonly unfollowFontSize: Unsubscribe;
+    /**
+     * Le rattrapage des touches mortes, une instance par onglet.
+     *
+     * Elle ne retient qu'une composition, le temps d'une frappe : deux onglets composent
+     * indépendamment, et une instance partagée rapprocherait le `compositionend` de l'un
+     * du `keydown` de l'autre.
+     */
+    private readonly deadKeys = new DeadKeyRepair();
     private disposed = false;
 
     /**
@@ -122,6 +131,22 @@ export class XtermView implements TerminalView {
         // saisie est le chemin nominal du terminal, et les deux tables sont disjointes —
         // un test de `key-actions.test.ts` le vérifie plutôt que de le supposer.
         this.term.attachCustomKeyEventHandler((event) => {
+            // En premier, parce que ce n'est pas un raccourci : c'est la frappe ordinaire
+            // d'une lettre, que xterm.js perd sous WebKit quand elle clôt une composition
+            // qui n'aboutit pas (`^` puis `d`). Les deux tables ci-dessous ne nomment que
+            // des accords à modificateur, donc aucune ne peut la revendiquer ; l'ordre
+            // vaut pour le lecteur, pas pour la résolution. Voir `dead-keys.ts`.
+            const missing = this.deadKeys.resolveKeyDown(event);
+            if (missing !== null) {
+                // Consommer la frappe est ce qui **supprime l'accent en double** : sans le
+                // `return false`, xterm.js émettrait à son tour le premier caractère de
+                // `event.key`. Le `preventDefault` évite en plus que WebKit ne dépose la
+                // lettre dans le textarea caché, où elle repartirait par l'`input`.
+                event.preventDefault();
+                this.emitInput(missing);
+                return false;
+            }
+
             const bytes = resolveKeyBinding(event);
             if (bytes !== null) {
                 // WKWebView garde des défauts à lui pour ces accords — `Cmd+←` y est
@@ -180,6 +205,20 @@ export class XtermView implements TerminalView {
         });
 
         this.term.open(this.pane);
+
+        // Après `open`, parce que le textarea caché n'existe pas avant : c'est lui que la
+        // webview pilote pendant une composition, et le seul endroit où `compositionend`
+        // est observable. En capture, pour être noté avant que xterm.js n'en tire ses
+        // propres conclusions. `term.dispose()` retire l'élément avec le reste — il n'y a
+        // pas d'abonnement à défaire dans `dispose`.
+        this.term.textarea?.addEventListener(
+            "compositionend",
+            (event) => {
+                this.deadKeys.compositionEnded(event.data ?? "");
+            },
+            true,
+        );
+
         this.term.loadAddon(this.fit);
         this.refit();
         this.loadWebgl();
