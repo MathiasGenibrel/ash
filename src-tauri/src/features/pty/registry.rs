@@ -11,6 +11,7 @@ use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
 use super::session::{PtySession, PtySpawner, PtySpec};
+use super::terminal_env::{ambient, terminal_env};
 use crate::features::probe::{Probe, TabObservation, TabWatch};
 
 /// Identifiant d'onglet — un ulid, posé dans `ASH_TAB_ID` au lancement du shell.
@@ -214,6 +215,11 @@ impl PtyRegistry {
 
     pub fn open(&self, mut spec: PtySpec, tab_id: TabId) -> Result<Opened, PtyError> {
         spec.env.push(("ASH_TAB_ID".to_owned(), tab_id.clone()));
+        // Ce que le shell doit savoir du terminal qu'on lui offre. C'est ici, à côté
+        // d'`ASH_TAB_ID`, parce que c'est la même nature de chose : une identité posée par
+        // Ash, pas une préférence de l'utilisateur — et parce que le registre est la
+        // dernière étape avant le spawner à rester derrière le trait, donc testable.
+        spec.env.extend(terminal_env(&ambient));
 
         let (session, reader) = self.spawner.spawn(&spec)?;
         let credits = Arc::new(Credits::new(WINDOW));
@@ -589,6 +595,24 @@ mod tests {
         assert!(env.contains(&("ASH_TAB_ID".to_owned(), "01J0TAB".to_owned())));
         assert!(env.contains(&("ASH_SOCK".to_owned(), "/tmp/ash.sock".to_owned())));
         assert_eq!(opened.tab_id, "01J0TAB");
+    }
+
+    #[test]
+    fn given_a_tab_is_opened_when_the_shell_starts_then_it_is_told_which_terminal_it_speaks_to() {
+        // Given — un environnement quelconque, y compris celui, vide, qu'un `.app` lancé
+        // par le Finder reçoit de launchd.
+        let spawner = FakeSpawner::default();
+        let env = Arc::clone(&spawner.last_env);
+        let registry = registry(spawner);
+
+        // When
+        registry.open(spec(), "01J0TAB".to_owned()).unwrap();
+
+        // Then — sans ça, zsh ne sait pas adresser le curseur et ZLE ajoute au lieu de
+        // remplacer : taper `ll` affiche `llll`.
+        let env = env.lock().unwrap().clone();
+        assert!(env.contains(&("TERM".to_owned(), "xterm-256color".to_owned())));
+        assert!(env.contains(&("COLORTERM".to_owned(), "truecolor".to_owned())));
     }
 
     #[test]
