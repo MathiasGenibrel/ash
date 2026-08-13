@@ -46,16 +46,31 @@ libc = "0.2.189"
 # par défaut, qui se réduisent ici à `macos_fsevent` : ni `crossbeam-channel`, ni `serde`.
 notify = "=8.2.0"
 # Les notifications macOS de la spec §8 — un agent en `waiting` doit être vu même quand Ash
-# est derrière une autre fenêtre. Version épinglée comme `notify` : 2.3.3, publiée le
-# 2025-10-27. C'est le plugin officiel, et il n'y a rien d'autre à porter — sur macOS il se
-# ramène à `notify_rust`, donc à `mac-notification-sys`.
+# est derrière une autre fenêtre, et le clic doit ramener sur l'agent concerné.
 #
-# **Ce qu'il ne fait pas, et qui n'est pas contournable ici** : capter le clic sur la
-# bannière. Son implémentation de bureau jette la poignée que `notify_rust` rend, et
-# `on_action` est `#[cfg(mobile)]`. Son `permission_state()` de bureau rend, lui, une
-# constante `Granted`. Voir `features/agents/notify.rs` et
-# `features/settings/notifications.rs`, qui documentent chacun la conséquence de son côté.
-tauri-plugin-notification = "=2.3.3"
+# **`tauri-plugin-notification` a été retiré ici**, il ne dort pas dans le fichier. Deux
+# critères de la spec §8 lui étaient inatteignables — l'autorisation réelle, que son
+# `permission_state()` de bureau rend en dur à `Granted`, et le clic, dont il jette la
+# poignée —, et le délégué de `NSUserNotificationCenter` est global au processus : cohabiter
+# aurait été deux couches se le disputant en silence. Voir `features/notifications/macos.rs`.
+#
+# Ces quatre crates étaient **déjà dans l'arbre**, tirées par Tauri et par `wry` ; on les
+# nomme, exactement comme `libc` l'est pour la sonde. `objc2-user-notifications` est la
+# liaison de `UserNotifications.framework`, la seule pile qui sache répondre aux deux
+# critères. Versions retenues et leur date de publication : `objc2` 0.6.4 (2026-02-26),
+# `objc2-foundation` 0.3.2, `objc2-user-notifications` 0.3.2 et `block2` 0.6.2 (2025-10-04).
+objc2 = "0.6.4"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", features = ["NSBundle", "NSString", "NSError"] }
+objc2-user-notifications = { version = "0.3.2", features = [
+    "UNNotification",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSettings",
+    "UNNotificationTrigger",
+    "block2",
+] }
 
 [dev-dependencies]
 ts-rs = "12.0.1"

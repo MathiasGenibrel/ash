@@ -168,13 +168,26 @@ fn announce(
 
 /// Ce que la section `notifications` affiche (spec §8).
 ///
-/// Sans état ni registre : ce que macOS laisse savoir de son autorisation ne dépend
-/// d'aucune entrée déclarée, et les deux états qui interrompent viennent d'`agents`. La
-/// fenêtre la rappelle à chaque fois qu'on ouvre la section — l'autorisation peut être
-/// changée dans les Réglages Système pendant qu'Ash est ouvert.
+/// Sans registre : l'autorisation ne dépend d'aucune entrée déclarée, et les deux états qui
+/// interrompent viennent d'`agents`. Elle est **relue à chaque appel**, et la fenêtre appelle
+/// à chaque ouverture de la section : l'autorisation peut être changée dans les Réglages
+/// Système pendant qu'Ash est ouvert, et une valeur retenue au démarrage vieillirait mal
+/// dans le seul panneau où l'on vient justement la vérifier.
+///
+/// Le centre est **injecté**, et c'est celui qui pose les bannières : la fenêtre décrit donc
+/// l'autorisation du mécanisme qui interrompt vraiment, et non celle d'un autre.
+///
+/// **`async` volontairement**, pour la raison exacte de [`super::super::git::commands`] :
+/// Tauri exécute une commande synchrone sur le fil de l'interface, et celle-ci **attend** —
+/// macOS répond à `getNotificationSettings` par un bloc, sur une file à lui, et le port
+/// borne cette attente à deux secondes. Deux secondes mesurées à moins de dix millisecondes,
+/// mais deux secondes de fenêtre figée le jour où elles arrivent. Le handle plutôt que
+/// `tauri::State` : une commande `async` qui emprunte l'état est obligée de rendre un
+/// `Result`, et une erreur qui ne peut pas se produire n'a pas sa place dans le contrat.
 #[tauri::command]
-pub fn settings_notifications() -> NotificationsReport {
-    notifications::report(notifications::observed())
+pub async fn settings_notifications<R: Runtime>(app: AppHandle<R>) -> NotificationsReport {
+    let banners = app.state::<Arc<dyn crate::features::notifications::Banners>>();
+    notifications::report(notifications::observed(banners.authorization()))
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
