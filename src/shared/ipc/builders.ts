@@ -3,6 +3,7 @@ import type {
     GitHead,
     GitOperation,
     GitStatus,
+    Subagent,
     TabInfo,
     WorktreeMetadata,
 } from "./index";
@@ -38,6 +39,8 @@ export class TabBuilder {
      * quand l'état a commencé.
      */
     private stateSince = 0;
+    /** Aucun sous-agent : le cas de l'écrasante majorité des onglets. */
+    private subagents: Subagent[] = [];
 
     static create(): TabBuilder {
         return new TabBuilder();
@@ -62,6 +65,22 @@ export class TabBuilder {
     /** L'onglet est entré dans son état à cette date — un `Date.now()`, en millisecondes. */
     since(stateSince: number): this {
         this.stateSince = stateSince;
+        return this;
+    }
+
+    /**
+     * Un sous-agent tourne sous cet onglet (spec §6.5).
+     *
+     * `since` est une **date** et non une durée, comme ce qui traverse réellement : un
+     * scénario qui parle d'un compteur doit dire lui-même quand l'enfant a commencé.
+     */
+    withSubagent(
+        agentType: string | null,
+        state: AgentState = "working",
+        since = 0,
+        agentId = `agent-${String(this.subagents.length + 1)}`,
+    ): this {
+        this.subagents.push({ agentId, agentType, state, since });
         return this;
     }
 
@@ -103,6 +122,7 @@ export class TabBuilder {
             process: this.process,
             state: this.state,
             stateSince: this.stateSince,
+            subagents: this.subagents,
             location: this.located
                 ? {
                       worktreeRoot: this.worktreeRoot,

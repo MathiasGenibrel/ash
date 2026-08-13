@@ -113,6 +113,26 @@ impl RawEvent {
     }
 }
 
+/// Ce qu'un événement dit du **cycle de vie d'un enfant**, et rien de l'onglet.
+///
+/// C'est la « méthode distincte » qu'exige l'amendement du 2026-08-13 à
+/// [ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md) : le cycle de vie des
+/// sous-agents ne passe **pas** par [`Adapter::interpret`], parce qu'un sous-agent qui finit
+/// ne rend pas l'outil disponible. Le traduire en état d'onglet serait exactement la
+/// déduction que l'ADR refuse, et la suite contractuelle vérifie qu'aucune implémentation ne
+/// le fait ([`super::contract`]).
+///
+/// **Une seule variante, et c'est un constat, pas un oubli.** Aucun outil n'annonce le
+/// *démarrage* d'un sous-agent : Claude Code n'a pas de `SubagentStart`. La naissance se lit
+/// donc au premier événement portant un `agent_id` encore inconnu, ce qui est une affaire de
+/// transport et non de vocabulaire — l'adaptateur n'aurait rien à en dire. Ce qu'il est seul
+/// à savoir, c'est quel verbe signifie « cet enfant-là s'arrête ».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildEvent {
+    /// L'enfant nommé par la trame vient de terminer.
+    Ended,
+}
+
 /// Un outil expose-t-il des sous-tâches ?
 ///
 /// La notion n'existe pas partout, et c'est la seule chose que le cœur a besoin de savoir
@@ -131,11 +151,16 @@ pub enum SubagentSupport {
 /// L'intégration d'un outil de code, derrière un trait
 /// ([ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md)).
 ///
-/// Les quatre méthodes correspondent aux quatre endroits où `claude`, `codex`, `kimi` et
+/// Les cinq méthodes correspondent aux cinq endroits où `claude`, `codex`, `kimi` et
 /// `opencode` divergent réellement : leur nom, le mécanisme et l'emplacement de leur
-/// instrumentation, leur vocabulaire d'événements, et l'existence de sous-tâches. Rien
-/// d'autre ne franchit la frontière : le cœur ne connaît que [`AgentState`], et un
-/// adaptateur n'a aucun moyen de lui faire connaître un sixième mot.
+/// instrumentation, leur vocabulaire d'états, le verbe par lequel un **enfant** annonce sa
+/// fin, et l'existence de sous-tâches. Rien d'autre ne franchit la frontière : le cœur ne
+/// connaît que [`AgentState`], et un adaptateur n'a aucun moyen de lui faire connaître un
+/// sixième mot.
+///
+/// **Le vocabulaire des états et celui des enfants sont deux méthodes**, et pas une avec un
+/// cas de plus : c'est la forme que l'amendement du 2026-08-13 à ADR-0007 exige, pour
+/// qu'un événement d'enfant n'ait aucun chemin vers l'état de l'onglet.
 ///
 /// `Send + Sync` parce que les adaptateurs sont partagés entre le fil qui reçoit les
 /// événements et celui qui sonde les onglets.
@@ -165,6 +190,17 @@ pub trait Adapter: Send + Sync {
     /// L'événement est emprunté : l'appelant en garde la propriété parce que c'est lui qui
     /// détient le routage et l'horodatage qui l'accompagnent.
     fn interpret(&self, raw: &RawEvent) -> Option<AgentState>;
+
+    /// Ce que cet événement dit d'un **enfant**, ou rien.
+    ///
+    /// Distincte d'[`Self::interpret`] parce qu'elle répond à une autre question, et que
+    /// confondre les deux est précisément ce que l'amendement du 2026-08-13 à ADR-0007
+    /// interdit : un `SubagentStop` ne rend pas l'onglet disponible. Un adaptateur qui
+    /// répond ici doit donc répondre `None` là — c'est un invariant du contrat.
+    ///
+    /// `None` est la réponse normale, y compris chez un outil qui a des sous-tâches : la
+    /// grande majorité des événements ne parlent que de l'agent principal.
+    fn child_event(&self, raw: &RawEvent) -> Option<ChildEvent>;
 
     /// L'outil expose-t-il des sous-tâches ?
     fn subagents(&self) -> SubagentSupport;

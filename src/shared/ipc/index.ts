@@ -51,6 +51,30 @@ export interface TabLocation {
 }
 
 /**
+ * Un sous-agent qui tourne **dans** un onglet (spec §6.5).
+ *
+ * Il n'a pas de terminal à lui — c'est le même processus, dans le même onglet
+ * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)) — donc sa ligne n'est pas
+ * cliquable, et rien ne le sélectionne.
+ *
+ * `state` ne vaut jamais que `working` ou `done` : un sous-agent ne peut pas interroger
+ * l'utilisateur, donc il n'est **jamais `waiting`** (ADR-0007, amendement du 2026-08-13). Il
+ * n'a pas non plus de `error` : son échec n'a aucune source, faute de processus à surveiller,
+ * et Ash n'en invente pas.
+ *
+ * `agentId` distingue deux frères **dans cet onglet**, et rien de plus : il n'est ni stable
+ * entre deux sessions, ni une clé de persistance.
+ */
+export interface Subagent {
+    agentId: string;
+    /** Le type que l'outil donne à l'enfant — `code-reviewer`, `Explore`. `null` s'il se tait. */
+    agentType: string | null;
+    state: AgentState;
+    /** Quand l'enfant est entré dans cet état — une date absolue, comme `stateSince`. */
+    since: number;
+}
+
+/**
  * Un onglet, tel que le backend le décrit.
  *
  * `cwd` est le répertoire **courant** : la sonde d'ADR-0005 le suit à travers les `cd`, et
@@ -81,6 +105,13 @@ export interface TabInfo {
      * `features/terminal/status-line.ts`.
      */
     stateSince: number;
+    /**
+     * Les sous-agents en cours sous cet onglet, dans leur ordre d'apparition.
+     *
+     * Vide dans le cas courant — et vide pour toujours chez un outil qui n'expose pas ses
+     * sous-tâches, sans que rien ne suggère qu'il en manque.
+     */
+    subagents: Subagent[];
     location: TabLocation | null;
 }
 

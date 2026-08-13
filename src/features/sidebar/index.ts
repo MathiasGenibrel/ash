@@ -16,6 +16,7 @@ import "./sidebar.css";
 import type { TabId, TabInfo } from "@/shared/ipc";
 import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
+import { showsSubagents } from "./visible";
 
 export type { SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
 
@@ -25,6 +26,13 @@ export interface SidebarPorts {
     selectTab(tabId: TabId): void;
     /** Le `+` du pied. */
     newTab(): void;
+    /**
+     * L'heure qu'il est, pour les durées des lignes de sous-agents.
+     *
+     * Injectée plutôt que lue, comme partout ailleurs où le temps entre dans le produit :
+     * `Date.now` par défaut, et le composition root n'a rien à en dire.
+     */
+    now?: () => number;
 }
 
 export interface Sidebar {
@@ -47,6 +55,14 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
 
     let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
+    const now = ports.now ?? ((): number => Date.now());
+
+    // Le battement qui fait avancer les durées des lignes filles, **et seulement quand il y
+    // en a une à l'écran**. La colonne entière se redessine à chaque rendu : la faire battre
+    // en permanence coûterait un rendu par seconde pour animer un compteur qui n'existe pas
+    // la plupart du temps. Sans sous-agent, la sidebar redevient exactement ce qu'elle était
+    // — dessinée sur événement, et jamais autrement.
+    let ticker: ReturnType<typeof setInterval> | null = null;
 
     const view = new SidebarView({
         selectTab: (tabId) => {
@@ -66,10 +82,28 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
     });
 
     function draw(): void {
-        view.render(
-            buildSidebar(tabs, { activeTabId, collapsedWorktrees, collapsedGroups }),
-            columnCollapsed,
-        );
+        const tree = buildSidebar(tabs, { activeTabId, collapsedWorktrees, collapsedGroups });
+        view.render(tree, columnCollapsed, now());
+        beat(showsSubagents(tree, columnCollapsed));
+    }
+
+    /**
+     * Ouvre ou ferme le battement des durées, sans jamais en laisser deux.
+     *
+     * Le battement rappelle [`draw`] lui-même, et non un rendu à lui : c'est ce qui lui permet
+     * de **s'arrêter tout seul** quand la dernière ligne fille a fini d'expirer. Un second
+     * chemin de rendu, qui ne repasserait pas par [`showsSubagents`], laisserait battre la
+     * colonne pour toujours le jour où le backend n'a plus rien à annoncer — et deux chemins
+     * de rendu finiraient de toute façon par ne plus dessiner la même chose.
+     */
+    function beat(wanted: boolean): void {
+        if (wanted === (ticker !== null)) return;
+        if (ticker !== null) {
+            clearInterval(ticker);
+            ticker = null;
+            return;
+        }
+        ticker = setInterval(draw, 1000);
     }
 
     draw();

@@ -6,7 +6,11 @@ import type {
     TabInfo,
     WorktreeMetadata,
 } from "@/shared/ipc";
-import { agentGlyph, presentAgentState } from "@/shared/agent-state";
+import {
+    agentGlyph,
+    elapsedSince as sinceEntering,
+    presentAgentState,
+} from "@/shared/agent-state";
 import { tabTitle } from "./tab-bar";
 import type { TabsState } from "./tabs";
 
@@ -129,41 +133,20 @@ export function composeStatusLine(
 /**
  * Depuis combien de temps l'onglet est dans son état — le `working · 15m22s` de la maquette.
  *
- * Calculé **ici**, à chaque rendu, à partir de la date d'entrée que le backend a envoyée
- * une seule fois : c'est ce qui garde `TabInfo` identique d'une passe de sonde à l'autre.
- * Le frontend n'invente rien pour autant — il ne décide ni de l'état, ni de son origine
+ * Calculé **à l'affichage**, à partir de la date d'entrée que le backend a envoyée une seule
+ * fois : c'est ce qui garde `TabInfo` identique d'une passe de sonde à l'autre. Le frontend
+ * n'invente rien pour autant — il ne décide ni de l'état, ni de son origine
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), seulement de la façon de
  * lire l'écart jusqu'à maintenant.
  *
- * `null` sur un onglet `idle` : un shell à son invite n'a pas d'activité à chronométrer, et
- * un compteur qui tournerait sur les onglets vides ferait du bruit là où il n'y a rien à
- * lire. `null` aussi sur une date à venir — une horloge recalée entre le backend et le
- * rendu — parce qu'écrire `-3s` serait pire que ne rien écrire.
+ * La seule règle qui reste ici est celle que cette ligne est seule à porter : **rien sur un
+ * onglet `idle`**. Un shell à son invite n'a pas d'activité à chronométrer, et un compteur
+ * qui tournerait sur les onglets vides ferait du bruit là où il n'y a rien à lire. La mise en
+ * forme, elle, est partagée avec les lignes de sous-agents de la sidebar
+ * ([`@/shared/agent-state`]).
  */
 function elapsedSince(tab: TabInfo, now: number): string | null {
-    if (tab.state === "idle") return null;
-    const elapsed = now - tab.stateSince;
-    return elapsed < 0 ? null : formatElapsed(elapsed);
-}
-
-/**
- * `45s`, `15m22s`, `2h05m` — au plus deux unités, et jamais plus de sept caractères.
- *
- * La ligne de statut fait 25 px de haut et partage sa largeur avec un chemin et un état
- * git : la seconde disparaît au-delà de l'heure, où elle n'apprend plus rien.
- */
-export function formatElapsed(millis: number): string {
-    const seconds = Math.floor(millis / 1000);
-    if (seconds < 60) return `${seconds}s`;
-
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m${pad(seconds % 60)}s`;
-
-    return `${Math.floor(minutes / 60)}h${pad(minutes % 60)}m`;
-}
-
-function pad(value: number): string {
-    return value.toString().padStart(2, "0");
+    return tab.state === "idle" ? null : sinceEntering(tab.stateSince, now);
 }
 
 /**

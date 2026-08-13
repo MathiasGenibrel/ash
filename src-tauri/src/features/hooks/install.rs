@@ -329,7 +329,7 @@ mod tests {
 
         // Then
         assert!(matches!(installed, Ok(Installation::Written { .. })));
-        assert!(after.contains("ash:hook v1"));
+        assert!(after.contains(&hook_mark(instrumentation.version)));
         assert!(
             after.contains("    \"model\": \"opus\",\n    \"env\": {\"FOO\": \"bar\"}"),
             "les lignes de l'utilisateur ont bougé :\n{after}"
@@ -371,8 +371,21 @@ mod tests {
         assert_eq!(parsed["model"], "opus", "les réglages sont intacts");
         assert_eq!(
             parsed["hooks"]["Stop"][0]["hooks"][0]["command"],
-            "'/Applications/Ash.app/Contents/MacOS/ash-event' waiting --tab \"$ASH_TAB_ID\" # ash:hook v1",
+            format!(
+                "'/Applications/Ash.app/Contents/MacOS/ash-event' waiting --tab \"$ASH_TAB_ID\" {}",
+                hook_mark(instrumentation.version)
+            ),
             "la forme canonique de la spec §6.3, telle que le shell la lira, marqueur compris"
+        );
+        // Le sixième hook, celui des sous-agents : il écrit un verbe qui n'est **pas** un
+        // état, et c'est ce qui l'empêche d'atteindre l'état de l'onglet (ADR-0007,
+        // amendement du 2026-08-13).
+        assert_eq!(
+            parsed["hooks"]["SubagentStop"][0]["hooks"][0]["command"],
+            format!(
+                "'/Applications/Ash.app/Contents/MacOS/ash-event' subagent-stop --tab \"$ASH_TAB_ID\" {}",
+                hook_mark(instrumentation.version)
+            )
         );
     }
 
@@ -462,9 +475,13 @@ mod tests {
 
         // Then
         assert!(matches!(updated, Ok(Installation::Written { .. })));
-        assert!(after.contains("ash:hook v2"), "version à jour :\n{after}");
+        let installed = instrumentation(config_dir).version;
         assert!(
-            !after.contains("ash:hook v1"),
+            after.contains(&hook_mark(installed + 1)),
+            "version à jour :\n{after}"
+        );
+        assert!(
+            !after.contains(&hook_mark(installed)),
             "les anciennes entrées ont disparu :\n{after}"
         );
         assert!(after.contains("  \"model\": \"opus\""));
@@ -605,7 +622,10 @@ mod tests {
             ("/home/someone/.claude-perso/settings.json", "haiku"),
         ] {
             let content = files.content_of(Path::new(file)).unwrap_or_default();
-            assert!(content.contains("ash:hook v1"), "{file} n'a pas d'entrée");
+            assert!(
+                content.contains(&hook_mark(instrumentation(".").version)),
+                "{file} n'a pas d'entrée"
+            );
             assert!(content.contains(model), "{file} a perdu son réglage");
         }
         // Puis on en retire un : l'autre ne bouge pas.
@@ -614,7 +634,7 @@ mod tests {
         assert!(files
             .content_of(Path::new("/home/someone/.claude-perso/settings.json"))
             .unwrap_or_default()
-            .contains("ash:hook v1"));
+            .contains(&hook_mark(instrumentation(".").version)));
     }
 
     #[test]

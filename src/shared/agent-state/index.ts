@@ -1,5 +1,7 @@
 import type { AgentState } from "@/shared/ipc";
 
+export { elapsedSince, formatElapsed } from "./elapsed";
+
 /**
  * La présentation des cinq états d'un agent — glyphe, mot, teinte.
  *

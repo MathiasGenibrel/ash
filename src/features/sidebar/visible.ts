@@ -1,5 +1,12 @@
 import type { AgentState } from "@/shared/ipc";
-import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
+import {
+    tabStates,
+    type SidebarGroup,
+    type SidebarTabNode,
+    type SidebarTree,
+    type WorktreeNode,
+} from "./tree";
+import type { SubagentNode } from "./subagents";
 
 /**
  * Ce que la colonne **montre réellement**, replis compris.
@@ -47,6 +54,21 @@ export function planWorktree(worktree: WorktreeNode): RowPlan<SidebarTabNode> {
     return worktree.collapsed
         ? { badge: worktree.state, children: [] }
         : { badge: null, children: worktree.tabs };
+}
+
+/**
+ * Le plan d'une ligne d'onglet : ses sous-agents, et jamais de glyphe à leur place.
+ *
+ * `badge` est **toujours** `null`, et ce n'est pas une omission : une ligne d'onglet porte
+ * déjà son propre état, à gauche de son nom. Elle ne remonte donc rien de ses enfants — ils
+ * sont juste en dessous, et le plus urgent d'entre eux se lit d'un coup d'œil. C'est la ligne
+ * de **worktree** qui les remonte quand elle est repliée, et c'est ce que [`tabStates`]
+ * porte.
+ *
+ * Une ligne d'onglet n'a pas de repli à elle : ses enfants se montrent ou n'existent pas.
+ */
+export function planTab(tab: SidebarTabNode): RowPlan<SubagentNode> {
+    return { badge: null, children: tab.subagents };
 }
 
 /**
@@ -101,7 +123,29 @@ function groupStates(group: SidebarGroup): AgentState[] {
 
 function worktreeStates(worktree: WorktreeNode): AgentState[] {
     const plan = planWorktree(worktree);
-    return [...badge(plan), ...plan.children.map((tab) => tab.state)];
+    // Chaque onglet déplié dit son état **et** ceux de ses enfants : ce sont autant de
+    // lignes que l'œil lit dans la colonne, et la garantie porte sur toutes.
+    return [...badge(plan), ...plan.children.flatMap(tabStates)];
+}
+
+/**
+ * Y a-t-il une ligne fille à l'écran ?
+ *
+ * Les durées d'une ligne fille se calculent à l'affichage, donc il faut un battement pour les
+ * faire avancer. Il n'a aucune raison de tourner quand la colonne n'a rien à animer, et
+ * `mountSidebar` s'en sert pour ne pas redessiner une sidebar immobile une fois par seconde.
+ */
+export function showsSubagents(
+    tree: SidebarTree,
+    columnCollapsed: boolean,
+): boolean {
+    // Le rail de 46 px ne montre pas les enfants : il n'a donc jamais de durée à animer.
+    if (columnCollapsed) return false;
+    return tree.groups.some((group) =>
+        planGroup(group).children.some((worktree) =>
+            planWorktree(worktree).children.some((tab) => tab.subagents.length > 0),
+        ),
+    );
 }
 
 function badge(plan: RowPlan<unknown>): AgentState[] {
