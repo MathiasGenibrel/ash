@@ -16,6 +16,8 @@ import type { HooksReport as RustHooksReport } from "@/shared/ipc/generated/Hook
 import type { HookState as RustHookState } from "@/shared/ipc/generated/HookState";
 import type { Mismatch as RustMismatch } from "@/shared/ipc/generated/Mismatch";
 import type { NewTool as RustNewTool } from "@/shared/ipc/generated/NewTool";
+import type { NotificationPermission as RustNotificationPermission } from "@/shared/ipc/generated/NotificationPermission";
+import type { NotificationsReport as RustNotificationsReport } from "@/shared/ipc/generated/NotificationsReport";
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
 import type { SuggestedFix as RustSuggestedFix } from "@/shared/ipc/generated/SuggestedFix";
 import type { TestDescription as RustTestDescription } from "@/shared/ipc/generated/TestDescription";
@@ -32,6 +34,8 @@ import type {
     HooksReport,
     HookState,
     Mismatch,
+    NotificationPermission,
+    NotificationsReport,
     SettingsSnapshot,
     SuggestedFix,
     TestDescription,
@@ -64,6 +68,20 @@ export type ToolDeclarationStillMirrorsRust = Assert<
 >;
 export type SettingsSnapshotStillMirrorsRust = Assert<
     Mirrors<RustSettingsSnapshot, SettingsSnapshot>
+>;
+
+/**
+ * La section `notifications` (spec §8), et l'autorisation qu'elle affiche.
+ *
+ * Elle est vérifiée comme le reste, et pas seulement par prudence : `notified` porte les
+ * deux états qui interrompent, et un état ajouté ou retiré côté `agents` doit se voir ici
+ * plutôt qu'à l'écran.
+ */
+export type NotificationPermissionStillMirrorsRust = Assert<
+    Mirrors<RustNotificationPermission, NotificationPermission>
+>;
+export type NotificationsReportStillMirrorsRust = Assert<
+    Mirrors<RustNotificationsReport, NotificationsReport>
 >;
 
 /** Ce que l'event `ash://settings-verified` porte — la ligne `hooks` comprise (#16). */

@@ -1,6 +1,12 @@
 import { button, FOCUS_KEY, paint, text, toNode, type UiChild } from "@/shared/ui";
 
-import type { FixAction, SettingsSnapshot, ToolDraft, Verification } from "./contract";
+import type {
+    FixAction,
+    NotificationsReport,
+    SettingsSnapshot,
+    ToolDraft,
+    Verification,
+} from "./contract";
 import { describeToolCount } from "./model";
 import { type SettingsSection } from "./sections";
 import {
@@ -10,6 +16,7 @@ import {
     foot,
     navColumn,
     noToolsYet,
+    notificationsSection,
     para,
     pathFocusKey,
     scaleNote,
@@ -113,6 +120,15 @@ export interface SettingsScene {
      * panneau. Rien ne s'y écrit tant que l'utilisateur n'a pas tranché.
      */
     conflict: string | null;
+    /**
+     * La section `notifications` telle que le backend la compose, ou `null` tant qu'il n'a
+     * pas répondu (spec §8).
+     *
+     * Elle n'est **pas** dans `snapshot` : la liste des outils et l'autorisation macOS ne
+     * changent ni au même moment ni pour la même raison, et les faire voyager ensemble
+     * obligerait chaque ajout d'entrée à redemander une permission au système.
+     */
+    notifications: NotificationsReport | null;
 }
 
 /** La colonne de gauche. */
@@ -130,6 +146,7 @@ export function settingsPanel(
     scene: SettingsScene,
     actions: SettingsRendering,
 ): readonly UiChild[] {
+    if (scene.section === "notifications") return notificationsSection(scene.notifications);
     if (scene.section !== "tools") return placeholderSection(scene.section);
     if (scene.draft !== null) {
         return addForm(
@@ -209,14 +226,12 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
  * aujourd'hui plutôt que de laisser un panneau muet. Rien n'y est inventé : chaque phrase
  * décrit l'état réel du produit.
  */
-function placeholderSection(section: Exclude<SettingsSection, "tools">): readonly UiChild[] {
-    const explanations: Record<Exclude<SettingsSection, "tools">, string> = {
+function placeholderSection(section: "shortcuts" | "appearance"): readonly UiChild[] {
+    const explanations: Record<"shortcuts" | "appearance", string> = {
         shortcuts:
             "the shortcuts are declared in the native menu — Terminal and View list them with their keys. changing them here comes later.",
         appearance:
             "the theme is chosen in View ▸ Theme: light, dark, or the one macOS is in. font, size and density come later.",
-        notifications:
-            "nothing is notified yet: waiting, done and error need the hooks, and the hooks need a verified tool.",
     };
 
     return [

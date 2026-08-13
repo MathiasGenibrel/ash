@@ -72,6 +72,7 @@ use std::sync::{Arc, Mutex};
 
 use super::adapter::{Adapter, RawEvent};
 use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
+use super::notify::{notice, Notice, Notifier};
 use super::state::AgentState;
 use super::wire::EventFrame;
 use crate::shared::time::Clock;
@@ -105,6 +106,14 @@ pub struct Supervisor {
     /// reconnaît le mot qui répond. Un adaptateur sans instrumentation, `generic` en tête,
     /// ne reconnaît rien et ne peut donc rien avaler au passage.
     adapters: Vec<Arc<dyn Adapter>>,
+    /// Où partent les interruptions de la spec §8.
+    ///
+    /// **Le superviseur est le seul endroit du produit qui sache qu'un état vient de
+    /// changer**, par opposition à *être* : c'est lui qui reçoit le `Some(état)` des
+    /// machines, et la boucle de sonde qui l'appelle ne voit, elle, qu'un état. Poser la
+    /// notification ailleurs reviendrait à la poser sur une lecture, donc trois fois par
+    /// seconde ([`super::notify`]).
+    notifier: Arc<dyn Notifier>,
     tabs: Mutex<Tabs>,
 }
 
@@ -129,10 +138,15 @@ struct Tab {
 }
 
 impl Supervisor {
-    pub fn new(clock: Arc<dyn Clock>, adapters: Vec<Arc<dyn Adapter>>) -> Self {
+    pub fn new(
+        clock: Arc<dyn Clock>,
+        adapters: Vec<Arc<dyn Adapter>>,
+        notifier: Arc<dyn Notifier>,
+    ) -> Self {
         Self {
             clock,
             adapters,
+            notifier,
             tabs: Mutex::new(Tabs::default()),
         }
     }
@@ -146,16 +160,25 @@ impl Supervisor {
         let Some(declared) = self.translate(&event.kind) else {
             return;
         };
-        let Ok(mut tabs) = self.tabs.lock() else {
-            return;
-        };
 
-        let focused = tabs.focused;
-        let clock = Arc::clone(&self.clock);
-        let tab = tabs.live.entry(event.tab_id.clone()).or_default();
-        tab.machine
-            .get_or_insert_with(|| watching(clock, focused))
-            .on(AgentEvent::Hook(declared));
+        // Le verrou est rendu **avant** de poster : une notification est un effet système,
+        // et le tenir pendant qu'on sort de la feature ferait dépendre la boucle de sonde
+        // de ce que le système met à répondre.
+        let interruption = {
+            let Ok(mut tabs) = self.tabs.lock() else {
+                return;
+            };
+
+            let focused = tabs.focused;
+            let clock = Arc::clone(&self.clock);
+            let tab = tabs.live.entry(event.tab_id.clone()).or_default();
+            let changed = tab
+                .machine
+                .get_or_insert_with(|| watching(clock, focused))
+                .on(AgentEvent::Hook(declared));
+            interrupt(&event.tab_id, changed, focused)
+        };
+        self.post(interruption);
     }
 
     /// Quel état pour cet onglet, compte tenu de ce que la sonde voit ?
@@ -164,12 +187,24 @@ impl Supervisor {
     /// des machines, et c'est par son résultat — porté par le `TabInfo` du registre — que
     /// l'état atteint l'écran. Le frontend n'apprend jamais un état autrement.
     pub fn state(&self, tab_id: &str, seen: Presence) -> AgentState {
+        let (state, interruption) = self.advance(tab_id, seen);
+        self.post(interruption);
+        state
+    }
+
+    /// La passe de sonde elle-même : ce que l'onglet montre, et ce qu'elle vient
+    /// d'apprendre qui mérite d'interrompre l'utilisateur.
+    ///
+    /// Découpée de [`Self::state`] pour une seule raison, et elle compte : le verrou des
+    /// onglets meurt avec cette fonction, donc rien n'est posté en le tenant.
+    fn advance(&self, tab_id: &str, seen: Presence) -> (AgentState, Option<Notice>) {
         let Ok(mut tabs) = self.tabs.lock() else {
             // Un superviseur empoisonné n'a plus de mémoire ; la sonde, elle, répond
             // toujours. Mieux vaut un onglet honnête qu'un onglet figé.
-            return probed(seen);
+            return (probed(seen), None);
         };
 
+        let focused = tabs.focused;
         let tab = tabs.live.entry(tab_id.to_owned()).or_default();
         let before = std::mem::replace(&mut tab.seen, seen);
         // Une passe aveugle ne raconte rien : elle ne doit pas non plus effacer le souvenir
@@ -179,15 +214,19 @@ impl Supervisor {
         }
 
         let Some(machine) = tab.machine.as_mut() else {
-            return probed(seen);
+            return (probed(seen), None);
         };
 
         // La disparition : le shell a repris son terminal. On ne saura jamais avec quel code
         // — voir [`Exit::Unseen`]. C'est le **seul** front que la sonde permet d'attribuer à
         // l'agent ; le lancement, lui, n'est volontairement émis nulle part ici (voir « Ce
         // que la sonde n'a pas le droit d'attribuer », en tête de fichier).
+        //
+        // C'est aussi le seul changement d'état qu'une passe de sonde peut produire : le
+        // `tick` ci-dessous ne rend jamais qu'`idle`, qui n'interrompt personne.
+        let mut changed = None;
         if (before, seen) == (Presence::Program, Presence::Prompt) {
-            machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
+            changed = machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
         }
 
         machine.tick();
@@ -197,7 +236,7 @@ impl Supervisor {
             // c'est de nouveau la sonde qui répond pour lui.
             tab.machine = None;
         }
-        state
+        (state, interrupt(tab_id, changed, focused))
     }
 
     /// La fenêtre Ash a pris ou perdu le premier plan.
@@ -226,6 +265,16 @@ impl Supervisor {
         }
     }
 
+    /// Pose l'interruption, s'il y en avait une à poser.
+    ///
+    /// Une ligne, et pas de règle : ce qui décide est [`super::notify::notice`], et ce qui
+    /// dit qu'un état a **changé** est la machine. Ici il ne reste qu'à livrer.
+    fn post(&self, interruption: Option<Notice>) {
+        if let Some(interruption) = interruption {
+            self.notifier.post(interruption);
+        }
+    }
+
     /// Le mot reçu sur le socket, traduit par le premier adaptateur qui le reconnaît.
     fn translate(&self, kind: &str) -> Option<Declared> {
         let raw = RawEvent::new(kind);
@@ -234,6 +283,15 @@ impl Supervisor {
             .find_map(|adapter| adapter.interpret(&raw))
             .and_then(Declared::of)
     }
+}
+
+/// L'interruption que mérite un état qui vient de **changer**, ou rien.
+///
+/// `None` dès que rien n'a changé : c'est la porte étroite par laquelle la spec §8 passe, et
+/// elle est étroite exprès — un état lu n'arrive jamais ici, donc un `waiting` qui dure ne
+/// peut pas notifier deux fois.
+fn interrupt(tab_id: &str, changed: Option<AgentState>, focused: bool) -> Option<Notice> {
+    notice(tab_id, changed?, focused)
 }
 
 /// Une machine neuve, à qui l'on dit tout de suite si l'utilisateur regarde.
@@ -258,10 +316,18 @@ fn probed(seen: Presence) -> AgentState {
 mod tests {
     use super::*;
     use crate::features::agents::adapters::{ClaudeCodeAdapter, GenericAdapter};
-    use crate::features::agents::fakes::ManualClock;
+    use crate::features::agents::fakes::{FakeNotifier, ManualClock};
     use std::path::PathBuf;
 
     const TAB: &str = "01J0TAB";
+
+    /// Ce qu'un scénario a sous la main : le superviseur, le temps, et l'écran de
+    /// l'utilisateur.
+    struct Assembled {
+        supervisor: Supervisor,
+        clock: Arc<ManualClock>,
+        notifier: Arc<FakeNotifier>,
+    }
 
     /// Test Data Builder : le superviseur tel que le composition root l'assemble.
     ///
@@ -287,16 +353,25 @@ mod tests {
             self
         }
 
-        fn build(self) -> (Supervisor, Arc<ManualClock>) {
+        fn build(self) -> Assembled {
             let adapters: Vec<Arc<dyn Adapter>> = vec![
                 Arc::new(GenericAdapter),
                 Arc::new(ClaudeCodeAdapter::new(PathBuf::from(
                     "/Applications/Ash.app/Contents/MacOS/ash-event",
                 ))),
             ];
-            let supervisor = Supervisor::new(Arc::clone(&self.clock) as Arc<dyn Clock>, adapters);
+            let notifier = FakeNotifier::new();
+            let supervisor = Supervisor::new(
+                Arc::clone(&self.clock) as Arc<dyn Clock>,
+                adapters,
+                Arc::clone(&notifier) as Arc<dyn Notifier>,
+            );
             supervisor.on_window_focus(self.focused);
-            (supervisor, self.clock)
+            Assembled {
+                supervisor,
+                clock: self.clock,
+                notifier,
+            }
         }
     }
 
@@ -316,7 +391,7 @@ mod tests {
         // Given — `vim`, `htop`, un `make` : la sonde ne sait pas les nommer autrement que
         // « quelque chose tourne », et c'est tout ce qu'elle a le droit d'en dire
         // (ADR-0007, précision du 2026-08-11).
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
 
         // When
         let at_the_prompt = sweep(&supervisor, Presence::Prompt);
@@ -333,7 +408,7 @@ mod tests {
         // Given — quitter `vim` n'est pas la fin d'un agent. Annoncer `done` ici ferait
         // clignoter la sidebar à chaque commande, et rendrait l'état inutilisable pour ce
         // qu'il sert : reconnaître un agent qui a fini.
-        let (supervisor, _clock) = SupervisorBuilder::new().watched().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().watched().build();
         sweep(&supervisor, Presence::Program);
 
         // When
@@ -350,7 +425,7 @@ mod tests {
         // premier plan et le croirait au travail, alors qu'il attend une réponse. Le hook
         // fait autorité (ADR-0007) ; sans ça, le seul état qui mérite d'interrompre
         // l'utilisateur serait écrasé trois fois par seconde.
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
 
         // When
@@ -369,7 +444,7 @@ mod tests {
         // Given — la séquence réelle d'une fin propre : `SessionEnd` part, *puis* le
         // processus quitte l'avant-plan. La disparition ne doit rien retrancher à ce que le
         // hook a dit, sinon toute fin normale s'afficherait en échec.
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("done", TAB));
 
@@ -387,7 +462,7 @@ mod tests {
         // fin lui-même, donc partir sans l'avoir dite est anormal. Ash n'aura jamais son
         // code de sortie — il n'a pas lancé le processus (ADR-0006) — et c'est le seul
         // endroit du produit où cette absence se tranche. Voir [`Exit::Unseen`].
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("working", TAB));
 
@@ -406,7 +481,9 @@ mod tests {
         // présence : rien ne distingue ce programme de l'agent (ADR-0006). Le prendre pour
         // lui annoncerait un échec sur une commande qui a réussi — et pour bien plus longtemps
         // que trente secondes, puisqu'un état actif n'expire jamais.
-        let (supervisor, clock) = SupervisorBuilder::new().watched().build();
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().watched().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("done", TAB));
         sweep(&supervisor, Presence::Prompt);
@@ -428,7 +505,7 @@ mod tests {
         // produit : ni l'un ni l'autre n'est un mot que le bloc d'Ash écrit (spec §6.3).
         // Les accepter reviendrait à deviner, et un `waiting` deviné est exactement ce
         // qu'ADR-0007 refuse.
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
 
         // When
@@ -447,7 +524,7 @@ mod tests {
         // Given — `claude` et `claude-perso`, deux dossiers de configuration, deux blocs de
         // hooks, et un seul socket. Ce qui les sépare est `ASH_TAB_ID`, et rien d'autre :
         // ni le `cwd`, ni un horodatage, ni le pid (ADR-0007).
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         supervisor.state("01J0PRO", Presence::Program);
         supervisor.state("01J0PERSO", Presence::Program);
 
@@ -472,7 +549,9 @@ mod tests {
         // prouve ici est qu'elle est **branchée** : personne d'autre que la boucle de sonde
         // ne fait avancer le temps, et une ligne `done` que rien ne rafraîchirait resterait
         // pour toujours.
-        let (supervisor, clock) = SupervisorBuilder::new().watched().build();
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().watched().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("done", TAB));
         sweep(&supervisor, Presence::Prompt);
@@ -494,7 +573,9 @@ mod tests {
         // Given — Ash derrière l'éditeur, l'agent finit tout seul. Effacer la ligne au bout
         // de 30 s d'absence ferait disparaître l'information avant que personne ne l'ait
         // lue : un agent aurait travaillé pour rien.
-        let (supervisor, clock) = SupervisorBuilder::new().build();
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("done", TAB));
         clock.advance(3600);
@@ -516,7 +597,7 @@ mod tests {
         // Given — rien n'est restauré (ADR-0009), et surtout pas dans un onglet qui n'est
         // plus celui-là. Un état qui survivrait à son onglet serait un agent fantôme dans la
         // sidebar, sans processus derrière lui.
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("waiting", TAB));
 
@@ -533,7 +614,7 @@ mod tests {
         // Given — un appel système qui échoue, un processus qui se dérobe entre deux
         // passes : c'est courant, et ça ne dit rien de l'agent. Retomber à `idle` là-dessus
         // ferait clignoter la sidebar au gré de la charge de la machine.
-        let (supervisor, _clock) = SupervisorBuilder::new().build();
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
         sweep(&supervisor, Presence::Program);
         supervisor.on_hook(&hook("waiting", TAB));
 
@@ -545,5 +626,108 @@ mod tests {
         // aurait écrasé le `waiting` par un `working`
         assert_eq!(blind, AgentState::Waiting);
         assert_eq!(seeing_again, AgentState::Waiting);
+    }
+
+    #[test]
+    fn given_a_waiting_agent_whose_state_persists_when_the_probe_keeps_sweeping_then_the_user_is_interrupted_exactly_once(
+    ) {
+        // Given — l'état est **lu** trois fois par seconde par la boucle d'ADR-0005. Une
+        // notification accrochée à la lecture en poserait trois par seconde, et la première
+        // chose qu'un utilisateur ferait serait de couper les notifications d'Ash — ce qui
+        // détruirait le seul critère de sortie du jalon (voir un `waiting` en moins de 10 s).
+        let Assembled {
+            supervisor,
+            notifier,
+            ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+
+        // When — trente secondes de boucle, et un seul `waiting`
+        supervisor.on_hook(&hook("waiting", TAB));
+        for _ in 0..100 {
+            sweep(&supervisor, Presence::Program);
+        }
+
+        // Then
+        assert_eq!(notifier.titles(), vec!["an agent is waiting".to_owned()]);
+    }
+
+    #[test]
+    fn given_ash_in_the_background_when_an_agent_asks_a_question_then_ash_never_brings_itself_forward(
+    ) {
+        // Given — le troisième critère de la spec §8 est une **interdiction** : jamais de
+        // sélection automatique ni de vol de focus (ADR-0010, ADR-0015). Elle s'observe
+        // ici, et pas seulement dans la forme du port : si le superviseur se croyait
+        // regardé après avoir notifié, la ligne d'un agent fini partirait son compte à
+        // rebours de trente secondes sans que personne ne l'ait vue — et l'information
+        // disparaîtrait de l'écran avant que l'utilisateur ne revienne.
+        let Assembled {
+            supervisor,
+            clock,
+            notifier,
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+
+        // When — l'agent interrompt l'utilisateur, puis termine son travail
+        supervisor.on_hook(&hook("waiting", TAB));
+        supervisor.on_hook(&hook("done", TAB));
+        clock.advance(3600);
+        let an_hour_later = sweep(&supervisor, Presence::Prompt);
+
+        // Then — la bannière est bien partie, et la fenêtre n'a pas pris le premier plan
+        assert_eq!(notifier.titles(), vec!["an agent is waiting".to_owned()]);
+        assert_eq!(an_hour_later, AgentState::Done);
+    }
+
+    #[test]
+    fn given_an_agent_that_vanishes_without_declaring_its_end_when_the_probe_sees_it_then_the_failure_reaches_the_user_outside_ash(
+    ) {
+        // Given — `error` est le second état qui interrompt (spec §8), et son producteur
+        // n'est pas un hook mais la boucle de sonde. C'est le seul chemin de notification
+        // qui parte d'une passe de sonde : le brancher au verdict plutôt qu'au changement
+        // rendrait le `Some` de la machine inutile.
+        let Assembled {
+            supervisor,
+            notifier,
+            ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB));
+
+        // When — le processus quitte l'avant-plan, puis la boucle continue de passer
+        let after_the_crash = sweep(&supervisor, Presence::Prompt);
+        for _ in 0..10 {
+            sweep(&supervisor, Presence::Prompt);
+        }
+
+        // Then
+        assert_eq!(after_the_crash, AgentState::Error);
+        assert_eq!(
+            notifier.titles(),
+            vec!["an agent stopped on an error".to_owned()]
+        );
+    }
+
+    #[test]
+    fn given_an_agent_that_finishes_while_the_user_looks_away_when_it_declares_done_then_nothing_interrupts_him(
+    ) {
+        // Given — « `done` ne notifie pas en v1 » (spec §8). Un travail fini n'attend rien :
+        // la ligne de la sidebar suffit. C'est un refus, donc rien ne l'attraperait s'il
+        // disparaissait — et l'interruption qui compte perdrait sa valeur.
+        let Assembled {
+            supervisor,
+            clock,
+            notifier,
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+
+        // When
+        supervisor.on_hook(&hook("done", TAB));
+        sweep(&supervisor, Presence::Prompt);
+        clock.advance(60);
+        sweep(&supervisor, Presence::Prompt);
+
+        // Then
+        assert_eq!(notifier.titles(), Vec::<String>::new());
     }
 }

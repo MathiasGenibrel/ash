@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : onze commandes, un event, et l'ouverture de
+//! La surface de la feature vers le frontend : douze commandes, un event, et l'ouverture de
 //! sa fenêtre.
 //!
 //! Le frontend ne connaît de `settings` que ces noms et la forme de [`SettingsSnapshot`].
@@ -22,6 +22,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::error::SettingsError;
 use super::hooks::HooksReport;
+use super::notifications::{self, NotificationsReport};
 use super::registry::{Changed, SecondPass, ToolRegistry};
 use super::tool::{NewTool, ToolDeclaration};
 use super::values::Command;
@@ -163,6 +164,17 @@ fn announce(
         verified: tool.verified,
         hooks: Some(tool.hooks),
     })
+}
+
+/// Ce que la section `notifications` affiche (spec §8).
+///
+/// Sans état ni registre : ce que macOS laisse savoir de son autorisation ne dépend
+/// d'aucune entrée déclarée, et les deux états qui interrompent viennent d'`agents`. La
+/// fenêtre la rappelle à chaque fois qu'on ouvre la section — l'autorisation peut être
+/// changée dans les Réglages Système pendant qu'Ash est ouvert.
+#[tauri::command]
+pub fn settings_notifications() -> NotificationsReport {
+    notifications::report(notifications::observed())
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
