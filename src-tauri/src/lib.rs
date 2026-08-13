@@ -96,6 +96,14 @@ impl EventSink for HookEvents {
 /// d'une application Tauri. Avant qu'il ne soit posé — c'est-à-dire pendant le démarrage —
 /// une notification est perdue, et c'est sans conséquence : aucun agent n'a encore parlé.
 ///
+/// **Un `OnceLock` jamais rempli serait muet à l'exécution, mais il ne peut pas arriver
+/// jusque-là** : [`Self::attach`] est privée et n'a qu'un appelant, donc la retirer du
+/// câblage la rend morte et `cargo clippy -- -D warnings` échoue à la compilation. C'est la
+/// différence avec le `state()` appelé avant son `manage()` qui avait cassé le démarrage :
+/// cette panne-ci se voit avant de tourner. **Ne la faire taire ni par `#[allow(dead_code)]`
+/// ni par `#[expect(dead_code)]`** — ce serait échanger une erreur de build contre des
+/// bannières qui n'arrivent jamais, sans rien qui le dise.
+///
 /// Il n'y a aucune décision ici — un texte déjà écrit, une bannière — et c'est délibéré :
 /// ce qu'Ash notifie, quand, et avec quels mots est décidé par `features::agents::notify`,
 /// où ça se prouve.

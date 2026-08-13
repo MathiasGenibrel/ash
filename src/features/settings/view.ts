@@ -219,15 +219,22 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
     ];
 }
 
+/** Les sections que ni `tools` ni `notifications` ne rendent — celles qui restent. */
+type EmptySection = Exclude<SettingsSection, "tools" | "notifications">;
+
 /**
- * Les trois sections qui n'ont pas encore de contenu.
+ * Les sections qui n'ont pas encore de contenu.
  *
  * Elles existent parce que la **navigation** les traverse, et elles disent où la chose vit
  * aujourd'hui plutôt que de laisser un panneau muet. Rien n'y est inventé : chaque phrase
  * décrit l'état réel du produit.
+ *
+ * Le type se **déduit** de `SettingsSection` au lieu d'en recopier les noms : une section
+ * ajoutée doit faire échouer `bun run typecheck` sur le `Record` ci-dessous, qui est
+ * l'endroit exact où sa phrase manque.
  */
-function placeholderSection(section: "shortcuts" | "appearance"): readonly UiChild[] {
-    const explanations: Record<"shortcuts" | "appearance", string> = {
+function placeholderSection(section: EmptySection): readonly UiChild[] {
+    const explanations: Record<EmptySection, string> = {
         shortcuts:
             "the shortcuts are declared in the native menu — Terminal and View list them with their keys. changing them here comes later.",
         appearance:

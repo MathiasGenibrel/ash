@@ -43,6 +43,11 @@ use super::state::AgentState;
 ///
 /// La liste est publique parce que la fenêtre de réglages l'affiche : ce qu'Ash notifie est
 /// une décision de cette feature, pas une phrase recopiée dans une vue.
+///
+/// **Elle décrit [`words`], elle ne la double pas.** C'est le fait d'avoir un texte à dire
+/// qui décide qu'un état interrompt, et rien d'autre : une liste qui déciderait *aussi*
+/// ferait deux règles à tenir d'accord, et la fenêtre de réglages promettrait une bannière
+/// qu'Ash n'enverrait jamais. Le test de fin de fichier tient les deux ensemble.
 pub const NOTIFIED_STATES: [AgentState; 2] = [AgentState::Waiting, AgentState::Error];
 
 /// Ce qu'une notification porte.
@@ -70,8 +75,12 @@ pub trait Notifier: Send + Sync {
 ///
 /// `changed` est le `Some(état)` de la machine : un état **lu** n'entre jamais ici, et c'est
 /// ce qui fait qu'un `waiting` qui dure ne notifie qu'une fois.
+///
+/// Les trois règles sont ici, et une seule fois chacune : Ash est-il devant, l'état a-t-il
+/// un texte à dire — c'est ce qui définit [`NOTIFIED_STATES`] — et le `changed` du seul
+/// appelant qui sache distinguer un changement d'une lecture.
 pub fn notice(tab_id: &str, changed: AgentState, focused: bool) -> Option<Notice> {
-    if focused || !NOTIFIED_STATES.contains(&changed) {
+    if focused {
         return None;
     }
     let (title, body) = words(changed)?;
@@ -168,5 +177,31 @@ mod tests {
         let posted = posted.expect("error notifies");
         assert_eq!(posted.state, AgentState::Error);
         assert_eq!(posted.title, "an agent stopped on an error");
+    }
+
+    #[test]
+    fn given_the_five_states_when_the_settings_window_names_what_interrupts_then_it_names_exactly_what_a_banner_would_say(
+    ) {
+        // Given — la fenêtre de réglages affiche `NOTIFIED_STATES` (spec §8, dernière puce)
+        // pendant que la bannière, elle, obéit à `words`. Deux listes, donc deux façons de
+        // dériver : un état ajouté à la constante seule ferait promettre aux réglages une
+        // interruption qu'Ash n'enverrait jamais, et le retirer d'elle seule cacherait une
+        // bannière qui continuerait de sortir. Rien d'autre que ceci ne les tient ensemble.
+        let states = [
+            AgentState::Idle,
+            AgentState::Working,
+            AgentState::Waiting,
+            AgentState::Done,
+            AgentState::Error,
+        ];
+
+        // When
+        let with_something_to_say: Vec<AgentState> = states
+            .into_iter()
+            .filter(|state| notice("01J0TAB", *state, false).is_some())
+            .collect();
+
+        // Then
+        assert_eq!(with_something_to_say, NOTIFIED_STATES.to_vec());
     }
 }

@@ -243,6 +243,12 @@ impl Supervisor {
     ///
     /// Un niveau, poussé à toutes les machines : c'est lui qui décide si la ligne d'un agent
     /// fini a été **vue**, donc si ses trente secondes peuvent commencer (spec §6.4).
+    ///
+    /// **C'est la seule méthode qui touche les machines sans rien poster**, et elle en a le
+    /// droit parce que le focus n'annonce jamais de changement d'état — un invariant de
+    /// [`AgentMachine`], prouvé chez elle et non supposé ici. Sans lui, une interruption
+    /// naîtrait sous le verrou, où la poser ferait attendre la boucle de sonde de tous les
+    /// onglets.
     pub fn on_window_focus(&self, focused: bool) {
         let Ok(mut tabs) = self.tabs.lock() else {
             return;
