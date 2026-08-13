@@ -66,6 +66,13 @@ export type SidebarGroup =
           readonly key: string;
           readonly label: string;
           readonly title: string;
+          /**
+           * Replié : la ligne du dépôt reste, ses worktrees disparaissent (spec §4.1).
+           *
+           * La forme à plat n'a pas cette propriété — son unique worktree *est* sa ligne, et
+           * c'est le repli de ce worktree qui joue.
+           */
+          readonly collapsed: boolean;
           readonly worktrees: readonly WorktreeNode[];
           readonly state: AgentState;
       };
@@ -79,7 +86,9 @@ export interface SidebarTree {
 export interface SidebarOptions {
     readonly activeTabId: TabId | null;
     /** Les worktrees repliés, par racine. */
-    readonly collapsed: ReadonlySet<string>;
+    readonly collapsedWorktrees: ReadonlySet<string>;
+    /** Les groupes de dépôt repliés, par clé de groupe. */
+    readonly collapsedGroups: ReadonlySet<string>;
 }
 
 export const emptyTree: SidebarTree = { groups: [], tabCount: 0, waitingCount: 0 };
@@ -112,7 +121,7 @@ export function buildSidebar(
     }
 
     return {
-        groups: [...groups.values()].map((group) => freeze(group, options.collapsed)),
+        groups: [...groups.values()].map((group) => freeze(group, options)),
         tabCount: tabs.length,
         waitingCount: tabs.filter((tab) => tab.state === "waiting").length,
     };
@@ -189,7 +198,7 @@ function worktreeFor(group: MutableGroup, place: Place): MutableWorktree {
     return worktree;
 }
 
-function freeze(group: MutableGroup, collapsed: ReadonlySet<string>): SidebarGroup {
+function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
     const worktrees = [...group.worktrees.values()];
     const suffixes = suffixesOf(
         worktrees.map((worktree) => worktree.name),
@@ -197,7 +206,7 @@ function freeze(group: MutableGroup, collapsed: ReadonlySet<string>): SidebarGro
     );
 
     const nodes = worktrees.map((worktree, index) =>
-        node(worktree, suffixes[index] ?? null, collapsed),
+        node(worktree, suffixes[index] ?? null, options.collapsedWorktrees),
     );
     const state = bubbleState(nodes.map((worktree) => worktree.state));
 
@@ -215,6 +224,7 @@ function freeze(group: MutableGroup, collapsed: ReadonlySet<string>): SidebarGro
         key: group.key,
         label: truncate(group.repo?.name ?? ""),
         title: group.repo?.name ?? "",
+        collapsed: options.collapsedGroups.has(group.key),
         worktrees: nodes,
         state,
     };

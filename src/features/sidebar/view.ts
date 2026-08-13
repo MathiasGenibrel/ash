@@ -1,10 +1,18 @@
 import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
+import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import { abbreviate } from "./labels";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
+import { planGroup, planRailEntry, planWorktree } from "./visible";
 
 /**
  * Le rendu de la sidebar. Il ne décide rien : il reçoit l'arbre que [`buildSidebar`] a
  * produit et le pose dans le DOM.
+ *
+ * Deux décisions lui sont retirées, parce qu'elles ne se vérifieraient pas ici — `bun test`
+ * n'a pas de DOM : la forme de l'en-tête ([`./header`]) et ce qu'une ligne repliée montre
+ * à la place de ses enfants ([`./visible`]). La vue peint leur résultat, elle ne le
+ * recalcule pas ; c'est ce qui rend la garantie « une ligne repliée ne cache jamais un
+ * agent qui attend » testable.
  *
  * Le DOM est reconstruit à chaque rendu, comme la barre d'onglets : quelques dizaines de
  * nœuds, contre le risque bien réel d'une colonne qui diverge de l'ordre que le backend
@@ -14,6 +22,8 @@ export interface SidebarViewActions {
     selectTab(tabId: string): void;
     /** Replier ou déplier un worktree — propriété du worktree, pas du dépôt (ADR-0012). */
     toggleWorktree(key: string): void;
+    /** Replier ou déplier un groupe de dépôt, par sa clé de groupe (spec §4.1). */
+    toggleGroup(key: string): void;
     /** Le `+` du pied : un onglet de plus dans le worktree courant. */
     newTab(): void;
 }
@@ -22,27 +32,21 @@ export class SidebarView {
     readonly element: HTMLElement;
 
     private readonly body = document.createElement("div");
-    private readonly count = document.createElement("span");
+    private readonly head = document.createElement("div");
 
     constructor(private readonly actions: SidebarViewActions) {
         this.element = document.createElement("aside");
         this.element.className = "ash-sidebar";
 
-        const header = document.createElement("div");
-        header.className = "ash-sidebar-head";
-        const title = document.createElement("span");
-        title.textContent = "workspaces";
-        this.count.className = "ash-sidebar-count";
-        header.append(title, this.count);
-
+        this.head.className = "ash-sidebar-head";
         this.body.className = "ash-sidebar-body";
 
-        this.element.append(header, this.body, this.foot());
+        this.element.append(this.head, this.body, this.foot());
     }
 
     render(tree: SidebarTree, collapsedColumn: boolean): void {
         this.element.classList.toggle("is-collapsed", collapsedColumn);
-        this.count.replaceChildren(...this.counters(tree));
+        this.header(composeSidebarHeader(tree, collapsedColumn));
 
         if (tree.tabCount === 0) {
             this.body.replaceChildren(emptyState());
@@ -56,48 +60,93 @@ export class SidebarView {
         );
     }
 
-    /** `1 waiting / 7 agents` — ou simplement `0` quand il n'y a rien. */
-    private counters(tree: SidebarTree): Node[] {
-        if (tree.tabCount === 0) return [text("span", "0")];
+    /**
+     * `1 waiting / 7 agents`, ou `❯1` à 46 px.
+     *
+     * La phrase entière reste portée par le `title` et l'`aria-label` dans les deux formes :
+     * replier la colonne abrège l'affichage, jamais l'information.
+     */
+    private header(model: SidebarHeaderModel): void {
+        this.head.classList.toggle("is-compact", model.shape === "compact");
+        this.head.title = model.summary;
+        this.head.setAttribute("aria-label", model.summary);
 
-        const agents = text("span", `${tree.tabCount} agents`);
-        if (tree.waitingCount === 0) return [agents];
+        if (model.shape === "compact") {
+            // `❯3` ne se lit pas à voix haute. Un `aria-label` seul n'y suffit pas : posé
+            // sur un `div`, il tombe sur le rôle `generic`, que les lecteurs d'écran
+            // n'exposent pas — la phrase serait écrite dans le DOM sans que personne ne
+            // l'entende. `role="img"` donne à l'en-tête un rôle qui accepte un nom, et
+            // masque le glyphe qu'il remplace. La forme longue n'en a pas besoin : son
+            // texte est déjà lisible, et un rôle l'empêcherait de l'être.
+            this.head.setAttribute("role", "img");
 
-        return [
-            text("span", `${tree.waitingCount} waiting`, "ash-accent"),
-            text("span", "/", "ash-rule"),
-            agents,
-        ];
+            const badge = document.createElement("span");
+            badge.className = "ash-sidebar-badge";
+            if (model.badge.urgent) badge.classList.add("is-urgent");
+            if (model.badge.state !== null) badge.append(glyph(model.badge.state));
+            badge.append(text("span", String(model.badge.count), "ash-sidebar-badge-count"));
+
+            this.head.replaceChildren(badge);
+            return;
+        }
+
+        this.head.removeAttribute("role");
+
+        const count = document.createElement("span");
+        count.className = "ash-sidebar-count";
+        count.append(
+            ...model.chips.map((chip) =>
+                text("span", chip.text, chip.tone === "plain" ? undefined : `ash-${chip.tone}`),
+            ),
+        );
+
+        this.head.replaceChildren(text("span", model.title), count);
     }
 
     private groupRows(group: SidebarGroup): HTMLElement[] {
-        if (group.kind === "flat") {
-            // Deux niveaux visibles, et pas trois : un dépôt sans worktree lié ne gagne
-            // jamais de ligne intermédiaire (ADR-0012).
-            return [
-                this.worktreeRow(group.worktree, "flat"),
-                ...this.tabRows(group.worktree, "flat"),
-            ];
-        }
+        const plan = planGroup(group);
+        const rows =
+            group.kind === "flat"
+                ? // Deux niveaux visibles, et pas trois : un dépôt sans worktree lié ne
+                  // gagne jamais de ligne intermédiaire (ADR-0012).
+                  []
+                : [this.repoRow(group)];
 
-        const header = document.createElement("div");
-        header.className = "ash-repo";
+        const shape = group.kind === "flat" ? "flat" : "grouped";
+        return [
+            ...rows,
+            ...plan.children.flatMap((worktree) => [
+                this.worktreeRow(worktree, shape),
+                ...planWorktree(worktree).children.map((tab) => this.tabRow(tab, shape)),
+            ]),
+        ];
+    }
+
+    private repoRow(group: Extract<SidebarGroup, { kind: "repo" }>): HTMLElement {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "ash-repo";
+        row.setAttribute("aria-expanded", String(!group.collapsed));
+
+        const chevron = text("span", group.collapsed ? "▸" : "▾", "ash-chevron");
         const name = text("span", group.label, "ash-repo-name");
         name.title = group.title;
+
         const worktrees = group.worktrees.length;
-        header.append(
+        row.append(
+            chevron,
             name,
             spacer(),
             text("span", `${worktrees} worktree${worktrees > 1 ? "s" : ""}`, "ash-repo-count"),
         );
+        // Repliée, la ligne doit encore dire ce qui se passe en dessous d'elle.
+        const badge = planGroup(group).badge;
+        if (badge !== null) row.append(glyph(badge));
 
-        return [
-            header,
-            ...group.worktrees.flatMap((worktree) => [
-                this.worktreeRow(worktree, "grouped"),
-                ...this.tabRows(worktree, "grouped"),
-            ]),
-        ];
+        row.addEventListener("click", () => {
+            this.actions.toggleGroup(group.key);
+        });
+        return row;
     }
 
     private worktreeRow(worktree: WorktreeNode, shape: "flat" | "grouped"): HTMLElement {
@@ -115,17 +164,13 @@ export class SidebarView {
             row.append(text("span", worktree.suffix, "ash-worktree-suffix"));
         }
         // Repliée, la ligne doit encore dire ce qui se passe en dessous d'elle.
-        if (worktree.collapsed) row.append(glyph(worktree.state));
+        const badge = planWorktree(worktree).badge;
+        if (badge !== null) row.append(glyph(badge));
 
         row.addEventListener("click", () => {
             this.actions.toggleWorktree(worktree.key);
         });
         return row;
-    }
-
-    private tabRows(worktree: WorktreeNode, shape: "flat" | "grouped"): HTMLElement[] {
-        if (worktree.collapsed) return [];
-        return worktree.tabs.map((tab) => this.tabRow(tab, shape));
     }
 
     private tabRow(tab: SidebarTabNode, shape: "flat" | "grouped"): HTMLElement {
@@ -156,7 +201,8 @@ export class SidebarView {
      */
     private railEntry(group: SidebarGroup): HTMLElement {
         const label = group.kind === "repo" ? group.title : group.worktree.title;
-        const shown = presentAgentState(group.state);
+        const plan = planRailEntry(group);
+        const shown = presentAgentState(plan.badge);
 
         const entry = document.createElement("div");
         entry.className = "ash-rail-entry";
@@ -166,12 +212,7 @@ export class SidebarView {
         const initials = text("span", abbreviate(label), "ash-rail-initials");
         if (shown.tinted) initials.classList.add("ash-accent");
 
-        const tabs =
-            group.kind === "repo"
-                ? group.worktrees.flatMap((worktree) => worktree.tabs)
-                : group.worktree.tabs;
-
-        entry.append(initials, ...tabs.map((tab) => glyph(tab.state)));
+        entry.append(initials, ...plan.children.map((tab) => glyph(tab.state)));
         return entry;
     }
 

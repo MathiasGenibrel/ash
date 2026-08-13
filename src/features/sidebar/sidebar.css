@@ -43,9 +43,39 @@
     gap: 5px;
 }
 
-.ash-sidebar.is-collapsed .ash-sidebar-head,
 .ash-sidebar.is-collapsed .ash-sidebar-hint {
     display: none;
+}
+
+/* Le compteur agrégé **reste visible** repliée (spec §4.1) : c'est le seul endroit qui dit,
+ * à 46 px, qu'un agent attend ailleurs que dans le groupe qu'on regarde. Il n'y a plus la
+ * place d'écrire `1 waiting / 7 agents`, donc l'en-tête se réduit à un glyphe et un nombre —
+ * la phrase entière reste dans le `title` et l'`aria-label` posés par `view.ts`. */
+.ash-sidebar-head.is-compact {
+    justify-content: center;
+    padding: 8px 4px;
+}
+
+.ash-sidebar-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 5px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ash-fg-muted);
+}
+
+/* Même teinte que la ligne d'un agent qui attend : à 46 px, c'est la forme et le fond qui
+ * portent l'alerte, le nombre ne fait que la chiffrer. */
+.ash-sidebar-badge.is-urgent {
+    background: var(--ash-accent-bg);
+    color: var(--ash-accent-fg);
+}
+
+.ash-sidebar-badge.is-urgent .ash-sidebar-badge-count {
+    color: var(--ash-accent-fg);
 }
 
 .ash-sidebar-body {
@@ -95,13 +125,26 @@
 
 /* --- les trois niveaux ------------------------------------------------------ */
 
+/* Une ligne de dépôt est repliable comme une ligne de worktree (spec §4.1) : c'est un
+ * bouton, et il porte les mêmes remises à zéro que les deux autres niveaux. */
 .ash-repo {
     display: flex;
     align-items: center;
     gap: 6px;
+    width: 100%;
     padding: 8px 10px 4px 8px;
+    font: inherit;
     font-size: 11.5px;
+    text-align: left;
+    background: none;
+    border: 0;
+    cursor: pointer;
     color: var(--ash-fg);
+    transition: background 90ms;
+}
+
+.ash-repo:hover {
+    background: color-mix(in srgb, var(--ash-fg) 6%, transparent);
 }
 
 .ash-repo-name {
