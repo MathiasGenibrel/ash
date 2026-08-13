@@ -34,7 +34,11 @@ pub enum Authorization {
     Undisclosed,
 }
 
-/// Ce que le système fait de l'aveu qu'un agent attend.
+/// Ce que le système fait d'une bannière, et ce qu'il dit du droit d'en poser.
+///
+/// **Le mot « agent » n'apparaît pas ici, et c'est la règle du module** : ce trait est le
+/// seul contact d'Ash avec le centre de notifications, et ce qui justifie une bannière est
+/// décidé par `features::agents`, pas par lui.
 ///
 /// Un trait, pour la raison habituelle du dépôt : les effets système passent par un trait
 /// que la feature possède. Celui-ci en abstrait deux, et ils vont ensemble — ce qui *pose*

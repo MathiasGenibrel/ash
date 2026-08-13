@@ -40,6 +40,7 @@
 //! bundle, et retirer le garde ne le fait pas échouer — il fait **mourir** `cargo test`.
 #![allow(unsafe_code)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -70,6 +71,15 @@ const DENIED: isize = 1;
 const AUTHORIZED: isize = 2;
 const PROVISIONAL: isize = 3;
 
+/// Un délégué a-t-il déjà été posé sur le centre ?
+///
+/// La fuite volontaire de [`SystemBanners::attach`] n'est tenable que parce qu'elle arrive
+/// **une fois pour la vie du processus** ; un second appel poserait un second délégué,
+/// remplacerait le premier — que plus rien ne pourrait ni atteindre ni libérer — et les
+/// clics partiraient au dernier posé sans que rien ne le dise. C'était une consigne dans un
+/// commentaire ; c'en est maintenant une que le code tient.
+static DELEGATE_ATTACHED: AtomicBool = AtomicBool::new(false);
+
 /// L'implémentation macOS de [`Banners`]. Choisie au composition root, nulle part ailleurs.
 ///
 /// **Elle ne retient aucun objet Objective-C**, et c'est ce qui la rend `Send + Sync` sans
@@ -91,16 +101,27 @@ impl SystemBanners {
     /// `None` n'est pas une panne : c'est le développement, où Ash n'est pas empaqueté. Le
     /// composition root en fait un adaptateur muet plutôt qu'un refus de démarrer — les
     /// bannières valent moins que le terminal.
+    ///
+    /// **Un second appel rend `None` aussi**, et sans rien toucher : le délégué est posé une
+    /// fois pour la vie du processus (voir [`DELEGATE_ATTACHED`]).
     pub fn attach(clicked: Clicked) -> Option<Self> {
         if !bundled() {
+            return None;
+        }
+        // **Après** le garde de `bundled` : c'est lui qui doit décider en premier, sans quoi
+        // le test de fin de fichier cesserait d'atteindre le centre, donc de garder quoi que
+        // ce soit.
+        if DELEGATE_ATTACHED.swap(true, Ordering::SeqCst) {
             return None;
         }
 
         let center = UNUserNotificationCenter::currentNotificationCenter();
 
-        // Le délégué est une propriété **faible** : le relâcher le ferait désallouer, et le
-        // centre garderait un `nil` — donc plus aucun clic, sans rien qui le dise. On le
-        // fuit volontairement, parce que sa durée de vie est exactement celle du processus.
+        // Le délégué est une propriété **faible** — la liaison le dit, et Apple aussi :
+        // le relâcher le ferait désallouer, et le centre garderait un `nil`, donc plus aucun
+        // clic sans rien qui le dise. On le fuit volontairement, parce que sa durée de vie
+        // est exactement celle du processus, et [`DELEGATE_ATTACHED`] est ce qui garantit
+        // qu'il n'y en a qu'un à fuir.
         let delegate = ClickDelegate::new(clicked);
         center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         std::mem::forget(delegate);

@@ -176,10 +176,17 @@ fn announce(
 ///
 /// Le centre est **injecté**, et c'est celui qui pose les bannières : la fenêtre décrit donc
 /// l'autorisation du mécanisme qui interrompt vraiment, et non celle d'un autre.
+///
+/// **`async` volontairement**, pour la raison exacte de [`super::super::git::commands`] :
+/// Tauri exécute une commande synchrone sur le fil de l'interface, et celle-ci **attend** —
+/// macOS répond à `getNotificationSettings` par un bloc, sur une file à lui, et le port
+/// borne cette attente à deux secondes. Deux secondes mesurées à moins de dix millisecondes,
+/// mais deux secondes de fenêtre figée le jour où elles arrivent. Le handle plutôt que
+/// `tauri::State` : une commande `async` qui emprunte l'état est obligée de rendre un
+/// `Result`, et une erreur qui ne peut pas se produire n'a pas sa place dans le contrat.
 #[tauri::command]
-pub fn settings_notifications(
-    banners: tauri::State<'_, Arc<dyn crate::features::notifications::Banners>>,
-) -> NotificationsReport {
+pub async fn settings_notifications<R: Runtime>(app: AppHandle<R>) -> NotificationsReport {
+    let banners = app.state::<Arc<dyn crate::features::notifications::Banners>>();
     notifications::report(notifications::observed(banners.authorization()))
 }
 
