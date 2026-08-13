@@ -25,44 +25,47 @@ pub const FAKE_EPOCH: UnixMillis = 1_767_225_600_000;
 /// formes du temps avancent du même pas : un scénario qui ferait vieillir l'une sans
 /// l'autre décrirait une machine qui n'existe pas.
 pub struct ManualClock {
-    monotonic: Mutex<Instant>,
+    /// Les deux origines, posées une fois et jamais touchées.
+    origin: Instant,
+    /// **Le seul état de cette horloge** : le temps écoulé depuis les deux origines.
+    ///
+    /// Un unique compteur, et non un `Instant` et une durée tenus côte à côte : les deux
+    /// formes du temps se **dérivent** alors l'une de l'autre, au lieu d'être avancées
+    /// séparément et de pouvoir se désaccorder. C'est la même forme que le `ControlledTime`
+    /// de `features/git`, et c'est ce que le trait [`Clock`] promet — une application qui
+    /// n'a qu'un temps.
     elapsed: Mutex<Duration>,
 }
 
 impl ManualClock {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            monotonic: Mutex::new(Instant::now()),
+            origin: Instant::now(),
             elapsed: Mutex::new(Duration::ZERO),
         })
     }
 
     pub fn advance(&self, seconds: u64) {
-        let step = Duration::from_secs(seconds);
-        if let Ok(mut now) = self.monotonic.lock() {
-            *now += step;
-        }
         if let Ok(mut elapsed) = self.elapsed.lock() {
-            *elapsed += step;
+            *elapsed += Duration::from_secs(seconds);
         }
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.elapsed
+            .lock()
+            .map(|elapsed| *elapsed)
+            .unwrap_or_default()
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        self.monotonic
-            .lock()
-            .map(|now| *now)
-            .unwrap_or_else(|_| Instant::now())
+        self.origin + self.elapsed()
     }
 
     fn wall(&self) -> UnixMillis {
-        let elapsed = self
-            .elapsed
-            .lock()
-            .map(|elapsed| UnixMillis::try_from(elapsed.as_millis()).unwrap_or_default())
-            .unwrap_or_default();
-        FAKE_EPOCH + elapsed
+        FAKE_EPOCH + UnixMillis::try_from(self.elapsed().as_millis()).unwrap_or_default()
     }
 }
 

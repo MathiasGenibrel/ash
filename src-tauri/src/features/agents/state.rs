@@ -54,6 +54,30 @@ pub struct AgentStatus {
     pub since: UnixMillis,
 }
 
+impl AgentStatus {
+    /// Le statut d'un onglet qui montre `state`, sachant celui qu'il montrait avant.
+    ///
+    /// **C'est ici, et nulle part ailleurs, que la datation se décide.** Trois lignes, mais
+    /// elles portent toute la promesse du type : la date suit le **verdict affiché**, jamais
+    /// la source qui le produit ni la passe qui le lit. Deux conséquences, et il a fallu
+    /// écrire la règle une seule fois pour que les deux tiennent ensemble :
+    ///
+    /// - une passe de sonde qui reconduit le même état rend la même date, sinon la fiche de
+    ///   l'onglet changerait trois fois par seconde et l'event `ash://tab-changed`
+    ///   deviendrait un flux ;
+    /// - un hook qui déclare le mot que l'onglet montrait **déjà** ne redate pas non plus.
+    ///   C'est la séquence de tout démarrage d'agent — la sonde voit `claude` prendre
+    ///   l'avant-plan, le premier hook n'arrive qu'au premier outil employé — et le
+    ///   compteur repartait de zéro sous les yeux de l'utilisateur.
+    #[must_use]
+    pub fn entering(previous: Option<Self>, state: AgentState, now: UnixMillis) -> Self {
+        match previous {
+            Some(known) if known.state == state => known,
+            _ => Self { state, since: now },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

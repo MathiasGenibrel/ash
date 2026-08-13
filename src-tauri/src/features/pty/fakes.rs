@@ -185,10 +185,11 @@ pub struct FakeAgentStates {
     forgotten: Mutex<Vec<TabId>>,
     /// L'heure murale du scénario, et la date d'entrée de chaque onglet dans son état.
     ///
-    /// Le vrai superviseur ne redate que sur un changement d'état ; la doublure fait de
-    /// même, sans quoi les tests du registre prouveraient une stabilité que l'application
-    /// n'a pas. C'est tout ce qu'elle recopie de lui : la règle qui **décide** de l'état,
-    /// elle, reste chez `agents`.
+    /// La doublure ne **recopie** pas la règle de datation : elle appelle celle d'`agents`
+    /// ([`AgentStatus::entering`]). Une seconde copie de trois lignes ici aurait laissé les
+    /// tests du registre prouver une stabilité que l'application n'aurait plus — c'est
+    /// exactement ce qu'une mutation du superviseur montrait : elle ne les faisait pas
+    /// rougir. La règle qui **décide** de l'état, elle, reste chez `agents` de toute façon.
     now: Mutex<UnixMillis>,
     dated: Mutex<HashMap<TabId, AgentStatus>>,
 }
@@ -218,10 +219,7 @@ impl AgentStates for FakeAgentStates {
 
         let now = *self.now.lock().unwrap();
         let mut dated = self.dated.lock().unwrap();
-        let status = match dated.get(tab_id) {
-            Some(known) if known.state == state => *known,
-            _ => AgentStatus { state, since: now },
-        };
+        let status = AgentStatus::entering(dated.get(tab_id).copied(), state, now);
         dated.insert(tab_id.clone(), status);
         status
     }
