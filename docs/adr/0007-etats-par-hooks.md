@@ -119,6 +119,60 @@ la copie `.bak` le précède toujours.
 **Ce qui reste un refus** : un fichier qui n'est pas un objet JSON, un chemin occupé par
 autre chose qu'un conteneur, un fichier illisible. On ne devine pas où écrire.
 
+### Amendement du 2026-08-13 — une seconde clé, **subordonnée** à l'onglet
+
+La rédaction initiale dit que la corrélation hook → onglet se fait par `ASH_TAB_ID`, sans
+devinette par `cwd` ni par horodatage. Elle ne dit rien de ce qui se passe **à
+l'intérieur** d'un onglet, et le silence devenait un obstacle.
+
+**Ce que la préparation de #19 a montré.** Un sous-agent de Claude Code n'est pas un autre
+processus dans un autre terminal : c'est le **même** `claude`, dans le **même** onglet.
+`ASH_TAB_ID` est donc rigoureusement identique pour le parent et pour tous ses enfants, et
+le `session_id` de l'outil aussi. Lu au pied de la lettre, « l'onglet est la seule
+corrélation » interdisait de représenter les sous-agents — non parce que l'information
+manque, mais parce que la règle ne prévoyait pas de niveau en dessous.
+
+Or l'information est là. Tout hook de Claude Code reçoit sur son entrée standard un
+`agent_id` et un `agent_type` **dès qu'il se déclenche dans un sous-agent**, et
+`SubagentStop` les porte aussi — donc on sait *lequel* des enfants s'arrête, y compris
+quand plusieurs tournent en parallèle.
+
+| Avant | Après |
+|---|---|
+| L'onglet est la **seule** corrélation | L'onglet est la **seule corrélation d'un événement à un onglet**. À l'intérieur d'un onglet déjà corrélé, un identifiant fourni par l'outil peut désigner un enfant |
+
+**Ce n'est pas un affaiblissement, et voici pourquoi.** Ce qui est interdit reste
+interdit : deviner à quel onglet un événement appartient. `agent_id` ne fait pas ça — il
+n'entre en jeu qu'après que `ASH_TAB_ID` a tranché, et il ne peut pas rattacher un
+événement à un onglet auquel il n'appartenait pas. C'est une hiérarchie, pas une seconde
+source de vérité. Une trame sans ces champs reste valide et concerne l'agent principal,
+exactement comme aujourd'hui.
+
+**Trois garde-fous, qui font partie de la décision :**
+
+- **Un événement de sous-agent ne produit jamais d'état d'onglet.** `SubagentStop` figure
+  dans `tempting_events()` — la liste des mots qu'un adaptateur a interdiction de
+  reconnaître — et **il y reste**. Un sous-agent qui finit ne rend pas `claude`
+  disponible ; le traduire en `done` serait exactement la déduction que cette ADR refuse.
+  Le cycle de vie des enfants passe par une méthode **distincte** du trait `Adapter`, et
+  la suite contractuelle gagne l'exigence de vérifier qu'aucun événement d'enfant ne fuit
+  vers l'état du parent.
+- **Un sous-agent n'est jamais `waiting`.** Il ne peut pas interroger l'utilisateur. La
+  partie de cette décision qui ne se relâche pas — `waiting` n'a jamais d'autre source
+  qu'un hook, et justifie seul d'interrompre — n'est donc pas touchée : un enfant ne peut
+  pas rendre son parent `waiting`.
+- **`agent_id` ne sert qu'à distinguer des frères dans un onglet.** Il n'est ni une clé
+  de persistance, ni un identifiant stable entre deux sessions, ni quelque chose qu'on
+  corrèle à un commit — l'attribution d'ADR-0014 continue de ne connaître que l'onglet et
+  l'identifiant de l'outil.
+
+**Un mélange qui existait déjà, et que cet amendement rend visible.** Le hook `PreToolUse`
+d'Ash prend tous les outils, donc il se déclenche aussi à l'intérieur des sous-agents :
+un enfant qui lance un outil marque l'onglet parent `working`. Ce n'est pas faux — le
+parent travaille bien — mais les états du parent et des enfants sont **déjà** confondus,
+sans que rien ne le signale. Représenter les sous-agents ne crée pas ce mélange, il le
+nomme.
+
 ## Conséquences
 
 - Les états sont exacts, y compris `waiting`, qui est indevinable de l'extérieur et
