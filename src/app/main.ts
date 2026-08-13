@@ -157,10 +157,27 @@ theme.ready.catch(() => undefined);
 const fontSize = followTerminalFontSize();
 fontSize.ready.catch(() => undefined);
 
-if (import.meta.env.VITE_SPIKE === "1") {
-    mountSpike(root).catch((error: unknown) => {
-        root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
-    });
-} else {
-    mount(root, theme.changes, fontSize.changes);
-}
+// **Rien ne se monte avant que JetBrains Mono ne soit retombée.** Une vue de terminal
+// mesure sa cellule une fois, à sa construction, et ne la remesure jamais : la construire
+// trop tôt fige la largeur d'une face de repli, et donne des glyphes rognés à une lamelle
+// verticale et un `➜` rendu `?`. Le mécanisme est documenté là où est la mesure, dans
+// `features/terminal/xterm-view.ts`, avec la raison pour laquelle la vue ne peut pas s'en
+// tirer seule.
+//
+// L'attente est ici parce que c'est ici qu'est l'ordre de démarrage, et parce que c'est le
+// seul endroit où la condition se tient en une fois : les onglets ouverts plus tard
+// héritent d'une mesure déjà juste. Elle ne coûte rien — la police est livrée dans le
+// bundle, pas téléchargée, et la promesse retombe en quelques millisecondes. `finally` et
+// non `then` : une police qui échoue à charger doit donner un terminal en police de repli,
+// pas une fenêtre vide.
+void document.fonts.ready.finally(() => {
+    if (import.meta.env.VITE_SPIKE === "1") {
+        // Le banc a la même contrainte, et une raison de plus : il chronomètre un rendu,
+        // et une grille mesurée sur une face de repli n'est pas la grille qu'on mesure.
+        mountSpike(root).catch((error: unknown) => {
+            root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
+        });
+    } else {
+        mount(root, theme.changes, fontSize.changes);
+    }
+});
