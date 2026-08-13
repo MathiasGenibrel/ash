@@ -23,6 +23,12 @@ import { readTerminalTheme } from "./theme";
  * l'addon **WebGL**, qui donne environ 50 % de débit en plus sous WKWebView, et son
  * repli explicite sur perte de contexte — sans écoute, une perte se lirait comme un
  * écran figé.
+ *
+ * **Une vue mesure sa cellule une fois, à sa construction, et ne la remesure jamais.**
+ * C'est donc une condition d'appel, et non un détail interne : ne construisez pas de vue
+ * avant que les métriques de la police du terminal ne soient stables. Le mécanisme, le
+ * défaut qu'il produit et la façon de le vérifier sont au-dessus de `term.open()` ; ce
+ * qui tient la condition aujourd'hui est l'attente de `src/app/main.ts`.
  */
 export class XtermView implements TerminalView {
     private readonly term: Terminal;
@@ -204,6 +210,30 @@ export class XtermView implements TerminalView {
             this.setFontSize(points);
         });
 
+        // **Le moment de la mesure, et le seul.** xterm.js prend ici la largeur d'un
+        // caractère, de façon synchrone, et la fige dans la grille comme dans l'atlas de
+        // textures du renderer WebGL. Or `assets/fonts/fonts.css` déclare JetBrains Mono
+        // en `font-display: block` : tant que le woff2 n'est pas arrivé, WebKit répond
+        // avec les métriques d'une face de repli. Mesurer là, c'est graver la largeur de
+        // SF Mono puis y tracer du JetBrains Mono — des glyphes rognés à une lamelle
+        // verticale, et un prompt déjà peint qui garde son `?` là où il voulait un `➜`
+        // (U+279C existe dans JetBrains Mono, pas dans SF Mono).
+        //
+        // Seul le bundle perd cette course, et c'est pourquoi elle se vérifie **en
+        // `tauri build` uniquement** : en `tauri dev`, l'origine `http://localhost:1420`
+        // garde son cache HTTP d'un lancement à l'autre, alors que `tauri://localhost`
+        // part d'un cache vierge et passe chaque asset par le protocole personnalisé de
+        // Tauri — un aller-retour vers Rust.
+        //
+        // La condition est tenue en amont, par l'attente de `src/app/main.ts`, et non
+        // rattrapée ici, parce que xterm.js n'offre pas de remesure : elle n'arrive qu'en
+        // effet de bord d'un **changement** de `fontFamily` ou `fontSize`, et son
+        // `OptionsService` n'émet rien quand la valeur reposée est la même (« Don't fire
+        // an option change event if they didn't change », vérifié sur 6.0.0). Remesurer
+        // d'ici demanderait de faire varier la famille pour la reposer aussitôt — un
+        // détour par une face fausse, appuyé sur un comportement non documenté, que
+        // `bun test` ne peut ni exercer ni protéger, faute de WKWebView et de police à
+        // charger.
         this.term.open(this.pane);
 
         // Après `open`, parce que le textarea caché n'existe pas avant : c'est lui que la
