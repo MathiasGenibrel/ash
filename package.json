@@ -8,10 +8,18 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "app": "tauri dev",
+    "package": "tauri build",
+    "package:debug": "tauri build --debug",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "smoke": "scripts/smoke.sh"
+    "smoke": "scripts/smoke.sh",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "rust:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "rust:test": "cd src-tauri && cargo test",
+    "verify": "bun run lint && bun run typecheck && bun test && bun run rust:fmt && bun run rust:lint && bun run rust:test",
+    "verify:full": "bun run verify && bun run smoke"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
