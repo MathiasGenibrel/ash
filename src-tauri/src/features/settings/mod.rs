@@ -40,6 +40,13 @@
 //! mémoire du dernier dossier valide consomment tous la même valeur, donc ne peuvent plus
 //! diverger sur ce que « le même dossier » veut dire.
 //!
+//! **La section `notifications` de la fenêtre est ici aussi** ([`notifications`]), et pas
+//! dans `agents` : cette feature-là n'expose rien au frontend et n'a pas de `commands.rs`,
+//! quand celle-ci a déjà sa fenêtre, sa capacité et ses commandes. Elle ne décide pas ce
+//! qu'Ash notifie — c'est `agents` qui le dit, par `NOTIFIED_STATES` — elle décide **ce que
+//! l'écran en montre**, et notamment ce qu'il dit quand macOS ne laisse rien savoir de son
+//! autorisation (spec §8).
+//!
 //! **Ce qui n'y est pas encore, et pourquoi :** l'**écriture dans `~/.ash/config.toml`**,
 //! qui n'a lieu que pour une entrée vérifiée. La vérification l'a débloquée ; la persistance
 //! appartient à la tâche qui la porte, et un registre en mémoire dit exactement la vérité du
@@ -54,6 +61,7 @@ mod error;
 #[cfg(test)]
 mod fakes;
 mod hooks;
+mod notifications;
 mod permits;
 mod ports;
 mod registry;
@@ -64,6 +72,7 @@ mod verification;
 
 pub use error::SettingsError;
 pub use hooks::{BlockAt, HookAction, HookChoice, HookState, HooksReport};
+pub use notifications::{NotificationPermission, NotificationsReport, GRANT_PATH};
 pub use ports::{CommandRunner, ConfigFiles, HookBlocks};
 pub use registry::ToolRegistry;
 pub use system::{SystemCommands, SystemConfigFiles};

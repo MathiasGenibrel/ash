@@ -14,6 +14,7 @@ import "./settings.css";
 
 import type {
     FixAction,
+    NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
     ToolDraft,
@@ -25,6 +26,8 @@ import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
 
 export type {
+    NotificationPermission,
+    NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
     ToolDeclaration,
@@ -82,6 +85,8 @@ export function mountSettings(
     let failure: string | null = null;
     /** L'entrée dont on regarde le conflit — un écran, pas un état d'outil. */
     let conflict: string | null = null;
+    /** Ce que le backend dit des notifications macOS, ou `null` tant qu'il n'a rien dit. */
+    let notifications: NotificationsReport | null = null;
     /** Ce qui est tapé dans le champ de chemin d'une carte, tant qu'il n'a pas été jugé. */
     const edits = new Map<string, string>();
 
@@ -105,6 +110,10 @@ export function mountSettings(
     const view = new SettingsView({
         selectSection: (next) => {
             section = next;
+            // L'autorisation macOS se change dans les Réglages Système pendant qu'Ash
+            // tourne : la relire en ouvrant la section est la seule façon de ne pas
+            // afficher un état d'hier.
+            if (next === "notifications") void askNotifications();
             draw();
         },
         startAdding: () => {
@@ -220,6 +229,16 @@ export function mountSettings(
         return ports.retargetTool(command, tool?.adapter ?? GENERIC_ADAPTER, fix.path);
     }
 
+    /** Relit la section `notifications`. Un refus la laisse à ce qu'elle montrait. */
+    async function askNotifications(): Promise<void> {
+        try {
+            notifications = await ports.notifications();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
     function closeDraft(): void {
         relaunch.cancel(DRAFT);
         draft = null;
@@ -255,7 +274,16 @@ export function mountSettings(
         // un diff que le backend ne rapporte plus montrerait un refus qui n'existe plus.
         const shown = snapshot.tools.find((tool) => tool.command === conflict);
         if (shown === undefined || shown.hooks.state !== "conflict") conflict = null;
-        view.render({ section, snapshot, draft, draftVerification, failure, edits, conflict });
+        view.render({
+            section,
+            snapshot,
+            draft,
+            draftVerification,
+            failure,
+            edits,
+            conflict,
+            notifications,
+        });
     }
 
     /**
@@ -295,12 +323,14 @@ export function mountSettings(
         // qui a le focus.
         event.preventDefault();
         section = moveSection(section, step);
+        if (section === "notifications") void askNotifications();
         draw();
         view.focusActiveSection();
     });
 
     draw();
     void apply(ports.tools());
+    void askNotifications();
 
     /**
      * Le **second temps** : le test 4 a répondu, parfois plusieurs secondes après le

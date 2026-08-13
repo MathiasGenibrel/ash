@@ -584,6 +584,39 @@ mod tests {
     }
 
     #[test]
+    fn given_an_agent_in_any_state_when_the_window_takes_or_loses_the_foreground_then_no_state_change_is_ever_announced(
+    ) {
+        // Given — le focus n'est pas une source d'état, il n'ouvre que le compte à rebours
+        // d'une ligne finie. C'est aussi ce qui rend `Supervisor::on_window_focus` sûr : il
+        // pousse le focus à toutes les machines **en tenant le verrou des onglets**, et jette
+        // ce qu'elles rendent. Le jour où le focus annoncerait un changement, une
+        // interruption de la spec §8 serait silencieusement perdue — ou, pire, posée sous le
+        // verrou, où un effet système lent figerait la boucle de sonde de tous les onglets.
+        let built = [
+            AgentBuilder::new(),
+            AgentBuilder::new().started(),
+            AgentBuilder::new().started().declared(Declared::Waiting),
+            AgentBuilder::new().started().declared(Declared::Done),
+            AgentBuilder::new().started().declared(Declared::Error),
+        ];
+
+        // When
+        let announced: Vec<Option<AgentState>> = built
+            .into_iter()
+            .flat_map(|builder| {
+                let (mut machine, _clock) = builder.build();
+                [
+                    machine.on(AgentEvent::WindowFocus(true)),
+                    machine.on(AgentEvent::WindowFocus(false)),
+                ]
+            })
+            .collect();
+
+        // Then
+        assert_eq!(announced, vec![None; 10]);
+    }
+
+    #[test]
     fn given_an_error_line_the_user_has_seen_when_thirty_seconds_pass_then_it_becomes_a_shell_row_again(
     ) {
         // Given — la spec §6.4 traite `done` et `error` ensemble. Une ligne d'échec qui
