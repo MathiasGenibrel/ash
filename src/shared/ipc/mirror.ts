@@ -22,6 +22,7 @@ import type { OperationKind as RustOperationKind } from "./generated/OperationKi
 import type { Progress as RustProgress } from "./generated/Progress";
 import type { RepoRef as RustRepoRef } from "./generated/RepoRef";
 import type { Status as RustStatus } from "./generated/Status";
+import type { Subagent as RustSubagent } from "./generated/Subagent";
 import type { TabInfo as RustTabInfo } from "./generated/TabInfo";
 import type { TabLocation as RustTabLocation } from "./generated/TabLocation";
 import type { TreeStatus as RustTreeStatus } from "./generated/TreeStatus";
@@ -37,6 +38,7 @@ import type {
     GitTreeStatus,
     GitUpstream,
     RepoRef,
+    Subagent,
     TabInfo,
     TabLocation,
     WorktreeMetadata,
@@ -52,6 +54,7 @@ export type AgentStateStillMirrorsRust = Assert<Mirrors<RustAgentState, AgentSta
 
 export type RepoRefStillMirrorsRust = Assert<Mirrors<RustRepoRef, RepoRef>>;
 export type TabLocationStillMirrorsRust = Assert<Mirrors<RustTabLocation, TabLocation>>;
+export type SubagentStillMirrorsRust = Assert<Mirrors<RustSubagent, Subagent>>;
 export type TabInfoStillMirrorsRust = Assert<Mirrors<RustTabInfo, TabInfo>>;
 
 export type GitHeadStillMirrorsRust = Assert<Mirrors<RustHead, GitHead>>;

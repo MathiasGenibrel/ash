@@ -26,6 +26,23 @@ use std::path::PathBuf;
 /// trame plus longue est rejetée sans être accumulée.
 pub const MAX_FRAME_BYTES: usize = 8 * 1024;
 
+/// Au-delà, une clé d'enfant n'en est plus une.
+///
+/// **C'est ce qui rend inatteignable le repli silencieux d'`ash-event`** : quand une trame
+/// déborde [`MAX_FRAME_BYTES`], le client la repost sans son enfant plutôt que de perdre
+/// l'état déclaré (`bin/ash-event.rs`), et une ligne fille disparaîtrait alors sans un mot.
+/// Deux clés bornées à 256 octets pèsent au plus un demi-kilo-octet : la trame ne peut plus
+/// déborder à cause d'elles, et le repli ne peut plus se déclencher pour cette raison-là.
+///
+/// Une clé plus longue est **écartée**, jamais tronquée : un `agent_id` coupé désignerait un
+/// enfant qui n'existe pas, et deux frères tronqués au même préfixe se confondraient. Ce que
+/// l'on perd en écartant est une ligne d'affichage ; ce que l'on perdrait en tronquant est
+/// l'identité qui apparie un `SubagentStop` à sa ligne.
+///
+/// 256 octets sont deux ordres de grandeur au-dessus du réel : `agent_id` est un identifiant
+/// d'outil, `agent_type` le nom d'un sous-agent — `code-reviewer`, `dev-integration`.
+pub const MAX_CHILD_KEY_BYTES: usize = 256;
+
 /// Ce qu'un hook envoie à Ash, tel qu'il passe sur le fil.
 ///
 /// Une ligne de JSON par événement, terminée par `\n` : le cadrage est le retour à la
@@ -160,10 +177,14 @@ impl EventFrame {
 }
 
 /// Une valeur qui désigne réellement quelque chose, ou rien.
+///
+/// Le seul normalisateur des deux clés d'enfant, appelé des **deux** côtés du fil : ce qui
+/// est vide ne désigne personne, et ce qui est démesuré n'est plus un identifiant (voir
+/// [`MAX_CHILD_KEY_BYTES`]).
 fn named(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && value.len() <= MAX_CHILD_KEY_BYTES)
         .map(str::to_owned)
 }
 
@@ -297,6 +318,52 @@ mod tests {
 
         // Then
         assert_eq!(frame, Ok(EventFrame::new("working", "01J0TAB")));
+    }
+
+    #[test]
+    fn given_a_child_key_far_longer_than_any_identifier_when_the_frame_is_built_then_it_never_reaches_the_wire(
+    ) {
+        // Given — sans borne ici, une clé démesurée ferait déborder la trame, et `ash-event`
+        // la reposterait **sans l'enfant** pour sauver l'état déclaré : la ligne fille
+        // disparaîtrait sans que rien ne l'explique. Borner la clé rend ce repli
+        // inatteignable pour cette raison-là, et l'écart se voit ici plutôt que nulle part.
+        let frame = EventFrame::new("working", "01J0TAB")
+            .with_subagent(Some("agent-7"), Some(&"z".repeat(MAX_CHILD_KEY_BYTES + 1)));
+
+        // When
+        let line = frame.to_line();
+
+        // Then — l'enfant reste identifié, et seul le nom démesuré est écarté ; écarté et
+        // non tronqué, parce qu'un identifiant coupé désignerait quelqu'un d'autre
+        assert_eq!(frame.agent_id.as_deref(), Some("agent-7"));
+        assert_eq!(frame.agent_type, None);
+        assert!(line.is_ok(), "{line:?}");
+    }
+
+    #[test]
+    fn given_a_forged_frame_whose_child_key_is_gigantic_when_the_server_reads_it_then_the_child_is_dropped_and_the_state_still_arrives(
+    ) {
+        // Given — le socket est ouvert à tout processus du même utilisateur, et `to_line`
+        // n'est pas sur son chemin : une trame forgée à la main n'a jamais vu `named()` côté
+        // client. La borne doit donc mordre **des deux côtés du fil**, sinon un `agent_id` de
+        // dix kilo-octets deviendrait une ligne fille indélogeable dans la colonne.
+        let line = format!(
+            r#"{{"tab_id":"01J0TAB","kind":"working","agent_id":"{}","agent_type":"explore"}}"#,
+            "z".repeat(MAX_CHILD_KEY_BYTES + 1)
+        );
+
+        // When
+        let frame = EventFrame::from_line(&line);
+
+        // Then — l'identité est écartée, jamais tronquée, et l'état déclaré arrive quand même.
+        // Sans `agent_id`, plus rien ne désigne un enfant : aucune ligne fille ne peut naître
+        // de cette trame, quoi qu'elle porte par ailleurs.
+        let frame = frame.unwrap_or_else(|why| panic!("{why}"));
+        assert_eq!(frame.agent_id, None);
+        assert_eq!(
+            (frame.tab_id.as_str(), frame.kind.as_str()),
+            ("01J0TAB", "working")
+        );
     }
 
     #[test]

@@ -18,7 +18,7 @@ use super::error::PtyError;
 use super::locate::{RepoRef, TabLocation, WorktreeLocator};
 use super::registry::{PtyRegistry, TabId};
 use super::session::{OpenPty, PtySession, PtySpawner, PtySpec, Terminal};
-use crate::features::agents::{AgentState, AgentStatus, Presence};
+use crate::features::agents::{AgentState, AgentStatus, Presence, Subagent, TabAgents};
 use crate::features::probe::{Pid, Probe, ProbeError, ProcessInfo};
 use crate::shared::time::UnixMillis;
 
@@ -192,12 +192,28 @@ pub struct FakeAgentStates {
     /// rougir. La règle qui **décide** de l'état, elle, reste chez `agents` de toute façon.
     now: Mutex<UnixMillis>,
     dated: Mutex<HashMap<TabId, AgentStatus>>,
+    /// Les lignes filles que le superviseur rendrait pour chaque onglet (spec §6.5).
+    children: Mutex<Vec<Subagent>>,
 }
 
 impl FakeAgentStates {
     /// Un hook a parlé : c'est cet état-là que tous les onglets montrent désormais.
     pub fn declare(&self, state: AgentState) {
         *self.declared.lock().unwrap() = Some(state);
+    }
+
+    /// Un sous-agent tourne dans chaque onglet, entré dans son état à cette date.
+    ///
+    /// Une **date** et non une durée, comme ce qui traverse réellement : une doublure qui
+    /// aurait inventé une durée vivante aurait fait passer les tests de stabilité du registre
+    /// pour une garantie qu'ils ne donnaient pas.
+    pub fn declare_subagent(&self, agent_type: &str, state: AgentState, since: UnixMillis) {
+        self.children.lock().unwrap().push(Subagent {
+            agent_id: format!("agent-{agent_type}"),
+            agent_type: Some(agent_type.to_owned()),
+            state,
+            since,
+        });
     }
 
     /// Le temps passe, et rien d'autre ne se produit.
@@ -211,7 +227,7 @@ impl FakeAgentStates {
 }
 
 impl AgentStates for FakeAgentStates {
-    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentStatus {
+    fn state(&self, tab_id: &TabId, seen: Presence) -> TabAgents {
         let state = self.declared.lock().unwrap().unwrap_or(match seen {
             Presence::Program => AgentState::Working,
             Presence::Prompt | Presence::Unknown => AgentState::Idle,
@@ -221,7 +237,10 @@ impl AgentStates for FakeAgentStates {
         let mut dated = self.dated.lock().unwrap();
         let status = AgentStatus::entering(dated.get(tab_id).copied(), state, now);
         dated.insert(tab_id.clone(), status);
-        status
+        TabAgents {
+            status,
+            subagents: self.children.lock().unwrap().clone(),
+        }
     }
 
     fn forget(&self, tab_id: &TabId) {

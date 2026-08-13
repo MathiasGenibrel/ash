@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::features::agents::{AgentState, Presence};
+use crate::features::agents::{AgentState, Presence, Subagent};
 use crate::shared::time::UnixMillis;
 
 use super::agent_states::AgentStates;
@@ -156,6 +156,18 @@ pub struct TabInfo {
     /// millisecondes tombe en l'an 287396.
     #[cfg_attr(test, ts(type = "number"))]
     pub state_since: UnixMillis,
+    /// Les sous-agents qui tournent **dans** cet onglet, en ce moment (spec §6.5).
+    ///
+    /// Vide dans le cas courant, et vide pour toujours chez un outil qui n'expose pas ses
+    /// sous-tâches. Ils voyagent avec l'onglet et non par un event à eux : ce sont des lignes
+    /// filles de la sienne, elles n'ont pas de terminal
+    /// ([ADR-0003](../../../../docs/adr/0003-zone-terminal-unique.md)) et rien ne les
+    /// sélectionne.
+    ///
+    /// Chacun porte sa **date d'entrée**, pour la même raison que [`Self::state_since`] : une
+    /// durée vivante ferait changer cette fiche à chaque seconde, et l'event ponctuel
+    /// deviendrait un flux.
+    pub subagents: Vec<Subagent>,
     /// Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
     /// n'a pas pu être situé.
     pub location: Option<TabLocation>,
@@ -409,15 +421,16 @@ impl PtyRegistry {
         // Le registre **demande** l'état, il ne le déduit pas : ce que la sonde voit est une
         // présence, et une présence n'est pas un état d'agent (ADR-0007). La date d'entrée
         // vient avec, pour la même raison : le registre la transporte, il ne la fabrique pas.
-        let status = self.agents.state(&tab.id, presence);
+        let agents = self.agents.state(&tab.id, presence);
 
         TabInfo {
             tab_id: tab.id,
             location: self.locate(&tab.place, &cwd),
             cwd: cwd.display().to_string(),
             process,
-            state: status.state,
-            state_since: status.since,
+            state: agents.status.state,
+            state_since: agents.status.since,
+            subagents: agents.subagents,
         }
     }
 
@@ -929,6 +942,10 @@ mod tests {
         let (registry, _probe, _locator, agents) = supervised_registry("/dev/ash");
         registry.open(spec(), "A".to_owned()).unwrap();
         agents.declare(AgentState::Working);
+        // Et un sous-agent sous lui : c'est la fiche qui a **le plus** de chances de bouger,
+        // puisqu'elle porte une seconde date. Le `working · 15m22s` d'une ligne fille se
+        // calcule à l'affichage, exactement comme celui de l'onglet.
+        agents.declare_subagent("explore", AgentState::Working, 0);
         let discovered = registry.changes().unwrap(); // la passe qui découvre l'onglet
 
         // When — une heure de boucle, et rien d'autre que le temps qui passe
@@ -939,13 +956,14 @@ mod tests {
             })
             .collect();
 
-        // Then — et la date d'entrée annoncée une seule fois est restée celle de l'entrée
+        // Then — et la date d'entrée annoncée une seule fois est restée celle de l'entrée,
+        // pour l'onglet comme pour sa ligne fille
         assert_eq!(
             discovered
                 .iter()
-                .map(|tab| tab.state_since)
+                .map(|tab| (tab.state_since, tab.subagents.len()))
                 .collect::<Vec<_>>(),
-            vec![0]
+            vec![(0, 1)]
         );
         assert_eq!(announced, vec![]);
     }

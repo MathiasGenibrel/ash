@@ -39,9 +39,19 @@ demande sans l'être. Un garde le franchit avant tout appel, la fenêtre de rég
 `permission_state()` de bureau rendait `Granted` en dur, et deux couches se disputant le
 délégué global au processus est une panne silencieuse.
 
-Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, les subagents,
-et la reconnaissance d'une commande d'agent par son nom (ADR-0006), sans laquelle Ash ne
-distingue pas `claude` de `vim` dans l'avant-plan d'un onglet.
+**Les sous-agents ont leurs lignes filles** (spec §6.5) : sous une ligne d'agent, une ligne
+par sous-agent en cours — son libellé, son état, sa durée —, inerte, un clic sélectionnant le
+parent (ADR-0003 : un onglet porte au plus un PTY). Elles viennent du **sixième hook**,
+`SubagentStop`, qui écrit un verbe qui n'est **pas** un état : le cycle de vie des enfants
+passe par `Adapter::child_event`, distincte d'`interpret`, et la suite contractuelle vérifie
+qu'aucun événement d'enfant n'atteint l'état de l'onglet. Un sous-agent n'est jamais
+`waiting`, et son échec n'a aucune source — c'est un angle mort documenté dans
+`agents/subagents.rs`. Une ligne fille finie reste visible dix secondes ; la durée est un
+réglage, injecté au superviseur, que la fenêtre de réglages ne porte pas encore.
+
+Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, et la
+reconnaissance d'une commande d'agent par son nom (ADR-0006), sans laquelle Ash ne distingue
+pas `claude` de `vim` dans l'avant-plan d'un onglet.
 
 **L'entrée dans un état est datée, et la ligne de statut affiche sa durée** (`working ·
 15m22s`). Ce qui traverse la frontière est une **date absolue** — `TabInfo.stateSince`, en
@@ -50,9 +60,10 @@ millisecondes depuis l'époque Unix — envoyée une seule fois, au changement d
 partir `ash://tab-changed` chaque seconde pour chaque onglet actif. Le compteur qui
 s'incrémente est un fait d'affichage, et il le reste.
 
-`ash-event` lit désormais **l'entrée standard** que tout hook lui donne, et en tire
-`agent_id` / `agent_type` (ADR-0007, amendement du 2026-08-13). Il ne les utilise encore
-nulle part : il les transporte. Il n'attend jamais cette entrée — rien de ce qui s'y passe
+`ash-event` lit **l'entrée standard** que tout hook lui donne, et en tire `agent_id` /
+`agent_type` (ADR-0007, amendement du 2026-08-13) — les deux clés que les lignes filles
+consomment, bornées à 256 octets pour qu'une clé démesurée ne fasse jamais partir une trame
+sans son enfant. Il n'attend jamais cette entrée — rien de ce qui s'y passe
 ne peut retenir un hook, donc bloquer un agent.
 
 ## Stack

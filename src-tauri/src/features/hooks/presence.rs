@@ -113,7 +113,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::features::agents::{Adapter, ClaudeCodeAdapter};
+    use crate::features::agents::{hook_mark, Adapter, ClaudeCodeAdapter};
     use crate::features::hooks::document::Document;
     use crate::features::hooks::fakes::FakeConfigFiles;
     use crate::features::hooks::install;
@@ -124,6 +124,67 @@ mod tests {
         ))
         .instrumentation(Path::new(config_dir))
         .unwrap_or_else(|| panic!("claude-code instrumente toujours"))
+    }
+
+    /// Ce que l'Ash **d'avant les sous-agents** avait écrit : les cinq mêmes entrées, sans
+    /// `SubagentStop`, et marquées de la version qui les portait.
+    ///
+    /// C'est le seul moyen honnête de jouer le parcours de réinstallation du sixième hook :
+    /// il ne se rejoue pas en changeant un nombre, il se rejoue en écrivant ce que la version
+    /// précédente écrivait.
+    fn five_hook_version(config_dir: &str) -> Instrumentation {
+        let current = instrumentation(config_dir);
+        let previous = current.version - 1;
+        Instrumentation {
+            entries: current
+                .entries
+                .iter()
+                .filter(|entry| entry.path.last().map(String::as_str) != Some("SubagentStop"))
+                .map(|entry| crate::features::agents::HookEntry {
+                    path: entry.path.clone(),
+                    item: entry
+                        .item
+                        .replace(&hook_mark(current.version), &hook_mark(previous)),
+                })
+                .collect(),
+            version: previous,
+            ..current
+        }
+    }
+
+    #[test]
+    fn given_a_file_instrumented_before_the_subagent_hook_when_ash_looks_at_it_then_it_offers_the_missing_entry_in_a_diff(
+    ) {
+        // Given — l'utilisateur avait installé les hooks avec un Ash d'avant les lignes
+        // filles. Le sixième hook change la **forme** du bloc, donc la version : sans elle,
+        // ses cinq entrées se liraient comme une édition à la main, et Ash refuserait de
+        // toucher au fichier au lieu de le mettre à jour.
+        let config_dir = "/home/someone/.claude";
+        let files = FakeConfigFiles::new().carrying(
+            "/home/someone/.claude/settings.json",
+            "{\n  \"model\": \"opus\"\n}\n",
+        );
+        install(&files, &five_hook_version(config_dir)).unwrap_or_else(|why| panic!("{why}"));
+
+        // When — l'Ash d'aujourd'hui regarde, sans rien écrire
+        let seen = inspect(&files, &instrumentation(config_dir));
+
+        // Then — c'est une version dépassée, et le diff montre l'entrée qui manque
+        let current = instrumentation(config_dir).version;
+        assert!(
+            matches!(
+                seen,
+                Presence::Superseded { installed, available, .. }
+                    if installed == current - 1 && available == current
+            ),
+            "{seen:?}"
+        );
+        let diff = seen.diff().unwrap_or_default();
+        assert!(
+            diff.contains("SubagentStop"),
+            "le diff n'annonce pas le sixième hook :\n{diff}"
+        );
+        assert!(diff.contains("subagent-stop"), "{diff}");
     }
 
     #[test]

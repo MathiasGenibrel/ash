@@ -1,6 +1,7 @@
 import type { AgentState, TabId, TabInfo } from "@/shared/ipc";
 import { basename, shortSuffix, truncate } from "./labels";
 import { bubbleState } from "./states";
+import { subagentNodes, type SubagentNode } from "./subagents";
 
 /**
  * La hiérarchie de la sidebar, sans DOM ni IPC.
@@ -24,6 +25,26 @@ export interface SidebarTabNode {
     readonly title: string;
     readonly state: AgentState;
     readonly active: boolean;
+    /**
+     * Les sous-agents qui tournent sous cet onglet (spec §6.5), dans leur ordre d'apparition.
+     *
+     * Vide dans le cas courant. Ils n'ont **pas** de repli à eux : une ligne d'onglet montre
+     * ses enfants ou n'en a pas, et un troisième niveau de repli dans une colonne de 240 px
+     * cacherait plus qu'il ne rangerait.
+     */
+    readonly subagents: readonly SubagentNode[];
+}
+
+/**
+ * Tous les états qu'une ligne d'onglet représente : le sien, et ceux de ses enfants.
+ *
+ * C'est ce qui fait qu'une ligne repliée porte l'état le plus urgent **sous-agents compris**
+ * (spec §4.1) : la remontée d'un worktree ou d'un dépôt part d'ici, et non du seul
+ * `tab.state`. Un `working` d'enfant sous un onglet dont l'agent a fini remonte donc, ce qui
+ * est juste — il se passe encore quelque chose là-dessous.
+ */
+export function tabStates(tab: SidebarTabNode): readonly AgentState[] {
+    return [tab.state, ...tab.subagents.map((child) => child.state)];
 }
 
 export interface WorktreeNode {
@@ -117,6 +138,7 @@ export function buildSidebar(
             title: tab.process,
             state: tab.state,
             active: tab.tabId === options.activeTabId,
+            subagents: subagentNodes(tab.subagents),
         });
     }
 
@@ -242,7 +264,7 @@ function node(
         suffix,
         collapsed: collapsed.has(worktree.key),
         tabs: worktree.tabs,
-        state: bubbleState(worktree.tabs.map((tab) => tab.state)),
+        state: bubbleState(worktree.tabs.flatMap(tabStates)),
     };
 }
 

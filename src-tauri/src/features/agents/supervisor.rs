@@ -79,13 +79,15 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use super::adapter::{Adapter, RawEvent};
+use super::adapter::{Adapter, ChildEvent, RawEvent};
 use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
 use super::notify::{notice, Notice, Notifier};
 use super::state::{AgentState, AgentStatus};
+use super::subagents::{Subagent, Subagents};
 use super::wire::EventFrame;
-use crate::shared::time::Clock;
+use crate::shared::time::{Clock, UnixMillis};
 
 /// Ce que la sonde voit d'un onglet — et tout ce qu'elle a le droit d'en dire.
 ///
@@ -124,7 +126,27 @@ pub struct Supervisor {
     /// notification ailleurs reviendrait à la poser sur une lecture, donc trois fois par
     /// seconde ([`super::notify`]).
     notifier: Arc<dyn Notifier>,
+    /// Combien de temps la ligne d'un sous-agent fini reste visible (spec §6.5).
+    ///
+    /// Injectée, et non lue d'une constante : c'est un **réglage**, dont le composition root
+    /// pose la valeur par défaut ([`super::SUBAGENT_LINGER`]). C'est aussi ce qui permet à un
+    /// scénario de la décrire au lieu de la subir.
+    subagent_linger: Duration,
     tabs: Mutex<Tabs>,
+}
+
+/// Ce que le superviseur répond pour un onglet : son état daté, et ses enfants.
+///
+/// Une seule réponse et non deux questions, parce que les deux se lisent sous le même verrou
+/// et à la même passe : demander l'état puis les enfants laisserait une passe de sonde
+/// s'intercaler entre les deux, et la sidebar afficherait des lignes filles arbitrées à un
+/// autre instant que la ligne qui les porte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabAgents {
+    pub status: AgentStatus,
+    /// Les lignes filles, dans leur ordre d'apparition. Vide dans l'écrasante majorité des
+    /// cas — un onglet sans sous-agent, ou un outil qui n'en expose pas.
+    pub subagents: Vec<Subagent>,
 }
 
 #[derive(Default)]
@@ -135,10 +157,15 @@ struct Tabs {
     live: HashMap<String, Tab>,
 }
 
-#[derive(Default)]
 struct Tab {
     /// La machine de cet onglet, tant qu'un agent y vit.
     machine: Option<AgentMachine>,
+    /// Les sous-agents qui vivent **dans** cet onglet (spec §6.5).
+    ///
+    /// Ils sont tenus à côté de la machine, et non dedans : la machine décide de l'état de
+    /// l'onglet, et aucun événement d'enfant n'a le droit d'y entrer (ADR-0007, amendement du
+    /// 2026-08-13). Les deux voisinent sans se parler.
+    children: Subagents,
     /// Le dernier verdict rendu pour cet onglet, **avec sa date d'entrée**.
     ///
     /// C'est ici que le temps est retenu, et pas dans la machine : la machine ne répond que
@@ -157,16 +184,29 @@ struct Tab {
     seen: Presence,
 }
 
+impl Tab {
+    fn new(subagent_linger: Duration) -> Self {
+        Self {
+            machine: None,
+            children: Subagents::new(subagent_linger),
+            answered: None,
+            seen: Presence::default(),
+        }
+    }
+}
+
 impl Supervisor {
     pub fn new(
         clock: Arc<dyn Clock>,
         adapters: Vec<Arc<dyn Adapter>>,
         notifier: Arc<dyn Notifier>,
+        subagent_linger: Duration,
     ) -> Self {
         Self {
             clock,
             adapters,
             notifier,
+            subagent_linger,
             tabs: Mutex::new(Tabs::default()),
         }
     }
@@ -177,9 +217,16 @@ impl Supervisor {
     /// adaptateur ne reconnaît ne produit rien du tout — ni état, ni erreur. Deviner serait
     /// exactement ce qu'ADR-0007 écarte.
     pub fn on_hook(&self, event: &EventFrame) {
-        let Some(declared) = self.translate(&event.kind) else {
+        // Les deux lectures du même mot brut, et elles ne se recouvrent jamais : un verbe
+        // d'état n'est pas un verbe d'enfant, et la suite contractuelle le vérifie sur chaque
+        // adaptateur (ADR-0007, amendement du 2026-08-13).
+        let declared = self.translate(&event.kind);
+        let child = self.child_event(&event.kind);
+        if declared.is_none() && child.is_none() {
+            // Un verbe qu'aucun adaptateur ne reconnaît ne produit rien du tout — ni état, ni
+            // ligne fille. Un enfant révélé par un mot inconnu serait deviné.
             return;
-        };
+        }
 
         // L'heure est lue **avant** le verrou : rien de ce qui se décide dessous n'en
         // dépend, et une section critique ne s'allonge pas d'un appel système gratuit.
@@ -195,7 +242,22 @@ impl Supervisor {
 
             let focused = tabs.focused;
             let clock = Arc::clone(&self.clock);
-            let tab = tabs.live.entry(event.tab_id.clone()).or_default();
+            let tab = tabs
+                .live
+                .entry(event.tab_id.clone())
+                .or_insert_with(|| Tab::new(self.subagent_linger));
+
+            // L'enfant d'abord, et à part : quoi qu'il arrive ensuite à l'onglet, ce qui suit
+            // ne touche que ses lignes filles.
+            note_child(&mut tab.children, event, child, now);
+
+            let Some(declared) = declared else {
+                // Le cas du sixième hook : `SubagentStop` a nommé un enfant, et n'a rien à
+                // dire de l'onglet. Aucun état ne change, donc il n'y a rien à poster — et
+                // c'est très exactement le garde-fou de l'amendement, tenu par le chemin du
+                // code plutôt que par une intention.
+                return;
+            };
             let changed = tab
                 .machine
                 .get_or_insert_with(|| watching(clock, focused))
@@ -221,10 +283,10 @@ impl Supervisor {
     /// Appelée à chaque passe de la boucle d'ADR-0005 : c'est elle qui fait avancer le temps
     /// des machines, et c'est par son résultat — porté par le `TabInfo` du registre — que
     /// l'état atteint l'écran. Le frontend n'apprend jamais un état autrement.
-    pub fn state(&self, tab_id: &str, seen: Presence) -> AgentStatus {
-        let (status, interruption) = self.advance(tab_id, seen);
+    pub fn state(&self, tab_id: &str, seen: Presence) -> TabAgents {
+        let (answer, interruption) = self.advance(tab_id, seen);
         self.post(interruption);
-        status
+        answer
     }
 
     /// La passe de sonde elle-même : ce que l'onglet montre, et ce qu'elle vient
@@ -232,7 +294,7 @@ impl Supervisor {
     ///
     /// Découpée de [`Self::state`] pour une seule raison, et elle compte : le verrou des
     /// onglets meurt avec cette fonction, donc rien n'est posté en le tenant.
-    fn advance(&self, tab_id: &str, seen: Presence) -> (AgentStatus, Option<Notice>) {
+    fn advance(&self, tab_id: &str, seen: Presence) -> (TabAgents, Option<Notice>) {
         let now = self.clock.wall();
         let Ok(mut tabs) = self.tabs.lock() else {
             // Un superviseur empoisonné n'a plus de mémoire ; la sonde, elle, répond
@@ -243,16 +305,22 @@ impl Supervisor {
             // verrou empoisonné veut dire qu'un fil a paniqué ; un compteur qui bégaie est
             // le moindre des symptômes.
             return (
-                AgentStatus {
-                    state: probed(seen),
-                    since: now,
+                TabAgents {
+                    status: AgentStatus {
+                        state: probed(seen),
+                        since: now,
+                    },
+                    subagents: Vec::new(),
                 },
                 None,
             );
         };
 
         let focused = tabs.focused;
-        let tab = tabs.live.entry(tab_id.to_owned()).or_default();
+        let tab = tabs
+            .live
+            .entry(tab_id.to_owned())
+            .or_insert_with(|| Tab::new(self.subagent_linger));
         let before = std::mem::replace(&mut tab.seen, seen);
         // Une passe aveugle ne raconte rien : elle ne doit pas non plus effacer le souvenir
         // de la précédente, sinon le retour du système passerait pour un lancement.
@@ -286,12 +354,26 @@ impl Supervisor {
 
         if state == AgentState::Idle {
             // La ligne est redevenue une ligne shell : l'onglet n'est plus un agent, et
-            // c'est de nouveau la sonde qui répond pour lui.
+            // c'est de nouveau la sonde qui répond pour lui. Ses enfants partent avec lui —
+            // un sous-agent sans agent au-dessus n'existe pas (ADR-0003 : c'est le même
+            // processus, dans le même onglet).
             tab.machine = None;
+            tab.children.clear();
         }
+        // Le seul endroit qui fasse vieillir les lignes filles, comme `tick` est le seul à
+        // faire vieillir celle de l'onglet : la boucle de sonde passe déjà, et rien ne
+        // réveille personne pour un compte à rebours.
+        tab.children.tick(now);
+
         let status = AgentStatus::entering(tab.answered, state, now);
         tab.answered = Some(status);
-        (status, interrupt(tab_id, changed, focused))
+        (
+            TabAgents {
+                status,
+                subagents: tab.children.shown(),
+            },
+            interrupt(tab_id, changed, focused),
+        )
     }
 
     /// La fenêtre Ash a pris ou perdu le premier plan.
@@ -344,6 +426,46 @@ impl Supervisor {
             .find_map(|adapter| adapter.interpret(&raw))
             .and_then(Declared::of)
     }
+
+    /// Ce que ce mot dit d'un **enfant**, par la seconde porte du trait.
+    ///
+    /// Symétrique de [`Self::translate`], et volontairement séparée d'elle : les deux lisent
+    /// le même mot brut sans jamais se croiser, ce qui est la forme qu'exige l'amendement du
+    /// 2026-08-13 à ADR-0007. Un adaptateur qui répondrait aux deux ne passerait pas la suite
+    /// contractuelle.
+    fn child_event(&self, kind: &str) -> Option<ChildEvent> {
+        let raw = RawEvent::new(kind);
+        self.adapters
+            .iter()
+            .find_map(|adapter| adapter.child_event(&raw))
+    }
+}
+
+/// Ce qu'une trame apprend des enfants de son onglet.
+///
+/// Rien du tout quand elle n'en nomme aucun — c'est le cas de l'écrasante majorité des
+/// événements, et de **toutes** les trames que les cinq premiers hooks envoient depuis
+/// l'agent principal. Une clé d'enfant vide a déjà été normalisée par le transport
+/// (`wire.rs`) : il n'y a pas d'enfant anonyme à inventer ici.
+fn note_child(
+    children: &mut Subagents,
+    event: &EventFrame,
+    child: Option<ChildEvent>,
+    now: UnixMillis,
+) {
+    let Some(agent_id) = event.agent_id.as_deref() else {
+        return;
+    };
+    let agent_type = event.agent_type.as_deref();
+
+    match child {
+        // La fin, dite par le seul hook qui la connaisse.
+        Some(ChildEvent::Ended) => children.ended(agent_id, agent_type, now),
+        // La naissance n'a pas de hook : elle se lit sur le premier événement portant un
+        // `agent_id` encore inconnu. C'est aussi ce qui garde la ligne d'un enfant vivante
+        // tant qu'il emploie des outils.
+        None => children.at_work(agent_id, agent_type, now),
+    }
 }
 
 /// L'interruption que mérite un état qui vient de **changer**, ou rien.
@@ -378,7 +500,7 @@ mod tests {
     use super::*;
     use crate::features::agents::adapters::{ClaudeCodeAdapter, GenericAdapter};
     use crate::features::agents::fakes::{FakeNotifier, ManualClock, FAKE_EPOCH};
-    use crate::shared::time::UnixMillis;
+    use crate::features::agents::subagents::SUBAGENT_LINGER;
     use std::path::PathBuf;
 
     const TAB: &str = "01J0TAB";
@@ -399,6 +521,7 @@ mod tests {
     struct SupervisorBuilder {
         clock: Arc<ManualClock>,
         focused: bool,
+        subagent_linger: Duration,
     }
 
     impl SupervisorBuilder {
@@ -406,12 +529,19 @@ mod tests {
             Self {
                 clock: ManualClock::new(),
                 focused: false,
+                subagent_linger: SUBAGENT_LINGER,
             }
         }
 
         /// La fenêtre Ash est au premier plan — l'utilisateur regarde.
         fn watched(mut self) -> Self {
             self.focused = true;
+            self
+        }
+
+        /// Le réglage de la spec §6.5, posé à une autre valeur que son défaut.
+        fn keeping_finished_children_for(mut self, seconds: u64) -> Self {
+            self.subagent_linger = Duration::from_secs(seconds);
             self
         }
 
@@ -427,6 +557,7 @@ mod tests {
                 Arc::clone(&self.clock) as Arc<dyn Clock>,
                 adapters,
                 Arc::clone(&notifier) as Arc<dyn Notifier>,
+                self.subagent_linger,
             );
             supervisor.on_window_focus(self.focused);
             Assembled {
@@ -442,6 +573,12 @@ mod tests {
         EventFrame::new(word, tab)
     }
 
+    /// Le même hook, déclenché **dans** un sous-agent : l'onglet est le même, l'enfant est
+    /// nommé (ADR-0007, amendement du 2026-08-13).
+    fn child_hook(word: &str, agent_id: &str, agent_type: &str) -> EventFrame {
+        EventFrame::new(word, TAB).with_subagent(Some(agent_id), Some(agent_type))
+    }
+
     /// Une passe de la boucle de sonde, telle que le registre la fait.
     fn sweep(supervisor: &Supervisor, seen: Presence) -> AgentState {
         sweep_status(supervisor, seen).state
@@ -449,7 +586,17 @@ mod tests {
 
     /// La même passe, avec la date d'entrée — pour les seuls scénarios qui en parlent.
     fn sweep_status(supervisor: &Supervisor, seen: Presence) -> AgentStatus {
-        supervisor.state(TAB, seen)
+        supervisor.state(TAB, seen).status
+    }
+
+    /// Les lignes filles que la sidebar montrerait, réduites à ce qu'un `Then` lit.
+    fn sweep_children(supervisor: &Supervisor, seen: Presence) -> Vec<(String, AgentState)> {
+        supervisor
+            .state(TAB, seen)
+            .subagents
+            .into_iter()
+            .map(|child| (child.agent_type.unwrap_or_default(), child.state))
+            .collect()
     }
 
     #[test]
@@ -679,6 +826,153 @@ mod tests {
     }
 
     #[test]
+    fn given_a_subagent_that_finishes_when_its_stop_hook_arrives_then_the_tab_state_is_left_alone()
+    {
+        // Given — le garde-fou n°1 de l'amendement du 2026-08-13, vu du superviseur : un
+        // enfant qui finit ne rend pas `claude` disponible. Si `subagent-stop` atteignait la
+        // machine, l'onglet afficherait `done` pendant que l'agent principal continue de
+        // travailler — et la ligne s'effacerait toute seule trente secondes plus tard.
+        let Assembled {
+            supervisor,
+            notifier,
+            ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+
+        // When
+        supervisor.on_hook(&child_hook("subagent-stop", "agent-7", "explore"));
+
+        // Then — l'onglet travaille toujours, et rien n'a interrompu l'utilisateur
+        assert_eq!(sweep(&supervisor, Presence::Program), AgentState::Working);
+        assert_eq!(notifier.titles(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_two_subagents_running_at_once_when_one_of_them_stops_then_each_row_carries_its_own_state(
+    ) {
+        // Given — plusieurs sous-agents en parallèle, c'est le cas courant d'un `Task` lancé
+        // en éventail. `ASH_TAB_ID` est identique pour les deux et pour leur parent : seul
+        // `agent_id` peut apparier un `SubagentStop` à la bonne ligne.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        supervisor.on_hook(&child_hook("working", "agent-8", "code-reviewer"));
+
+        // When
+        supervisor.on_hook(&child_hook("subagent-stop", "agent-8", "code-reviewer"));
+
+        // Then
+        assert_eq!(
+            sweep_children(&supervisor, Presence::Program),
+            vec![
+                ("explore".to_owned(), AgentState::Working),
+                ("code-reviewer".to_owned(), AgentState::Done),
+            ]
+        );
+    }
+
+    #[test]
+    fn given_a_finished_subagent_row_when_the_configured_delay_passes_then_it_disappears_from_the_tab(
+    ) {
+        // Given — la durée est un **réglage** (spec §6.5) : ce scénario en pose une autre que
+        // les dix secondes par défaut, pour prouver que c'est bien elle qui décide et non un
+        // nombre écrit au milieu de la règle.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new()
+            .keeping_finished_children_for(3)
+            .build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        supervisor.on_hook(&child_hook("subagent-stop", "agent-7", "explore"));
+
+        // When
+        clock.advance(2);
+        let still_shown = sweep_children(&supervisor, Presence::Program);
+        clock.advance(1);
+        let expired = sweep_children(&supervisor, Presence::Program);
+
+        // Then
+        assert_eq!(still_shown, vec![("explore".to_owned(), AgentState::Done)]);
+        assert_eq!(expired, vec![]);
+    }
+
+    #[test]
+    fn given_a_tab_whose_agent_works_with_children_when_the_loop_sweeps_for_a_quarter_of_an_hour_then_nothing_it_shows_ever_changes(
+    ) {
+        // Given — le piège de #98, à l'échelle des lignes filles : la fiche d'un onglet est
+        // comparée **entière** pour décider s'il faut émettre. Si une ligne fille portait sa
+        // durée plutôt que sa date d'entrée, chaque onglet qui porte un enfant changerait à
+        // chaque seconde, et `ash://tab-changed` deviendrait un flux continu — un rendu
+        // complet de la sidebar par seconde, pour animer un compteur qui se calcule à
+        // l'affichage.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        let first = supervisor.state(TAB, Presence::Program);
+
+        // When — un quart d'heure de boucle, sans qu'aucun hook ne parle
+        let answers: Vec<TabAgents> = (0..900)
+            .map(|_| {
+                clock.advance(1);
+                supervisor.state(TAB, Presence::Program)
+            })
+            .collect();
+
+        // Then — la réponse est identique, au champ près, d'un bout à l'autre
+        assert_eq!(first.subagents.len(), 1);
+        assert_eq!(answers, vec![first; 900]);
+    }
+
+    #[test]
+    fn given_a_tool_that_reports_no_subagent_when_its_hooks_arrive_then_the_tab_never_grows_a_child_row(
+    ) {
+        // Given — `SubagentSupport::None` doit se voir : un outil qui n'expose pas ses
+        // sous-tâches ne produit **aucune** ligne fille, et rien ne doit suggérer qu'il en
+        // manque (spec §6.5). Ses hooks n'emportent pas d'`agent_id`, et c'est cette absence
+        // qui décide — pas une devinette sur le nom de l'outil.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+
+        // When
+        for word in ["working", "waiting", "done"] {
+            supervisor.on_hook(&hook(word, TAB));
+        }
+
+        // Then
+        assert_eq!(sweep_children(&supervisor, Presence::Program), vec![]);
+    }
+
+    #[test]
+    fn given_an_agent_whose_children_are_still_shown_when_the_tab_becomes_a_shell_row_again_then_nothing_remains_under_it(
+    ) {
+        // Given — un sous-agent n'a pas de processus à lui : c'est le même `claude`, dans le
+        // même onglet (ADR-0003). Quand l'onglet redevient une ligne shell, laisser des
+        // lignes filles montrerait des enfants sans parent, que rien ne viendrait jamais
+        // effacer.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().watched().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        supervisor.on_hook(&hook("done", TAB));
+
+        // When — la ligne `done` vit ses trente secondes, puis l'onglet redevient un shell
+        sweep(&supervisor, Presence::Prompt);
+        clock.advance(30);
+        let once_it_is_a_shell_row = supervisor.state(TAB, Presence::Prompt);
+
+        // Then
+        assert_eq!(once_it_is_a_shell_row.status.state, AgentState::Idle);
+        assert_eq!(once_it_is_a_shell_row.subagents, vec![]);
+    }
+
+    #[test]
     fn given_a_word_no_adapter_understands_when_it_arrives_from_the_socket_then_the_tab_keeps_its_state(
     ) {
         // Given — `Stop` est un vrai nom de hook de Claude Code, `idle` un vrai état du
@@ -713,11 +1007,14 @@ mod tests {
 
         // Then
         assert_eq!(
-            supervisor.state("01J0PRO", Presence::Program).state,
+            supervisor.state("01J0PRO", Presence::Program).status.state,
             AgentState::Working
         );
         assert_eq!(
-            supervisor.state("01J0PERSO", Presence::Program).state,
+            supervisor
+                .state("01J0PERSO", Presence::Program)
+                .status
+                .state,
             AgentState::Waiting
         );
     }
