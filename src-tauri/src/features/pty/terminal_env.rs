@@ -31,30 +31,38 @@ const FALLBACK_LANG: &str = "en_US.UTF-8";
 
 /// Les variables qu'Ash pose dans l'environnement du shell d'un onglet.
 ///
-/// `is_set` dit si l'environnement ambiant porte déjà une variable utilisable. La
-/// décision reste ainsi une **fonction pure de ce qu'on lui donne** : lire le vrai
-/// environnement du processus depuis ici ferait dépendre les tests de la machine qui les
-/// exécute.
-///
 /// `TERM`, `COLORTERM` et `TERM_PROGRAM` sont posés **toujours** : ils décrivent la
 /// surface, pas un goût. La locale, elle, appartient à l'utilisateur — Ash ne comble
 /// qu'un vide, et n'écrase jamais un `LANG` ou un `LC_ALL` existant.
 ///
+/// Ce que l'environnement du processus Ash porte déjà est lu ici, et nulle part ailleurs :
+/// l'appelant n'a pas à connaître cette lecture pour poser ces variables.
+///
 /// Suite possible, hors périmètre ici : dériver la vraie locale de macOS (`AppleLocale`,
 /// dans les préférences globales) plutôt que de se rabattre sur l'anglais. Ça demande un
 /// appel système, donc un port de plus dans la feature.
-pub fn terminal_env(is_set: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
-    let mut declared = vec![
+pub fn terminal_env() -> Vec<(String, String)> {
+    declared(&ambient)
+}
+
+/// La règle, séparée de la lecture de l'environnement qui l'alimente.
+///
+/// `is_set` dit si l'environnement ambiant porte déjà une variable utilisable. La
+/// décision est ainsi une **fonction pure de ce qu'on lui donne**, et ses tests ne
+/// dépendent pas de la machine qui les exécute. Cette couture reste **interne** : elle
+/// n'existe que pour les tests de ce module, et rien au dehors n'a à la connaître.
+fn declared(is_set: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
+    let mut posed = vec![
         ("TERM", TERM),
         ("COLORTERM", COLORTERM),
         ("TERM_PROGRAM", TERM_PROGRAM),
     ];
 
     if !is_set("LC_ALL") && !is_set("LANG") {
-        declared.push(("LANG", FALLBACK_LANG));
+        posed.push(("LANG", FALLBACK_LANG));
     }
 
-    declared
+    posed
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
         .collect()
@@ -64,7 +72,7 @@ pub fn terminal_env(is_set: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
 ///
 /// Une variable vide vaut absente : un `LANG=` ne dit pas plus la locale qu'un `LANG`
 /// manquant, et laisserait le prompt aussi faux.
-pub fn ambient(name: &str) -> bool {
+fn ambient(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| !value.is_empty())
 }
 
@@ -91,7 +99,7 @@ mod tests {
         let empty = carrying(&[]);
 
         // When
-        let env = terminal_env(&empty);
+        let env = declared(&empty);
 
         // Then
         assert_eq!(value_of(&env, "TERM"), Some("xterm-256color"));
@@ -105,7 +113,7 @@ mod tests {
         let inherited = carrying(&["TERM", "COLORTERM"]);
 
         // When
-        let env = terminal_env(&inherited);
+        let env = declared(&inherited);
 
         // Then — jamais conditionnel : la surface reste celle d'Ash.
         assert_eq!(value_of(&env, "TERM"), Some("xterm-256color"));
@@ -119,7 +127,7 @@ mod tests {
         let without_locale = carrying(&[]);
 
         // When
-        let env = terminal_env(&without_locale);
+        let env = declared(&without_locale);
 
         // Then
         assert_eq!(value_of(&env, "LANG"), Some("en_US.UTF-8"));
@@ -131,7 +139,7 @@ mod tests {
         let with_lang = carrying(&["LANG"]);
 
         // When
-        let env = terminal_env(&with_lang);
+        let env = declared(&with_lang);
 
         // Then — la locale appartient à l'utilisateur ; poser la nôtre l'écraserait, le
         // `spec.env` ayant le dernier mot sur l'héritage.
@@ -145,7 +153,7 @@ mod tests {
         let with_lc_all = carrying(&["LC_ALL"]);
 
         // When
-        let env = terminal_env(&with_lc_all);
+        let env = declared(&with_lc_all);
 
         // Then
         assert_eq!(value_of(&env, "LANG"), None);

@@ -11,7 +11,7 @@ use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
 use super::session::{PtySession, PtySpawner, PtySpec};
-use super::terminal_env::{ambient, terminal_env};
+use super::terminal_env::terminal_env;
 use crate::features::probe::{Probe, TabObservation, TabWatch};
 
 /// Identifiant d'onglet — un ulid, posé dans `ASH_TAB_ID` au lancement du shell.
@@ -218,8 +218,9 @@ impl PtyRegistry {
         // Ce que le shell doit savoir du terminal qu'on lui offre. C'est ici, à côté
         // d'`ASH_TAB_ID`, parce que c'est la même nature de chose : une identité posée par
         // Ash, pas une préférence de l'utilisateur — et parce que le registre est la
-        // dernière étape avant le spawner à rester derrière le trait, donc testable.
-        spec.env.extend(terminal_env(&ambient));
+        // dernière étape avant le spawner à rester derrière le trait, donc testable. Ce
+        // qu'Ash déclare et ce qu'il laisse à l'utilisateur se décide là-bas, pas ici.
+        spec.env.extend(terminal_env());
 
         let (session, reader) = self.spawner.spawn(&spec)?;
         let credits = Arc::new(Credits::new(WINDOW));

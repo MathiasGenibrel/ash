@@ -14,7 +14,9 @@ pub struct PtySpec {
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
-    /// Variables ajoutées à celles héritées — `ASH_TAB_ID` et `ASH_SOCK`.
+    /// Variables ajoutées à celles héritées, et qui l'emportent sur elles — `ASH_SOCK`,
+    /// posé par la commande d'ouverture, puis `ASH_TAB_ID` et la déclaration du terminal
+    /// (voir [`super::terminal_env`]), posés par le registre pour tout onglet.
     pub env: Vec<(String, String)>,
 }
 
