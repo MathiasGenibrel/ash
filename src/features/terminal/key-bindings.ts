@@ -122,13 +122,22 @@ const BOUND_CHORDS = {
     // sait pas encore reconnaître ce qui tient l'avant-plan (#61). Les deux autres voies
     // ont été pesées : n'envoyer la séquence que sous un agent instrumenté est juste, mais
     // suppose #61 ; un réglage déplace la décision sur l'utilisateur, et la fenêtre de
-    // réglages n'a pas de section pour ça (#22). Ce que coûte l'envoi inconditionnel est
-    // réel et se dit : dans `zsh`, `ESC`+`CR` n'est lié à rien, donc `⇧⏎` cesse de valider
-    // la commande ; dans `vim`, `ESC` sort du mode insertion. Le cas le plus plausible
-    // n'est pas volontaire, c'est ⇧ encore enfoncé après une majuscule. Il est accepté
-    // parce que le mode de défaillance est « ça ne fait pas » et jamais « ça fait autre
-    // chose » : `ESC`+`CR` n'exécute rien que `CR` n'aurait pas exécuté, et une seconde
-    // frappe de `⏎` répare. À reprendre quand #61 donnera de quoi conditionner l'entrée.
+    // réglages n'a pas de section pour ça (#22).
+    //
+    // Ce que coûte l'envoi inconditionnel est réel et se dit — mais il est plus petit que
+    // « `⇧⏎` devient une gêne au shell ». Dans `zsh`, `ESC`+`CR` **est** lié : `zshzle(1)`
+    // donne `ESC-^M` à `self-insert-unmeta`, « insert a character into the buffer after
+    // stripping the meta bit and converting ^M to ^J ». À une invite `zsh` ordinaire, `⇧⏎`
+    // insère donc une **nouvelle ligne dans la ligne de commande** au lieu de la valider :
+    // c'est exactement ce que le geste veut dire. Le coût qui reste est ailleurs, et il est
+    // réel : dans `vim`, `ESC` sort du mode insertion ; et dans un `zsh` en `bindkey -v`,
+    // `ESC` passe en mode commande, où `^M` est `accept-line` — la ligne part quand même.
+    //
+    // Le cas le plus plausible n'est pas volontaire, c'est ⇧ encore enfoncé après une
+    // majuscule. Il est accepté parce que le mode de défaillance reste « ça ne valide pas »
+    // et jamais « ça fait autre chose » : `ESC`+`CR` n'exécute aucune commande que `CR`
+    // n'aurait pas exécutée, et une seconde frappe de `⏎` répare. À reprendre quand #61
+    // donnera de quoi conditionner l'entrée.
     //
     // ADR-0015 n'est pas en cause : le `\r` n'est pas composé par Ash, c'est la touche que
     // l'utilisateur vient de presser qui est relayée — et précédée d'`ESC`, elle valide

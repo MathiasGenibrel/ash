@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { menuAccelerators, press } from "./builders";
+import { menuAccelerators, press, type ChordBuilder } from "./builders";
+import { resolveKeyAction } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 
 describe("les raccourcis d'édition de ligne", () => {
@@ -182,6 +183,46 @@ describe("le retour à la ligne dans un prompt", () => {
 
         // Then
         expect(sent).toEqual([null, null, null, null, null]);
+    });
+
+    it("Given every modifier combination of every named key, when both terminal tables see it, then no keystroke is claimed twice", () => {
+        // Given — `xterm-view.ts` compose les deux résolveurs, saisie d'abord et action
+        // ensuite, et dit les tables disjointes. Un accord que les deux nomment ne se
+        // signale pas : la saisie gagne, écrit ses octets, rend `false`, et l'action
+        // d'affichage ne part jamais — sans erreur et sans trace. Jusqu'ici seul `⌘F` était
+        // vérifié ; #91 est justement le changement qui a élargi la surface, en faisant
+        // entrer `⇧` dans l'accord cherché au lieu de le refuser en bloc.
+        const named = [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown",
+            "Backspace",
+            "Delete",
+            "Enter",
+            "f",
+        ];
+        const withModifiers = (key: string): ChordBuilder[] =>
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((mask) => {
+                let chord = press(key);
+                if (mask & 1) chord = chord.withShift();
+                if (mask & 2) chord = chord.withOption();
+                if (mask & 4) chord = chord.withCommand();
+                if (mask & 8) chord = chord.withControl();
+                return chord;
+            });
+        const everyChord = named.flatMap(withModifiers);
+
+        // When
+        const claimedTwice = everyChord
+            .map((chord) => chord.build())
+            .filter(
+                (chord) =>
+                    resolveKeyBinding(chord) !== null && resolveKeyAction(chord) !== null,
+            );
+
+        // Then
+        expect(claimedTwice).toEqual([]);
     });
 
     it("Given a shifted line editing chord, when it is resolved, then adding Shift to the table did not widen the others", () => {
