@@ -17,11 +17,11 @@ mod menu;
 pub mod spike;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use features::agents::{
-    Adapter, AgentState, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Presence,
-    Supervisor,
+    Adapter, AgentState, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice,
+    Notifier, Presence, Supervisor,
 };
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::probe::SystemProbe;
@@ -84,6 +84,61 @@ impl EventSink for HookEvents {
 
     fn deliver(&self, event: &EventFrame) {
         self.agents.on_hook(event);
+    }
+}
+
+/// Relie le port de notification de `features::agents` à macOS.
+///
+/// **L'`AppHandle` arrive après coup, et il n'y a pas d'autre créneau** : le superviseur est
+/// assemblé avant `tauri::Builder`, puisque le registre de PTY en dépend, et le handle
+/// n'existe qu'après `build()`. Le `OnceLock` est le prix de cet ordre-là ; il est ici,
+/// dans l'assemblage, plutôt que dans la feature, qui n'a pas à connaître le cycle de vie
+/// d'une application Tauri. Avant qu'il ne soit posé — c'est-à-dire pendant le démarrage —
+/// une notification est perdue, et c'est sans conséquence : aucun agent n'a encore parlé.
+///
+/// **Un `OnceLock` jamais rempli serait muet à l'exécution, mais il ne peut pas arriver
+/// jusque-là** : [`Self::attach`] est privée et n'a qu'un appelant, donc la retirer du
+/// câblage la rend morte et `cargo clippy -- -D warnings` échoue à la compilation. C'est la
+/// différence avec le `state()` appelé avant son `manage()` qui avait cassé le démarrage :
+/// cette panne-ci se voit avant de tourner. **Ne la faire taire ni par `#[allow(dead_code)]`
+/// ni par `#[expect(dead_code)]`** — ce serait échanger une erreur de build contre des
+/// bannières qui n'arrivent jamais, sans rien qui le dise.
+///
+/// Il n'y a aucune décision ici — un texte déjà écrit, une bannière — et c'est délibéré :
+/// ce qu'Ash notifie, quand, et avec quels mots est décidé par `features::agents::notify`,
+/// où ça se prouve.
+///
+/// **`notice.tab_id` n'est pas utilisé, et c'est le manque de la tranche** : la spec §8 veut
+/// que le clic sélectionne l'onglet, et `tauri-plugin-notification` 2.3.3 ne rend aucun
+/// moyen de capter ce clic sur macOS. Le champ voyage jusqu'ici pour que le jour où il se
+/// captera, il n'y ait qu'un `else` à écrire — et pour que le trou reste visible.
+#[derive(Default)]
+struct AppNotifier {
+    app: OnceLock<tauri::AppHandle>,
+}
+
+impl AppNotifier {
+    fn attach(&self, app: tauri::AppHandle) {
+        let _ = self.app.set(app);
+    }
+}
+
+impl Notifier for AppNotifier {
+    fn post(&self, notice: Notice) {
+        use tauri_plugin_notification::NotificationExt;
+
+        let Some(app) = self.app.get() else {
+            return;
+        };
+        // Une notification perdue ne change aucun état : rien ne dépend de sa réussite, et
+        // faire remonter l'échec n'apprendrait rien de plus que ce que la section
+        // `notifications` des réglages dit déjà.
+        let _ = app
+            .notification()
+            .builder()
+            .title(notice.title)
+            .body(notice.body)
+            .show();
     }
 }
 
@@ -233,9 +288,15 @@ pub fn run() -> tauri::Result<()> {
     // superviseur pour savoir quoi montrer d'un onglet.
     let (adapters, profiles) = embedded_adapters();
 
+    // La bannière macOS de la spec §8. Elle est câblée **avant** le superviseur parce que
+    // celui-ci la détient, et rattachée à l'application après `build()` : voir
+    // [`AppNotifier`].
+    let notifier = Arc::new(AppNotifier::default());
+
     let agents = Arc::new(Supervisor::new(
         Arc::new(shared::time::SystemClock),
         adapters.clone(),
+        Arc::clone(&notifier) as Arc<dyn Notifier>,
     ));
 
     let ptys = Arc::new(PtyRegistry::new(
@@ -265,6 +326,11 @@ pub fn run() -> tauri::Result<()> {
         }),
     ));
     let app = tauri::Builder::default()
+        // Le plugin n'est utilisé que depuis Rust — c'est le backend qui détient l'état,
+        // donc lui qui décide d'interrompre (ADR-0009). Aucune capacité ne lui est accordée
+        // dans `capabilities/` : ce serait ouvrir à la webview une API que le produit
+        // n'appelle pas.
+        .plugin(tauri_plugin_notification::init())
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&tools))
@@ -282,6 +348,7 @@ pub fn run() -> tauri::Result<()> {
             features::git::commands::git_metadata,
             features::theme::commands::theme_mode,
             features::theme::commands::terminal_font_size,
+            features::settings::commands::settings_notifications,
             features::settings::commands::settings_tools,
             features::settings::commands::settings_declare_tool,
             features::settings::commands::settings_forget_tool,
@@ -298,6 +365,11 @@ pub fn run() -> tauri::Result<()> {
             spike::spike_report
         ])
         .build(tauri::generate_context!())?;
+
+    // Le port de notification n'avait pas d'application à qui parler avant cette ligne. Il
+    // la reçoit ici, dans le même créneau que la surveillance git et le socket d'events, et
+    // pour la même raison : `setup` ne tourne pas pendant `build()` dans Tauri 2.
+    notifier.attach(app.handle().clone());
 
     // La surveillance git naît **après** `build` et **avant** `run` : elle a besoin du
     // handle de l'application pour émettre, et l'application a besoin d'elle pour répondre

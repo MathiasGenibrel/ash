@@ -22,9 +22,16 @@ arbitrés par une machine à états — une par onglet, tenue par `features/agen
 sortie du PTY, et `waiting` n'a **jamais** d'autre source qu'un hook. N'invente aucune
 source d'état.
 
-Ce qui reste à faire du côté des agents : la notification macOS, la remontée d'état dans la
-sidebar, les subagents, et la reconnaissance d'une commande d'agent par son nom (ADR-0006),
-sans laquelle Ash ne distingue pas `claude` de `vim` dans l'avant-plan d'un onglet.
+**La notification macOS existe** (spec §8) : `waiting` et `error` posent une bannière quand
+Ash n'est pas au premier plan, sur le **changement** d'état et jamais sur sa lecture, et
+`done` ne notifie pas. Elle passe par le port `Notifier` d'`agents`, que le composition root
+branche sur `tauri-plugin-notification`. Un critère de la spec n'est **pas** tenu, et c'est
+documenté dans `features/agents/notify.rs` : le clic sur la bannière ne sélectionne pas
+l'agent, parce que le plugin jette la poignée par laquelle macOS rapporterait ce clic.
+
+Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, les subagents,
+et la reconnaissance d'une commande d'agent par son nom (ADR-0006), sans laquelle Ash ne
+distingue pas `claude` de `vim` dans l'avant-plan d'un onglet.
 
 Ne prends pas les durées de la maquette (`working · 15m22s`) pour un manque : rien ne
 date encore l'entrée dans un état.

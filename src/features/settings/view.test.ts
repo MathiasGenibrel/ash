@@ -2,7 +2,14 @@ import { describe, expect, it } from "bun:test";
 
 import { find, findAll, plainText, text, type UiChild } from "@/shared/ui";
 
-import { aDraft, aHooksReport, aSnapshot, aTool, aVerification } from "./builders";
+import {
+    aDraft,
+    aHooksReport,
+    aNotificationsReport,
+    aSnapshot,
+    aTool,
+    aVerification,
+} from "./builders";
 import { describeToolCount } from "./model";
 import { settingsNav, settingsPanel, type SettingsRendering, type SettingsScene } from "./view";
 
@@ -23,6 +30,7 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         failure: null,
         edits: new Map(),
         conflict: null,
+        notifications: aNotificationsReport(),
         ...overrides,
     };
 }
@@ -128,6 +136,17 @@ describe("le panneau de la fenêtre de réglages", () => {
 
         // Then
         expect(said(composed)).toContain("the theme is chosen in View ▸ Theme");
+    });
+
+    it("Given the notifications section, when the panel is composed, then it shows what the backend says rather than a placeholder", () => {
+        // Given — c'est la section qui porte la dernière puce de la spec §8, et elle était
+        // un texte de remplissage. Un panneau qui garderait sa prose d'attente ferait lire
+        // « rien n'est notifié » à un utilisateur qu'Ash interrompt déjà
+        const composed = settingsPanel(scene({ section: "notifications" }), IDLE_ACTIONS);
+
+        // Then
+        expect(said(composed)).toContain("System Settings ▸ Notifications ▸ ash");
+        expect(said(composed)).not.toContain("nothing is notified yet");
     });
 
     it("Given two entries pointing at the same folder, when the panel is composed, then the banner sits between the header and the list", () => {

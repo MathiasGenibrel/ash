@@ -24,5 +24,6 @@ export { diffView } from "./diff-view";
 export { duplicateBanner, type DuplicateBannerActions } from "./duplicate-banner";
 export { hooksNote, hooksRow, type HooksRowActions } from "./hooks-row";
 export { navColumn } from "./nav";
+export { notificationsSection } from "./notifications";
 export { testDetail, testRow, type TestDetailActions } from "./test-row";
 export { cell, label, para, spacer, tag } from "./atoms";

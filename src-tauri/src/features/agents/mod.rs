@@ -34,11 +34,19 @@
 //! | Port | Système | Tests |
 //! |---|---|---|
 //! | `EventSink` (`socket.rs`) | `HookEvents` (`lib.rs`) | `FakeSink` (`socket.rs`) |
+//! | `Notifier` (`notify.rs`) | `AppNotifier` (`lib.rs`) | `FakeNotifier` (`fakes.rs`) |
 //!
-//! Le port n'est **pas** le socket : celui-ci est l'effet que la feature exerce elle-même,
-//! et ses tests l'exercent pour de vrai. Ce que `EventSink` abstrait, c'est la **livraison**
-//! — savoir qu'un onglet existe, et prévenir la webview. C'est ce qui laisse `agents` et
-//! `pty` s'ignorer, et ce qui rend l'écoute vérifiable sans lancer un seul PTY.
+//! Le premier n'est **pas** le socket : celui-ci est l'effet que la feature exerce
+//! elle-même, et ses tests l'exercent pour de vrai. Ce que `EventSink` abstrait, c'est la
+//! **livraison** — savoir qu'un onglet existe, et prévenir la webview. C'est ce qui laisse
+//! `agents` et `pty` s'ignorer, et ce qui rend l'écoute vérifiable sans lancer un seul PTY.
+//!
+//! Le second est la seule chose du produit qui sorte de la fenêtre (spec §8). Il est un
+//! trait pour la raison la plus simple qui soit : aucun `cargo test` ne doit faire
+//! apparaître une bannière sur l'écran de qui le lance. Ce qu'il porte — les deux états qui
+//! interrompent, jamais quand Ash est devant, et jamais deux fois pour le même changement —
+//! est décidé dans [`notify`], et posé par [`Supervisor`], seul endroit du système qui sache
+//! qu'un état vient de **changer** plutôt que d'être.
 
 mod adapter;
 mod adapters;
@@ -51,6 +59,7 @@ mod error;
 #[cfg(test)]
 mod fakes;
 mod machine;
+mod notify;
 mod socket;
 mod state;
 mod supervisor;
@@ -62,6 +71,7 @@ pub use adapter::{
 pub use adapters::{ClaudeCodeAdapter, GenericAdapter};
 pub use error::AgentError;
 pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};
+pub use notify::{Notice, Notifier, NOTIFIED_STATES};
 pub use socket::{listen, EventSink, EventSocket};
 pub use state::AgentState;
 pub use supervisor::{Presence, Supervisor};

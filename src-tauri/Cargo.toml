@@ -45,6 +45,17 @@ libc = "0.2.189"
 # dernière stable — les 9.0.0-rc ne sont pas publiées en version finale. Fonctionnalités
 # par défaut, qui se réduisent ici à `macos_fsevent` : ni `crossbeam-channel`, ni `serde`.
 notify = "=8.2.0"
+# Les notifications macOS de la spec §8 — un agent en `waiting` doit être vu même quand Ash
+# est derrière une autre fenêtre. Version épinglée comme `notify` : 2.3.3, publiée le
+# 2025-10-27. C'est le plugin officiel, et il n'y a rien d'autre à porter — sur macOS il se
+# ramène à `notify_rust`, donc à `mac-notification-sys`.
+#
+# **Ce qu'il ne fait pas, et qui n'est pas contournable ici** : capter le clic sur la
+# bannière. Son implémentation de bureau jette la poignée que `notify_rust` rend, et
+# `on_action` est `#[cfg(mobile)]`. Son `permission_state()` de bureau rend, lui, une
+# constante `Granted`. Voir `features/agents/notify.rs` et
+# `features/settings/notifications.rs`, qui documentent chacun la conséquence de son côté.
+tauri-plugin-notification = "=2.3.3"
 
 [dev-dependencies]
 ts-rs = "12.0.1"

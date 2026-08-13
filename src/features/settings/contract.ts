@@ -11,6 +11,8 @@
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 
+import type { AgentState } from "@/shared/ipc";
+
 /**
  * Une commande reconnue — le `[[command]]` de `~/.ash/config.toml` (spec §9).
  *
@@ -196,6 +198,35 @@ export interface Verified {
     hooks: HooksReport | null;
 }
 
+/**
+ * Ce que macOS laisse savoir à Ash de son autorisation de notifier.
+ *
+ * `undisclosed` est **la seule valeur produite aujourd'hui**, et la raison est en Rust
+ * (`features/settings/notifications.rs`) : le `permission_state()` de bureau du plugin rend
+ * une constante `granted`, donc Ash ne peut affirmer ni l'un ni l'autre sans risquer de
+ * mentir à celui qui a refusé.
+ */
+export type NotificationPermission = "granted" | "denied" | "undisclosed";
+
+/**
+ * La section `notifications` de la fenêtre, telle que le backend la compose (spec §8).
+ *
+ * Rien n'est décidé ici, pas même les deux états qui interrompent : ils viennent de
+ * `features/agents`, seul propriétaire de ce que « notifier » veut dire
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface NotificationsReport {
+    permission: NotificationPermission;
+    /** La phrase de la ligne d'état. */
+    summary: string;
+    /** Sa conséquence, en prose. */
+    note: string;
+    /** Le chemin où l'autorisation se donne, mot pour mot. */
+    path: string;
+    /** Les états qui interrompent l'utilisateur, dans l'ordre de la spec §8. */
+    notified: readonly AgentState[];
+}
+
 /** Ce que le formulaire d'ajout envoie : du texte, pas encore une déclaration. */
 export interface ToolDraft {
     command: string;
@@ -213,6 +244,13 @@ export interface ToolDraft {
  */
 export interface SettingsPorts {
     tools(): Promise<SettingsSnapshot>;
+    /**
+     * Ce que la section `notifications` affiche (spec §8).
+     *
+     * Demandée à chaque ouverture de la section, et pas une seule fois au montage :
+     * l'autorisation macOS se change dans les Réglages Système pendant qu'Ash tourne.
+     */
+    notifications(): Promise<NotificationsReport>;
     declareTool(draft: ToolDraft): Promise<SettingsSnapshot>;
     forgetTool(command: string): Promise<SettingsSnapshot>;
     /** Change le dossier ou l'adaptateur d'une entrée, et relance la séquence. */

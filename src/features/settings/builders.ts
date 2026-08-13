@@ -1,5 +1,7 @@
 import type {
     HooksReport,
+    NotificationPermission,
+    NotificationsReport,
     SettingsSnapshot,
     TestDescription,
     ToolDeclaration,
@@ -92,6 +94,27 @@ export const FOUR_TESTS: readonly TestDescription[] = [
     { number: 3, label: "the command exists in PATH", shortLabel: "in PATH", decisive: true },
     { number: 4, label: "the command answers", shortLabel: "answers", decisive: false },
 ];
+
+/**
+ * La section `notifications` telle que le backend la compose aujourd'hui.
+ *
+ * Le défaut est le cas **réel** : macOS ne dit pas à Ash si l'autorisation est accordée. Les
+ * phrases sont celles de `features/settings/notifications.rs` — un scénario qui les
+ * réécrirait prouverait quelque chose que le backend n'envoie pas.
+ */
+export function aNotificationsReport(
+    permission: NotificationPermission = "undisclosed",
+    overrides: Partial<NotificationsReport> = {},
+): NotificationsReport {
+    return {
+        permission,
+        summary: "macOS doesn't tell ash whether notifications are allowed",
+        note: "if nothing appears while ash is in the background and an agent is waiting, the permission is the first thing to check:",
+        path: "System Settings ▸ Notifications ▸ ash",
+        notified: ["waiting", "error"],
+        ...overrides,
+    };
+}
 
 export function aSnapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     return {

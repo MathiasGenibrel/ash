@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+    NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
     ToolDraft,
@@ -10,7 +11,7 @@ import type {
 } from "./contract";
 
 /**
- * L'implémentation réelle du pont vers `features::settings` : onze commandes, un event, et
+ * L'implémentation réelle du pont vers `features::settings` : douze commandes, un event, et
  * rien d'autre.
  *
  * Le pendant de `pty-bridge.ts` et de `git-bridge.ts`, posé pour la même raison : la
@@ -35,6 +36,7 @@ function folder(config: string): string | null {
 
 export const tauriSettings: SettingsPorts = {
     tools: () => invoke<SettingsSnapshot>("settings_tools"),
+    notifications: () => invoke<NotificationsReport>("settings_notifications"),
     // Le nom du paramètre est `tool` des deux côtés : Tauri passe les arguments par nom, et
     // une faute de frappe ici se verrait à l'exécution, pas à la compilation.
     declareTool: (draft: ToolDraft) =>
