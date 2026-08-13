@@ -72,6 +72,14 @@ export class SidebarView {
         this.head.setAttribute("aria-label", model.summary);
 
         if (model.shape === "compact") {
+            // `❯3` ne se lit pas à voix haute. Un `aria-label` seul n'y suffit pas : posé
+            // sur un `div`, il tombe sur le rôle `generic`, que les lecteurs d'écran
+            // n'exposent pas — la phrase serait écrite dans le DOM sans que personne ne
+            // l'entende. `role="img"` donne à l'en-tête un rôle qui accepte un nom, et
+            // masque le glyphe qu'il remplace. La forme longue n'en a pas besoin : son
+            // texte est déjà lisible, et un rôle l'empêcherait de l'être.
+            this.head.setAttribute("role", "img");
+
             const badge = document.createElement("span");
             badge.className = "ash-sidebar-badge";
             if (model.badge.urgent) badge.classList.add("is-urgent");
@@ -81,6 +89,8 @@ export class SidebarView {
             this.head.replaceChildren(badge);
             return;
         }
+
+        this.head.removeAttribute("role");
 
         const count = document.createElement("span");
         count.className = "ash-sidebar-count";

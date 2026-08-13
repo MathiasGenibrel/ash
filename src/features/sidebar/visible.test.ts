@@ -136,6 +136,26 @@ describe("ce qu'une ligne repliée porte à la place de ses enfants", () => {
         expect(shown).toEqual(["waiting", "working"]);
     });
 
+    it("Given a collapsed column, when the rows below it are folded in any combination, then the rail shows the same agents regardless", () => {
+        // Given — à 46 px le rail aplatit le groupe (`planRailEntry`) : replier une ligne
+        // en dessous ne doit rien lui retirer, sans quoi `⌘B` réduirait deux fois la même
+        // colonne et masquerait exactement ce qu'on est venu y chercher. Sans ce test, le
+        // chemin du rail n'est pincé par rien : le remplacer par celui de la colonne
+        // dépliée laissait la suite verte.
+        const tabs = tabsWith("in-api");
+        const railFoldings = everyFolding().filter((folding) => folding.columnCollapsed);
+
+        // When
+        const renderings = new Set(
+            railFoldings.map((folding) => shownUnder(tabs, folding).join()),
+        );
+
+        // Then — l'état du dépôt, puis un glyphe par agent, et une seule lecture pour les
+        // huit replis
+        expect(railFoldings).toHaveLength(8);
+        expect([...renderings]).toEqual(["waiting,waiting,idle,working"]);
+    });
+
     it("Given an expanded worktree, when the column is drawn, then its row adds no state of its own", () => {
         // Given — dépliée, la ligne n'a rien à remonter : ses onglets se disent eux-mêmes,
         // et un glyphe de plus ne ferait que répéter le plus urgent d'entre eux
