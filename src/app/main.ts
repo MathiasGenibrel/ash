@@ -157,10 +157,35 @@ theme.ready.catch(() => undefined);
 const fontSize = followTerminalFontSize();
 fontSize.ready.catch(() => undefined);
 
-if (import.meta.env.VITE_SPIKE === "1") {
-    mountSpike(root).catch((error: unknown) => {
-        root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
-    });
-} else {
-    mount(root, theme.changes, fontSize.changes);
-}
+// **Rien ne se monte avant que JetBrains Mono ne soit retombée.** xterm.js mesure la
+// cellule au moment d'`open()`, une fois, de façon synchrone, et ne remesure jamais
+// ensuite : la largeur qu'il fige à cet instant part dans la grille **et** dans l'atlas
+// de textures du renderer WebGL. Or `assets/fonts/fonts.css` déclare ses faces en
+// `font-display: block` — tant que le woff2 n'est pas arrivé, WebKit répond avec les
+// métriques d'une face de repli. Mesurer là, c'est graver la largeur de SF Mono puis
+// tracer du JetBrains Mono dedans : des glyphes rognés à une lamelle verticale, et un
+// prompt déjà peint qui garde son `?` là où il voulait un `➜` (U+279C existe dans
+// JetBrains Mono, pas dans SF Mono).
+//
+// C'est une course, et seul le bundle la perd. En `tauri dev`, l'origine
+// `http://localhost:1420` garde son cache HTTP d'un lancement à l'autre, donc la police
+// est déjà chaude quand `open()` mesure ; en bundle, `tauri://localhost` part d'un cache
+// vierge et chaque asset passe par le protocole personnalisé de Tauri — un aller-retour
+// vers Rust. Le défaut ne se voit donc **qu'en `tauri build`**, et ne se vérifie que là.
+//
+// L'attente ne coûte rien au démarrage : la police est livrée dans le bundle, pas
+// téléchargée, et la promesse retombe en quelques millisecondes. `finally` et non `then` :
+// une police qui échoue à charger doit donner un terminal en police de repli, pas une
+// fenêtre vide. Le correctif est ici, au composition root, et pas dans la vue : les
+// onglets ouverts plus tard héritent d'une mesure déjà juste.
+void document.fonts.ready.finally(() => {
+    if (import.meta.env.VITE_SPIKE === "1") {
+        // Le banc a la même contrainte, et une raison de plus : il chronomètre un rendu,
+        // et une grille mesurée sur une face de repli n'est pas la grille qu'on mesure.
+        mountSpike(root).catch((error: unknown) => {
+            root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
+        });
+    } else {
+        mount(root, theme.changes, fontSize.changes);
+    }
+});
