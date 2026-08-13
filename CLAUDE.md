@@ -22,12 +22,22 @@ arbitrés par une machine à états — une par onglet, tenue par `features/agen
 sortie du PTY, et `waiting` n'a **jamais** d'autre source qu'un hook. N'invente aucune
 source d'état.
 
-**La notification macOS existe** (spec §8) : `waiting` et `error` posent une bannière quand
-Ash n'est pas au premier plan, sur le **changement** d'état et jamais sur sa lecture, et
-`done` ne notifie pas. Elle passe par le port `Notifier` d'`agents`, que le composition root
-branche sur `tauri-plugin-notification`. Un critère de la spec n'est **pas** tenu, et c'est
-documenté dans `features/agents/notify.rs` : le clic sur la bannière ne sélectionne pas
-l'agent, parce que le plugin jette la poignée par laquelle macOS rapporterait ce clic.
+**La notification macOS existe, et son clic ramène sur l'agent** (spec §8) : `waiting` et
+`error` posent une bannière quand Ash n'est pas au premier plan, sur le **changement** d'état
+et jamais sur sa lecture, et `done` ne notifie pas. Elle passe par le port `Notifier`
+d'`agents`, que le composition root branche sur `features/notifications` —
+`UNUserNotificationCenter`, le **second module `unsafe` du crate** après la sonde. La
+bannière emporte l'identifiant de son onglet, macOS le rend au clic par un délégué
+asynchrone, et le backend émet `ash://select-tab` : aucun fil n'attend jamais un geste de
+l'utilisateur, et rien ne sélectionne sans lui.
+
+**Rien de tout cela ne fonctionne en `bun run tauri dev`**, et c'est irréductible :
+`UNUserNotificationCenter` exige une application empaquetée et *tue* le processus qui le
+demande sans l'être. Un garde le franchit avant tout appel, la fenêtre de réglages dit alors
+« macOS ne nous le dit pas », et la fonctionnalité ne se vérifie que sur
+`bun run tauri build`. `tauri-plugin-notification` a été **retiré** : son
+`permission_state()` de bureau rendait `Granted` en dur, et deux couches se disputant le
+délégué global au processus est une panne silencieuse.
 
 Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, les subagents,
 et la reconnaissance d'une commande d'agent par son nom (ADR-0006), sans laquelle Ash ne
@@ -41,7 +51,8 @@ date encore l'entrée dans un état.
 - **Type de projet** : application de bureau macOS
 - **Coquille** : Tauri v2 ([ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md))
 - **Backend** : Rust — `portable-pty`, `libc` (la sonde), `notify` (la surveillance de
-  `.git`). Le socket unix et le binaire `ash-event`
+  `.git`), `objc2` + `objc2-user-notifications` (les bannières). Le socket unix et le
+  binaire `ash-event`
   ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)) n'existent pas encore : c'est J2
 - **Frontend** : TypeScript + xterm.js, dans la webview système (WKWebView)
 - **Gestionnaire de paquets** : **bun** — n'utilise aucun autre gestionnaire dans ce dépôt
@@ -121,6 +132,8 @@ src-tauri/src/
   features/
     pty/               ✓ PTY, onglets, boucle de sonde 300 ms       — ADR-0003
     probe/             ✓ sonde fg_pid + cwd (libc)                  — ADR-0005
+    notifications/     ✓ bannières macOS, autorisation, clic
+                         (UNUserNotificationCenter)                 — spec §8
     git/               ✓ résolution worktree/dépôt, surveillance de
                          `.git`, métadonnées                        — ADR-0011/12
     theme/             ✓ clair / sombre / système, persisté

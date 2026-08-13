@@ -13,27 +13,16 @@
 //!   [`super::AgentMachine`] qui distingue les deux — elle rend `Some(état)` quand il
 //!   **change** — et [`super::Supervisor`] ne consulte que ce `Some`.
 //!
-//! **Ce que ce module ne fait pas, et ne peut pas faire aujourd'hui : router le clic.** La
-//! spec §8 veut que le clic sélectionne l'agent concerné, et `tauri-plugin-notification`
-//! 2.3.3 ne le rend pas possible sur macOS. Ce n'est pas une limite de macOS mais une limite
-//! du plugin, et elle se lit dans son code :
+//! **[`Notice::tab_id`] est l'onglet que le clic sélectionne.** Il voyage avec la bannière —
+//! `features::notifications` le confie à macOS et le rend tel quel quand l'utilisateur
+//! clique — et le composition root en fait une sélection. Rien de ce chemin n'attend :
+//! macOS rappelle par un délégué, et aucun fil d'Ash n'est garé en attendant un geste qui,
+//! le plus souvent, ne vient pas.
 //!
-//! - la couche du dessous, `notify-rust` 4.18, sait le faire — `NotificationHandle`
-//!   expose `wait_for_response`, qui rend un `NotificationResponse::Click` ;
-//! - le plugin, lui, appelle `notification.show()` dans un `tauri::async_runtime::spawn` et
-//!   **jette** cette poignée (`let _ = notification.show();`, `src/desktop.rs`) ;
-//! - `on_action` et `register_action_types` sont `#[cfg(mobile)]`, donc absents du bureau.
-//!
-//! Le capter demanderait de dépendre directement de `notify-rust`, et d'y consacrer un fil
-//! par bannière — `wait_for_response` bloque jusqu'à ce que l'utilisateur agisse. C'est une
-//! dépendance de plus et une décision à prendre, pas un détail d'implémentation à glisser
-//! dans cette tranche. [`Notice::tab_id`] désigne donc l'onglet que le clic sélectionnerait :
-//! il voyage jusqu'au port, et l'adaptateur système n'en fait rien. C'est volontairement un
-//! manque visible plutôt qu'un contournement.
-//!
-//! **Rien ici ne sélectionne quoi que ce soit.** Le port ne rend rien, ne prend aucun
-//! `AppHandle`, et n'a aucun moyen de changer l'onglet actif ni de mettre la fenêtre au
-//! premier plan : c'est la forme que prend l'interdiction de la spec §8 et d'
+//! **Rien ici ne sélectionne pourtant quoi que ce soit, et c'est structurel.** Le port ne
+//! rend rien, ne prend aucun `AppHandle`, et n'a aucun moyen de changer l'onglet actif ni de
+//! mettre la fenêtre au premier plan. La sélection a une seule source, et c'est le clic :
+//! c'est la forme que prend l'interdiction de la spec §8 et d'
 //! [ADR-0010](../../../../docs/adr/0010-sidebar-informe-terminal-agit.md) — Ash informe,
 //! l'utilisateur agit.
 
@@ -53,7 +42,7 @@ pub const NOTIFIED_STATES: [AgentState; 2] = [AgentState::Waiting, AgentState::E
 /// Ce qu'une notification porte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
-    /// L'onglet concerné — celui que le clic sélectionnerait, le jour où le clic se capte.
+    /// L'onglet concerné — celui que le clic sur la bannière sélectionne.
     pub tab_id: String,
     /// L'état qui a justifié l'interruption. Toujours l'un de [`NOTIFIED_STATES`].
     pub state: AgentState,
