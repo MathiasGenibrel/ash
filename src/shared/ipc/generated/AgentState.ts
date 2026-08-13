@@ -23,5 +23,7 @@
  *
  * La représentation sérialisée est le contrat partagé avec le TypeScript
  * (`src/shared/ipc`) : cinq mots en minuscules, et `presentAgentState` en face.
+ *
+ * Un état seul ne dit pas depuis quand il dure : c'est [`AgentStatus`] qui le date.
  */
 export type AgentState = "idle" | "working" | "waiting" | "done" | "error";

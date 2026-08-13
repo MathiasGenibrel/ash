@@ -43,8 +43,17 @@ Ce qui reste à faire du côté des agents : la remontée d'état dans la sideba
 et la reconnaissance d'une commande d'agent par son nom (ADR-0006), sans laquelle Ash ne
 distingue pas `claude` de `vim` dans l'avant-plan d'un onglet.
 
-Ne prends pas les durées de la maquette (`working · 15m22s`) pour un manque : rien ne
-date encore l'entrée dans un état.
+**L'entrée dans un état est datée, et la ligne de statut affiche sa durée** (`working ·
+15m22s`). Ce qui traverse la frontière est une **date absolue** — `TabInfo.stateSince`, en
+millisecondes depuis l'époque Unix — envoyée une seule fois, au changement d'état : le
+`TabInfo` est comparé entier pour décider s'il faut émettre, donc une durée vivante ferait
+partir `ash://tab-changed` chaque seconde pour chaque onglet actif. Le compteur qui
+s'incrémente est un fait d'affichage, et il le reste.
+
+`ash-event` lit désormais **l'entrée standard** que tout hook lui donne, et en tire
+`agent_id` / `agent_type` (ADR-0007, amendement du 2026-08-13). Il ne les utilise encore
+nulle part : il les transporte. Il n'attend jamais cette entrée — rien de ce qui s'y passe
+ne peut retenir un hook, donc bloquer un agent.
 
 ## Stack
 

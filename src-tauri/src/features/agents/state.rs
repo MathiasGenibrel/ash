@@ -1,3 +1,5 @@
+use crate::shared::time::UnixMillis;
+
 /// Les cinq états d'un agent — le vocabulaire commun du produit.
 ///
 /// C'est **le backend** qui les détient
@@ -20,6 +22,8 @@
 ///
 /// La représentation sérialisée est le contrat partagé avec le TypeScript
 /// (`src/shared/ipc`) : cinq mots en minuscules, et `presentAgentState` en face.
+///
+/// Un état seul ne dit pas depuis quand il dure : c'est [`AgentStatus`] qui le date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "kebab-case")]
@@ -29,6 +33,49 @@ pub enum AgentState {
     Waiting,
     Done,
     Error,
+}
+
+/// L'état d'un onglet, et **depuis quand** il y est.
+///
+/// La date est absolue (millisecondes depuis l'époque Unix) et non une durée, et c'est la
+/// décision qui porte tout le reste : une durée changerait de valeur à chaque passe de la
+/// boucle de sonde, donc la fiche d'onglet changerait avec elle, donc l'event
+/// `ash://tab-changed` partirait chaque seconde pour chaque onglet actif — on paierait un
+/// rendu complet de la sidebar pour animer un compteur. Envoyée une fois, en absolu, la
+/// fiche redevient stable et le compteur redevient ce qu'il est : un problème d'affichage,
+/// que le frontend résout avec sa propre horloge.
+///
+/// C'est bien le backend qui date : le frontend rend une durée, il n'invente pas son
+/// origine ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentStatus {
+    pub state: AgentState,
+    /// Quand cet onglet est **entré** dans cet état, et non quand on l'a lu.
+    pub since: UnixMillis,
+}
+
+impl AgentStatus {
+    /// Le statut d'un onglet qui montre `state`, sachant celui qu'il montrait avant.
+    ///
+    /// **C'est ici, et nulle part ailleurs, que la datation se décide.** Trois lignes, mais
+    /// elles portent toute la promesse du type : la date suit le **verdict affiché**, jamais
+    /// la source qui le produit ni la passe qui le lit. Deux conséquences, et il a fallu
+    /// écrire la règle une seule fois pour que les deux tiennent ensemble :
+    ///
+    /// - une passe de sonde qui reconduit le même état rend la même date, sinon la fiche de
+    ///   l'onglet changerait trois fois par seconde et l'event `ash://tab-changed`
+    ///   deviendrait un flux ;
+    /// - un hook qui déclare le mot que l'onglet montrait **déjà** ne redate pas non plus.
+    ///   C'est la séquence de tout démarrage d'agent — la sonde voit `claude` prendre
+    ///   l'avant-plan, le premier hook n'arrive qu'au premier outil employé — et le
+    ///   compteur repartait de zéro sous les yeux de l'utilisateur.
+    #[must_use]
+    pub fn entering(previous: Option<Self>, state: AgentState, now: UnixMillis) -> Self {
+        match previous {
+            Some(known) if known.state == state => known,
+            _ => Self { state, since: now },
+        }
+    }
 }
 
 #[cfg(test)]

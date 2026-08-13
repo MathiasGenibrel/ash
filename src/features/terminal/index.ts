@@ -106,10 +106,26 @@ export function mountTerminals(
     function drawStatus(): void {
         const active = shown.tabs.find((tab) => tab.tabId === shown.activeTabId) ?? null;
         const worktreeRoot = active?.location?.worktreeRoot ?? null;
-        status.render(composeStatusLine(shown, metadata.of(worktreeRoot), sidebarCollapsed));
+        status.render(
+            composeStatusLine(shown, metadata.of(worktreeRoot), sidebarCollapsed, Date.now()),
+        );
     }
 
     const metadata = new WorktreeMetadataStore(tauriGit, drawStatus);
+
+    // Le compteur de la ligne de statut (`working · 15m22s`) est un fait d'affichage : le
+    // backend date l'entrée dans un état **une fois**, et c'est ce battement-ci qui fait
+    // avancer les secondes. Le faire côté backend rendrait la fiche de chaque onglet actif
+    // différente à chaque seconde, donc réveillerait la sidebar entière pour animer un
+    // chiffre.
+    //
+    // Un redessin d'une ligne par seconde, sans rien redemander à personne : `metadata.of`
+    // lit un cache, et ne déclenche une lecture qu'au premier worktree jamais demandé. Rien
+    // à désabonner : comme l'atelier, la ligne de statut vit aussi longtemps que la fenêtre.
+    //
+    // Posé **après** le cache, et non avant : `drawStatus` le lit, et un battement qui
+    // partirait pendant l'assemblage tomberait sur une liaison pas encore initialisée.
+    setInterval(drawStatus, 1000);
 
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
