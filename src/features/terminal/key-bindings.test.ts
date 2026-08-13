@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { menuAccelerators, press } from "./builders";
+import { menuAccelerators, press, type ChordBuilder } from "./builders";
+import { resolveKeyAction } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 
 describe("les raccourcis d'édition de ligne", () => {
@@ -77,14 +78,18 @@ describe("les raccourcis d'édition de ligne", () => {
 
     it("Given a bound chord that is released, when it is resolved, then nothing is sent a second time", () => {
         // Given — xterm.js appelle le gestionnaire pour `keydown` **et** `keyup` ; sans le
-        // filtre, chaque ⌥← enverrait `ESC b` deux fois.
-        const release = press("ArrowLeft").withOption().released().build();
+        // filtre, chaque ⌥← enverrait `ESC b` deux fois. ⇧⏎ est le cas où ça se paierait le
+        // plus cher : deux `ESC CR` pour une frappe, donc deux lignes dans le prompt.
+        const released = [
+            press("ArrowLeft").withOption().released(),
+            press("Enter").withShift().released(),
+        ];
 
         // When
-        const sent = resolveKeyBinding(release);
+        const sent = released.map((chord) => resolveKeyBinding(chord.build()));
 
         // Then
-        expect(sent).toBeNull();
+        expect(sent).toEqual([null, null]);
     });
 
     it("Given a bound key pressed with an extra modifier, when it is resolved, then it is left to the shell", () => {
@@ -103,9 +108,13 @@ describe("les raccourcis d'édition de ligne", () => {
         expect(sent).toEqual([null, null, null]);
     });
 
-    it("Given every chord of the table, when its sequence is inspected, then none of them submits a line", () => {
+    it("Given every line editing chord, when its sequence is inspected, then none of them submits a line", () => {
         // Given — ADR-0015 : Ash compose, l'utilisateur envoie. Un raccourci d'édition qui
-        // glisserait un `\r` validerait une commande à la place de l'utilisateur.
+        // glisserait un `\r` validerait une commande à la place de l'utilisateur. ⇧⏎ n'est
+        // pas de la liste, et ne peut pas l'être : sa séquence contient un `\r` par
+        // construction. Ce n'est pas la même chose — la touche pressée **est** ⏎, Ash
+        // relaie une frappe au lieu d'en fabriquer une, et `ESC` devant valide moins que le
+        // `CR` nu qui part aujourd'hui.
         const bound = [
             press("ArrowLeft").withOption(),
             press("ArrowRight").withOption(),
@@ -123,5 +132,114 @@ describe("les raccourcis d'édition de ligne", () => {
         // Then
         expect(sent.some((bytes) => bytes?.includes("\r") === true)).toBe(false);
         expect(sent.some((bytes) => bytes?.includes("\n") === true)).toBe(false);
+    });
+});
+
+describe("le retour à la ligne dans un prompt", () => {
+    it("Given Shift+Enter, when it is resolved, then it sends ESC+CR so an agent can tell it from a bare Enter", () => {
+        // Given — xterm.js n'a que `result.key = ev.altKey ? ESC + CR : CR` pour le keyCode
+        // 13 (`@xterm/xterm` 6.0.0, `src/common/input/Keyboard.ts:102`) : `⇧⏎` et `⏎` y
+        // sont le même octet, et l'agent à l'autre bout envoie donc le prompt dans les deux
+        // cas. `ESC`+`CR` est la séquence que les terminaux configurés par
+        // `claude /terminal-setup` envoient pour `⇧⏎`.
+        const chord = press("Enter").withShift().build();
+
+        // When
+        const sent = resolveKeyBinding(chord);
+
+        // Then
+        expect(sent).toBe("\x1b\r");
+    });
+
+    it("Given a bare Enter, when it is resolved, then the table leaves it alone and the command is still submitted", () => {
+        // Given — c'est la moitié qu'il ne faut surtout pas casser : `⏎` doit continuer de
+        // partir en `CR` par le chemin de xterm.js. Le type `Chord` interdit d'ailleurs
+        // d'écrire `"Enter"` dans la table, mais c'est le comportement qu'on protège ici,
+        // pas le type.
+        const chord = press("Enter").build();
+
+        // When
+        const sent = resolveKeyBinding(chord);
+
+        // Then
+        expect(sent).toBeNull();
+    });
+
+    it("Given Enter pressed with any other modifier, when it is resolved, then xterm keeps the keystroke it already handles", () => {
+        // Given — `⌥⏎` envoie déjà `ESC`+`CR` par xterm.js, et `macOptionIsMeta: false` ne
+        // le détourne pas : le chemin « third level shift » exige un keyCode > 47, et ⏎ a
+        // le 13. Le recouvrir ici ne changerait rien pour l'utilisateur et ferait deux
+        // sources pour une même séquence. `⌃⏎` et `⌘⏎` ne sont pas des accords d'Ash.
+        const others = [
+            press("Enter").withOption(),
+            press("Enter").withOption().withShift(),
+            press("Enter").withControl(),
+            press("Enter").withCommand(),
+            press("Enter").withShift().withCommand(),
+        ];
+
+        // When
+        const sent = others.map((chord) => resolveKeyBinding(chord.build()));
+
+        // Then
+        expect(sent).toEqual([null, null, null, null, null]);
+    });
+
+    it("Given every modifier combination of every named key, when both terminal tables see it, then no keystroke is claimed twice", () => {
+        // Given — `xterm-view.ts` compose les deux résolveurs, saisie d'abord et action
+        // ensuite, et dit les tables disjointes. Un accord que les deux nomment ne se
+        // signale pas : la saisie gagne, écrit ses octets, rend `false`, et l'action
+        // d'affichage ne part jamais — sans erreur et sans trace. Jusqu'ici seul `⌘F` était
+        // vérifié ; #91 est justement le changement qui a élargi la surface, en faisant
+        // entrer `⇧` dans l'accord cherché au lieu de le refuser en bloc.
+        const named = [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown",
+            "Backspace",
+            "Delete",
+            "Enter",
+            "f",
+        ];
+        const withModifiers = (key: string): ChordBuilder[] =>
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((mask) => {
+                let chord = press(key);
+                if (mask & 1) chord = chord.withShift();
+                if (mask & 2) chord = chord.withOption();
+                if (mask & 4) chord = chord.withCommand();
+                if (mask & 8) chord = chord.withControl();
+                return chord;
+            });
+        const everyChord = named.flatMap(withModifiers);
+
+        // When
+        const claimedTwice = everyChord
+            .map((chord) => chord.build())
+            .filter(
+                (chord) =>
+                    resolveKeyBinding(chord) !== null && resolveKeyAction(chord) !== null,
+            );
+
+        // Then
+        expect(claimedTwice).toEqual([]);
+    });
+
+    it("Given a shifted line editing chord, when it is resolved, then adding Shift to the table did not widen the others", () => {
+        // Given — `⇧` était un refus sec avant #91 ; il est maintenant écrit dans l'accord
+        // cherché. Le risque du changement est là, et pas ailleurs : que `⇧⌥←` se mette à
+        // envoyer ce que `⌥←` envoie, et prive le shell de sa sélection par mot.
+        const shifted = [
+            press("ArrowLeft").withOption().withShift(),
+            press("ArrowRight").withOption().withShift(),
+            press("Backspace").withCommand().withShift(),
+            press("Delete").withOption().withShift(),
+        ];
+
+        // When
+        const sent = shifted.map((chord) => resolveKeyBinding(chord.build()));
+
+        // Then
+        expect(sent).toEqual([null, null, null, null]);
     });
 });
