@@ -27,7 +27,7 @@ Ensuite, deux commandes, **dans un vrai terminal** :
 
 ```bash
 bun install
-bun run tauri dev
+bun run app
 ```
 
 La première installe les dépendances TypeScript ; la seconde compile le backend,
@@ -35,7 +35,7 @@ démarre Vite et ouvre la fenêtre. Elle **occupe le terminal** tant que l'appli
 tourne : ne la lance pas depuis un agent ou un outil qui attend la fin de la commande.
 
 La première compilation Rust prend plusieurs minutes et quelques gigaoctets ; les
-suivantes sont incrémentales. `bun run tauri dev` s'occupe seul du serveur Vite
+suivantes sont incrémentales. `bun run app` s'occupe seul du serveur Vite
 (port 1420) — ne le lance pas à côté.
 
 Le rechargement à chaud n'est pas symétrique, et c'est la surprise habituelle :
@@ -43,24 +43,62 @@ une modification **TypeScript ou CSS** apparaît immédiatement dans la fenêtre
 modification **Rust** relance une compilation et redémarre l'application, en fermant
 les onglets ouverts.
 
-### Vérifier son travail
+## Toutes les commandes
 
-Six commandes, celles que la CI et les agents lancent :
+Tout passe par `bun run`, y compris le Rust : les scripts savent depuis où lancer
+`cargo`, et ça évite un piège décrit plus bas.
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `bun install` | dépendances TypeScript |
+| `bun run app` | lance Ash en développement — compile le backend, démarre Vite, ouvre la fenêtre |
+| `bun run package` | produit `Ash.app` en release |
+| `bun run package:debug` | idem, en debug — plus rapide à compiler, plus lent à l'exécution |
+| `bun run verify` | les six vérifications, TypeScript **et** Rust |
+| `bun run verify:full` | les six, plus le smoke |
+| `bun run lint` · `typecheck` · `test` | TypeScript, une par une |
+| `bun run rust:fmt` · `rust:lint` · `rust:test` | Rust, une par une |
+| `bun run smoke` | lance réellement l'application et vérifie qu'elle survit |
+
+**Ne renomme ni `dev` ni `build`.** Ce sont les deux scripts que Tauri appelle
+lui-même — `beforeDevCommand` et `beforeBuildCommand` dans `src-tauri/tauri.conf.json`.
+`build` ne construit que la partie web (`tsc --noEmit && vite build`) ; il ne produit
+aucune application macOS. C'est `bun run package` qui empaquette.
+
+### Produire un paquet
 
 ```bash
-bun run lint
-bun run typecheck
-bun test
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
+bun run package
 ```
 
-Les trois premières couvrent le TypeScript, les trois dernières le Rust. Les commandes
-`cargo` se lancent depuis `src-tauri/`, ou avec
-`cargo --manifest-path src-tauri/Cargo.toml`.
+Elle enchaîne le build web, compile les deux binaires Rust en release — `ash` et
+`ash-event` — et empaquette le tout dans :
 
-Il y en a une septième, à lancer dès qu'on touche à l'assemblage de l'application :
+```
+src-tauri/target/release/bundle/macos/Ash.app
+```
+
+**Les deux binaires comptent.** `ash-event` est celui que les hooks des agents appellent,
+par **chemin absolu** : c'est lui qui rapporte à Ash qu'un agent attend ou a fini. Un
+`Ash.app` déplacé après l'installation des hooks les casse en silence — réinstalle-les
+depuis les réglages, le nouveau chemin remplacera l'ancien.
+
+**Les notifications macOS n'existent que dans un paquet.** L'API native refuse de
+fonctionner hors d'un bundle, au point de terminer le processus ; un garde la
+court-circuite donc en développement. Si tu veux voir une bannière, il faut passer par
+`bun run package`, pas par `bun run app`.
+
+### Vérifier son travail
+
+```bash
+bun run verify
+```
+
+Six vérifications : `lint`, `typecheck` et les tests côté TypeScript ; `fmt`, `clippy`
+en `-D warnings` et les tests côté Rust. La commande s'arrête à la première qui échoue.
+
+Il y en a une septième, à lancer **dès qu'on touche à l'assemblage de l'application** —
+`lib.rs`, `menu.rs`, un `commands.rs` :
 
 ```bash
 bun run smoke
@@ -71,11 +109,21 @@ ouvert son shell. Une fenêtre apparaît quelques secondes. Les six autres peuve
 vertes pendant que l'application ne s'ouvre pas — c'est arrivé, et c'est pour ça qu'elle
 existe.
 
-Pour produire un bundle `.app` :
+### Le piège des commandes `cargo` lancées à la main
 
-```bash
-bun run tauri build
-```
+`bun run rust:test` fait un `cd src-tauri` avant d'appeler `cargo`, et ce n'est pas une
+coquetterie.
+
+`cargo` cherche son fichier de configuration en remontant depuis le **répertoire
+courant**, pas depuis le manifeste. `src-tauri/.cargo/config.toml` y pose
+`TS_RS_EXPORT_DIR`, qui dit où déposer les types TypeScript tirés du Rust. Lancé depuis
+la racine du dépôt avec `--manifest-path`, `cargo test` ne lit pas ce fichier et écrit
+les types **au mauvais endroit, en silence**.
+
+`fmt` et `clippy` ne lisent pas cette variable : eux peuvent se lancer depuis la racine,
+et les scripts le font.
+
+Si tu lances `cargo` toi-même, fais-le donc depuis `src-tauri/`.
 
 ### Si `cargo` est introuvable
 
