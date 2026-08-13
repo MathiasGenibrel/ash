@@ -68,6 +68,19 @@ export interface TabInfo {
     /** Le programme qui tient l'avant-plan de l'onglet — `zsh`, `claude`, `bun`. */
     process: string;
     state: AgentState;
+    /**
+     * Quand l'onglet est **entré** dans cet état — un `Date.now()`, en millisecondes.
+     *
+     * Une date, jamais une durée : le backend l'envoie une seule fois, en absolu, et la
+     * fiche d'onglet reste donc identique tant que l'état ne change pas. Une durée
+     * transportée ferait partir `ash://tab-changed` chaque seconde pour chaque onglet
+     * actif, c'est-à-dire un rendu complet de la sidebar par seconde pour animer un
+     * compteur.
+     *
+     * Le compteur, lui, se calcule ici, à l'affichage — voir `elapsedSince` dans
+     * `features/terminal/status-line.ts`.
+     */
+    stateSince: number;
     location: TabLocation | null;
 }
 

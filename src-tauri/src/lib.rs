@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use features::agents::{
-    Adapter, AgentState, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice,
+    Adapter, AgentStatus, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice,
     Notifier, Presence, Supervisor,
 };
 use features::git::{resolve_worktree, SystemFileSystem};
@@ -192,7 +192,7 @@ impl Banners for NoBanners {
 struct TabAgents(Arc<Supervisor>);
 
 impl AgentStates for TabAgents {
-    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentState {
+    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentStatus {
         self.0.state(tab_id, seen)
     }
 

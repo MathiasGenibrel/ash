@@ -7,7 +7,7 @@
 //! Aucun processus n'est lancé ici. Les tests d'intégration, eux, utilisent les vraies
 //! implémentations sur un vrai shell (`tests/pty_real_shell.rs`, `tests/probe_real_shell.rs`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -18,8 +18,9 @@ use super::error::PtyError;
 use super::locate::{RepoRef, TabLocation, WorktreeLocator};
 use super::registry::{PtyRegistry, TabId};
 use super::session::{OpenPty, PtySession, PtySpawner, PtySpec, Terminal};
-use crate::features::agents::{AgentState, Presence};
+use crate::features::agents::{AgentState, AgentStatus, Presence};
 use crate::features::probe::{Pid, Probe, ProbeError, ProcessInfo};
+use crate::shared::time::UnixMillis;
 
 /// Le terminal que les faux onglets annoncent. Aucun appel système ne le touche : le
 /// [`FakeProbe`] répond sans regarder.
@@ -182,6 +183,15 @@ impl WorktreeLocator for CountingLocator {
 pub struct FakeAgentStates {
     declared: Mutex<Option<AgentState>>,
     forgotten: Mutex<Vec<TabId>>,
+    /// L'heure murale du scénario, et la date d'entrée de chaque onglet dans son état.
+    ///
+    /// La doublure ne **recopie** pas la règle de datation : elle appelle celle d'`agents`
+    /// ([`AgentStatus::entering`]). Une seconde copie de trois lignes ici aurait laissé les
+    /// tests du registre prouver une stabilité que l'application n'aurait plus — c'est
+    /// exactement ce qu'une mutation du superviseur montrait : elle ne les faisait pas
+    /// rougir. La règle qui **décide** de l'état, elle, reste chez `agents` de toute façon.
+    now: Mutex<UnixMillis>,
+    dated: Mutex<HashMap<TabId, AgentStatus>>,
 }
 
 impl FakeAgentStates {
@@ -190,24 +200,33 @@ impl FakeAgentStates {
         *self.declared.lock().unwrap() = Some(state);
     }
 
+    /// Le temps passe, et rien d'autre ne se produit.
+    pub fn advance(&self, millis: UnixMillis) {
+        *self.now.lock().unwrap() += millis;
+    }
+
     pub fn forgotten(&self) -> Vec<TabId> {
         self.forgotten.lock().unwrap().clone()
     }
 }
 
 impl AgentStates for FakeAgentStates {
-    fn state(&self, _tab_id: &TabId, seen: Presence) -> AgentState {
-        if let Some(declared) = *self.declared.lock().unwrap() {
-            return declared;
-        }
-        match seen {
+    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentStatus {
+        let state = self.declared.lock().unwrap().unwrap_or(match seen {
             Presence::Program => AgentState::Working,
             Presence::Prompt | Presence::Unknown => AgentState::Idle,
-        }
+        });
+
+        let now = *self.now.lock().unwrap();
+        let mut dated = self.dated.lock().unwrap();
+        let status = AgentStatus::entering(dated.get(tab_id).copied(), state, now);
+        dated.insert(tab_id.clone(), status);
+        status
     }
 
     fn forget(&self, tab_id: &TabId) {
         self.forgotten.lock().unwrap().push(tab_id.clone());
+        self.dated.lock().unwrap().remove(tab_id);
     }
 }
 

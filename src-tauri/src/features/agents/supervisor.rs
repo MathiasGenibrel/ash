@@ -25,6 +25,16 @@
 //! | Un hook, traduit par [`Adapter::interpret`] | `working`, `waiting`, `done`, `error` |
 //! | La sonde ([`Presence`]) | la **présence** d'un programme, et sa disparition |
 //!
+//! ## Ce qui date un état
+//!
+//! Le superviseur est aussi le seul endroit qui sache **depuis quand** un onglet est dans
+//! l'état qu'il montre : la machine ne répond que pour les onglets où un agent a parlé,
+//! alors que la ligne de statut date aussi bien un `vim` que la sonde seule décrit. Ce qui
+//! est daté est donc le **verdict**, quelle qu'en soit la source, et la date ne bouge que
+//! quand le verdict change. La règle elle-même vit chez le type qu'elle produit —
+//! [`AgentStatus::entering`] — et non ici : `pty` en a besoin pour sa doublure, et une
+//! seconde copie de trois lignes se serait tue le jour où celle-ci aurait changé.
+//!
 //! **`waiting` n'a aucune autre source qu'un hook**, et c'est structurel plutôt que
 //! surveillé : la sonde n'entre dans ce fichier que par [`Presence`], qui ne porte que trois
 //! valeurs et aucun état. Rien n'y lit la sortie du PTY
@@ -73,7 +83,7 @@ use std::sync::{Arc, Mutex};
 use super::adapter::{Adapter, RawEvent};
 use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
 use super::notify::{notice, Notice, Notifier};
-use super::state::AgentState;
+use super::state::{AgentState, AgentStatus};
 use super::wire::EventFrame;
 use crate::shared::time::Clock;
 
@@ -129,6 +139,16 @@ struct Tabs {
 struct Tab {
     /// La machine de cet onglet, tant qu'un agent y vit.
     machine: Option<AgentMachine>,
+    /// Le dernier verdict rendu pour cet onglet, **avec sa date d'entrée**.
+    ///
+    /// C'est ici que le temps est retenu, et pas dans la machine : la machine ne répond que
+    /// pour les onglets où un agent a parlé, alors que la ligne de statut date aussi bien un
+    /// `vim` que la sonde seule décrit. Ce que l'on date est donc le verdict — ce que
+    /// l'utilisateur voit — quelle qu'en soit la source.
+    ///
+    /// La date ne bouge **que** quand l'état change : c'est ce qui laisse la fiche d'un
+    /// onglet identique d'une passe à l'autre (voir [`AgentStatus`]).
+    answered: Option<AgentStatus>,
     /// Ce que la sonde a vu la dernière fois — de quoi reconnaître un **front**.
     ///
     /// Retenu même sans machine : sans ça, la machine créée par le premier hook prendrait le
@@ -161,6 +181,10 @@ impl Supervisor {
             return;
         };
 
+        // L'heure est lue **avant** le verrou : rien de ce qui se décide dessous n'en
+        // dépend, et une section critique ne s'allonge pas d'un appel système gratuit.
+        let now = self.clock.wall();
+
         // Le verrou est rendu **avant** de poster : une notification est un effet système,
         // et le tenir pendant qu'on sort de la feature ferait dépendre la boucle de sonde
         // de ce que le système met à répondre.
@@ -176,6 +200,17 @@ impl Supervisor {
                 .machine
                 .get_or_insert_with(|| watching(clock, focused))
                 .on(AgentEvent::Hook(declared));
+            // Un hook ne passe pas par la boucle de sonde : dater ici, et non à la passe
+            // suivante, est ce qui fait que la durée affichée part du moment où l'agent a
+            // parlé, et non de la prochaine passe.
+            //
+            // `entering` et non une date posée d'autorité : la machine annonce le changement
+            // de **son** état, qui part d'`idle`, alors que l'onglet montrait peut-être déjà
+            // le mot que le hook déclare — la sonde répondait pour lui. C'est le cas de tout
+            // démarrage d'agent, et redater y ferait repartir le compteur de zéro.
+            if let Some(state) = changed {
+                tab.answered = Some(AgentStatus::entering(tab.answered, state, now));
+            }
             interrupt(&event.tab_id, changed, focused)
         };
         self.post(interruption);
@@ -186,10 +221,10 @@ impl Supervisor {
     /// Appelée à chaque passe de la boucle d'ADR-0005 : c'est elle qui fait avancer le temps
     /// des machines, et c'est par son résultat — porté par le `TabInfo` du registre — que
     /// l'état atteint l'écran. Le frontend n'apprend jamais un état autrement.
-    pub fn state(&self, tab_id: &str, seen: Presence) -> AgentState {
-        let (state, interruption) = self.advance(tab_id, seen);
+    pub fn state(&self, tab_id: &str, seen: Presence) -> AgentStatus {
+        let (status, interruption) = self.advance(tab_id, seen);
         self.post(interruption);
-        state
+        status
     }
 
     /// La passe de sonde elle-même : ce que l'onglet montre, et ce qu'elle vient
@@ -197,11 +232,23 @@ impl Supervisor {
     ///
     /// Découpée de [`Self::state`] pour une seule raison, et elle compte : le verrou des
     /// onglets meurt avec cette fonction, donc rien n'est posté en le tenant.
-    fn advance(&self, tab_id: &str, seen: Presence) -> (AgentState, Option<Notice>) {
+    fn advance(&self, tab_id: &str, seen: Presence) -> (AgentStatus, Option<Notice>) {
+        let now = self.clock.wall();
         let Ok(mut tabs) = self.tabs.lock() else {
             // Un superviseur empoisonné n'a plus de mémoire ; la sonde, elle, répond
             // toujours. Mieux vaut un onglet honnête qu'un onglet figé.
-            return (probed(seen), None);
+            //
+            // Sans mémoire, il n'y a plus de date d'entrée : l'instant courant est le seul
+            // repli honnête, et il fera repartir le compteur de zéro à chaque passe. Un
+            // verrou empoisonné veut dire qu'un fil a paniqué ; un compteur qui bégaie est
+            // le moindre des symptômes.
+            return (
+                AgentStatus {
+                    state: probed(seen),
+                    since: now,
+                },
+                None,
+            );
         };
 
         let focused = tabs.focused;
@@ -213,30 +260,38 @@ impl Supervisor {
             tab.seen = before;
         }
 
-        let Some(machine) = tab.machine.as_mut() else {
-            return (probed(seen), None);
+        let mut changed = None;
+        let state = match tab.machine.as_mut() {
+            // Un onglet où aucun agent n'a jamais parlé : c'est la sonde qui répond pour
+            // lui, exactement comme au jalon J1.
+            None => probed(seen),
+            Some(machine) => {
+                // La disparition : le shell a repris son terminal. On ne saura jamais avec
+                // quel code — voir [`Exit::Unseen`]. C'est le **seul** front que la sonde
+                // permet d'attribuer à l'agent ; le lancement, lui, n'est volontairement
+                // émis nulle part ici (voir « Ce que la sonde n'a pas le droit
+                // d'attribuer », en tête de fichier).
+                //
+                // C'est aussi le seul changement d'état qu'une passe de sonde peut
+                // produire : le `tick` ci-dessous ne rend jamais qu'`idle`, qui
+                // n'interrompt personne.
+                if (before, seen) == (Presence::Program, Presence::Prompt) {
+                    changed = machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
+                }
+
+                machine.tick();
+                machine.state()
+            }
         };
 
-        // La disparition : le shell a repris son terminal. On ne saura jamais avec quel code
-        // — voir [`Exit::Unseen`]. C'est le **seul** front que la sonde permet d'attribuer à
-        // l'agent ; le lancement, lui, n'est volontairement émis nulle part ici (voir « Ce
-        // que la sonde n'a pas le droit d'attribuer », en tête de fichier).
-        //
-        // C'est aussi le seul changement d'état qu'une passe de sonde peut produire : le
-        // `tick` ci-dessous ne rend jamais qu'`idle`, qui n'interrompt personne.
-        let mut changed = None;
-        if (before, seen) == (Presence::Program, Presence::Prompt) {
-            changed = machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
-        }
-
-        machine.tick();
-        let state = machine.state();
         if state == AgentState::Idle {
             // La ligne est redevenue une ligne shell : l'onglet n'est plus un agent, et
             // c'est de nouveau la sonde qui répond pour lui.
             tab.machine = None;
         }
-        (state, interrupt(tab_id, changed, focused))
+        let status = AgentStatus::entering(tab.answered, state, now);
+        tab.answered = Some(status);
+        (status, interrupt(tab_id, changed, focused))
     }
 
     /// La fenêtre Ash a pris ou perdu le premier plan.
@@ -322,7 +377,8 @@ fn probed(seen: Presence) -> AgentState {
 mod tests {
     use super::*;
     use crate::features::agents::adapters::{ClaudeCodeAdapter, GenericAdapter};
-    use crate::features::agents::fakes::{FakeNotifier, ManualClock};
+    use crate::features::agents::fakes::{FakeNotifier, ManualClock, FAKE_EPOCH};
+    use crate::shared::time::UnixMillis;
     use std::path::PathBuf;
 
     const TAB: &str = "01J0TAB";
@@ -388,6 +444,11 @@ mod tests {
 
     /// Une passe de la boucle de sonde, telle que le registre la fait.
     fn sweep(supervisor: &Supervisor, seen: Presence) -> AgentState {
+        sweep_status(supervisor, seen).state
+    }
+
+    /// La même passe, avec la date d'entrée — pour les seuls scénarios qui en parlent.
+    fn sweep_status(supervisor: &Supervisor, seen: Presence) -> AgentStatus {
         supervisor.state(TAB, seen)
     }
 
@@ -505,6 +566,119 @@ mod tests {
     }
 
     #[test]
+    fn given_an_agent_that_keeps_working_when_the_loop_sweeps_for_a_quarter_of_an_hour_then_its_entry_date_never_moves(
+    ) {
+        // Given — c'est le piège que cette tranche existe pour éviter. La boucle passe trois
+        // fois par seconde ; si chaque passe redatait l'état, la fiche de l'onglet changerait
+        // à chaque passe, et l'event `ash://tab-changed` deviendrait un flux continu — un
+        // rendu complet de la sidebar par seconde, pour animer un compteur.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB));
+        let entered = sweep_status(&supervisor, Presence::Program);
+
+        // When — un quart d'heure de travail, sans qu'aucun hook ne parle
+        let dates: Vec<UnixMillis> = (0..900)
+            .map(|_| {
+                clock.advance(1);
+                sweep_status(&supervisor, Presence::Program).since
+            })
+            .collect();
+
+        // Then — la date d'entrée est celle du hook, et elle n'a pas bougé d'une milliseconde
+        assert_eq!(entered.since, FAKE_EPOCH);
+        assert_eq!(dates, vec![FAKE_EPOCH; 900]);
+    }
+
+    #[test]
+    fn given_a_tab_that_changes_state_when_it_is_swept_again_then_the_date_moves_to_the_moment_it_changed(
+    ) {
+        // Given — l'autre moitié : une date qui ne bougerait jamais afficherait `waiting ·
+        // 15m22s` sur un agent qui vient à peine de poser sa question. C'est le hook qui date,
+        // pas la passe de sonde qui le constate.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB));
+
+        // When — dix minutes de travail, puis une question
+        clock.advance(600);
+        let while_working = sweep_status(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("waiting", TAB));
+        clock.advance(5);
+        let once_it_asks = sweep_status(&supervisor, Presence::Program);
+
+        // Then
+        assert_eq!(
+            (while_working.state, while_working.since),
+            (AgentState::Working, FAKE_EPOCH)
+        );
+        assert_eq!(
+            (once_it_asks.state, once_it_asks.since),
+            (AgentState::Waiting, FAKE_EPOCH + 600_000)
+        );
+    }
+
+    #[test]
+    fn given_a_tab_where_no_agent_ever_spoke_when_a_program_takes_the_foreground_then_that_state_is_dated_too(
+    ) {
+        // Given — la ligne de statut date ce qu'elle montre, et elle montre aussi les onglets
+        // où aucun agent n'a jamais parlé : `vim`, un `make` qui tourne. Ne dater que les
+        // états venus d'un hook ferait apparaître et disparaître le compteur d'un onglet à
+        // l'autre, sans que rien ne l'explique à l'écran.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        sweep(&supervisor, Presence::Prompt);
+
+        // When — un programme prend l'avant-plan une minute après l'ouverture
+        clock.advance(60);
+        let started = sweep_status(&supervisor, Presence::Program);
+        clock.advance(30);
+        let still_running = sweep_status(&supervisor, Presence::Program);
+
+        // Then
+        assert_eq!(started.since, FAKE_EPOCH + 60_000);
+        assert_eq!(
+            (still_running.state, still_running.since),
+            (AgentState::Working, FAKE_EPOCH + 60_000)
+        );
+    }
+
+    #[test]
+    fn given_a_tab_the_probe_already_shows_working_when_the_agent_says_the_same_word_then_the_counter_does_not_start_over(
+    ) {
+        // Given — la séquence de **tout** démarrage d'agent, et elle se voit à l'écran :
+        // la sonde voit `claude` prendre l'avant-plan et l'onglet affiche `working` ; le
+        // premier hook n'arrive qu'ensuite, au premier outil employé. Le verdict montré n'a
+        // pas changé entre les deux — c'est le même mot —, donc le compteur ne doit pas
+        // repartir de zéro sous les yeux de l'utilisateur. La date suit le verdict, pas la
+        // source qui le produit.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        let started = sweep_status(&supervisor, Presence::Program);
+
+        // When — l'agent emploie son premier outil dix secondes plus tard
+        clock.advance(10);
+        supervisor.on_hook(&hook("working", TAB));
+        let once_it_spoke = sweep_status(&supervisor, Presence::Program);
+
+        // Then
+        assert_eq!(
+            (started.state, started.since),
+            (AgentState::Working, FAKE_EPOCH)
+        );
+        assert_eq!(
+            (once_it_spoke.state, once_it_spoke.since),
+            (AgentState::Working, FAKE_EPOCH)
+        );
+    }
+
+    #[test]
     fn given_a_word_no_adapter_understands_when_it_arrives_from_the_socket_then_the_tab_keeps_its_state(
     ) {
         // Given — `Stop` est un vrai nom de hook de Claude Code, `idle` un vrai état du
@@ -539,11 +713,11 @@ mod tests {
 
         // Then
         assert_eq!(
-            supervisor.state("01J0PRO", Presence::Program),
+            supervisor.state("01J0PRO", Presence::Program).state,
             AgentState::Working
         );
         assert_eq!(
-            supervisor.state("01J0PERSO", Presence::Program),
+            supervisor.state("01J0PERSO", Presence::Program).state,
             AgentState::Waiting
         );
     }

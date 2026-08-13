@@ -5,6 +5,12 @@
 //! ash-event working --tab $ASH_TAB_ID
 //! ```
 //!
+//! Depuis l'amendement du 2026-08-13 à ADR-0007, il lit aussi ce que l'outil lui donne sur
+//! son **entrée standard** — l'objet JSON que tout hook de Claude Code écrit dans le
+//! processus qu'il lance, et qui porte `agent_id` et `agent_type` dès que le hook part d'un
+//! sous-agent. Voir [`subagent`] pour ce que ça coûte, et pour ce qui garantit qu'il
+//! n'attend jamais.
+//!
 //! C'est ce que le bloc délimité écrit dans le `settings.json` de chaque outil appelle, à
 //! **chaque** hook. Trois conséquences, et elles gouvernent tout ce fichier :
 //!
@@ -34,9 +40,10 @@
 #[path = "../features/agents/wire.rs"]
 mod wire;
 
-use std::io::Write;
+use std::io::{IsTerminal, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use wire::{socket_path, EventFrame};
@@ -44,6 +51,21 @@ use wire::{socket_path, EventFrame};
 /// Une écriture d'une ligne ne doit pas retenir un hook. Si Ash est à ce point figé, se
 /// taire vaut mieux qu'attendre.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Ce qu'on accorde à une entrée standard qui a été promise mais qui ne vient pas.
+///
+/// Un hook qui ne rend pas la main **bloque l'agent** : le budget est donc court devant
+/// l'humain qui attend son agent, et large devant l'écriture d'un objet déjà en mémoire par
+/// un processus qui vient de nous lancer. Passé ce délai, l'état déclaré part quand même,
+/// sans la clé d'enfant.
+const STDIN_BUDGET: Duration = Duration::from_millis(250);
+
+/// Au-delà, on ne lit plus : deux champs courts ne justifient pas de suivre un flux sans
+/// fin, et la trame est de toute façon bornée à [`wire::MAX_FRAME_BYTES`].
+///
+/// L'objet d'un hook de Claude Code pèse quelques centaines d'octets ; le plus gros connu
+/// — un `PostToolUse` qui recopie l'entrée et la sortie d'un outil — reste très en deçà.
+const MAX_PAYLOAD_BYTES: u64 = 64 * 1024;
 
 const USAGE: &str = "usage : ash-event <état> --tab <id> [--sock <chemin>]";
 
@@ -58,6 +80,11 @@ fn main() {
         }
     };
 
+    // L'entrée standard est lue **après** les arguments, et jamais avant : une invocation
+    // mal formée est un défaut d'Ash, et elle doit le dire tout de suite plutôt qu'après
+    // avoir attendu un objet qu'elle n'utilisera pas.
+    let invocation = invocation.enriched_with(subagent());
+
     // À partir d'ici, plus rien n'a le droit d'échouer bruyamment.
     post(&invocation);
 }
@@ -67,6 +94,79 @@ fn main() {
 struct Invocation {
     frame: EventFrame,
     socket: PathBuf,
+}
+
+impl Invocation {
+    /// La même invocation, en nommant l'enfant si l'outil en a nommé un.
+    fn enriched_with(mut self, subagent: Option<Subagent>) -> Self {
+        let Some(subagent) = subagent else {
+            return self;
+        };
+        self.frame = self
+            .frame
+            .with_subagent(subagent.agent_id.as_deref(), subagent.agent_type.as_deref());
+        self
+    }
+}
+
+/// L'enfant que l'outil a nommé sur l'entrée standard, s'il y en a un.
+///
+/// Les champs inconnus de l'objet sont ignorés : on ne lit ici que ce qu'ADR-0007 autorise
+/// à transporter, et un hook en dit bien davantage — le `cwd`, la session, le transcript.
+#[derive(Debug, Default, PartialEq, Eq, serde::Deserialize)]
+struct Subagent {
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    agent_type: Option<String>,
+}
+
+/// L'enfant lu sur l'entrée standard — et rien du tout au moindre doute.
+///
+/// **Ce chemin ne peut pas bloquer, et c'est sa seule vraie contrainte** ; trois cas, trois
+/// conduites :
+///
+/// - **un terminal** — quelqu'un lance `ash-event` à la main pour voir. On ne lit rien du
+///   tout : un `read` sur un tty attend une frappe, c'est-à-dire pour toujours ;
+/// - **un tube, ou un fichier** — le cas des hooks. La lecture se fait sur un fil, et
+///   l'attente est bornée par [`STDIN_BUDGET`] : un tube ouvert mais muet — un lanceur qui
+///   oublie de fermer son extrémité d'écriture — laisse donc partir l'état déclaré au lieu
+///   de retenir l'agent. Le fil resté dans son `read` ne retient rien non plus : la fin de
+///   `main` termine le processus, fils compris ;
+/// - **une entrée fermée** — le `read` échoue aussitôt, et il n'y a rien à en tirer.
+///
+/// Une entrée illisible, tronquée ou qui n'est pas du JSON tombe dans le même `None` : ce
+/// n'est pas une erreur, c'est une absence d'information. L'état déclaré, lui, part dans
+/// tous les cas.
+fn subagent() -> Option<Subagent> {
+    subagent_of(&read_stdin()?)
+}
+
+/// L'enfant que porte un objet de hook, si cet objet en nomme un.
+///
+/// Séparée de la lecture parce que c'est la seule moitié qui décide quelque chose : ce qui
+/// entre est du texte, et ce qui sort est ce qu'ADR-0007 autorise à transporter.
+fn subagent_of(payload: &str) -> Option<Subagent> {
+    let subagent: Subagent = serde_json::from_str(payload).ok()?;
+    (subagent != Subagent::default()).then_some(subagent)
+}
+
+fn read_stdin() -> Option<String> {
+    if std::io::stdin().is_terminal() {
+        return None;
+    }
+
+    let (read, payload) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buffer = String::new();
+        let outcome = std::io::stdin()
+            .take(MAX_PAYLOAD_BYTES)
+            .read_to_string(&mut buffer)
+            .map(|_| buffer);
+        let _ = read.send(outcome.ok());
+    });
+
+    payload.recv_timeout(STDIN_BUDGET).ok().flatten()
 }
 
 /// L'analyse des arguments, à la main.
@@ -133,7 +233,7 @@ fn parse(arguments: &[String]) -> Result<Invocation, String> {
 
 /// Poste la trame, et se tait quoi qu'il arrive.
 fn post(invocation: &Invocation) {
-    let Ok(line) = invocation.frame.to_line() else {
+    let Some(line) = line_of(&invocation.frame) else {
         return;
     };
     let Ok(mut stream) = UnixStream::connect(&invocation.socket) else {
@@ -143,6 +243,20 @@ fn post(invocation: &Invocation) {
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let _ = stream.write_all(line.as_bytes());
     let _ = stream.flush();
+}
+
+/// La ligne à écrire, quitte à **abandonner l'enfant** pour tenir dans la trame.
+///
+/// La borne du fil (`wire::MAX_FRAME_BYTES`, 8 Kio) est une frontière de sécurité du
+/// serveur : au-delà, la ligne est refusée sans être accumulée, donc l'état déclaré serait
+/// perdu. Rien ne garantit ce qu'un outil futur mettra dans un `agent_type` ; ce qui est
+/// garanti, c'est que l'état est la seule chose qu'un hook existe pour transporter. La
+/// clé d'enfant tombe donc la première, et la trame repart sans elle.
+fn line_of(frame: &EventFrame) -> Option<String> {
+    frame
+        .to_line()
+        .or_else(|_| frame.clone().without_subagent().to_line())
+        .ok()
 }
 
 #[cfg(test)]
@@ -187,6 +301,81 @@ mod tests {
                 frame: EventFrame::new("waiting", "01J0TAB"),
                 socket: PathBuf::from("/tmp/ailleurs.sock"),
             })
+        );
+    }
+
+    /// L'objet qu'un hook de Claude Code écrit sur l'entrée standard, réduit à ce qui nous
+    /// concerne — mais gardé **entier** dans sa forme : les clés que nous ignorons sont là,
+    /// parce que les ignorer est précisément ce qui doit être vérifié.
+    fn hook_payload(child: &str) -> String {
+        format!(
+            r#"{{"session_id":"abc","transcript_path":"/tmp/t.jsonl","cwd":"/dev/ash",
+             "hook_event_name":"PreToolUse","tool_name":"Read"{child}}}"#
+        )
+    }
+
+    #[test]
+    fn given_a_hook_fired_inside_a_subagent_when_its_payload_is_read_then_the_child_is_named() {
+        // Given — l'information arrive déjà aujourd'hui, à chaque hook, et part à la
+        // poubelle : Claude Code pose `agent_id` et `agent_type` dès que le hook se
+        // déclenche dans un sous-agent (ADR-0007, amendement du 2026-08-13).
+        let written = hook_payload(r#","agent_id":"agent-7","agent_type":"code-reviewer""#);
+
+        // When
+        let child = subagent_of(&written);
+
+        // Then
+        assert_eq!(
+            child,
+            Some(Subagent {
+                agent_id: Some("agent-7".to_owned()),
+                agent_type: Some("code-reviewer".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_standard_input_that_names_no_child_when_it_is_read_then_the_event_stays_what_it_was()
+    {
+        // Given — les quatre entrées que l'on rencontrera vraiment : le hook de l'agent
+        // principal, une entrée vide, un flux coupé au milieu, et quelque chose qui n'est
+        // pas du JSON. Aucune n'est une erreur : ce sont des absences d'information, et
+        // l'état déclaré doit partir dans les quatre cas.
+        let entrances = [
+            hook_payload(""),
+            String::new(),
+            r#"{"session_id":"abc","agent_i"#.to_owned(),
+            "Erreur : jq introuvable\n".to_owned(),
+        ];
+
+        // When
+        let children: Vec<Option<Subagent>> = entrances
+            .iter()
+            .map(|written| subagent_of(written))
+            .collect();
+
+        // Then
+        assert_eq!(children, vec![None, None, None, None]);
+    }
+
+    #[test]
+    fn given_a_frame_whose_child_keys_would_overflow_the_wire_when_it_is_posted_then_the_declared_state_still_leaves(
+    ) {
+        // Given — 8 Kio est une frontière de sécurité du serveur, pas un réglage : une
+        // ligne plus longue est refusée sans être accumulée. Rien ne garantit ce qu'un
+        // outil futur mettra dans un `agent_type`, et perdre un `waiting` parce qu'un
+        // enfant porte un nom démesuré serait perdre la seule chose qu'un hook transporte.
+        let frame = EventFrame::new("waiting", "01J0TAB")
+            .with_subagent(Some("agent-7"), Some(&"z".repeat(16 * 1024)));
+
+        // When
+        let line = line_of(&frame);
+
+        // Then — la clé d'enfant est tombée, l'état est parti
+        assert_eq!(
+            line,
+            EventFrame::new("waiting", "01J0TAB").to_line().ok(),
+            "l'état déclaré doit partir sans l'enfant plutôt que de ne pas partir"
         );
     }
 

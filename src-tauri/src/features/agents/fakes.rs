@@ -10,32 +10,62 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::notify::{Notice, Notifier};
-use crate::shared::time::Clock;
+use crate::shared::time::{Clock, UnixMillis};
 
-/// Une horloge qu'on avance à la main.
+/// L'heure qu'il est au début de chaque scénario — le 1ᵉʳ janvier 2026 à minuit UTC.
+///
+/// Une date **fixe** : une datation lue dans un `Then` doit valoir la même chose sur la
+/// machine de qui lance les tests que sur celle d'à côté.
+pub const FAKE_EPOCH: UnixMillis = 1_767_225_600_000;
+
+/// Une horloge qu'on avance à la main, murale et monotone **ensemble**.
 ///
 /// C'est tout ce qu'il faut pour prouver « 30 s » et « une heure sans rien » sans qu'aucun
-/// test ne dorme une milliseconde — et un test qui dort finit par être désactivé.
-pub struct ManualClock(Mutex<Instant>);
+/// test ne dorme une milliseconde — et un test qui dort finit par être désactivé. Les deux
+/// formes du temps avancent du même pas : un scénario qui ferait vieillir l'une sans
+/// l'autre décrirait une machine qui n'existe pas.
+pub struct ManualClock {
+    /// Les deux origines, posées une fois et jamais touchées.
+    origin: Instant,
+    /// **Le seul état de cette horloge** : le temps écoulé depuis les deux origines.
+    ///
+    /// Un unique compteur, et non un `Instant` et une durée tenus côte à côte : les deux
+    /// formes du temps se **dérivent** alors l'une de l'autre, au lieu d'être avancées
+    /// séparément et de pouvoir se désaccorder. C'est la même forme que le `ControlledTime`
+    /// de `features/git`, et c'est ce que le trait [`Clock`] promet — une application qui
+    /// n'a qu'un temps.
+    elapsed: Mutex<Duration>,
+}
 
 impl ManualClock {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self(Mutex::new(Instant::now())))
+        Arc::new(Self {
+            origin: Instant::now(),
+            elapsed: Mutex::new(Duration::ZERO),
+        })
     }
 
     pub fn advance(&self, seconds: u64) {
-        if let Ok(mut now) = self.0.lock() {
-            *now += Duration::from_secs(seconds);
+        if let Ok(mut elapsed) = self.elapsed.lock() {
+            *elapsed += Duration::from_secs(seconds);
         }
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.elapsed
+            .lock()
+            .map(|elapsed| *elapsed)
+            .unwrap_or_default()
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        self.0
-            .lock()
-            .map(|now| *now)
-            .unwrap_or_else(|_| Instant::now())
+        self.origin + self.elapsed()
+    }
+
+    fn wall(&self) -> UnixMillis {
+        FAKE_EPOCH + UnixMillis::try_from(self.elapsed().as_millis()).unwrap_or_default()
     }
 }
 

@@ -11,20 +11,51 @@
 //! et ils ne portent la règle d'aucune des deux — les durées, elles, restent chez qui les
 //! décide.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// L'instant courant.
+/// Une date **absolue**, en millisecondes depuis l'époque Unix.
+///
+/// C'est la seule forme du temps qui a le droit de traverser la frontière Tauri : un
+/// [`Instant`] mesure un écart mais ne dit pas l'heure, et ne se sérialise pas — c'est
+/// exactement l'écart entre `performance.now()` et `Date.now()`. La milliseconde est la
+/// résolution du `Date` du TypeScript ; en donner plus obligerait le frontend à diviser.
+pub type UnixMillis = u64;
+
+/// Le temps, sous ses deux formes.
+///
+/// Un seul trait pour les deux, et non deux traits : une application qui n'a qu'un temps
+/// ne doit pas pouvoir avancer d'un côté sans avancer de l'autre, ce que deux horloges
+/// injectées séparément rendraient possible dans un test — et invisible.
 pub trait Clock: Send + Sync {
+    /// L'instant courant, **monotone**. Pour mesurer un écart : les trente secondes d'une
+    /// ligne finie, le délai d'un débit limité.
     fn now(&self) -> Instant;
+
+    /// L'heure **murale**, pour dater un événement que quelqu'un d'autre devra situer.
+    ///
+    /// Elle peut reculer — l'utilisateur change de fuseau, `ntp` recale la machine — et
+    /// c'est pourquoi aucune règle du produit ne s'appuie dessus : elle ne sert qu'à dire
+    /// *quand* une chose est arrivée, jamais à décider *si* un délai est écoulé.
+    fn wall(&self) -> UnixMillis;
 }
 
-/// L'horloge monotone du système.
+/// L'horloge du système, monotone d'un côté et murale de l'autre.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> Instant {
         Instant::now()
+    }
+
+    fn wall(&self) -> UnixMillis {
+        // Une horloge posée avant 1970 rendrait une erreur, et un dépassement de `u64` ne
+        // se produira pas avant l'an 584 millions : les deux se replient sur l'époque
+        // plutôt que de paniquer dans une boucle de sonde.
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|since| UnixMillis::try_from(since.as_millis()).unwrap_or(UnixMillis::MAX))
+            .unwrap_or_default()
     }
 }
 

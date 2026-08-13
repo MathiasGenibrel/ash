@@ -5,14 +5,21 @@ import type { WorktreeMetadata } from "@/shared/ipc";
 import { composeStatusLine, elide, type StatusLineModel } from "./status-line";
 import type { TabsState } from "./tabs";
 
-/** Un onglet actif dans un worktree, et rien d'autre : le décor de la plupart des cas. */
+/**
+ * Un onglet actif dans un worktree, et rien d'autre : le décor de la plupart des cas.
+ *
+ * `now` est l'époque Unix, comme la date d'entrée par défaut du `TabBuilder` : l'onglet
+ * vient donc d'entrer dans son état, et les scénarios qui ne parlent pas de durée lisent
+ * `0s` sans avoir à s'en soucier.
+ */
 function showing(
     tab = TabBuilder.create().running("claude").inFlatWorktree("/dev/omelette-web").build(),
     metadata: WorktreeMetadata | null = MetadataBuilder.create().build(),
     sidebarCollapsed = false,
+    now = 0,
 ): StatusLineModel {
     const state: TabsState = { tabs: [tab], activeTabId: tab.tabId };
-    return composeStatusLine(state, metadata, sidebarCollapsed);
+    return composeStatusLine(state, metadata, sidebarCollapsed, now);
 }
 
 /** Ce que la ligne **dit**, segment par segment — ce qu'un utilisateur y lit. */
@@ -34,7 +41,7 @@ describe("la ligne de statut", () => {
         // Then
         expect(line.cwd.text).toBe("/dev/omelette-web");
         expect(words(line)).toEqual(["feat/agent-sidebar", "+3", "~1"]);
-        expect(line.agent.text).toBe("claude · working");
+        expect(line.agent.text).toBe("claude · working · 0s");
     });
 
     it("Given a worktree whose tree is clean, when the status line is composed, then nothing is written after the branch", () => {
@@ -121,7 +128,7 @@ describe("la ligne de statut", () => {
         const state: TabsState = { tabs: [], activeTabId: null };
 
         // When
-        const line = composeStatusLine(state, null, false);
+        const line = composeStatusLine(state, null, false, 0);
 
         // Then
         expect([line.cwd.text, ...words(line), line.agent.text]).toEqual([
@@ -147,6 +154,67 @@ describe("la ligne de statut", () => {
     });
 });
 
+describe("la durée de l'état courant", () => {
+    it("Given an agent that has been working for a quarter of an hour, when the status line is composed, then it reads the elapsed time from the entry date", () => {
+        // Given — le `working · 15m22s` de la maquette. Le backend n'envoie que la **date
+        // d'entrée** ; la durée est un fait d'affichage, recalculé à chaque rendu.
+        const tab = TabBuilder.create().running("claude").since(1_000_000).build();
+
+        // When — 15 min 22 s plus tard
+        const line = showing(tab, undefined, false, 1_000_000 + (15 * 60 + 22) * 1000);
+
+        // Then
+        expect(line.agent.text).toBe("claude · working · 15m22s");
+    });
+
+    it("Given an agent waiting for less than a minute, when the status line is composed, then only the seconds are shown", () => {
+        // Given — sous la minute, écrire `0m45s` ferait lire un zéro pour rien : la ligne
+        // fait 25 px et partage sa largeur avec un chemin et un état git.
+        const tab = TabBuilder.create().running("claude", "waiting").since(0).build();
+
+        // When
+        const line = showing(tab, undefined, false, 45_000);
+
+        // Then
+        expect(line.agent.text).toBe("claude · waiting · 45s");
+    });
+
+    it("Given an agent that has been working for more than an hour, when the status line is composed, then the seconds give way to the hours", () => {
+        // Given — passé l'heure, la seconde n'apprend plus rien et coûte deux caractères.
+        const tab = TabBuilder.create().running("claude").since(0).build();
+
+        // When — 2 h 05 min 09 s
+        const line = showing(tab, undefined, false, ((2 * 60 + 5) * 60 + 9) * 1000);
+
+        // Then
+        expect(line.agent.text).toBe("claude · working · 2h05m");
+    });
+
+    it("Given a shell sitting at its prompt, when the status line is composed, then no counter runs on it", () => {
+        // Given — `idle` n'est pas une activité : chronométrer un shell vide ferait tourner
+        // un compteur là où il n'y a rien à lire.
+        const tab = TabBuilder.create().running("zsh", "idle").since(0).build();
+
+        // When — une heure à l'invite
+        const line = showing(tab, undefined, false, 3_600_000);
+
+        // Then
+        expect(line.agent.text).toBe("zsh · idle");
+    });
+
+    it("Given an entry date that is ahead of the display clock, when the status line is composed, then no negative duration is ever shown", () => {
+        // Given — le backend date avec l'horloge murale, qui peut reculer : changement de
+        // fuseau, recalage `ntp`. Écrire `-3s` serait pire que de ne rien écrire.
+        const tab = TabBuilder.create().running("claude").since(10_000).build();
+
+        // When
+        const line = showing(tab, undefined, false, 7_000);
+
+        // Then
+        expect(line.agent.text).toBe("claude · working");
+    });
+});
+
 describe("le rappel de droite", () => {
     it("Given an expanded sidebar, when the status line is composed, then it only carries the command hint", () => {
         // Given / When — dépliée, la sidebar porte déjà les agents : les répéter serait du
@@ -169,7 +237,7 @@ describe("le rappel de droite", () => {
         const state: TabsState = { tabs: [shell, codex], activeTabId: "T1" };
 
         // When
-        const line = composeStatusLine(state, MetadataBuilder.create().build(), true);
+        const line = composeStatusLine(state, MetadataBuilder.create().build(), true, 0);
 
         // Then
         expect(line.hint?.text).toBe("1 waiting · ash-core/codex ⌘2");
