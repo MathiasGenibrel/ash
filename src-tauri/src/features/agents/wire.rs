@@ -341,6 +341,32 @@ mod tests {
     }
 
     #[test]
+    fn given_a_forged_frame_whose_child_key_is_gigantic_when_the_server_reads_it_then_the_child_is_dropped_and_the_state_still_arrives(
+    ) {
+        // Given — le socket est ouvert à tout processus du même utilisateur, et `to_line`
+        // n'est pas sur son chemin : une trame forgée à la main n'a jamais vu `named()` côté
+        // client. La borne doit donc mordre **des deux côtés du fil**, sinon un `agent_id` de
+        // dix kilo-octets deviendrait une ligne fille indélogeable dans la colonne.
+        let line = format!(
+            r#"{{"tab_id":"01J0TAB","kind":"working","agent_id":"{}","agent_type":"explore"}}"#,
+            "z".repeat(MAX_CHILD_KEY_BYTES + 1)
+        );
+
+        // When
+        let frame = EventFrame::from_line(&line);
+
+        // Then — l'identité est écartée, jamais tronquée, et l'état déclaré arrive quand même.
+        // Sans `agent_id`, plus rien ne désigne un enfant : aucune ligne fille ne peut naître
+        // de cette trame, quoi qu'elle porte par ailleurs.
+        let frame = frame.unwrap_or_else(|why| panic!("{why}"));
+        assert_eq!(frame.agent_id, None);
+        assert_eq!(
+            (frame.tab_id.as_str(), frame.kind.as_str()),
+            ("01J0TAB", "working")
+        );
+    }
+
+    #[test]
     fn given_a_gigantic_line_when_it_is_read_then_it_is_refused_instead_of_being_parsed() {
         // Given — un client du même utilisateur peut écrire ce qu'il veut sur le socket ;
         // la borne est ce qui empêche une ligne sans fin de faire grossir Ash.

@@ -30,6 +30,7 @@ pub(crate) enum Invariant {
     InterpretNeverAnswersIdle,
     ChildEventsNeverBecomeTabState,
     NoChildEventsWithoutSubagentSupport,
+    SubagentSupportNamesAChildVerb,
     NoWorkingNorWaitingWithoutInstrumentation,
     InstrumentationIsACapability,
     InstrumentationIsDeterministic,
@@ -71,6 +72,12 @@ impl Invariant {
                 "un adaptateur qui répond `SubagentSupport::None` ne doit reconnaître aucun \
                  événement d'enfant : le cœur n'afficherait alors des lignes filles pour un \
                  outil qui a déclaré n'en avoir pas"
+            }
+            Self::SubagentSupportNamesAChildVerb => {
+                "un adaptateur qui répond `SubagentSupport::Reported` doit reconnaître au \
+                 moins un verbe d'enfant dans son propre vocabulaire : sans lui, il annonce \
+                 au cœur des lignes filles qui n'arriveront jamais, et l'utilisateur \
+                 attendrait une colonne qui ne se remplira pas (spec §6.5)"
             }
             Self::NoWorkingNorWaitingWithoutInstrumentation => {
                 "un adaptateur sans instrumentation ne doit rendre ni `working` ni \
@@ -231,6 +238,19 @@ fn check_interpretation(adapter: &dyn Adapter, corpus: &[RawEvent], report: &mut
     let instruments = adapter
         .instrumentation(Path::new("/ash-contract/alpha"))
         .is_some();
+
+    // L'autre sens de [`Invariant::NoChildEventsWithoutSubagentSupport`], et il attrape la
+    // faute inverse : un adaptateur qui **promet** des sous-tâches sans jamais nommer le verbe
+    // qui en annonce une. La promesse est ce sur quoi le cœur se fonde pour dire qu'il ne
+    // manque aucune ligne (spec §6.5) ; une promesse que rien ne peut tenir est pire qu'un
+    // `None` honnête, parce qu'elle est indiscernable d'un outil qui n'a rien à montrer.
+    report.require(
+        adapter.subagents() != SubagentSupport::Reported
+            || corpus
+                .iter()
+                .any(|event| adapter.child_event(event).is_some()),
+        Invariant::SubagentSupportNamesAChildVerb,
+    );
 
     for event in corpus {
         let interpreted = adapter.interpret(event);
@@ -547,6 +567,31 @@ mod tests {
             report
                 .violations()
                 .contains(&Invariant::NoChildEventsWithoutSubagentSupport),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_that_promises_subagents_without_naming_the_verb_that_ends_one_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — la faute exactement inverse de la précédente, et celle qui se commet le
+        // plus facilement : on passe `subagents()` à `Reported` en préparant une tranche, et
+        // l'on oublie le verbe. L'onglet promet alors des lignes filles que rien n'écrira
+        // jamais, et un utilisateur qui n'en voit aucune ne peut pas distinguer « aucun
+        // sous-agent ne tourne » de « Ash ne les entend pas » (spec §6.5).
+        let boastful = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .reporting_subagents()
+            .build();
+
+        // When
+        let report = check_adapter_contract(&boastful, &[]);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::SubagentSupportNamesAChildVerb),
             "violations : {report}"
         );
     }

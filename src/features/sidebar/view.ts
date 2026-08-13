@@ -228,18 +228,7 @@ export class SidebarView {
         const name = text("span", shown.label, "ash-subagent-name");
         name.title = shown.title;
 
-        row.append(
-            glyph(shown.state),
-            name,
-            spacer(),
-            text(
-                "span",
-                shown.elapsed === null
-                    ? presented.label
-                    : `${presented.label} · ${shown.elapsed}`,
-                "ash-subagent-state",
-            ),
-        );
+        row.append(glyph(shown.state), name, spacer(), text("span", shown.status, "ash-subagent-state"));
         row.addEventListener("click", () => {
             this.actions.selectTab(parent.tabId);
         });

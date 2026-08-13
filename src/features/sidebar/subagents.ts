@@ -1,4 +1,4 @@
-import { elapsedSince } from "@/shared/agent-state";
+import { elapsedSince, presentAgentState } from "@/shared/agent-state";
 import type { AgentState, Subagent } from "@/shared/ipc";
 import { truncate } from "./labels";
 
@@ -46,6 +46,15 @@ export interface SubagentRow {
     readonly state: AgentState;
     /** `1m20s`, ou `null` quand il n'y a rien d'honnête à écrire. */
     readonly elapsed: string | null;
+    /**
+     * La colonne de droite, telle qu'elle se lit : `working · 1m20s`, ou `working` seul.
+     *
+     * Composée **ici** et non par [`./view`] : le séparateur n'a de sens qu'entre deux choses,
+     * et une ligne sans durée ne doit pas traîner un ` · ` derrière son état. C'est une
+     * décision, si petite soit-elle, et une décision posée dans la peinture ne se vérifie
+     * nulle part — `bun test` n'a pas de DOM.
+     */
+    readonly status: string;
 }
 
 /**
@@ -77,10 +86,13 @@ export function subagentNodes(subagents: readonly Subagent[]): readonly Subagent
  * animer un compteur.
  */
 export function composeSubagentRow(node: SubagentNode, now: number): SubagentRow {
+    const elapsed = elapsedSince(node.since, now);
+    const state = presentAgentState(node.state).label;
     return {
         label: node.label,
         title: node.title,
         state: node.state,
-        elapsed: elapsedSince(node.since, now),
+        elapsed,
+        status: elapsed === null ? state : `${state} · ${elapsed}`,
     };
 }

@@ -87,7 +87,15 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         beat(showsSubagents(tree, columnCollapsed));
     }
 
-    /** Ouvre ou ferme le battement des durées, sans jamais en laisser deux. */
+    /**
+     * Ouvre ou ferme le battement des durées, sans jamais en laisser deux.
+     *
+     * Le battement rappelle [`draw`] lui-même, et non un rendu à lui : c'est ce qui lui permet
+     * de **s'arrêter tout seul** quand la dernière ligne fille a fini d'expirer. Un second
+     * chemin de rendu, qui ne repasserait pas par [`showsSubagents`], laisserait battre la
+     * colonne pour toujours le jour où le backend n'a plus rien à annoncer — et deux chemins
+     * de rendu finiraient de toute façon par ne plus dessiner la même chose.
+     */
     function beat(wanted: boolean): void {
         if (wanted === (ticker !== null)) return;
         if (ticker !== null) {
@@ -95,13 +103,7 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
             ticker = null;
             return;
         }
-        ticker = setInterval(() => {
-            view.render(
-                buildSidebar(tabs, { activeTabId, collapsedWorktrees, collapsedGroups }),
-                columnCollapsed,
-                now(),
-            );
-        }, 1000);
+        ticker = setInterval(draw, 1000);
     }
 
     draw();

@@ -35,6 +35,7 @@ describe("ce qu'une ligne de sous-agent montre", () => {
             title: "explore",
             state: "working",
             elapsed: "15m22s",
+            status: "working · 15m22s",
         });
     });
 
@@ -74,7 +75,8 @@ describe("ce qu'une ligne de sous-agent montre", () => {
         // When
         const row = composeSubagentRow(nodes[0]!, 1_000);
 
-        // Then
+        // Then — et la colonne de droite ne garde pas un séparateur qui ne sépare plus rien
         expect(row.elapsed).toBeNull();
+        expect(row.status).toBe("working");
     });
 });
