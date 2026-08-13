@@ -6,6 +6,7 @@
 pub mod agents;
 pub mod git;
 pub mod hooks;
+pub mod notifications;
 pub mod probe;
 pub mod pty;
 pub mod settings;

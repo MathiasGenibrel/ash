@@ -15,6 +15,8 @@ src-tauri/src/
   features/
     pty/                 PTY et cycle de vie des onglets shell
     probe/               sonde fg_pid + cwd (libproc)             — ADR-0005
+    notifications/       bannières macOS, autorisation, clic
+                         (UNUserNotificationCenter)               — spec §8
     agents/              découverte, machine à états, trait Adapter — ADR-0006/7/8
       adapters/          claude-code, codex, generic
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12

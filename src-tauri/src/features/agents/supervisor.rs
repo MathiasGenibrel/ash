@@ -667,6 +667,12 @@ mod tests {
         // regardé après avoir notifié, la ligne d'un agent fini partirait son compte à
         // rebours de trente secondes sans que personne ne l'ait vue — et l'information
         // disparaîtrait de l'écran avant que l'utilisateur ne revienne.
+        //
+        // **Depuis que le clic se capte, l'interdiction porte plus loin** : la bannière
+        // emporte l'onglet qu'un clic sélectionnerait, et c'est le clic — un geste de
+        // l'utilisateur — qui doit être seul à le faire. Poser la bannière ne sélectionne
+        // rien, et ne peut rien sélectionner : [`Notifier::post`] ne rend rien et ne reçoit
+        // aucune poignée d'application.
         let Assembled {
             supervisor,
             clock,
@@ -680,8 +686,17 @@ mod tests {
         clock.advance(3600);
         let an_hour_later = sweep(&supervisor, Presence::Prompt);
 
-        // Then — la bannière est bien partie, et la fenêtre n'a pas pris le premier plan
+        // Then — la bannière est bien partie, en nommant l'onglet que le clic ramènera, et
+        // la fenêtre n'a pas pris le premier plan pour autant
         assert_eq!(notifier.titles(), vec!["an agent is waiting".to_owned()]);
+        assert_eq!(
+            notifier
+                .posted()
+                .into_iter()
+                .map(|notice| notice.tab_id)
+                .collect::<Vec<_>>(),
+            vec![TAB.to_owned()]
+        );
         assert_eq!(an_hour_later, AgentState::Done);
     }
 

@@ -24,6 +24,7 @@ use features::agents::{
     Notifier, Presence, Supervisor,
 };
 use features::git::{resolve_worktree, SystemFileSystem};
+use features::notifications::{Authorization, Banner, Banners, SystemBanners};
 use features::probe::SystemProbe;
 use features::pty::{
     AgentStates, PtyRegistry, RepoRef, SystemPtySpawner, TabId, TabLocation, WorktreeLocator,
@@ -87,14 +88,42 @@ impl EventSink for HookEvents {
     }
 }
 
-/// Relie le port de notification de `features::agents` à macOS.
+/// L'event par lequel une sélection décidée par le backend atteint la vue.
 ///
-/// **L'`AppHandle` arrive après coup, et il n'y a pas d'autre créneau** : le superviseur est
-/// assemblé avant `tauri::Builder`, puisque le registre de PTY en dépend, et le handle
-/// n'existe qu'après `build()`. Le `OnceLock` est le prix de cet ordre-là ; il est ici,
-/// dans l'assemblage, plutôt que dans la feature, qui n'a pas à connaître le cycle de vie
-/// d'une application Tauri. Avant qu'il ne soit posé — c'est-à-dire pendant le démarrage —
-/// une notification est perdue, et c'est sans conséquence : aucun agent n'a encore parlé.
+/// ## Pourquoi un event, alors qu'`agents` n'en a plus
+///
+/// `features::agents` a **retiré** le sien, `ash://agent-event`, et son mod-doc dit qu'il
+/// n'y en aura pas d'autre. La raison du retrait était précise : cet event poussait un
+/// **état** — un verbe brut — dans la webview, en doublon du `TabInfo` que `ash://tab-changed`
+/// porte déjà, et personne ne l'écoutait. Un état d'agent a une seule route jusqu'à l'écran
+/// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// **Ce que celui-ci porte n'est pas un état, et n'en est pas une seconde source.** C'est un
+/// geste de l'utilisateur sur un objet de fenêtre, exactement comme `ash://menu-action` : le
+/// clic sur une bannière et le choix d'une entrée de menu sont la même chose vue du produit,
+/// et `menu.rs` — posé, lui aussi, à côté du composition root plutôt que dans une feature —
+/// route déjà `select-tab` par ce chemin. La sélection, elle, vit côté frontend et doit y
+/// vivre : ADR-0009 donne au backend l'**état** d'un agent, pas la **vue** qu'on en a, et le
+/// jour du démon `ashd` chaque vue tiendra la sienne.
+///
+/// Le backend décide donc **quel** onglet, et le frontend le rend actif. C'est aussi pour ça
+/// que l'event ne s'appelle pas `banner-clicked` : ce qui traverse est la décision, pas le
+/// geste qui l'a produite.
+///
+/// Il est déclaré ici plutôt que dans un `commands.rs` parce qu'aucune feature ne peut le
+/// porter : `notifications` ignore ce qu'est un onglet, et `agents` ignore ce qu'est une
+/// fenêtre. Le seul endroit qui sache les deux est celui qui les assemble.
+const SELECT_TAB_EVENT: &str = "ash://select-tab";
+
+/// Relie le port de notification de `features::agents` au centre de notifications de macOS.
+///
+/// **L'adaptateur arrive après coup, et il n'y a pas d'autre créneau** : le superviseur est
+/// assemblé avant `tauri::Builder`, puisque le registre de PTY en dépend, et le rappel du
+/// clic a besoin de l'`AppHandle`, qui n'existe qu'après `build()`. Le `OnceLock` est le
+/// prix de cet ordre-là ; il est ici, dans l'assemblage, plutôt que dans la feature, qui n'a
+/// pas à connaître le cycle de vie d'une application Tauri. Avant qu'il ne soit posé —
+/// c'est-à-dire pendant le démarrage — une notification est perdue, et c'est sans
+/// conséquence : aucun agent n'a encore parlé.
 ///
 /// **Un `OnceLock` jamais rempli serait muet à l'exécution, mais il ne peut pas arriver
 /// jusque-là** : [`Self::attach`] est privée et n'a qu'un appelant, donc la retirer du
@@ -106,39 +135,52 @@ impl EventSink for HookEvents {
 ///
 /// Il n'y a aucune décision ici — un texte déjà écrit, une bannière — et c'est délibéré :
 /// ce qu'Ash notifie, quand, et avec quels mots est décidé par `features::agents::notify`,
-/// où ça se prouve.
-///
-/// **`notice.tab_id` n'est pas utilisé, et c'est le manque de la tranche** : la spec §8 veut
-/// que le clic sélectionne l'onglet, et `tauri-plugin-notification` 2.3.3 ne rend aucun
-/// moyen de capter ce clic sur macOS. Le champ voyage jusqu'ici pour que le jour où il se
-/// captera, il n'y ait qu'un `else` à écrire — et pour que le trou reste visible.
+/// où ça se prouve. `notice.tab_id` devient le `payload` de la bannière, la chaîne opaque
+/// que `features::notifications` rendra telle quelle au clic.
 #[derive(Default)]
 struct AppNotifier {
-    app: OnceLock<tauri::AppHandle>,
+    banners: OnceLock<Arc<dyn Banners>>,
 }
 
 impl AppNotifier {
-    fn attach(&self, app: tauri::AppHandle) {
-        let _ = self.app.set(app);
+    fn attach(&self, banners: Arc<dyn Banners>) {
+        let _ = self.banners.set(banners);
     }
 }
 
 impl Notifier for AppNotifier {
     fn post(&self, notice: Notice) {
-        use tauri_plugin_notification::NotificationExt;
-
-        let Some(app) = self.app.get() else {
+        let Some(banners) = self.banners.get() else {
             return;
         };
         // Une notification perdue ne change aucun état : rien ne dépend de sa réussite, et
         // faire remonter l'échec n'apprendrait rien de plus que ce que la section
         // `notifications` des réglages dit déjà.
-        let _ = app
-            .notification()
-            .builder()
-            .title(notice.title)
-            .body(notice.body)
-            .show();
+        banners.post(Banner {
+            payload: notice.tab_id,
+            title: notice.title,
+            body: notice.body,
+        });
+    }
+}
+
+/// Le centre de notifications quand il n'y en a pas — c'est-à-dire en développement.
+///
+/// `bun run tauri dev` et `bun run smoke` lancent `target/debug/ash`, un binaire nu :
+/// `UNUserNotificationCenter` n'y existe pas pour Ash, et le seul fait de le demander tue le
+/// processus (voir `features/notifications/macos.rs`). Ash tourne alors sans bannière, et le
+/// dit honnêtement dans la fenêtre de réglages — [`Authorization::Undisclosed`] est
+/// exactement « macOS ne nous le dit pas ».
+///
+/// Refuser de démarrer pour ça enlèverait à l'utilisateur bien plus que ça ne lui rendrait,
+/// comme pour le socket d'events : les bannières valent moins que le terminal.
+struct NoBanners;
+
+impl Banners for NoBanners {
+    fn post(&self, _banner: Banner) {}
+
+    fn authorization(&self) -> Authorization {
+        Authorization::Undisclosed
     }
 }
 
@@ -326,11 +368,6 @@ pub fn run() -> tauri::Result<()> {
         }),
     ));
     let app = tauri::Builder::default()
-        // Le plugin n'est utilisé que depuis Rust — c'est le backend qui détient l'état,
-        // donc lui qui décide d'interrompre (ADR-0009). Aucune capacité ne lui est accordée
-        // dans `capabilities/` : ce serait ouvrir à la webview une API que le produit
-        // n'appelle pas.
-        .plugin(tauri_plugin_notification::init())
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&tools))
@@ -369,7 +406,32 @@ pub fn run() -> tauri::Result<()> {
     // Le port de notification n'avait pas d'application à qui parler avant cette ligne. Il
     // la reçoit ici, dans le même créneau que la surveillance git et le socket d'events, et
     // pour la même raison : `setup` ne tourne pas pendant `build()` dans Tauri 2.
-    notifier.attach(app.handle().clone());
+    //
+    // **C'est aussi le seul créneau où le délégué du clic peut être posé** : Apple demande
+    // qu'il le soit avant que l'application ne tourne, et il lui faut le handle pour émettre.
+    // Nous sommes ici sur le fil principal, avant `app.run`.
+    //
+    // Le rappel du clic est le point d'arrivée de toute cette tranche, et il tient en une
+    // ligne : la chaîne que la bannière portait est l'onglet à sélectionner. Il est
+    // **asynchrone** — macOS le déclenche quand l'utilisateur clique, et aucun fil d'Ash
+    // n'attend ce moment. Il ne met pas non plus la fenêtre au premier plan : cliquer une
+    // notification active déjà l'application qui l'a posée, et Ash n'a rien à ajouter à un
+    // geste que l'utilisateur vient de faire (ADR-0010, ADR-0015).
+    let clicking = app.handle().clone();
+    let banners: Arc<dyn Banners> = match SystemBanners::attach(Arc::new(move |tab_id: &str| {
+        use tauri::Emitter;
+        let _ = clicking.emit(SELECT_TAB_EVENT, tab_id);
+    })) {
+        Some(system) => Arc::new(system),
+        None => Arc::new(NoBanners),
+    };
+    notifier.attach(Arc::clone(&banners));
+    {
+        // La fenêtre de réglages lit l'autorisation par le **même** centre que celui qui
+        // poste : `settings_notifications` la lui demande, et ne la déduit de rien.
+        use tauri::Manager;
+        app.manage(Arc::clone(&banners));
+    }
 
     // La surveillance git naît **après** `build` et **avant** `run` : elle a besoin du
     // handle de l'application pour émettre, et l'application a besoin d'elle pour répondre

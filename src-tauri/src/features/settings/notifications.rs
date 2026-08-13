@@ -13,22 +13,20 @@
 //! est la seule chose qui lui appartienne vraiment : **quels états interrompent**
 //! ([`NOTIFIED_STATES`]).
 //!
-//! ## Pourquoi Ash ne sait pas si la permission est accordée
+//! ## D'où vient la permission, maintenant
 //!
-//! `tauri-plugin-notification` 2.3.3 expose bien `permission_state()`, mais son
-//! implémentation de bureau rend une **constante** — `Ok(PermissionState::Granted)`,
-//! quoi que macOS en pense (`src/desktop.rs` du plugin). La brancher ferait afficher
-//! « accordée » à un utilisateur qui a refusé, c'est-à-dire exactement le contraire de ce
-//! que la puce de la spec demande. Lire la vraie autorisation demanderait
-//! `UNUserNotificationCenter` — donc `objc`, donc de l'`unsafe` hors de `features/probe/`,
-//! et une application empaquetée.
+//! De `UNUserNotificationCenter`, par le port [`Banners`] de `features::notifications` —
+//! c'est-à-dire du **même** centre que celui qui pose les bannières. C'était la condition
+//! pour que cette ligne ne mente pas : `tauri-plugin-notification`, qui portait les
+//! bannières jusqu'ici, rend `Granted` en dur sur le bureau, donc afficher « accordée » sur
+//! sa foi aurait dit à un utilisateur ayant refusé l'exact contraire de ce qu'il constate.
 //!
-//! Ash dit donc ce qu'il sait, et pas plus : [`NotificationPermission::Undisclosed`]. Les
-//! deux autres valeurs ne sont pas décoratives — ce sont elles que la spec nomme, et la
-//! ligne qu'elles produisent est prouvée ici. Le jour où une source existera, c'est
-//! [`observed`] qui changera, et rien d'autre.
+//! Il reste un cas où Ash ne sait rien, et il est franc : hors d'une application empaquetée
+//! — `bun run tauri dev` —, macOS n'a pas de centre de notifications pour Ash. C'est ce que
+//! [`NotificationPermission::Undisclosed`] dit, et c'est désormais tout ce qu'il dit.
 
 use crate::features::agents::{AgentState, NOTIFIED_STATES};
+use crate::features::notifications::Authorization;
 
 /// Ce que macOS laisse savoir à Ash de sa propre autorisation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -38,8 +36,8 @@ pub enum NotificationPermission {
     Granted,
     /// Refusée : rien n'arrivera jamais, et c'est le cas que la spec §8 veut voir affiché.
     Denied,
-    /// macOS ne le dit pas à Ash. **La seule valeur produite aujourd'hui** — voir le
-    /// mod-doc.
+    /// macOS ne le dit pas à Ash — il n'a pas de centre de notifications à lui offrir, faute
+    /// d'application empaquetée. Voir le mod-doc.
     Undisclosed,
 }
 
@@ -69,12 +67,18 @@ pub struct NotificationsReport {
     pub notified: Vec<AgentState>,
 }
 
-/// Ce qu'Ash observe aujourd'hui de son autorisation.
+/// Ce qu'Ash observe de son autorisation, traduit pour la fenêtre.
 ///
-/// Une fonction, et pas une constante, pour que le jour où une source existe il n'y ait
-/// qu'un corps à écrire — et un seul endroit à relire pour savoir d'où vient la réponse.
-pub fn observed() -> NotificationPermission {
-    NotificationPermission::Undisclosed
+/// Deux vocabulaires plutôt qu'un, et c'est la frontière qui l'impose :
+/// [`Authorization`] est ce que macOS répond, [`NotificationPermission`] est ce que le
+/// contrat TypeScript porte. Les confondre ferait voyager jusqu'à la webview un mot dont
+/// le sens vient d'un `enum` d'Apple.
+pub fn observed(authorization: Authorization) -> NotificationPermission {
+    match authorization {
+        Authorization::Granted => NotificationPermission::Granted,
+        Authorization::Denied => NotificationPermission::Denied,
+        Authorization::Undisclosed => NotificationPermission::Undisclosed,
+    }
 }
 
 /// La ligne que la fenêtre affiche pour cette autorisation.
@@ -125,13 +129,13 @@ mod tests {
     }
 
     #[test]
-    fn given_a_permission_macos_does_not_disclose_when_the_section_is_composed_then_ash_claims_nothing(
-    ) {
-        // Given — le cas **réel** aujourd'hui : le plugin rend une constante `Granted` sur
-        // le bureau. Afficher « accordée » sur cette foi-là serait affirmer à l'utilisateur
-        // l'exact contraire de ce qu'il constate, et c'est la seule faute que cette ligne
-        // pourrait commettre.
-        let permission = observed();
+    fn given_a_macos_that_refuses_to_say_when_the_section_is_composed_then_ash_claims_nothing() {
+        // Given — hors d'une application empaquetée, macOS n'a pas de centre de
+        // notifications pour Ash. Affirmer « accordée » sur cette absence-là serait dire à
+        // l'utilisateur l'exact contraire de ce qu'il constate, et c'est la seule faute que
+        // cette ligne pourrait commettre — celle que le `Granted` constant du plugin
+        // commettait.
+        let permission = observed(Authorization::Undisclosed);
 
         // When
         let shown = report(permission);
@@ -146,12 +150,28 @@ mod tests {
     }
 
     #[test]
+    fn given_a_user_who_turned_ash_off_in_system_settings_when_the_section_is_composed_then_the_window_says_refused(
+    ) {
+        // Given — la valeur qu'aucune pile du projet n'avait su produire jusqu'ici : le
+        // plugin rendait `Granted` en dur, donc `Denied` était un cas mort, et la puce de la
+        // spec §8 une promesse sans producteur. C'est ce test qui dit qu'elle en a un.
+        let refused = Authorization::Denied;
+
+        // When
+        let shown = report(observed(refused));
+
+        // Then
+        assert_eq!(shown.permission, NotificationPermission::Denied);
+        assert_eq!(shown.summary, "macOS notifications are not allowed");
+    }
+
+    #[test]
     fn given_the_section_when_it_names_what_interrupts_then_it_names_exactly_what_agents_notifies()
     {
         // Given — les deux états de la spec §8, et pas trois. La fenêtre les **rend** ; les
         // écrire une seconde fois ici ferait promettre `done` le jour où quelqu'un
         // l'ajouterait à `agents`, ou l'inverse.
-        let shown = report(observed());
+        let shown = report(observed(Authorization::Granted));
 
         // When
         let named = shown.notified;

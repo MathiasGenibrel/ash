@@ -3,6 +3,7 @@ import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
 import { onMenuAction, type MenuAction } from "./menu";
+import { onSelectTab } from "./select-tab";
 import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
@@ -71,6 +72,13 @@ function mount(root: HTMLElement, theme: ThemeChanges, fontSize: FontSizeChanges
     };
 
     onMenuAction(play).catch(fail);
+    // Le clic sur une bannière macOS ramène sur l'agent qui a interrompu (spec §8). Il
+    // arrive par le même genre de chemin qu'une action de menu — un geste de l'utilisateur
+    // hors de la webview — et il se joue par la même méthode que le clic sur une ligne de la
+    // sidebar : un onglet qui n'existe plus ne change rien.
+    onSelectTab((tabId) => {
+        void terminals.selectTab(tabId);
+    }).catch(fail);
     // `⌃⇥` et `⌃⇧⇥` arrivent par le clavier de la webview, faute d'être captées par le
     // menu natif — voir `shortcuts.ts`. Elles produisent les mêmes actions, et sont donc
     // jouées par la même table : il n'y a qu'un seul chemin d'effet.

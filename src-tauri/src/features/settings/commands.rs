@@ -168,13 +168,19 @@ fn announce(
 
 /// Ce que la section `notifications` affiche (spec §8).
 ///
-/// Sans état ni registre : ce que macOS laisse savoir de son autorisation ne dépend
-/// d'aucune entrée déclarée, et les deux états qui interrompent viennent d'`agents`. La
-/// fenêtre la rappelle à chaque fois qu'on ouvre la section — l'autorisation peut être
-/// changée dans les Réglages Système pendant qu'Ash est ouvert.
+/// Sans registre : l'autorisation ne dépend d'aucune entrée déclarée, et les deux états qui
+/// interrompent viennent d'`agents`. Elle est **relue à chaque appel**, et la fenêtre appelle
+/// à chaque ouverture de la section : l'autorisation peut être changée dans les Réglages
+/// Système pendant qu'Ash est ouvert, et une valeur retenue au démarrage vieillirait mal
+/// dans le seul panneau où l'on vient justement la vérifier.
+///
+/// Le centre est **injecté**, et c'est celui qui pose les bannières : la fenêtre décrit donc
+/// l'autorisation du mécanisme qui interrompt vraiment, et non celle d'un autre.
 #[tauri::command]
-pub fn settings_notifications() -> NotificationsReport {
-    notifications::report(notifications::observed())
+pub fn settings_notifications(
+    banners: tauri::State<'_, Arc<dyn crate::features::notifications::Banners>>,
+) -> NotificationsReport {
+    notifications::report(notifications::observed(banners.authorization()))
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
