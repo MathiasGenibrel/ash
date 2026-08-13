@@ -236,6 +236,48 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* --- les lignes filles : les sous-agents (spec §6.5) -------------------------
+ *
+ * Un cran de plus à gauche que la ligne de leur onglet, et un filet vertical qui les relie
+ * à elle : ce sont les deux seules choses qui disent « ceci vit sous celle du dessus ».
+ * Elles ne sont pas des boutons — un sous-agent n'a pas de terminal (ADR-0003) — donc pas de
+ * `cursor: pointer` : un clic sélectionne le parent, il n'ouvre rien qui leur appartienne. */
+
+.ash-subagent {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 2px 10px 2px 30px;
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+    border-left: 2px solid transparent;
+}
+
+.ash-subagent-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ash-subagent.is-struck .ash-subagent-name {
+    text-decoration: line-through;
+}
+
+.ash-subagent-state {
+    font-size: 10px;
+    color: var(--ash-fg-dim);
+    /* Sans ça, les chiffres d'une durée dansent à chaque seconde. */
+    font-variant-numeric: tabular-nums;
+}
+
+/* Une ligne fille finie s'efface au bout de dix secondes : elle s'atténue d'ici là, pour
+ * qu'un coup d'œil distingue ce qui tourne de ce qui vient de finir. */
+.ash-subagent.is-done {
+    opacity: 0.7;
+}
+
 .ash-worktree:hover,
 .ash-agent:hover {
     background: color-mix(in srgb, var(--ash-fg) 6%, transparent);

@@ -14,6 +14,12 @@
 //!   (spec §6.4). Un adaptateur traduit ; il n'arbitre pas, et il ne connaît ni l'onglet
 //!   ni l'horloge.
 //!
+//! Une quatrième pièce vit **à côté** de la machine, et non dedans : [`Subagents`], les
+//! lignes filles d'un onglet (spec §6.5). Elle est séparée parce que l'amendement du
+//! 2026-08-13 à ADR-0007 l'exige — le cycle de vie des enfants passe par une méthode
+//! distincte du trait ([`Adapter::child_event`]), et aucun événement d'enfant n'a de chemin
+//! vers l'état de l'onglet. La suite contractuelle le vérifie sur chaque implémentation.
+//!
 //! La couture entre les trois est [`Supervisor`] : il tient une machine par onglet, traduit
 //! les [`EventFrame`] du socket en [`RawEvent`] puis en [`AgentEvent`], et répond à la
 //! question que `pty` lui pose à chaque passe de sonde. La machine, elle, continue de
@@ -62,11 +68,13 @@ mod machine;
 mod notify;
 mod socket;
 mod state;
+mod subagents;
 mod supervisor;
 mod wire;
 
 pub use adapter::{
-    hook_mark, Adapter, HookEntry, Instrumentation, RawEvent, SubagentSupport, HOOK_MARK,
+    hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SubagentSupport,
+    HOOK_MARK,
 };
 pub use adapters::{ClaudeCodeAdapter, GenericAdapter};
 pub use error::AgentError;
@@ -74,5 +82,9 @@ pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};
 pub use notify::{Notice, Notifier, NOTIFIED_STATES};
 pub use socket::{listen, EventSink, EventSocket};
 pub use state::{AgentState, AgentStatus};
-pub use supervisor::{Presence, Supervisor};
+// `Subagents` reste privé : c'est la mémoire du superviseur, pas un type que `pty` ou le
+// composition root aient à nommer. Ce qui sort est la ligne qui traverse la frontière, et le
+// réglage que l'assemblage pose.
+pub use subagents::{Subagent, SUBAGENT_LINGER};
+pub use supervisor::{Presence, Supervisor, TabAgents};
 pub use wire::{socket_path, EventFrame};

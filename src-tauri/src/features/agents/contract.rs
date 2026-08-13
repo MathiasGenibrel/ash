@@ -12,7 +12,7 @@
 
 use std::path::{Component, Path};
 
-use super::adapter::{hook_mark, Adapter, RawEvent};
+use super::adapter::{hook_mark, Adapter, RawEvent, SubagentSupport};
 use super::state::AgentState;
 
 /// Les invariants du contrat, un par un.
@@ -28,6 +28,8 @@ pub(crate) enum Invariant {
     IdIsASlug,
     InterpretIsDeterministic,
     InterpretNeverAnswersIdle,
+    ChildEventsNeverBecomeTabState,
+    NoChildEventsWithoutSubagentSupport,
     NoWorkingNorWaitingWithoutInstrumentation,
     InstrumentationIsACapability,
     InstrumentationIsDeterministic,
@@ -59,6 +61,16 @@ impl Invariant {
             Self::InterpretNeverAnswersIdle => {
                 "interpret() ne doit jamais rendre `idle` : c'est le mot de la sonde pour \
                  « aucun agent ici », qu'aucun événement d'outil ne peut affirmer"
+            }
+            Self::ChildEventsNeverBecomeTabState => {
+                "un événement de sous-agent ne doit produire aucun état d'onglet : un enfant \
+                 qui finit ne rend pas l'outil disponible, et le traduire serait la déduction \
+                 qu'ADR-0007 refuse (amendement du 2026-08-13)"
+            }
+            Self::NoChildEventsWithoutSubagentSupport => {
+                "un adaptateur qui répond `SubagentSupport::None` ne doit reconnaître aucun \
+                 événement d'enfant : le cœur n'afficherait alors des lignes filles pour un \
+                 outil qui a déclaré n'en avoir pas"
             }
             Self::NoWorkingNorWaitingWithoutInstrumentation => {
                 "un adaptateur sans instrumentation ne doit rendre ni `working` ni \
@@ -159,6 +171,11 @@ fn tempting_events() -> Vec<RawEvent> {
         "PreToolUse",
         "PostToolUse",
         "SubagentStop",
+        // Le verbe canonique du sixième hook, à côté du nom que Claude Code lui donne. Il
+        // est ici pour la même raison que les autres : c'est **le** mot qu'un adaptateur
+        // serait tenté de traduire en `done`, et l'amendement du 2026-08-13 à ADR-0007 dit
+        // qu'il n'en est pas un.
+        "subagent-stop",
         "SessionEnd",
         "idle",
         "working",
@@ -228,6 +245,20 @@ fn check_interpretation(adapter: &dyn Adapter, corpus: &[RawEvent], report: &mut
         report.require(
             interpreted != Some(AgentState::Idle),
             Invariant::InterpretNeverAnswersIdle,
+        );
+
+        // Le garde-fou de l'amendement du 2026-08-13, rendu exécutable : les deux méthodes
+        // lisent le même mot brut, et le même mot ne peut pas parler des deux à la fois.
+        // C'est ce qui empêche un `SubagentStop` de repasser par la porte de l'état d'onglet
+        // le jour où quelqu'un l'ajoutera « pour que la ligne se mette à jour ».
+        let child = adapter.child_event(event);
+        report.require(
+            child.is_none() || interpreted.is_none(),
+            Invariant::ChildEventsNeverBecomeTabState,
+        );
+        report.require(
+            child.is_none() || adapter.subagents() == SubagentSupport::Reported,
+            Invariant::NoChildEventsWithoutSubagentSupport,
         );
 
         if !instruments {
@@ -309,7 +340,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::features::agents::adapter::{HookEntry, Instrumentation, SubagentSupport};
+    use crate::features::agents::adapter::{ChildEvent, HookEntry, Instrumentation};
 
     /// Un adaptateur de test, réglable défaut par défaut — c'est ce qui permet de vérifier
     /// que la suite contractuelle **attrape** ce qu'elle prétend attraper.
@@ -318,6 +349,8 @@ mod tests {
         id: Option<String>,
         instrumented_file: Option<PathBuf>,
         always: Option<AgentState>,
+        child_verb: Option<String>,
+        reports_subagents: bool,
     }
 
     impl AdapterBuilder {
@@ -341,11 +374,25 @@ mod tests {
             self
         }
 
+        /// Ce mot-là annonce la fin d'un enfant.
+        fn ending_children_on(mut self, verb: &str) -> Self {
+            self.child_verb = Some(verb.to_owned());
+            self
+        }
+
+        /// L'outil déclare avoir des sous-tâches.
+        fn reporting_subagents(mut self) -> Self {
+            self.reports_subagents = true;
+            self
+        }
+
         fn build(self) -> FakeAdapter {
             FakeAdapter {
                 id: self.id.unwrap_or_else(|| "fake".to_owned()),
                 instrumented_file: self.instrumented_file,
                 always: self.always,
+                child_verb: self.child_verb,
+                reports_subagents: self.reports_subagents,
             }
         }
     }
@@ -354,6 +401,8 @@ mod tests {
         id: String,
         instrumented_file: Option<PathBuf>,
         always: Option<AgentState>,
+        child_verb: Option<String>,
+        reports_subagents: bool,
     }
 
     impl Adapter for FakeAdapter {
@@ -376,8 +425,16 @@ mod tests {
             self.always
         }
 
+        fn child_event(&self, raw: &RawEvent) -> Option<ChildEvent> {
+            (self.child_verb.as_deref() == Some(raw.kind())).then_some(ChildEvent::Ended)
+        }
+
         fn subagents(&self) -> SubagentSupport {
-            SubagentSupport::None
+            if self.reports_subagents {
+                SubagentSupport::Reported
+            } else {
+                SubagentSupport::None
+            }
         }
     }
 
@@ -441,6 +498,56 @@ mod tests {
                 Invariant::InstrumentationStaysUnderTheConfigDir,
                 Invariant::InstrumentationIsPerConfigDir,
             ]
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_that_turns_a_finished_subagent_into_a_tab_state_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — la faute que l'amendement du 2026-08-13 nomme et interdit : traduire un
+        // `SubagentStop` en état d'onglet. Un enfant qui finit ne rend pas `claude`
+        // disponible ; l'onglet afficherait `done` pendant que l'agent principal travaille,
+        // et la sidebar annoncerait un travail terminé qui ne l'est pas.
+        let confused = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .reporting_subagents()
+            .ending_children_on("subagent-stop")
+            .always_answering(AgentState::Done)
+            .build();
+
+        // When
+        let report = check_adapter_contract(&confused, &[]);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::ChildEventsNeverBecomeTabState),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_that_reports_children_while_declaring_it_has_none_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — `SubagentSupport` est ce sur quoi le cœur se fonde pour décider s'il peut
+        // afficher des lignes filles (spec §6.5). Un adaptateur qui répond `None` et
+        // reconnaît quand même un verbe d'enfant ferait apparaître des lignes sous un outil
+        // qui a déclaré ne pas en avoir — donc suggérer qu'il en manque ailleurs.
+        let inconsistent = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .ending_children_on("subagent-stop")
+            .build();
+
+        // When
+        let report = check_adapter_contract(&inconsistent, &[]);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::NoChildEventsWithoutSubagentSupport),
+            "violations : {report}"
         );
     }
 

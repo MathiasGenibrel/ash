@@ -20,8 +20,8 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use features::agents::{
-    Adapter, AgentStatus, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice,
-    Notifier, Presence, Supervisor,
+    Adapter, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice, Notifier, Presence,
+    Supervisor, TabAgents, SUBAGENT_LINGER,
 };
 use features::git::{resolve_worktree, SystemFileSystem};
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
@@ -189,10 +189,10 @@ impl Banners for NoBanners {
 /// Il n'y a aucune décision ici — une question, une délégation — et c'est délibéré : le
 /// composition root n'a pas de test unitaire, donc tout ce qui s'y glisse n'en a pas non
 /// plus. La règle, elle, vit dans `agents/supervisor.rs`, où elle se prouve.
-struct TabAgents(Arc<Supervisor>);
+struct SupervisedTabs(Arc<Supervisor>);
 
-impl AgentStates for TabAgents {
-    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentStatus {
+impl AgentStates for SupervisedTabs {
+    fn state(&self, tab_id: &TabId, seen: Presence) -> TabAgents {
         self.0.state(tab_id, seen)
     }
 
@@ -339,13 +339,18 @@ pub fn run() -> tauri::Result<()> {
         Arc::new(shared::time::SystemClock),
         adapters.clone(),
         Arc::clone(&notifier) as Arc<dyn Notifier>,
+        // Le réglage de la spec §6.5, à sa valeur par défaut : combien de temps la ligne
+        // d'un sous-agent fini reste lisible. Il est posé **ici** et non lu d'une constante
+        // au fond de la feature, pour que le jour où la fenêtre de réglages le porte, il n'y
+        // ait qu'un fil à rebrancher.
+        SUBAGENT_LINGER,
     ));
 
     let ptys = Arc::new(PtyRegistry::new(
         Box::new(SystemPtySpawner),
         Arc::new(SystemProbe),
         Arc::new(GitWorktrees),
-        Arc::new(TabAgents(Arc::clone(&agents))),
+        Arc::new(SupervisedTabs(Arc::clone(&agents))),
     ));
 
     // L'apparence — le thème et la taille de police du terminal — est relue **avant** la

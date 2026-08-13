@@ -1,8 +1,9 @@
 import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import { abbreviate } from "./labels";
+import { composeSubagentRow, type SubagentNode } from "./subagents";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
-import { planGroup, planRailEntry, planWorktree } from "./visible";
+import { planGroup, planRailEntry, planTab, planWorktree } from "./visible";
 
 /**
  * Le rendu de la sidebar. Il ne décide rien : il reçoit l'arbre que [`buildSidebar`] a
@@ -33,6 +34,8 @@ export class SidebarView {
 
     private readonly body = document.createElement("div");
     private readonly head = document.createElement("div");
+    /** L'instant du rendu en cours — voir [`SidebarView.render`]. */
+    private now = 0;
 
     constructor(private readonly actions: SidebarViewActions) {
         this.element = document.createElement("aside");
@@ -44,7 +47,14 @@ export class SidebarView {
         this.element.append(this.head, this.body, this.foot());
     }
 
-    render(tree: SidebarTree, collapsedColumn: boolean): void {
+    /**
+     * `now` est l'horloge du **rendu**, et non un état de la colonne : les durées des lignes
+     * filles s'en déduisent, exactement comme celle de la ligne de statut. Le passer en
+     * paramètre plutôt que de lire `Date.now()` ici est ce qui rend la composition d'une
+     * ligne fille vérifiable sans DOM ([`./subagents`]).
+     */
+    render(tree: SidebarTree, collapsedColumn: boolean, now: number): void {
+        this.now = now;
         this.element.classList.toggle("is-collapsed", collapsedColumn);
         this.header(composeSidebarHeader(tree, collapsedColumn));
 
@@ -117,7 +127,12 @@ export class SidebarView {
             ...rows,
             ...plan.children.flatMap((worktree) => [
                 this.worktreeRow(worktree, shape),
-                ...planWorktree(worktree).children.map((tab) => this.tabRow(tab, shape)),
+                ...planWorktree(worktree).children.flatMap((tab) => [
+                    this.tabRow(tab, shape),
+                    // Les lignes filles suivent immédiatement la ligne de leur onglet, et
+                    // n'ont pas de repli à elles : elles se montrent, ou n'existent pas.
+                    ...planTab(tab).children.map((child) => this.subagentRow(child, tab)),
+                ]),
             ]),
         ];
     }
@@ -189,6 +204,44 @@ export class SidebarView {
         row.append(glyph(tab.state), name, text("span", shown.label, "ash-agent-state"));
         row.addEventListener("click", () => {
             this.actions.selectTab(tab.tabId);
+        });
+        return row;
+    }
+
+    /**
+     * Une ligne de sous-agent : son libellé, son état, sa durée — et aucun geste à elle.
+     *
+     * **Ce n'est pas un bouton, et c'est la décision qui compte ici** : un sous-agent n'a pas
+     * de terminal ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)), donc rien à
+     * sélectionner. Un clic sur la ligne sélectionne le **parent**, qui est le seul onglet
+     * qu'il y ait à montrer ; et comme elle n'est pas un bouton, `tab` ne s'y arrête pas —
+     * le parcours clavier ne gagne pas une étape qui ne mène nulle part.
+     */
+    private subagentRow(child: SubagentNode, parent: SidebarTabNode): HTMLElement {
+        const shown = composeSubagentRow(child, this.now);
+        const presented = presentAgentState(shown.state);
+
+        const row = document.createElement("div");
+        row.className = `ash-subagent ${presented.className}`;
+        if (presented.struck) row.classList.add("is-struck");
+
+        const name = text("span", shown.label, "ash-subagent-name");
+        name.title = shown.title;
+
+        row.append(
+            glyph(shown.state),
+            name,
+            spacer(),
+            text(
+                "span",
+                shown.elapsed === null
+                    ? presented.label
+                    : `${presented.label} · ${shown.elapsed}`,
+                "ash-subagent-state",
+            ),
+        );
+        row.addEventListener("click", () => {
+            this.actions.selectTab(parent.tabId);
         });
         return row;
     }

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::features::agents::adapter::{
-    hook_mark, Adapter, HookEntry, Instrumentation, RawEvent, SubagentSupport,
+    hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
 
@@ -13,11 +13,17 @@ use crate::features::agents::state::AgentState;
 /// plus ancien et de le réécrire, sans avoir à comparer deux textes ni à se demander si
 /// l'utilisateur y a touché.
 ///
-/// **Elle vaut 1, et c'est la première.** La spec §10 écrit `ash block v3` : ce `v3` est
-/// une illustration de la *forme* du marqueur, rédigée avant la moindre ligne de code, et
-/// il n'a jamais eu de v1 ni de v2 pour le précéder. Le nombre est le compteur réel, pas
+/// **Elle vaut 2 depuis le sixième hook.** La v1 installait cinq entrées ; `SubagentStop`
+/// en fait une sixième (spec §6.5), donc un `settings.json` instrumenté par un Ash antérieur
+/// ne porte pas ce qu'Ash écrirait aujourd'hui. C'est exactement ce que la version existe
+/// pour dire : la feature `hooks` classe alors le fichier en `Superseded`, montre le diff de
+/// l'entrée manquante, et réécrit sans rien demander — le parcours d'ADR-0007, sans cas
+/// particulier à ajouter.
+///
+/// La spec §10 écrit `ash block v3` : ce `v3` est une illustration de la *forme* du
+/// marqueur, rédigée avant la moindre ligne de code. Le nombre est le compteur réel, pas
 /// celui de la spec.
-const BLOCK_VERSION: u32 = 1;
+const BLOCK_VERSION: u32 = 2;
 
 /// Les hooks de Claude Code qu'Ash installe, et l'état que chacun déclare.
 ///
@@ -56,6 +62,18 @@ const HOOKS: [(&str, AgentState); 5] = [
     ("Stop", AgentState::Waiting),
     ("SessionEnd", AgentState::Done),
 ];
+
+/// Le sixième hook, et le seul qui ne parle **pas** de l'onglet.
+///
+/// `SubagentStop` part quand une sous-tâche de l'outil `Task` se termine, et son entrée
+/// standard porte l'`agent_id` de celle qui s'arrête — donc on sait *laquelle*, y compris
+/// quand plusieurs tournent en parallèle (ADR-0007, amendement du 2026-08-13).
+///
+/// **Il écrit un verbe qui n'est pas un état**, et c'est toute la précaution : `subagent-stop`
+/// ne figure dans aucune table d'états, donc [`Adapter::interpret`] le refuse comme il refuse
+/// `Stop`, et il n'a aucun chemin vers l'état de l'onglet. Il ne se lit que par
+/// [`Adapter::child_event`].
+const CHILD_HOOK: (&str, &str) = ("SubagentStop", "subagent-stop");
 
 /// Le seul hook qui exige un sélecteur d'outils, et la valeur qui les prend tous.
 ///
@@ -107,13 +125,13 @@ impl ClaudeCodeAdapter {
     /// et un `#` en fin de ligne ne change rien à ce que le shell exécute
     /// ([ADR-0007](../../../../../docs/adr/0007-etats-par-hooks.md), amendement du
     /// 2026-08-12).
-    fn invocation(&self, state: AgentState) -> Option<String> {
-        Some(format!(
+    fn invocation(&self, word: &str) -> String {
+        format!(
             "{} {} --tab \"$ASH_TAB_ID\" {}",
             shell_quoted(&self.event_binary),
-            declared_word(state)?,
+            word,
             hook_mark(BLOCK_VERSION),
-        ))
+        )
     }
 }
 
@@ -133,7 +151,7 @@ impl Adapter for ClaudeCodeAdapter {
     /// d'`ash-event` finit dans une chaîne JSON, et c'est le sérialiseur qui doit décider
     /// comment y échapper un guillemet ou un antislash.
     fn instrumentation(&self, config_dir: &Path) -> Option<Instrumentation> {
-        let mut entries = Vec::with_capacity(HOOKS.len());
+        let mut entries = Vec::with_capacity(HOOKS.len() + 1);
         for (hook, state) in HOOKS {
             entries.push(HookEntry {
                 // `settings.json` range les hooks de Claude Code sous `hooks`, une clé par
@@ -141,9 +159,16 @@ impl Adapter for ClaudeCodeAdapter {
                 // que la feature `hooks` descend pour fusionner : elle n'a besoin de rien
                 // d'autre, et surtout pas de connaître Claude Code.
                 path: vec!["hooks".to_owned(), hook.to_owned()],
-                item: self.item_for(hook, state)?,
+                item: self.item_for(hook, declared_word(state)?)?,
             });
         }
+
+        // Le sixième, en dernier : il ne déclare pas un état, il nomme un enfant qui finit.
+        let (child_hook, child_word) = CHILD_HOOK;
+        entries.push(HookEntry {
+            path: vec!["hooks".to_owned(), child_hook.to_owned()],
+            item: self.item_for(child_hook, child_word)?,
+        });
 
         Some(Instrumentation {
             file: config_dir.join("settings.json"),
@@ -176,14 +201,25 @@ impl Adapter for ClaudeCodeAdapter {
         .find(|state| declared_word(*state) == Some(raw.kind()))
     }
 
-    /// Claude Code a bien des sous-tâches — l'outil `Task`, et le hook `SubagentStop`.
+    /// Le verbe du sixième hook, et lui seul.
     ///
-    /// On répond pourtant `None`, qui se lit « n'en dit rien » : ce bloc n'installe pas
-    /// `SubagentStop`, donc aucun événement de sous-tâche ne remontera. Déclarer `Reported`
-    /// annoncerait au cœur des lignes filles qui n'arriveraient jamais. À reprendre avec la
-    /// tranche des subagents (spec §6.5).
+    /// Il ne passe **jamais** par [`Self::interpret`] : `subagent-stop` n'est pas un état, et
+    /// un enfant qui finit ne rend pas `claude` disponible (ADR-0007, amendement du
+    /// 2026-08-13). Les deux méthodes lisent le même mot brut et n'en tirent pas la même
+    /// chose, ce qui est exactement le partage voulu.
+    fn child_event(&self, raw: &RawEvent) -> Option<ChildEvent> {
+        let (_, child_word) = CHILD_HOOK;
+        (raw.kind() == child_word).then_some(ChildEvent::Ended)
+    }
+
+    /// Claude Code a des sous-tâches, et Ash les entend désormais.
+    ///
+    /// C'est cette tranche qui fait passer l'adaptateur de `None` à `Reported` : le bloc
+    /// installe `SubagentStop`, donc la fin d'un enfant remonte, et le premier événement
+    /// portant un `agent_id` inconnu révèle sa naissance. Déclarer `Reported` sans installer
+    /// le hook aurait annoncé au cœur des lignes filles qui ne seraient jamais arrivées.
     fn subagents(&self) -> SubagentSupport {
-        SubagentSupport::None
+        SubagentSupport::Reported
     }
 }
 
@@ -193,10 +229,10 @@ impl ClaudeCodeAdapter {
     /// **Sur une seule ligne, et compact.** C'est ce que la feature `hooks` insère dans le
     /// tableau de l'utilisateur, à côté des siens : une ligne se retire exactement comme
     /// elle a été posée, et ne réindente rien autour d'elle.
-    fn item_for(&self, hook: &str, state: AgentState) -> Option<String> {
+    fn item_for(&self, hook: &str, word: &str) -> Option<String> {
         let command = serde_json::json!({
             "type": "command",
-            "command": self.invocation(state)?,
+            "command": self.invocation(word),
         });
 
         let mut group = serde_json::Map::new();
@@ -368,13 +404,13 @@ mod tests {
         let hostile = ClaudeCodeAdapter::new(PathBuf::from("/Users/x/Ash'; rm -rf ~; '/ash-event"));
 
         // When
-        let line = hostile.invocation(AgentState::Waiting).unwrap_or_default();
+        let line = hostile.invocation("waiting");
 
         // Then — tout le chemin tient dans une seule chaîne entre apostrophes, dont la
         // seule apostrophe présente est celle, échappée, du nom du dossier.
         assert_eq!(
             line,
-            r#"'/Users/x/Ash'\''; rm -rf ~; '\''/ash-event' waiting --tab "$ASH_TAB_ID" # ash:hook v1"#
+            r#"'/Users/x/Ash'\''; rm -rf ~; '\''/ash-event' waiting --tab "$ASH_TAB_ID" # ash:hook v2"#
         );
     }
 

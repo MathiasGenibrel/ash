@@ -11,7 +11,7 @@
 //! continuent de s'ignorer. Le composition root les relie, comme il relie déjà `pty` à la
 //! résolution de `git`.
 
-use crate::features::agents::{AgentStatus, Presence};
+use crate::features::agents::{Presence, TabAgents};
 
 use super::registry::TabId;
 
@@ -28,7 +28,12 @@ pub trait AgentStates: Send + Sync {
     /// chaque passe, donc la fiche de l'onglet aussi, donc l'event `ash://tab-changed`
     /// partirait chaque seconde pour chaque onglet actif. Le registre transporte une date
     /// stable ; le compteur qui s'incrémente est un problème d'affichage.
-    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentStatus;
+    ///
+    /// Elle porte aussi les **sous-agents** de l'onglet (spec §6.5), datés de la même façon
+    /// et pour la même raison. Une seule question et non deux : les lignes filles et la ligne
+    /// qui les porte doivent être arbitrées à la même passe, sinon la colonne montrerait un
+    /// onglet et ses enfants pris à deux instants différents.
+    fn state(&self, tab_id: &TabId, seen: Presence) -> TabAgents;
 
     /// Cet onglet n'existe plus : rien de ce qui le concernait n'a à lui survivre.
     fn forget(&self, tab_id: &TabId);

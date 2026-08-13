@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use crate::features::agents::adapter::{Adapter, Instrumentation, RawEvent, SubagentSupport};
+use crate::features::agents::adapter::{
+    Adapter, ChildEvent, Instrumentation, RawEvent, SubagentSupport,
+};
 use crate::features::agents::state::AgentState;
 
 /// Le socle : l'adaptateur d'un outil dont on ne sait rien
@@ -35,6 +37,16 @@ impl Adapter for GenericAdapter {
     }
 
     fn interpret(&self, _raw: &RawEvent) -> Option<AgentState> {
+        None
+    }
+
+    /// Rien non plus du côté des enfants, et pour la même raison qu'ailleurs : un outil dont
+    /// Ash n'a rien instrumenté n'a envoyé aucun événement, donc aucun enfant à nommer.
+    ///
+    /// C'est ce que `SubagentSupport::None` promet, et la suite contractuelle le vérifie :
+    /// **aucune ligne fille ne peut apparaître** sous un onglet de cet outil, et rien
+    /// n'ira suggérer à l'utilisateur qu'il en manque (spec §6.5).
+    fn child_event(&self, _raw: &RawEvent) -> Option<ChildEvent> {
         None
     }
 

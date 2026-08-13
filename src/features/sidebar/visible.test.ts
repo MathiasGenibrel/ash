@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { AgentState, TabInfo } from "@/shared/ipc";
 import { TabBuilder } from "@/shared/ipc/builders";
 import { buildSidebar, type SidebarTree } from "./tree";
-import { visibleStates } from "./visible";
+import { showsSubagents, visibleStates } from "./visible";
 
 /**
  * Un dépôt, deux worktrees, trois onglets — le plus petit décor qui ait les **trois**
@@ -106,6 +106,99 @@ describe("une ligne repliée ne cache jamais un agent qui attend", () => {
         // Then — et aucune combinaison ne rend une colonne muette
         expect(noisy.map(describeFolding)).toEqual([]);
         expect(mute.map(describeFolding)).toEqual([]);
+    });
+});
+
+/**
+ * Le même décor, plus **un niveau** : l'onglet `claude` de `api` porte deux sous-agents.
+ *
+ * Il double le nombre de combinaisons de replis — les seize d'avant, avec et sans enfants —
+ * et c'est ce que la tranche des sous-agents ajoute à la garantie de la spec §4.1 : une
+ * colonne repliée ne doit pas davantage cacher ce qui se passe *sous* une ligne d'agent.
+ */
+function tabsWithSubagents(waiting: "in-api" | "in-web" | "nowhere"): readonly TabInfo[] {
+    return tabsWith(waiting).map((tab, index) =>
+        index === 0
+            ? TabBuilder.create()
+                  .named(tab.tabId)
+                  .running(tab.process, tab.state)
+                  .inWorktree(API, REPO)
+                  .withSubagent("explore", "working")
+                  .withSubagent("code-reviewer", "done")
+                  .build()
+            : tab,
+    );
+}
+
+describe("une ligne fille ne se perd pas davantage qu'une autre", () => {
+    it("Given a subagent running under an agent, when any combination of rows and of the column is collapsed, then something above it still says that it works", () => {
+        // Given — un enfant n'a pas de ligne à lui quand son parent est replié : c'est la
+        // ligne du worktree, puis celle du dépôt, qui doivent le porter. Sans `tabStates`
+        // dans la remontée, un worktree replié dont le seul travail se passe **sous** un
+        // agent `done` afficherait `done`, et la colonne dirait que tout est fini.
+        const tabs = [
+            TabBuilder.create()
+                .named("A")
+                .running("claude", "done")
+                .inWorktree(API, REPO)
+                .withSubagent("explore", "working")
+                .build(),
+        ];
+
+        // When
+        const blind = everyFolding().filter(
+            (folding) => !shownUnder(tabs, folding).includes("working"),
+        );
+
+        // Then
+        expect(blind.map(describeFolding)).toEqual([]);
+    });
+
+    it("Given an expanded worktree whose agent runs two subagents, when the column is drawn, then each child adds its own line", () => {
+        // Given — plusieurs sous-agents en parallèle, chacun avec son état
+        const tabs = tabsWithSubagents("nowhere");
+
+        // When
+        const shown = shownUnder(tabs, { groups: [], worktrees: [], columnCollapsed: false });
+
+        // Then — l'onglet `claude`, ses deux enfants, puis les deux autres onglets
+        expect(shown).toEqual(["working", "working", "done", "idle", "working"]);
+    });
+
+    it("Given a collapsed column, when a tab carries subagents, then the rail adds no line for them", () => {
+        // Given — à 46 px, une ligne fille n'aurait rien pour se distinguer de la ligne de
+        // son parent. C'est le glyphe du dépôt qui porte ce qui se passe dessous, et il le
+        // porte déjà (`bubbleState`) : ajouter un glyphe par enfant remplirait le rail sans
+        // dire lequel appartient à qui.
+        const tabs = tabsWithSubagents("nowhere");
+
+        // When
+        const shown = shownUnder(tabs, { groups: [], worktrees: [], columnCollapsed: true });
+
+        // Then — un état de dépôt, puis un glyphe par **onglet**
+        expect(shown).toEqual(["working", "working", "idle", "working"]);
+    });
+
+    it("Given a column that shows no subagent at all, when it is drawn, then nothing asks for a per-second beat", () => {
+        // Given — les durées des lignes filles avancent par un battement, et un battement
+        // redessine la colonne entière. Sans sous-agent à l'écran — le cas de presque toutes
+        // les colonnes, et de **toutes** celles d'un outil qui n'en expose pas — il n'a rien
+        // à animer, et la sidebar doit rester dessinée sur événement.
+        const withChildren = foldedTree(tabsWithSubagents("nowhere"), {
+            groups: [],
+            worktrees: [],
+            columnCollapsed: false,
+        });
+        const without = foldedTree(tabsWith("nowhere"), {
+            groups: [],
+            worktrees: [],
+            columnCollapsed: false,
+        });
+
+        // When / Then
+        expect(showsSubagents(without, false)).toBe(false);
+        expect(showsSubagents(withChildren, false)).toBe(true);
+        expect(showsSubagents(withChildren, true)).toBe(false);
     });
 });
 

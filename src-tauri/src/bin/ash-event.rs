@@ -249,9 +249,14 @@ fn post(invocation: &Invocation) {
 ///
 /// La borne du fil (`wire::MAX_FRAME_BYTES`, 8 Kio) est une frontière de sécurité du
 /// serveur : au-delà, la ligne est refusée sans être accumulée, donc l'état déclaré serait
-/// perdu. Rien ne garantit ce qu'un outil futur mettra dans un `agent_type` ; ce qui est
-/// garanti, c'est que l'état est la seule chose qu'un hook existe pour transporter. La
-/// clé d'enfant tombe donc la première, et la trame repart sans elle.
+/// perdu. L'état est la seule chose qu'un hook existe pour transporter : la clé d'enfant
+/// tombe donc la première, et la trame repart sans elle.
+///
+/// **Ce repli est silencieux, et c'est pourquoi il ne doit plus pouvoir se déclencher pour
+/// une clé d'enfant** : une ligne fille qui disparaîtrait ici ne laisserait aucune trace.
+/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES`, qui écarte une clé démesurée **là où elle
+/// entre**, bien avant que la trame ne puisse déborder à cause d'elle. Ce qui reste ici ne
+/// couvre plus qu'un `<état>` ou un `--tab` absurdes, que le bloc d'Ash n'écrit pas.
 fn line_of(frame: &EventFrame) -> Option<String> {
     frame
         .to_line()
@@ -359,23 +364,26 @@ mod tests {
     }
 
     #[test]
-    fn given_a_frame_whose_child_keys_would_overflow_the_wire_when_it_is_posted_then_the_declared_state_still_leaves(
+    fn given_a_child_whose_type_is_absurdly_long_when_it_is_posted_then_the_child_is_still_named_and_nothing_is_dropped_in_silence(
     ) {
-        // Given — 8 Kio est une frontière de sécurité du serveur, pas un réglage : une
-        // ligne plus longue est refusée sans être accumulée. Rien ne garantit ce qu'un
-        // outil futur mettra dans un `agent_type`, et perdre un `waiting` parce qu'un
-        // enfant porte un nom démesuré serait perdre la seule chose qu'un hook transporte.
+        // Given — 8 Kio est une frontière de sécurité du serveur, pas un réglage : une ligne
+        // plus longue est refusée sans être accumulée, et `line_of` la reposterait alors
+        // **sans l'enfant**, en silence. Une ligne fille qui s'évanouirait ainsi serait
+        // introuvable. La borne des clés (`MAX_CHILD_KEY_BYTES`) écarte le nom démesuré là
+        // où il entre, donc l'enfant garde son identité et le repli ne se déclenche pas.
         let frame = EventFrame::new("waiting", "01J0TAB")
             .with_subagent(Some("agent-7"), Some(&"z".repeat(16 * 1024)));
 
         // When
         let line = line_of(&frame);
 
-        // Then — la clé d'enfant est tombée, l'état est parti
+        // Then
         assert_eq!(
             line,
-            EventFrame::new("waiting", "01J0TAB").to_line().ok(),
-            "l'état déclaré doit partir sans l'enfant plutôt que de ne pas partir"
+            EventFrame::new("waiting", "01J0TAB")
+                .with_subagent(Some("agent-7"), None)
+                .to_line()
+                .ok()
         );
     }
 
