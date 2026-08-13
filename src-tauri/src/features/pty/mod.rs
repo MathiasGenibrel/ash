@@ -20,6 +20,7 @@ mod locate;
 mod registry;
 mod session;
 mod sweep;
+mod terminal_env;
 
 pub use agent_states::AgentStates;
 pub use error::PtyError;
