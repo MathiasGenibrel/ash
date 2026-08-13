@@ -1,3 +1,5 @@
+use crate::shared::time::UnixMillis;
+
 /// Les cinq états d'un agent — le vocabulaire commun du produit.
 ///
 /// C'est **le backend** qui les détient
@@ -20,6 +22,8 @@
 ///
 /// La représentation sérialisée est le contrat partagé avec le TypeScript
 /// (`src/shared/ipc`) : cinq mots en minuscules, et `presentAgentState` en face.
+///
+/// Un état seul ne dit pas depuis quand il dure : c'est [`AgentStatus`] qui le date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "kebab-case")]
@@ -29,6 +33,25 @@ pub enum AgentState {
     Waiting,
     Done,
     Error,
+}
+
+/// L'état d'un onglet, et **depuis quand** il y est.
+///
+/// La date est absolue (millisecondes depuis l'époque Unix) et non une durée, et c'est la
+/// décision qui porte tout le reste : une durée changerait de valeur à chaque passe de la
+/// boucle de sonde, donc la fiche d'onglet changerait avec elle, donc l'event
+/// `ash://tab-changed` partirait chaque seconde pour chaque onglet actif — on paierait un
+/// rendu complet de la sidebar pour animer un compteur. Envoyée une fois, en absolu, la
+/// fiche redevient stable et le compteur redevient ce qu'il est : un problème d'affichage,
+/// que le frontend résout avec sa propre horloge.
+///
+/// C'est bien le backend qui date : le frontend rend une durée, il n'invente pas son
+/// origine ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentStatus {
+    pub state: AgentState,
+    /// Quand cet onglet est **entré** dans cet état, et non quand on l'a lu.
+    pub since: UnixMillis,
 }
 
 #[cfg(test)]

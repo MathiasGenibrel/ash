@@ -30,6 +30,14 @@ export class TabBuilder {
     private worktreeName = "solo";
     private repo: { id: string; name: string } | null = null;
     private located = true;
+    /**
+     * L'onglet est entré dans son état à l'époque Unix.
+     *
+     * Un défaut **déterministe**, comme les autres : un `Date.now()` ici ferait dépendre du
+     * moment où le test tourne, et un scénario qui parle d'une durée doit dire lui-même
+     * quand l'état a commencé.
+     */
+    private stateSince = 0;
 
     static create(): TabBuilder {
         return new TabBuilder();
@@ -48,6 +56,12 @@ export class TabBuilder {
 
     inState(state: AgentState): this {
         this.state = state;
+        return this;
+    }
+
+    /** L'onglet est entré dans son état à cette date — un `Date.now()`, en millisecondes. */
+    since(stateSince: number): this {
+        this.stateSince = stateSince;
         return this;
     }
 
@@ -88,6 +102,7 @@ export class TabBuilder {
             cwd: this.cwd,
             process: this.process,
             state: this.state,
+            stateSince: this.stateSince,
             location: this.located
                 ? {
                       worktreeRoot: this.worktreeRoot,

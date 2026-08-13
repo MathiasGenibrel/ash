@@ -19,7 +19,7 @@ use super::metadata_watch::{Announce, Relocate};
 use super::ports::{Entry, FileSystem};
 use super::targets::WatchRoot;
 use super::watcher::{FileWatcher, OnChange, WatchHandle};
-use crate::shared::time::{Clock, Scheduler};
+use crate::shared::time::{Clock, Scheduler, UnixMillis};
 
 /// Un arbre de fichiers **surveillé** : le disque et l'observateur, ensemble.
 ///
@@ -298,7 +298,19 @@ impl Clock for ControlledTime {
     fn now(&self) -> Instant {
         self.origin + self.elapsed()
     }
+
+    /// L'heure murale du test : une date fixe, avancée du même délai que l'horloge
+    /// monotone. Aucune règle de cette feature n'en dépend — la surveillance date des
+    /// rafales, pas des événements — mais elle reste **déterministe**, sans quoi un test
+    /// qui la lirait un jour dépendrait de l'heure de la machine.
+    fn wall(&self) -> UnixMillis {
+        let elapsed = UnixMillis::try_from(self.elapsed().as_millis()).unwrap_or_default();
+        FAKE_EPOCH + elapsed
+    }
 }
+
+/// L'origine murale des tests — le 1ᵉʳ janvier 2026 à minuit UTC, en millisecondes.
+const FAKE_EPOCH: UnixMillis = 1_767_225_600_000;
 
 impl Scheduler for ControlledTime {
     fn after(&self, delay: Duration, action: Box<dyn FnOnce() + Send + 'static>) {

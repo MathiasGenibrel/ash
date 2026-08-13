@@ -48,6 +48,25 @@ pub struct EventFrame {
     /// arriver quand même, pour que l'adaptateur puisse le refuser en connaissance de
     /// cause plutôt que de ne jamais le voir.
     pub kind: String,
+    /// L'enfant qui a produit l'événement, quand il vient d'un sous-agent
+    /// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), amendement du
+    /// 2026-08-13).
+    ///
+    /// **Facultatif, et subordonné à l'onglet** : `ASH_TAB_ID` reste la seule corrélation
+    /// d'un événement à un onglet, et cette clé ne fait que désigner un enfant *à
+    /// l'intérieur* d'un onglet déjà corrélé. Une trame sans elle est valide et concerne
+    /// l'agent principal — c'est le cas de toutes celles qu'Ash a reçues jusqu'ici.
+    ///
+    /// Elle vient de l'entrée standard du hook, pas de sa ligne de commande : c'est l'outil
+    /// qui la donne, et lui seul sait s'il y a un enfant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Le type de l'enfant tel que l'outil le nomme — `code-reviewer`, `general-purpose`.
+    ///
+    /// Facultatif pour la même raison, et jamais interprété ici : le transport le porte,
+    /// il ne le traduit pas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
 }
 
 /// Ce qui peut clocher dans une ligne reçue.
@@ -76,7 +95,33 @@ impl EventFrame {
         Self {
             tab_id: tab_id.into(),
             kind: kind.into(),
+            agent_id: None,
+            agent_type: None,
         }
+    }
+
+    /// La même trame, en nommant l'enfant qui l'a produite.
+    ///
+    /// Une chaîne vide ou blanche vaut « pas d'enfant » : un outil qui pose la clé sans la
+    /// remplir ne doit pas faire exister un sous-agent anonyme, que rien ne saurait
+    /// distinguer d'un autre.
+    #[must_use]
+    pub fn with_subagent(mut self, agent_id: Option<&str>, agent_type: Option<&str>) -> Self {
+        self.agent_id = named(agent_id);
+        self.agent_type = named(agent_type);
+        self
+    }
+
+    /// La même trame, dépouillée de ce qui n'est pas l'état déclaré.
+    ///
+    /// C'est le repli quand la trame déborde [`MAX_FRAME_BYTES`] : l'état d'un onglet est
+    /// ce qu'un hook existe pour transporter, et un `agent_type` démesuré ne doit pas
+    /// l'emporter avec lui dans le fossé (voir `bin/ash-event.rs`).
+    #[must_use]
+    pub fn without_subagent(mut self) -> Self {
+        self.agent_id = None;
+        self.agent_type = None;
+        self
     }
 
     /// La trame telle qu'elle part sur le fil, terminateur compris.
@@ -102,12 +147,24 @@ impl EventFrame {
             return Err(WireError::Empty);
         }
 
-        let frame: EventFrame = serde_json::from_str(line).map_err(|_| WireError::Malformed)?;
+        let mut frame: EventFrame = serde_json::from_str(line).map_err(|_| WireError::Malformed)?;
         if frame.tab_id.trim().is_empty() || frame.kind.trim().is_empty() {
             return Err(WireError::Empty);
         }
+        // Une clé d'enfant vide n'en est pas une : la normaliser ici évite que chaque
+        // lecteur ait à se demander si `Some("")` désigne quelqu'un.
+        frame.agent_id = named(frame.agent_id.as_deref());
+        frame.agent_type = named(frame.agent_type.as_deref());
         Ok(frame)
     }
+}
+
+/// Une valeur qui désigne réellement quelque chose, ou rien.
+fn named(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 /// Le dossier privé d'Ash, celui d'`~/.ash/config.toml`
@@ -192,6 +249,54 @@ mod tests {
 
         // Then
         assert!(read.iter().all(|frame| frame.is_err()), "{read:?}");
+    }
+
+    #[test]
+    fn given_an_event_produced_inside_a_subagent_when_it_crosses_the_socket_then_the_child_is_named_under_its_tab(
+    ) {
+        // Given — l'amendement du 2026-08-13 à ADR-0007 : l'onglet reste la seule
+        // corrélation d'un événement à un onglet, et `agent_id` ne fait qu'y désigner un
+        // enfant. Les deux voyagent donc **ensemble**, jamais l'un sans l'autre.
+        let sent = EventFrame::new("working", "01J0TAB")
+            .with_subagent(Some("agent-7"), Some("code-reviewer"));
+
+        // When
+        let line = sent.to_line().unwrap();
+        let received = EventFrame::from_line(&line).unwrap();
+
+        // Then
+        assert_eq!(received, sent);
+        assert_eq!(received.tab_id, "01J0TAB");
+    }
+
+    #[test]
+    fn given_a_frame_from_the_main_agent_when_it_crosses_the_socket_then_it_carries_no_child_at_all(
+    ) {
+        // Given — la moitié qu'il ne faut pas casser : c'est la trame que tous les hooks
+        // d'aujourd'hui envoient. Elle doit rester **identique** sur le fil, sans quoi un
+        // Ash plus ancien qu'`ash-event` lirait des clés vides là où il n'y a personne.
+        let alone = EventFrame::new("waiting", "01J0TAB");
+
+        // When
+        let line = alone.to_line().unwrap();
+
+        // Then
+        assert_eq!(line, "{\"tab_id\":\"01J0TAB\",\"kind\":\"waiting\"}\n");
+        assert_eq!(EventFrame::from_line(&line), Ok(alone));
+    }
+
+    #[test]
+    fn given_a_frame_whose_child_keys_are_blank_when_it_is_read_then_no_anonymous_child_is_invented(
+    ) {
+        // Given — un outil qui pose la clé sans la remplir. Un enfant sans identité ne se
+        // distingue d'aucun autre : le représenter serait pire que de l'ignorer.
+        let line = r#"{"tab_id":"01J0TAB","kind":"working","agent_id":"","agent_type":"  "}"#;
+
+        // When
+        let frame = EventFrame::from_line(line);
+
+        // Then
+        assert_eq!(frame, Ok(EventFrame::new("working", "01J0TAB")));
     }
 
     #[test]

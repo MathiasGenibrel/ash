@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::features::agents::{AgentState, Presence};
+use crate::shared::time::UnixMillis;
 
 use super::agent_states::AgentStates;
 use super::error::PtyError;
@@ -137,6 +138,24 @@ pub struct TabInfo {
     /// Le programme qui tient l'avant-plan — le nom que la sidebar et la barre affichent.
     pub process: String,
     pub state: AgentState,
+    /// Quand l'onglet est **entré** dans cet état, en millisecondes depuis l'époque Unix.
+    ///
+    /// Une date, jamais une durée, et c'est ce qui garde cette fiche **stable** : le
+    /// registre compare le `TabInfo` entier pour décider s'il faut annoncer quoi que ce
+    /// soit (voir [`Self::changes`]). Une durée vivante ferait donc changer la fiche de
+    /// chaque onglet actif à chaque seconde, et l'event ponctuel deviendrait un flux — on
+    /// paierait un rendu complet de la sidebar par seconde pour animer un compteur.
+    ///
+    /// Le `working · 15m22s` de la maquette se calcule donc à l'affichage, à partir de
+    /// cette date et de l'horloge du frontend.
+    ///
+    /// **`number` et non `bigint`** : `ts-rs` prête un `bigint` à tout `u64`, par prudence
+    /// sur les valeurs qui dépassent 2⁵³. Ce ne serait pas seulement pénible — ce serait
+    /// faux : `serde_json` écrit un nombre JSON, que la webview lit en `number`, et un
+    /// `bigint` déclaré ici mentirait sur ce qui arrive vraiment. La borne de 2⁵³
+    /// millisecondes tombe en l'an 287396.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub state_since: UnixMillis,
     /// Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
     /// n'a pas pu être situé.
     pub location: Option<TabLocation>,
@@ -388,15 +407,17 @@ impl PtyRegistry {
         );
 
         // Le registre **demande** l'état, il ne le déduit pas : ce que la sonde voit est une
-        // présence, et une présence n'est pas un état d'agent (ADR-0007).
-        let state = self.agents.state(&tab.id, presence);
+        // présence, et une présence n'est pas un état d'agent (ADR-0007). La date d'entrée
+        // vient avec, pour la même raison : le registre la transporte, il ne la fabrique pas.
+        let status = self.agents.state(&tab.id, presence);
 
         TabInfo {
             tab_id: tab.id,
             location: self.locate(&tab.place, &cwd),
             cwd: cwd.display().to_string(),
             process,
-            state,
+            state: status.state,
+            state_since: status.since,
         }
     }
 
@@ -895,6 +916,38 @@ mod tests {
             vec![AgentState::Waiting]
         );
         assert_eq!(settled, vec![]);
+    }
+
+    #[test]
+    fn given_a_tab_whose_agent_keeps_working_when_the_clock_runs_for_an_hour_then_nothing_crosses_the_frontier(
+    ) {
+        // Given — le piège de cette tranche, vu d'ici : la fiche d'un onglet est comparée
+        // **entière** pour décider s'il faut annoncer quelque chose. Si elle portait une
+        // durée plutôt qu'une date, elle changerait chaque seconde pour chaque onglet actif,
+        // et l'event ponctuel deviendrait un flux — un rendu complet de la sidebar par
+        // seconde, pour animer un compteur qui se calcule à l'affichage.
+        let (registry, _probe, _locator, agents) = supervised_registry("/dev/ash");
+        registry.open(spec(), "A".to_owned()).unwrap();
+        agents.declare(AgentState::Working);
+        let discovered = registry.changes().unwrap(); // la passe qui découvre l'onglet
+
+        // When — une heure de boucle, et rien d'autre que le temps qui passe
+        let announced: Vec<TabInfo> = (0..3600)
+            .flat_map(|_| {
+                agents.advance(1_000);
+                registry.changes().unwrap()
+            })
+            .collect();
+
+        // Then — et la date d'entrée annoncée une seule fois est restée celle de l'entrée
+        assert_eq!(
+            discovered
+                .iter()
+                .map(|tab| tab.state_since)
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
+        assert_eq!(announced, vec![]);
     }
 
     #[test]

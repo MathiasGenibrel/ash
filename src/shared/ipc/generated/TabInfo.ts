@@ -23,6 +23,25 @@ cwd: string,
  */
 process: string, state: AgentState, 
 /**
+ * Quand l'onglet est **entré** dans cet état, en millisecondes depuis l'époque Unix.
+ *
+ * Une date, jamais une durée, et c'est ce qui garde cette fiche **stable** : le
+ * registre compare le `TabInfo` entier pour décider s'il faut annoncer quoi que ce
+ * soit (voir [`Self::changes`]). Une durée vivante ferait donc changer la fiche de
+ * chaque onglet actif à chaque seconde, et l'event ponctuel deviendrait un flux — on
+ * paierait un rendu complet de la sidebar par seconde pour animer un compteur.
+ *
+ * Le `working · 15m22s` de la maquette se calcule donc à l'affichage, à partir de
+ * cette date et de l'horloge du frontend.
+ *
+ * **`number` et non `bigint`** : `ts-rs` prête un `bigint` à tout `u64`, par prudence
+ * sur les valeurs qui dépassent 2⁵³. Ce ne serait pas seulement pénible — ce serait
+ * faux : `serde_json` écrit un nombre JSON, que la webview lit en `number`, et un
+ * `bigint` déclaré ici mentirait sur ce qui arrive vraiment. La borne de 2⁵³
+ * millisecondes tombe en l'an 287396.
+ */
+stateSince: number, 
+/**
  * Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
  * n'a pas pu être situé.
  */

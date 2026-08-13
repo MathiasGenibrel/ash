@@ -1,4 +1,11 @@
-import type { AgentState, GitHead, GitOperation, GitStatus, WorktreeMetadata } from "@/shared/ipc";
+import type {
+    AgentState,
+    GitHead,
+    GitOperation,
+    GitStatus,
+    TabInfo,
+    WorktreeMetadata,
+} from "@/shared/ipc";
 import { agentGlyph, presentAgentState } from "@/shared/agent-state";
 import { tabTitle } from "./tab-bar";
 import type { TabsState } from "./tabs";
@@ -18,6 +25,11 @@ import type { TabsState } from "./tabs";
  * Rien n'est produit ici : le `cwd` vient de la sonde d'ADR-0005, l'état git de la
  * surveillance d'ADR-0011, l'état d'agent du backend
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ *
+ * La seule chose qui se **calcule** ici est la durée de l'état courant — le `15m22s` de la
+ * maquette. Elle n'est pas une exception à la règle : le backend envoie la **date d'entrée**
+ * dans l'état, une fois, en absolu, et l'écart jusqu'à maintenant est un fait d'affichage.
+ * C'est ce qui laisse la fiche d'un onglet identique d'une passe de sonde à l'autre.
  */
 
 /**
@@ -85,6 +97,7 @@ export function composeStatusLine(
     state: TabsState,
     metadata: WorktreeMetadata | null,
     sidebarCollapsed: boolean,
+    now: number,
 ): StatusLineModel {
     const tab = state.tabs.find((candidate) => candidate.tabId === state.activeTabId) ?? null;
 
@@ -100,16 +113,57 @@ export function composeStatusLine(
     }
 
     const shown = presentAgentState(tab.state);
+    const elapsed = elapsedSince(tab, now);
     return {
         cwd: { text: elide(tab.cwd), tone: "path", title: tab.cwd },
         git: gitSegment(metadata),
         agent: {
             state: tab.state,
-            text: `${tab.process} · ${shown.label}`,
+            text: `${tab.process} · ${shown.label}${elapsed === null ? "" : ` · ${elapsed}`}`,
             tone: shown.tinted ? "accent" : "text",
         },
         hint: hint(state, sidebarCollapsed),
     };
+}
+
+/**
+ * Depuis combien de temps l'onglet est dans son état — le `working · 15m22s` de la maquette.
+ *
+ * Calculé **ici**, à chaque rendu, à partir de la date d'entrée que le backend a envoyée
+ * une seule fois : c'est ce qui garde `TabInfo` identique d'une passe de sonde à l'autre.
+ * Le frontend n'invente rien pour autant — il ne décide ni de l'état, ni de son origine
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), seulement de la façon de
+ * lire l'écart jusqu'à maintenant.
+ *
+ * `null` sur un onglet `idle` : un shell à son invite n'a pas d'activité à chronométrer, et
+ * un compteur qui tournerait sur les onglets vides ferait du bruit là où il n'y a rien à
+ * lire. `null` aussi sur une date à venir — une horloge recalée entre le backend et le
+ * rendu — parce qu'écrire `-3s` serait pire que ne rien écrire.
+ */
+function elapsedSince(tab: TabInfo, now: number): string | null {
+    if (tab.state === "idle") return null;
+    const elapsed = now - tab.stateSince;
+    return elapsed < 0 ? null : formatElapsed(elapsed);
+}
+
+/**
+ * `45s`, `15m22s`, `2h05m` — au plus deux unités, et jamais plus de sept caractères.
+ *
+ * La ligne de statut fait 25 px de haut et partage sa largeur avec un chemin et un état
+ * git : la seconde disparaît au-delà de l'heure, où elle n'apprend plus rien.
+ */
+export function formatElapsed(millis: number): string {
+    const seconds = Math.floor(millis / 1000);
+    if (seconds < 60) return `${seconds}s`;
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m${pad(seconds % 60)}s`;
+
+    return `${Math.floor(minutes / 60)}h${pad(minutes % 60)}m`;
+}
+
+function pad(value: number): string {
+    return value.toString().padStart(2, "0");
 }
 
 /**

@@ -73,6 +73,6 @@ pub use error::AgentError;
 pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};
 pub use notify::{Notice, Notifier, NOTIFIED_STATES};
 pub use socket::{listen, EventSink, EventSocket};
-pub use state::AgentState;
+pub use state::{AgentState, AgentStatus};
 pub use supervisor::{Presence, Supervisor};
 pub use wire::{socket_path, EventFrame};

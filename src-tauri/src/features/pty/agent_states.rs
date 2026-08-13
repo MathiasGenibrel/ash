@@ -11,7 +11,7 @@
 //! continuent de s'ignorer. Le composition root les relie, comme il relie déjà `pty` à la
 //! résolution de `git`.
 
-use crate::features::agents::{AgentState, Presence};
+use crate::features::agents::{AgentStatus, Presence};
 
 use super::registry::TabId;
 
@@ -23,7 +23,12 @@ use super::registry::TabId;
 /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 pub trait AgentStates: Send + Sync {
     /// Quel état afficher pour cet onglet, compte tenu de ce que la sonde vient de voir ?
-    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentState;
+    ///
+    /// La réponse porte sa **date d'entrée**, et non une durée : une durée changerait à
+    /// chaque passe, donc la fiche de l'onglet aussi, donc l'event `ash://tab-changed`
+    /// partirait chaque seconde pour chaque onglet actif. Le registre transporte une date
+    /// stable ; le compteur qui s'incrémente est un problème d'affichage.
+    fn state(&self, tab_id: &TabId, seen: Presence) -> AgentStatus;
 
     /// Cet onglet n'existe plus : rien de ce qui le concernait n'a à lui survivre.
     fn forget(&self, tab_id: &TabId);
