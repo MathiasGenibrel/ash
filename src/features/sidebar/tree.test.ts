@@ -6,10 +6,25 @@ import { MAX_LABEL } from "./labels";
 import { buildSidebar, type SidebarGroup, type SidebarTree } from "./tree";
 
 const build = (tabs: readonly TabInfo[], activeTabId: string | null = null): SidebarTree =>
-    buildSidebar(tabs, { activeTabId, collapsed: new Set() });
+    buildSidebar(tabs, {
+        activeTabId,
+        collapsedWorktrees: new Set(),
+        collapsedGroups: new Set(),
+    });
 
 const collapsing = (tabs: readonly TabInfo[], ...roots: string[]): SidebarTree =>
-    buildSidebar(tabs, { activeTabId: null, collapsed: new Set(roots) });
+    buildSidebar(tabs, {
+        activeTabId: null,
+        collapsedWorktrees: new Set(roots),
+        collapsedGroups: new Set(),
+    });
+
+const collapsingGroups = (tabs: readonly TabInfo[], ...keys: string[]): SidebarTree =>
+    buildSidebar(tabs, {
+        activeTabId: null,
+        collapsedWorktrees: new Set(),
+        collapsedGroups: new Set(keys),
+    });
 
 const worktreesOf = (group: SidebarGroup | undefined) =>
     group === undefined ? [] : group.kind === "repo" ? group.worktrees : [group.worktree];
@@ -192,6 +207,31 @@ describe("le repli d'un worktree", () => {
         const worktrees = worktreesOf(tree.groups[0]);
         expect(worktrees.map((worktree) => worktree.collapsed)).toEqual([true, false]);
         expect(worktrees[0]?.tabs).toHaveLength(1);
+    });
+
+    it("Given a collapsed repository group, when the sidebar is built, then its row carries the most urgent state of every worktree below it", () => {
+        // Given — spec §4.1 : un dépôt est repliable, et sa ligne est alors le seul endroit
+        // qui puisse dire ce qui se passe deux niveaux plus bas
+        const tabs = [
+            TabBuilder.create()
+                .named("A")
+                .running("claude", "working")
+                .inWorktree("/wt/ash-main", "ash")
+                .build(),
+            TabBuilder.create()
+                .named("B")
+                .running("codex", "waiting")
+                .inWorktree("/wt/ash-toc", "ash")
+                .build(),
+        ];
+
+        // When
+        const tree = collapsingGroups(tabs, "repo:/dev/ash/.git");
+
+        // Then — le groupe garde ses worktrees en mémoire ; c'est la vue qui ne les pose pas
+        const group = tree.groups[0];
+        expect(group?.kind === "repo" && group.collapsed).toBe(true);
+        expect(group?.state).toBe("waiting");
     });
 });
 

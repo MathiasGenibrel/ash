@@ -37,11 +37,13 @@ export interface Sidebar {
 }
 
 export function mountSidebar(ports: SidebarPorts): Sidebar {
-    // Deux replis, et ils ne se confondent pas : la **colonne** (`⌘B`), et chaque
-    // **worktree** pris séparément (ADR-0012). Ce sont les seuls états que la sidebar
-    // détient — ils ne décrivent aucun agent, seulement ce qu'on regarde.
+    // Trois replis, et ils ne se confondent pas : la **colonne** (`⌘B`), chaque **dépôt**,
+    // et chaque **worktree** pris séparément (ADR-0012, spec §4.1). Ce sont les seuls états
+    // que la sidebar détient — ils ne décrivent aucun agent, seulement ce qu'on regarde,
+    // donc ils ont le droit de vivre ici sans contredire ADR-0009.
     let columnCollapsed = false;
     const collapsedWorktrees = new Set<string>();
+    const collapsedGroups = new Set<string>();
 
     let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
@@ -54,6 +56,10 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
             if (!collapsedWorktrees.delete(key)) collapsedWorktrees.add(key);
             draw();
         },
+        toggleGroup: (key) => {
+            if (!collapsedGroups.delete(key)) collapsedGroups.add(key);
+            draw();
+        },
         newTab: () => {
             ports.newTab();
         },
@@ -61,7 +67,7 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
 
     function draw(): void {
         view.render(
-            buildSidebar(tabs, { activeTabId, collapsed: collapsedWorktrees }),
+            buildSidebar(tabs, { activeTabId, collapsedWorktrees, collapsedGroups }),
             columnCollapsed,
         );
     }
