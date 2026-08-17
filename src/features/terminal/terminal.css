@@ -75,9 +75,27 @@
 }
 
 /* Les onglets se superposent tous à la même place ; seul l'actif est visible
- * (ADR-0003). */
+ * (ADR-0003).
+ *
+ * `isolation: isolate` **contient les couches de xterm.js**, et ce n'est pas une précaution
+ * : c'est la correction d'un bug. `position: relative` seul ne crée pas de contexte
+ * d'empilement, ni ici, ni sur `.xterm`, ni sur `.xterm-screen` — donc les `z-index` que
+ * xterm.js pose à l'intérieur remontaient jusqu'au contexte racine. Le canevas des
+ * soulignements de liens (`LinkRenderLayer`, `z-index: 2`) couvre toute la surface du
+ * terminal et n'a pas de `pointer-events: none` : il se peignait par-dessus la confirmation
+ * de fermeture — transparent, donc la boîte restait visible — et **avalait le clic de ses
+ * deux boutons**. Seul `Échap` en sortait.
+ *
+ * Isoler ici plutôt que numéroter là-bas : la pile devient une couche, la confirmation est
+ * son frère suivant, et l'ordre du DOM suffit. Aucun `z-index` de la feature n'a donc à
+ * dépasser un nombre choisi par xterm.js — 2 aujourd'hui, 5 et 11 ailleurs dans sa feuille,
+ * et rien ne promet qu'ils ne bougeront pas. La recherche (`.terminal-search`, `z-index: 2`)
+ * est à l'intérieur de la pile et garde exactement le rang qu'elle avait : elle est posée
+ * après le terminal dans le DOM, ce qui tranche l'égalité en sa faveur, dedans comme
+ * dehors. */
 .terminal-stack {
     position: relative;
+    isolation: isolate;
     min-height: 0;
     margin: 0 8px 8px;
 }
@@ -254,8 +272,21 @@
     cursor: default;
 }
 
-/* La confirmation de fermeture (`⌘W` sur un onglet où quelque chose tourne). Ancrée sur
- * `.terminal-workbench`, pas sur la fenêtre : elle appartient à la zone terminal. */
+/* --- la confirmation de fermeture (`⌘W` sur un onglet où quelque chose tourne) ---
+ *
+ * Ancrée sur `.terminal-workbench`, pas sur la fenêtre : elle appartient à la zone terminal,
+ * comme la recherche appartient à l'onglet (ADR-0003).
+ *
+ * **Aucun `z-index` ici, et c'est volontaire.** Elle est le dernier enfant de l'atelier, et
+ * ses deux frères — la barre d'onglets et la ligne de statut — n'en portent pas ; la pile de
+ * terminaux, elle, est devenue une couche à elle seule (voir `.terminal-stack`). L'ordre du
+ * DOM suffit donc, et il ne dépend d'aucun nombre choisi ailleurs.
+ *
+ * Toutes les couleurs viennent de la table de `app/styles.css` : c'était la dernière surface
+ * du dépôt à en écrire en dur, donc la seule à ne pas suivre le thème. Seule l'ombre reste
+ * un noir littéral — ce n'est pas une couleur de la palette mais un repère de profondeur, de
+ * la même famille que celui de `.terminal-search-box` juste au-dessus. Un `--ash-fg`
+ * translucide à sa place ferait une **auréole claire** en thème sombre. */
 .ash-confirm {
     position: absolute;
     inset: 0;
@@ -270,8 +301,11 @@
     padding: 16px;
     max-width: 360px;
     border-radius: 8px;
+    color: var(--ash-fg);
     background: var(--ash-bg);
-    border: 1px solid color-mix(in srgb, var(--ash-fg) 25%, transparent);
+    /* La bordure la plus marquée de la table : c'est le seul dialogue de l'application, et
+     * il doit se détacher du terminal qu'il recouvre. */
+    border: 1px solid var(--ash-border-strong);
     box-shadow: 0 8px 32px rgb(0 0 0 / 35%);
 }
 
@@ -281,18 +315,44 @@
     gap: 8px;
 }
 
+/* Le bouton neutre, dessiné comme ceux de la fenêtre de réglages : un fond de chrome sur le
+ * fond de la boîte, et la bordure des contrôles. */
 .ash-confirm-actions button {
     font: inherit;
     color: inherit;
     padding: 4px 10px;
     border-radius: 6px;
     cursor: pointer;
-    background: color-mix(in srgb, var(--ash-fg) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ash-fg) 25%, transparent);
+    background: var(--ash-bg-chrome);
+    border: 1px solid var(--ash-control-border);
+    transition:
+        background 90ms,
+        border-color 90ms;
 }
 
+/* Le survol change le fond des deux boutons : c'est ce qui dit que le clic est visé. C'est
+ * la seule confirmation d'Ash qui détruit un processus — viser à côté ne doit pas être une
+ * surprise (spec §4.4 : tout est atteignable à la souris). */
+.ash-confirm-actions button:hover {
+    background: var(--ash-bg-selected);
+    border-color: var(--ash-border-strong);
+}
+
+/* Le geste destructeur, et le seul de la boîte : il porte `--ash-error`, l'encre du dépôt
+ * pour ce qui coûte quelque chose. Ce n'est pas un état d'agent — la teinte d'état de
+ * l'interface reste celle de `waiting` (§4.1), et aucune pastille ni ligne n'est repeinte
+ * ici. L'encre est `--ash-bg` : c'est le fond de la fenêtre posé sur un aplat, et il tient
+ * 5,85:1 en clair et 4,52:1 en sombre — au-dessus du seuil du corps de texte dans les deux
+ * thèmes, ce que `#fff` en dur ne garantissait sur aucun des deux. */
 .ash-confirm-actions button.is-danger {
-    background: color-mix(in srgb, #e5484d 80%, transparent);
-    border-color: #e5484d;
-    color: #fff;
+    background: var(--ash-error);
+    border-color: var(--ash-error);
+    color: var(--ash-bg);
+}
+
+/* Le même rouge, un cran plus dense : le survol se voit sans changer de teinte, et il va
+ * dans le bon sens dans les deux thèmes — `--ash-fg` est sombre en clair, clair en sombre. */
+.ash-confirm-actions button.is-danger:hover {
+    background: color-mix(in srgb, var(--ash-error) 82%, var(--ash-fg));
+    border-color: color-mix(in srgb, var(--ash-error) 82%, var(--ash-fg));
 }
