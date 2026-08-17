@@ -1,4 +1,5 @@
 import type { AgentState } from "@/shared/ipc";
+import { SVG_NAMESPACE } from "@/shared/ui";
 
 export { elapsedSince, formatElapsed } from "./elapsed";
 
@@ -29,8 +30,32 @@ export { elapsedSince, formatElapsed } from "./elapsed";
  * d'une feature.
  */
 export interface AgentPresentation {
-    /** Le glyphe, choisi pour sa **forme** avant sa couleur. */
+    /**
+     * Le glyphe, choisi pour sa **forme** avant sa couleur.
+     *
+     * C'est un caractère, donc une forme que la police décide et qu'aucune animation ne
+     * déforme. Quand un état demande plus que ça — `working`, dont le mouvement *est*
+     * l'information —, il porte en plus un [`shape`], et c'est celui-ci que le DOM reçoit :
+     * le caractère reste alors le repli des contextes purement textuels (l'énumération des
+     * états qui interrompent, dans les réglages).
+     */
     readonly glyph: string;
+    /**
+     * Le tracé d'un arc **incomplet**, quand un caractère ne suffit pas — `working`, et lui
+     * seul. `null` partout ailleurs.
+     *
+     * `◍` était un disque plein presque symétrique par rotation : la rotation tournait, et
+     * rien ne bougeait à l'œil — `working` se lisait comme une pastille immobile, donc comme
+     * un état de plus au repos (issue #108). Un secteur incomplet n'a aucune symétrie de
+     * rotation : c'est la forme qui rend le mouvement visible, pas l'animation.
+     *
+     * Le tracé vit dans la table et non dans le rendu parce que c'est une **décision de
+     * forme**, au même titre que les quatre caractères : `bun test` ne monte pas de DOM,
+     * donc une forme posée dans le rendu serait le seul choix de cette table que rien ne
+     * pourrait relire. C'est aussi ce qui garde `working` en un seul endroit pour ses trois
+     * consommateurs — sidebar, lignes filles, ligne de statut.
+     */
+    readonly shape: string | null;
     /** Le mot lu par les lecteurs d'écran, et l'infobulle. */
     readonly label: string;
     /** Le seul fond teinté de toute l'interface — `waiting`, et lui seul. */
@@ -45,9 +70,32 @@ export interface AgentPresentation {
     readonly className: string;
 }
 
+/**
+ * L'arc de `working` — 120° d'un cercle de rayon 9, dans la boîte 24×24 de Lucide.
+ *
+ * Trois nombres, et chacun a sa raison :
+ *
+ * - **120°**, et pas 270 : un anneau presque fermé à 12 px ne se distingue plus du `○`
+ *   d'`idle`, et sa rotation ne se voit qu'au déplacement de son trou. Un secteur d'un tiers
+ *   déplace toute sa masse, donc il tourne visiblement à un mètre de l'écran — et il ne
+ *   ressemble à aucun des quatre autres états, couleur retirée.
+ * - **rayon 9**, et pas 10 : le trait est épais (2,75 sur 24), et un rayon de 10 le ferait
+ *   mordre le bord de la boîte une fois arrondi.
+ * - le tracé **part du haut** (12, 3), donc `prefers-reduced-motion` — qui coupe l'animation
+ *   et rien d'autre — rend un arc franchement incliné, jamais une forme ambiguë.
+ *
+ * La boîte 24×24 est celle des glyphes de la fenêtre de réglages : un tracé d'Ash se lit
+ * dans le même repère partout.
+ */
+const WORKING_ARC = "M12 3a9 9 0 0 1 7.794 13.5";
+
+/** La taille du dessin, en pixels : celle de la boîte de `.ash-glyph`. */
+const GLYPH_SIZE = "12";
+
 const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     working: {
         glyph: "◍",
+        shape: WORKING_ARC,
         label: "working",
         tinted: false,
         rail: "none",
@@ -57,6 +105,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     },
     waiting: {
         glyph: "❯",
+        shape: null,
         label: "waiting",
         tinted: true,
         rail: "accent",
@@ -66,6 +115,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     },
     done: {
         glyph: "✓",
+        shape: null,
         label: "done",
         tinted: false,
         rail: "none",
@@ -75,6 +125,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     },
     idle: {
         glyph: "○",
+        shape: null,
         label: "idle",
         tinted: false,
         rail: "none",
@@ -84,6 +135,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     },
     error: {
         glyph: "✕",
+        shape: null,
         label: "error",
         tinted: false,
         rail: "error",
@@ -119,13 +171,55 @@ export function presentAgentState(state: AgentState): AgentPresentation {
  *
  * `.ash-glyph` et les classes d'état sont peintes par `app/styles.css`, à côté des deux
  * palettes : la couleur d'un état est du thème, pas de la mise en forme d'une feature.
+ *
+ * La boîte est la même pour les cinq — un `<span>` de 12 px, que la rotation fait tourner —
+ * et seul son contenu change : un caractère, ou le dessin d'un état qui n'en a pas
+ * ([`AgentPresentation.shape`]). C'est ce qui laisse `working` s'aligner sur les quatre
+ * autres dans la sidebar comme dans la ligne de statut, sans qu'aucune des deux ne sache
+ * qu'il est dessiné.
+ *
+ * `role="img"` porte le mot : `aria-label` sur un `<span>` nu n'est pas exposé de façon
+ * fiable, et un état dessiné n'a plus de texte du tout à lire par défaut.
  */
 export function agentGlyph(state: AgentState): HTMLElement {
     const shown = PRESENTATIONS[state];
     const element = document.createElement("span");
     element.className = `ash-glyph ${shown.className}`;
-    element.textContent = shown.glyph;
+    element.setAttribute("role", "img");
     element.setAttribute("aria-label", shown.label);
+    if (shown.shape === null) element.textContent = shown.glyph;
+    else element.append(drawing(shown.shape));
     if (shown.spinning) element.classList.add("is-spinning");
     return element;
+}
+
+/**
+ * Le dessin d'un état, dans l'espace de noms qui le rend visible.
+ *
+ * Un tracé et pas un caractère, pour la raison qui vaut déjà dans la fenêtre de réglages : à
+ * 12 px, la forme d'un caractère dépend de la police installée, et il n'existe aucun arc
+ * incomplet fiable dans un jeu monospace. `currentColor` garde la couleur là où elle est
+ * décidée — `.ash-glyph.is-working` dans `app/styles.css`, donc le thème.
+ *
+ * `aria-hidden` : le mot est déjà porté par la boîte, et un lecteur d'écran dirait
+ * « working » deux fois.
+ */
+function drawing(shape: string): SVGElement {
+    const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", GLYPH_SIZE);
+    svg.setAttribute("height", GLYPH_SIZE);
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    // Plus épais que les glyphes des réglages (1,75) : ceux-là sont lus de près, celui-ci
+    // doit se voir à un mètre, au coin de l'œil, dans une ligne de 12 px.
+    svg.setAttribute("stroke-width", "2.75");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+
+    const path = document.createElementNS(SVG_NAMESPACE, "path");
+    path.setAttribute("d", shape);
+    svg.append(path);
+    return svg;
 }

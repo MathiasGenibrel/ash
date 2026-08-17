@@ -8,11 +8,16 @@ describe("les cinq états d'un agent", () => {
         // sans la couleur. C'est ce qui tient sous daltonisme, écran mat, ou du coin de l'œil.
         const states = AGENT_STATES;
 
-        // When
-        const glyphs = states.map((state) => presentAgentState(state).glyph);
+        // When — la forme *rendue* : un tracé quand l'état en a un, son caractère sinon.
+        // Comparer les seuls caractères laisserait deux états se rejoindre à l'écran tout en
+        // gardant deux glyphes de repli distincts dans la table.
+        const shapes = states.map((state) => {
+            const shown = presentAgentState(state);
+            return shown.shape ?? shown.glyph;
+        });
 
         // Then
-        expect(new Set(glyphs).size).toBe(states.length);
+        expect(new Set(shapes).size).toBe(states.length);
     });
 
     it("Given the five agent states, when they are presented, then waiting is the only one with a tinted background", () => {
@@ -42,4 +47,42 @@ describe("les cinq états d'un agent", () => {
         // pas devenir un bruit de fond
         expect(moving).toEqual(["working"]);
     });
+
+    it("Given the state that moves, when its shape is read, then it is an open arc that never closes back on itself", () => {
+        // Given — c'est la forme qui rend la rotation visible, pas l'animation : `◍` était un
+        // disque presque invariant par rotation, donc `working` se lisait comme une pastille
+        // immobile malgré son `animation: ash-spin` (issue #108). Un état dessiné est
+        // exactement celui qui tourne, et son tracé doit rester un secteur incomplet.
+        const drawn = AGENT_STATES.filter((state) => presentAgentState(state).shape !== null);
+
+        // When
+        const shape = presentAgentState("working").shape ?? "";
+
+        // Then — un anneau fermé revient à son point de départ ; un arc n'y revient pas
+        expect(drawn).toEqual(["working"]);
+        expect(shape).toMatch(ONLY_MOVES_AND_ARCS);
+        expect(travel(shape)).toBeGreaterThan(1);
+    });
 });
+
+/**
+ * Un tracé qui ne fait que partir d'un point et suivre des arcs.
+ *
+ * Ce qu'elle exclut est ce qui rendrait la rotation muette : un `Z` qui referme, une ligne
+ * droite, une courbe de Bézier dont on ne saurait plus dire si la forme est un secteur.
+ */
+const ONLY_MOVES_AND_ARCS = /^M[\d.-]+ [\d.-]+(a[\d.]+ [\d.]+ [\d.]+ [01] [01] -?[\d.]+ -?[\d.]+)+$/;
+
+/**
+ * La distance entre le début et la fin d'un tracé d'arcs, en unités de sa boîte.
+ *
+ * Elle se calcule en sommant les déplacements **relatifs** des arcs, ce que la forme
+ * `a rx ry rotation grand-arc sens dx dy` donne directement. Un cercle complet — deux
+ * demi-arcs — revient à zéro, un secteur non.
+ */
+function travel(shape: string): number {
+    const arcs = [...shape.matchAll(/a[\d.]+ [\d.]+ [\d.]+ [01] [01] (-?[\d.]+) (-?[\d.]+)/g)];
+    const dx = arcs.reduce((sum, arc) => sum + Number(arc[1]), 0);
+    const dy = arcs.reduce((sum, arc) => sum + Number(arc[2]), 0);
+    return Math.hypot(dx, dy);
+}
