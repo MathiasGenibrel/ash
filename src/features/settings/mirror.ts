@@ -11,6 +11,7 @@
  */
 
 import type { FixAction as RustFixAction } from "@/shared/ipc/generated/FixAction";
+import type { FontStep as RustFontStep } from "@/shared/ipc/generated/FontStep";
 import type { HookAction as RustHookAction } from "@/shared/ipc/generated/HookAction";
 import type { HooksReport as RustHooksReport } from "@/shared/ipc/generated/HooksReport";
 import type { HookState as RustHookState } from "@/shared/ipc/generated/HookState";
@@ -19,7 +20,9 @@ import type { NewTool as RustNewTool } from "@/shared/ipc/generated/NewTool";
 import type { NotificationPermission as RustNotificationPermission } from "@/shared/ipc/generated/NotificationPermission";
 import type { NotificationsReport as RustNotificationsReport } from "@/shared/ipc/generated/NotificationsReport";
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
+import type { Shortcut as RustShortcut } from "@/shared/ipc/generated/Shortcut";
 import type { SuggestedFix as RustSuggestedFix } from "@/shared/ipc/generated/SuggestedFix";
+import type { ThemeMode as RustThemeMode } from "@/shared/ipc/generated/ThemeMode";
 import type { TestDescription as RustTestDescription } from "@/shared/ipc/generated/TestDescription";
 import type { TestOutcome as RustTestOutcome } from "@/shared/ipc/generated/TestOutcome";
 import type { ToolDeclaration as RustToolDeclaration } from "@/shared/ipc/generated/ToolDeclaration";
@@ -30,6 +33,7 @@ import type { Accepts, Assert, Mirrors } from "@/shared/ipc/mirroring";
 
 import type {
     FixAction,
+    FontStep,
     HookAction,
     HooksReport,
     HookState,
@@ -37,9 +41,11 @@ import type {
     NotificationPermission,
     NotificationsReport,
     SettingsSnapshot,
+    Shortcut,
     SuggestedFix,
     TestDescription,
     TestOutcome,
+    ThemeMode,
     ToolDeclaration,
     ToolDraft,
     Verification,
@@ -86,6 +92,21 @@ export type NotificationsReportStillMirrorsRust = Assert<
 
 /** Ce que l'event `ash://settings-verified` porte — la ligne `hooks` comprise (#16). */
 export type VerifiedStillMirrorsRust = Assert<Mirrors<RustVerified, Verified>>;
+
+/**
+ * Les sections `appearance` et `shortcuts` (#110).
+ *
+ * Les trois formes sont **détenues ailleurs** — `features::theme` pour les deux premières,
+ * `src-tauri/src/menu.rs` pour la troisième — et c'est précisément ce qui les rend fragiles :
+ * un mode renommé, un pas de police renommé ou un champ de raccourci disparu ne casserait
+ * rien à la compilation, et l'écran montrerait un choix qui n'agit plus ou une liste vide.
+ * `ThemeMode` est vérifié deux fois dans le dépôt, ici et dans `src/app/mirror.ts` : les deux
+ * copies TypeScript existent pour que la feature n'importe pas le composition root, donc les
+ * deux ont besoin du même filet.
+ */
+export type SettingsThemeModeStillMirrorsRust = Assert<Mirrors<RustThemeMode, ThemeMode>>;
+export type FontStepStillMirrorsRust = Assert<Mirrors<RustFontStep, FontStep>>;
+export type ShortcutStillMirrorsRust = Assert<Mirrors<RustShortcut, Shortcut>>;
 
 /**
  * La seule forme qui va dans l'autre sens : le formulaire d'ajout **envoie** une saisie.

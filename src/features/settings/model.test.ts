@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { aDraft, aTool, aVerification } from "./builders";
+import { aDraft, aShortcut, aTool, aVerification } from "./builders";
 import {
     ADAPTER_DEFAULT,
     countProblems,
@@ -12,6 +12,7 @@ import {
     describeStop,
     describeTool,
     describeToolCount,
+    groupShortcuts,
     NOTHING_VERIFIED_YET,
     parseDiff,
 } from "./model";
@@ -451,4 +452,40 @@ describe("l'avertissement de mode dégradé", () => {
         // Then
         expect(subject).toBeNull();
     });
+});
+
+describe("les raccourcis groupés", () => {
+    it("Given shortcuts from two submenus in the menu's order, when they are grouped, then the groups keep that order", () => {
+        // Given — l'ordre est celui du menu natif, et c'est tout l'intérêt : on retrouve un
+        // raccourci dans l'écran là où on l'a vu dans le menu. Trier ici donnerait à cette
+        // fenêtre un second avis sur une question dont le menu a déjà décidé
+        const declared = [
+            aShortcut({ group: "application", label: "Settings…" }),
+            aShortcut({ group: "terminal", label: "New Tab" }),
+            aShortcut({ group: "view", label: "Toggle Sidebar" }),
+        ];
+
+        // When
+        const grouped = groupShortcuts(declared);
+
+        // Then
+        expect(grouped.map((one) => one.group)).toEqual(["application", "terminal", "view"]);
+    });
+
+    it("Given a group the backend sends twice, when they are grouped, then the second batch joins the first instead of opening a twin", () => {
+        // Given — deux titres identiques dans une liste se lisent comme un bug d'affichage
+        const declared = [
+            aShortcut({ group: "terminal", label: "New Tab" }),
+            aShortcut({ group: "view", label: "Toggle Sidebar" }),
+            aShortcut({ group: "terminal", label: "Close Tab" }),
+        ];
+
+        // When
+        const grouped = groupShortcuts(declared);
+
+        // Then
+        expect(grouped.map((one) => one.group)).toEqual(["terminal", "view"]);
+        expect(grouped[0]?.shortcuts.map((one) => one.label)).toEqual(["New Tab", "Close Tab"]);
+    });
+
 });

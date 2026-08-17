@@ -1,9 +1,13 @@
-import { button, FOCUS_KEY, paint, text, toNode, type UiChild } from "@/shared/ui";
+import { button, FOCUS_KEY, paint, toNode, type UiChild } from "@/shared/ui";
 
 import type {
+    Appearance,
     FixAction,
+    FontStep,
     NotificationsReport,
     SettingsSnapshot,
+    Shortcut,
+    ThemeMode,
     ToolDraft,
     Verification,
 } from "./contract";
@@ -11,16 +15,17 @@ import { describeToolCount } from "./model";
 import { type SettingsSection } from "./sections";
 import {
     addForm,
+    appearanceSection,
     conflictScreen,
     duplicateBanner,
     foot,
     navColumn,
     noToolsYet,
     notificationsSection,
-    para,
     pathFocusKey,
     scaleNote,
     sectionHeader,
+    shortcutsSection,
     tag,
     toolCard,
 } from "./components";
@@ -81,6 +86,16 @@ export interface SettingsViewActions {
     openConflict(command: string): void;
     /** `← back to the list`. */
     closeConflict(): void;
+    /**
+     * Un thème choisi dans la section `appearance` — la **seconde surface** du choix.
+     *
+     * Elle ne pose aucune palette : `features::theme` retient le mode et l'annonce, et la
+     * fenêtre le rend quand l'annonce revient
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    chooseTheme(mode: ThemeMode): void;
+    /** Un pas de taille de police, jamais une taille : les bornes sont en Rust. */
+    stepFontSize(step: FontStep): void;
 }
 
 /**
@@ -129,6 +144,23 @@ export interface SettingsScene {
      * obligerait chaque ajout d'entrée à redemander une permission au système.
      */
     notifications: NotificationsReport | null;
+    /**
+     * Le thème et la taille de police que le backend détient, ou `null` tant qu'il n'a pas
+     * répondu (spec §9).
+     *
+     * Ce n'est **pas** l'état de l'écran : c'est celui de `features::theme`, relu ici pour
+     * être rendu. Un clic sur `dark` ne le change pas — il part au backend, qui l'annonce à
+     * toutes les fenêtres, et c'est cette annonce qui repose la scène. Sans quoi la coche du
+     * menu Vue et cet écran finiraient par ne plus dire la même chose
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    appearance: Appearance | null;
+    /**
+     * Les raccourcis que le menu natif déclare, ou `null` tant qu'il ne les a pas rendus.
+     *
+     * Demandés une fois : le menu est construit au démarrage et ne change plus.
+     */
+    shortcuts: readonly Shortcut[] | null;
 }
 
 /** La colonne de gauche. */
@@ -147,7 +179,17 @@ export function settingsPanel(
     actions: SettingsRendering,
 ): readonly UiChild[] {
     if (scene.section === "notifications") return notificationsSection(scene.notifications);
-    if (scene.section !== "tools") return placeholderSection(scene.section);
+    if (scene.section === "shortcuts") return shortcutsSection(scene.shortcuts);
+    if (scene.section === "appearance") {
+        return appearanceSection(scene.appearance, {
+            chooseTheme: (mode) => {
+                actions.chooseTheme(mode);
+            },
+            stepFontSize: (step) => {
+                actions.stepFontSize(step);
+            },
+        });
+    }
     if (scene.draft !== null) {
         return addForm(
             scene.draft,
@@ -215,36 +257,6 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
             empty
                 ? "ash writes to no file until you declare a tool and install its hooks."
                 : "ash writes to no file until an entry is verified.",
-        ),
-    ];
-}
-
-/** Les sections que ni `tools` ni `notifications` ne rendent — celles qui restent. */
-type EmptySection = Exclude<SettingsSection, "tools" | "notifications">;
-
-/**
- * Les sections qui n'ont pas encore de contenu.
- *
- * Elles existent parce que la **navigation** les traverse, et elles disent où la chose vit
- * aujourd'hui plutôt que de laisser un panneau muet. Rien n'y est inventé : chaque phrase
- * décrit l'état réel du produit.
- *
- * Le type se **déduit** de `SettingsSection` au lieu d'en recopier les noms : une section
- * ajoutée doit faire échouer `bun run typecheck` sur le `Record` ci-dessous, qui est
- * l'endroit exact où sa phrase manque.
- */
-function placeholderSection(section: EmptySection): readonly UiChild[] {
-    const explanations: Record<EmptySection, string> = {
-        shortcuts:
-            "the shortcuts are declared in the native menu — Terminal and View list them with their keys. changing them here comes later.",
-        appearance:
-            "the theme is chosen in View ▸ Theme: light, dark, or the one macOS is in. font, size and density come later.",
-    };
-
-    return [
-        sectionHeader(section, null, []),
-        tag("div", "settings-body", "is-empty").add(
-            para("settings-empty-prose", text(explanations[section])),
         ),
     ];
 }

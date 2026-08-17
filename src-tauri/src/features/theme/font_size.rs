@@ -94,11 +94,20 @@ impl<'de> serde::Deserialize<'de> for FontSize {
     }
 }
 
-/// Ce qu'une entrée de menu demande à la taille de police.
+/// Ce qu'une entrée de menu — ou la fenêtre de réglages — demande à la taille de police.
 ///
-/// Un pas, et non une taille : le menu ne connaît ni les bornes ni la valeur courante —
-/// c'est [`FontSize`] qui les tient, et lui seul.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Un pas, et non une taille : ni le menu ni la fenêtre de réglages ne connaissent les
+/// bornes ou la valeur courante — c'est [`FontSize`] qui les tient, et lui seul. C'est aussi
+/// ce qui laisse une seconde surface régler la taille sans devenir un second détenteur
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : elle demande un pas,
+/// elle n'annonce pas un nombre.
+///
+/// Il se **désérialise** depuis la webview, et les trois noms sérialisés sont ceux de
+/// [`FontStep::as_id`] — les mêmes que le menu emploie dans ses identifiants d'entrée. Un pas
+/// inconnu est refusé par Tauri avant d'arriver ici : il n'y a rien à deviner d'un `"huge"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "lowercase")]
 pub enum FontStep {
     /// `Cmd++`
     Bigger,
@@ -219,6 +228,27 @@ mod tests {
                 Some(FontSize(FontSize::MAX)),
             ]
         );
+    }
+
+    #[test]
+    fn given_a_step_asked_by_the_settings_window_when_it_is_read_then_it_is_the_one_the_menu_names()
+    {
+        // Given — la fenêtre de réglages envoie les identifiants de `as_id`, ceux que le
+        // menu emploie déjà. Les deux noms sont dérivés séparément — l'un par `serde`,
+        // l'autre à la main — donc renommer un pas d'un seul côté rendrait le bouton muet
+        let sent: Vec<String> = FontStep::ALL
+            .iter()
+            .map(|step| format!("\"{}\"", step.as_id()))
+            .collect();
+
+        // When
+        let read: Vec<Option<FontStep>> = sent
+            .iter()
+            .map(|raw| serde_json::from_str::<FontStep>(raw).ok())
+            .collect();
+
+        // Then
+        assert_eq!(read, FontStep::ALL.map(Some).to_vec());
     }
 
     #[test]

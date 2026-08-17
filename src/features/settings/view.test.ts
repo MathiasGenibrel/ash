@@ -3,9 +3,11 @@ import { describe, expect, it } from "bun:test";
 import { find, findAll, plainText, text, type UiChild } from "@/shared/ui";
 
 import {
+    anAppearance,
     aDraft,
     aHooksReport,
     aNotificationsReport,
+    aShortcut,
     aSnapshot,
     aTool,
     aVerification,
@@ -31,6 +33,8 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         edits: new Map(),
         conflict: null,
         notifications: aNotificationsReport(),
+        appearance: anAppearance(),
+        shortcuts: [aShortcut()],
         ...overrides,
     };
 }
@@ -130,12 +134,27 @@ describe("le panneau de la fenêtre de réglages", () => {
         expect(composed.flatMap((child) => findAll(child, "settings-card"))).toEqual([]);
     });
 
-    it("Given a section that has no content yet, when the panel is composed, then it says where the thing lives today", () => {
-        // Given — la navigation les traverse : un panneau muet ferait croire à une panne
+    it("Given the appearance section, when the panel is composed, then it settles the theme here instead of sending the user to the menu", () => {
+        // Given — c'était la section qui renvoyait à `View ▸ Theme`, et la fenêtre de réglages
+        // est censée être l'autre façon d'éditer `~/.ash/config.toml` (spec §9) : envoyer
+        // l'utilisateur ailleurs est un aveu, pas une réponse (#110)
         const composed = settingsPanel(scene({ section: "appearance" }), IDLE_ACTIONS);
 
         // Then
-        expect(said(composed)).toContain("the theme is chosen in View ▸ Theme");
+        expect(said(composed)).not.toContain("View ▸ Theme");
+        expect(said(composed)).toContain("light");
+        expect(said(composed)).toContain("13 pt");
+    });
+
+    it("Given the shortcuts section, when the panel is composed, then it lists what the menu declares rather than pointing at it", () => {
+        // Given — même aveu, et le point dur du critère : la combinaison vient du menu, elle
+        // n'est pas recopiée en TypeScript
+        const composed = settingsPanel(scene({ section: "shortcuts" }), IDLE_ACTIONS);
+
+        // Then
+        expect(said(composed)).toContain("New Tab");
+        expect(said(composed)).toContain("⌘T");
+        expect(said(composed)).not.toContain("changing them here comes later");
     });
 
     it("Given the notifications section, when the panel is composed, then it shows what the backend says rather than a placeholder", () => {
