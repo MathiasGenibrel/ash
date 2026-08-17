@@ -79,7 +79,7 @@ function mount(
         // vaut mieux qu'une fenêtre noire dont l'utilisateur ne peut rien conclure.
         const banner = document.createElement("p");
         banner.className = "ash-banner";
-        banner.textContent = `ash : le shell n'a pas démarré — ${
+        banner.textContent = `${appName} : le shell n'a pas démarré — ${
             error instanceof Error ? error.message : String(error)
         }`;
         host.append(banner);
