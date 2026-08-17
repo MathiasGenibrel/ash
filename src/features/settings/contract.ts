@@ -227,6 +227,81 @@ export interface NotificationsReport {
     notified: readonly AgentState[];
 }
 
+/**
+ * Le thème choisi, tel que `features::theme` le détient (spec §9, `[appearance]`).
+ *
+ * Il est déclaré ici **en plus** de `src/app/theme.ts`, et les deux sont tenus au même type
+ * Rust par une ligne de [`mirror`](./mirror.ts) : une feature n'importe pas le composition
+ * root, et recopier trois chaînes sans filet est exactement la faute que ce dispositif
+ * attrape ailleurs.
+ */
+export type ThemeMode = "light" | "dark" | "system";
+
+/**
+ * Le pas de taille de police que la fenêtre demande — **jamais un nombre**.
+ *
+ * Les bornes et la valeur courante appartiennent à `FontSize`, en Rust : envoyer une taille
+ * ferait de cette fenêtre un second détenteur de l'état
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et rien n'y borne quoi que
+ * ce soit. C'est aussi pourquoi les trois mots servent de libellés aux trois boutons : ils
+ * viennent du contrat, pas d'une table écrite dans la vue.
+ */
+export type FontStep = "bigger" | "smaller" | "default";
+
+/** Les trois pas, dans l'ordre où la section les propose. */
+export const FONT_STEPS: readonly FontStep[] = ["smaller", "bigger", "default"];
+
+/** Les trois thèmes, dans l'ordre du menu natif — du plus explicite au moins. */
+export const THEME_MODES: readonly ThemeMode[] = ["light", "dark", "system"];
+
+/** L'apparence courante, telle que le backend la détient. */
+export interface Appearance {
+    mode: ThemeMode;
+    /** La taille de police du terminal, en points. */
+    fontSize: number;
+}
+
+/**
+ * Un raccourci, tel que le menu natif le déclare (spec §4.4). Miroir de `Shortcut` en Rust.
+ *
+ * Les trois champs viennent de `src-tauri/src/menu.rs`, et c'est le point : les accélérateurs
+ * y sont déclarés, donc c'est là qu'ils se lisent. Une table écrite en TypeScript aurait fini
+ * par annoncer un raccourci que le menu ne déclare plus, et c'est l'écran des réglages qu'on
+ * croit quand les deux ne disent pas la même chose.
+ */
+export interface Shortcut {
+    /** Le sous-menu où l'action vit — `terminal`, `view`, `application`. */
+    group: string;
+    label: string;
+    /** La combinaison, déjà écrite comme macOS l'écrit — `⇧⌘T`. */
+    keys: string;
+}
+
+/**
+ * Ce que la fenêtre demande aux **objets de fenêtre** : le thème, la taille de police, le
+ * menu.
+ *
+ * Ils sont séparés de [`SettingsPorts`] parce qu'ils n'appartiennent pas à
+ * `features::settings` : le thème et la taille sont à `features::theme`, la liste des
+ * raccourcis à `src-tauri/src/menu.rs`. Le composition root de la fenêtre
+ * (`src/app/settings.ts`) les branche sur les modules qui savent déjà leur parler — c'est
+ * lui, et lui seul, qui connaît `theme_mode` et `ash://theme-mode`.
+ *
+ * **Rien n'est rendu par les deux verbes d'écriture.** La nouvelle valeur revient par
+ * l'annonce du backend, celle que le menu natif fait déjà partir : c'est ce qui rend les deux
+ * surfaces incapables de diverger ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface WindowPorts {
+    /** L'apparence en vigueur, une fois le raccordement au backend fait. */
+    appearance(): Promise<Appearance>;
+    chooseThemeMode(mode: ThemeMode): Promise<void>;
+    stepTerminalFontSize(step: FontStep): Promise<void>;
+    /** Prévient à chaque changement, **d'où qu'il vienne** — le menu Vue compris. */
+    onAppearanceChanged(listener: (appearance: Appearance) => void): void;
+    /** Les raccourcis que le menu déclare. Demandés une fois : le menu ne change pas. */
+    shortcuts(): Promise<readonly Shortcut[]>;
+}
+
 /** Ce que le formulaire d'ajout envoie : du texte, pas encore une déclaration. */
 export interface ToolDraft {
     command: string;

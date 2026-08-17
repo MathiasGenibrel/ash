@@ -60,9 +60,26 @@ export interface FontSizeChanges {
     subscribe(listener: (points: number) => void): () => void;
 }
 
+/**
+ * Le pas que la fenêtre de réglages demande — les mêmes trois que le menu Vue.
+ *
+ * Le contrat est un **pas**, jamais un nombre : les bornes et la valeur courante sont à
+ * `FontSize`, en Rust, et une fenêtre qui enverrait une taille en deviendrait le second
+ * détenteur ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export type FontStep = "bigger" | "smaller" | "default";
+
 /** Ce que `followTerminalFontSize` rend : de quoi suivre, et de quoi attendre le backend. */
 export interface FontSizeBinding {
     changes: FontSizeChanges;
+    /**
+     * Demande un pas au backend. Rejette si l'appel n'aboutit pas.
+     *
+     * Rien n'est posé ici : la nouvelle taille revient par `ash://terminal-font-size`, comme
+     * après un `⌘+`, et c'est cette annonce qui fait relire sa grille à chaque terminal
+     * ouvert. Une taille posée au passage se serait décalée d'une borne atteinte.
+     */
+    step(step: FontStep): Promise<void>;
     /** Le raccordement à la taille que le backend détient. Rejette s'il n'a pas lieu. */
     ready: Promise<void>;
 }
@@ -108,6 +125,7 @@ export function followTerminalFontSize(): FontSizeBinding {
                 };
             },
         },
+        step: (asked) => invoke<void>("step_terminal_font_size", { step: asked }),
         ready,
     };
 }

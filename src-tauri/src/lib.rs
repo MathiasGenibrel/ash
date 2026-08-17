@@ -435,6 +435,13 @@ pub fn run() -> tauri::Result<()> {
             features::git::commands::git_metadata,
             features::theme::commands::theme_mode,
             features::theme::commands::terminal_font_size,
+            features::theme::commands::step_terminal_font_size,
+            // Les deux surfaces de l'apparence et la liste des raccourcis sont servies par
+            // `menu.rs` et par `features::theme` : le choix de thème passe par le menu parce
+            // qu'il doit corriger ses coches, la taille de police non — voir les deux
+            // fonctions.
+            menu::theme_set_mode,
+            menu::menu_shortcuts,
             features::settings::commands::settings_notifications,
             features::settings::commands::settings_tools,
             features::settings::commands::settings_declare_tool,
