@@ -2,7 +2,8 @@ import type { ActiveTab } from "@/features/terminal";
 import { branchOf, locationLabel } from "@/shared/tab-context";
 
 /**
- * Ce que la bande de titre écrit : `ash — <dépôt> / <branche>` de l'onglet actif (spec §4.2).
+ * Ce que la bande de titre écrit : `<nom> — <dépôt> / <branche>` de l'onglet actif
+ * (spec §4.2).
  *
  * La règle est ici, dans le composition root, et pas dans une feature : la bande surplombe
  * les deux colonnes, elle n'appartient donc ni à la sidebar ni à la zone terminal. C'est une
@@ -22,15 +23,23 @@ import { branchOf, locationLabel } from "@/shared/tab-context";
  * `2.1.233` demande [ADR-0006](../../docs/adr/0006-decouverte-automatique-des-agents.md), qui n'est pas
  * faite. Le processus brut, lui, est déjà dans la ligne de statut.
  *
- * `ash` en minuscules, littéralement, comme la bande de la fenêtre de réglages écrit
- * `settings — ash` : c'est le mot de la maquette, pas le nom affiché de l'application — ce
- * dernier vit dans `APP_NAME` côté Rust et vaut `Ash-dev` en développement, ce qui ferait de
- * la bande le seul endroit où le mot changerait d'un build à l'autre.
+ * **Le nom est un paramètre, jamais un littéral** (décision du 2026-08-17). La maquette
+ * dessinait `ash` en minuscules ; ce mot est abandonné, parce qu'il faisait deux noms pour
+ * une application. Ce qui s'écrit ici est le nom **affiché**, dont `APP_NAME` côté Rust est
+ * la seule source (voir `CLAUDE.md`) : la bande dit donc `Ash` dans l'application
+ * installée et `Ash-dev` dans une compilation de développement — et c'est le résultat
+ * voulu, pas un effet de bord. Ash est le terminal quotidien de son auteur : deux fenêtres
+ * qui se ressemblent doivent se distinguer là où l'œil se pose, et la bande de titre est
+ * précisément là.
+ *
+ * Le recevoir plutôt que le lire est ce qui garde la fonction pure, donc ses sept cas
+ * vérifiables sans backend — c'est le composition root qui va chercher le nom, une fois, au
+ * démarrage (`app-name.ts`).
  */
-export function windowTitle(active: ActiveTab | null): string {
+export function windowTitle(active: ActiveTab | null, appName: string): string {
     // Pas d'onglet : rien à dire de plus que le nom. Un titre inventé serait faux, et une
     // bande vide ferait sauter la hauteur du titre à l'ouverture du premier onglet.
-    if (active === null) return "ash";
+    if (active === null) return appName;
 
     const where = locationLabel(active.tab);
 
@@ -38,7 +47,7 @@ export function windowTitle(active: ActiveTab | null): string {
     // l'aller-retour qui lit les fichiers de contrôle — la bande dit **où** l'on est et se
     // tait sur le reste. Elle ne ment donc jamais, et elle ne clignote pas : le titre
     // s'allonge d'une branche quand git répond, il ne passe pas par le vide.
-    if (active.metadata === null) return `ash — ${where}`;
+    if (active.metadata === null) return `${appName} — ${where}`;
 
-    return `ash — ${where} / ${branchOf(active.metadata).label}`;
+    return `${appName} — ${where} / ${branchOf(active.metadata).label}`;
 }
