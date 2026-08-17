@@ -1,20 +1,6 @@
 import { ElementBuilder, type UiEvent } from "./node";
 
 /**
- * L'attribut qui identifie un champ **à travers un rendu**.
- *
- * Les vues du dépôt refont tout leur DOM à chaque rendu. Un champ qu'on est en train de
- * remplir est donc détruit puis reconstruit — et le focus, avec le curseur, part avec
- * l'ancien élément. La vue qui monte le DOM retient la clé du champ actif et la position du
- * curseur avant de peindre, puis les rend après : c'est ce qui empêche une relance
- * différée de redessiner une carte au milieu d'un mot.
- *
- * La clé est nommée **ici** parce que c'est le seul endroit qui sait quel élément la porte.
- * Le mécanisme, lui, reste dans la vue : ce socle ne conserve rien.
- */
-export const FOCUS_KEY = "data-focus-key";
-
-/**
  * Ce qu'une validation dit de plus que « j'ai fini de taper ».
  *
  * Un objet plutôt qu'un booléen nu : `onSubmit(({ reversed }) => …)` se lit sans aller
@@ -47,11 +33,6 @@ class FieldBuilder extends ElementBuilder {
 
     placeholder(hint: string): this {
         return this.attr("placeholder", hint);
-    }
-
-    /** La clé que la vue retient pour rendre le focus après avoir refait le DOM. */
-    focusKey(key: string): this {
-        return this.attr(FOCUS_KEY, key);
     }
 
     onInput(handler: (value: string) => void): this {

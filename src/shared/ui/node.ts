@@ -70,6 +70,24 @@ export interface UiTextNode {
  */
 export const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
+/**
+ * L'attribut par lequel une description désigne **l'élément que le peintre focalise**.
+ *
+ * C'est la seule chose que le focus a besoin de traverser : une description ne focalise rien
+ * — elle ne s'exécute pas —, donc elle nomme, et la vue qui monte le DOM retrouve le nom.
+ * Les deux usages du dépôt sont le même geste pris à deux moments :
+ *
+ * - **à l'ouverture** — la boîte de recherche prend les doigts quand `⌘F` la pose, et la
+ *   confirmation de fermeture les donne au bouton qui ne détruit rien ;
+ * - **à travers un rendu** — les vues refont tout leur DOM, donc un champ qu'on est en train
+ *   de remplir est détruit puis reconstruit, et le focus partirait avec l'ancien élément. La
+ *   vue relève la clé active et la position du curseur avant de peindre, et les repose après.
+ *
+ * La clé est nommée **ici** parce que c'est ce socle qui la pose ; le mécanisme, lui, reste
+ * dans la vue — il ne conserve rien.
+ */
+export const FOCUS_KEY = "data-focus-key";
+
 export interface UiElementNode {
     readonly kind: "element";
     readonly tag: string;
@@ -210,6 +228,18 @@ export abstract class ElementBuilder implements UiBuilder {
     /** L'infobulle, quand le mot affiché est plus court que ce qu'il veut dire. */
     title(hint: string): this {
         return this.attr("title", hint);
+    }
+
+    /**
+     * La clé sous laquelle la vue retrouvera cet élément pour lui donner le focus.
+     *
+     * Elle est sur la base et non sur une primitive : ce n'est pas le propre d'un champ de
+     * recevoir les doigts. La confirmation de fermeture les donne à un **bouton** — celui
+     * qui ne détruit rien —, et un second attribut inventé dans la feature aurait fait deux
+     * noms pour un seul geste, l'un lu par le peintre de la recherche, l'autre par le sien.
+     */
+    focusKey(key: string): this {
+        return this.attr(FOCUS_KEY, key);
     }
 
     /**
