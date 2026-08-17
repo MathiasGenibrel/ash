@@ -3,7 +3,9 @@
 //! Il vit à côté du composition root, pas dans une feature : un menu est un objet de
 //! fenêtre, partagé par toutes les features, et aucune d'elles ne doit avoir à le
 //! connaître. Ce module ne fait rien lui-même — il traduit un clic ou un accélérateur en
-//! une **action**, et l'émet vers la webview qui la joue.
+//! une **action**, et l'envoie à la fenêtre qui la joue. Un menu est global à
+//! l'application, donc une action y naît sans surface : c'est [`route`] qui lui en donne
+//! une, à partir de la fenêtre au premier plan.
 //!
 //! Pourquoi un menu natif plutôt qu'un `keydown` dans la webview :
 //!
@@ -54,13 +56,26 @@
 use tauri::menu::{
     AboutMetadata, CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu,
 };
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::features::settings::commands as settings;
 use crate::features::theme::{commands as theme, FontStep, ThemeMode};
 
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
 const MENU_ACTION_EVENT: &str = "ash://menu-action";
+
+/// Label de la **seule** fenêtre qui porte des onglets.
+///
+/// `tauri.conf.json` déclare la fenêtre principale sans la nommer : Tauri lui donne alors
+/// `"main"`. C'est la surface de terminal, et la seule qui sache jouer une action d'onglet
+/// — voir [`route`].
+///
+/// Ce nom-là n'est pas seulement une valeur par défaut de bibliothèque : c'est le contrat
+/// avec `src-tauri/capabilities/default.json`, qui accorde ses permissions à `"main"` et à
+/// elle seule — comme `settings.json` le fait pour
+/// [`crate::features::settings::commands::SETTINGS_WINDOW`]. Renommer la fenêtre sans y
+/// toucher lui ôterait toutes ses permissions, donc l'écart ne peut pas passer inaperçu.
+const MAIN_WINDOW: &str = "main";
 
 /// Nombre d'onglets directement adressables — `Cmd+1` … `Cmd+9` (spec §4.4).
 const DIRECT_TABS: u8 = 9;
@@ -296,6 +311,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     let view = Submenu::with_items(app, "View", true, &view_items)?;
 
     // Pas de « Close Window » ici : son `Cmd+W` prendrait le pas sur celui des onglets.
+    // C'est `route` qui rend `Cmd+W` juste devant une fenêtre sans onglets — la même
+    // entrée « Close Tab », acheminée vers la surface au premier plan.
     let window = Submenu::with_items(
         app,
         "Window",
@@ -309,13 +326,19 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     Menu::with_items(app, &[&application, &edit, &view, &terminal, &window])
 }
 
-/// Traduit un item de menu en action et la donne à qui sait la jouer.
+/// Traduit un item de menu en action, décide **qui** la reçoit, et la lui donne.
 ///
-/// Deux chemins, et la différence n'est pas un détail : les actions d'onglet partent vers
-/// la webview, qui détient les surfaces de rendu ; le thème, lui, est un **état**, et il
-/// est retenu par `features::theme` avant d'être annoncé
-/// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)). Une bascule de thème qui
-/// ne vivrait que dans la webview serait perdue à la première seconde fenêtre.
+/// Trois chemins, et les différences ne sont pas des détails :
+///
+/// - le thème et la taille de police sont des **états**, retenus par `features::theme`
+///   avant d'être annoncés ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)) —
+///   une bascule qui ne vivrait que dans la webview serait perdue à la première seconde
+///   fenêtre ;
+/// - les actions d'onglet partent vers **une** webview, celle qui détient les onglets ;
+/// - `Cmd+W` sur une fenêtre sans onglets ferme cette fenêtre-là.
+///
+/// La règle de destination est dans [`route`], qui est pure et testée : ce gestionnaire
+/// n'a pas de test unitaire, et n'en aura pas.
 ///
 /// Un identifiant inconnu est ignoré : les items prédéfinis (copier, quitter…) sont
 /// traités par le système et ne passent pas par ici.
@@ -324,28 +347,114 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
         return;
     };
 
-    match action {
-        Action::ChooseTheme(mode) => {
+    // `Manager::get_focused_window` est derrière la feature `unstable` de Tauri : on lit le
+    // focus sur les fenêtres qu'on a, ce qui est l'API stable équivalente. Une fenêtre dont
+    // l'état de focus n'est pas lisible est traitée comme non focalisée — mieux vaut ne rien
+    // router que router au hasard, voir [`route`].
+    let focused = app
+        .webview_windows()
+        .into_iter()
+        .find(|(_, window)| window.is_focused().unwrap_or(false));
+
+    match route(action, focused.as_ref().map(|(label, _)| label.as_str())) {
+        Route::Backend(Backend::ChooseTheme(mode)) => {
             theme::choose(app, mode);
             // **Toujours**, et pas seulement quand le mode a changé : un `CheckMenuItem`
             // bascule sa propre coche au clic. Cliquer l'entrée déjà cochée la décocherait
             // donc, et le menu n'aurait plus aucun mode coché.
             check_only(app, mode);
         }
-        // La taille de police est un **état**, comme le thème : elle est retenue par
-        // `features::theme` — donc gardée d'une session à l'autre — avant d'être annoncée à
-        // la webview, qui n'a plus qu'à réajuster ses grilles
-        // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
-        Action::ResizeFont(step) => theme::resize_terminal_font(app, step),
+        Route::Backend(Backend::ResizeFont(step)) => theme::resize_terminal_font(app, step),
         // Une fenêtre est un objet du backend, comme le thème : l'ouvrir depuis la webview
         // demanderait à la fenêtre principale d'exister pour que la seconde puisse naître.
-        Action::OpenSettings => settings::open(app),
+        Route::Backend(Backend::OpenSettings) => settings::open(app),
         // L'échec d'émission signifie qu'il n'y a plus de webview à prévenir : rien à
         // rattraper, et surtout pas de panique dans un gestionnaire d'event.
-        other => {
-            let _ = app.emit(MENU_ACTION_EVENT, other.id());
+        Route::Webview(label) => {
+            let _ = app.emit_to(label, MENU_ACTION_EVENT, action.id());
         }
+        // Fermer, et non cacher : la fenêtre de réglages est construite à l'exécution, donc
+        // `settings::open` la refait à la demande suivante — c'est la décision de
+        // `features::settings::commands::open`, et rien n'a à porter un état « ouverte ».
+        //
+        // La fenêtre est retrouvée **par le label que `route` a rendu**, et non reprise dans
+        // `focused` : ce gestionnaire obéit à la destination, il ne la redécide pas. Une
+        // fenêtre disparue entre la lecture du focus et ici ne ferme rien.
+        Route::CloseWindow(label) => {
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.close();
+            }
+        }
+        Route::Nowhere => {}
     }
+}
+
+/// Où va une action de menu, sachant quelle fenêtre est au premier plan.
+///
+/// C'est ici qu'est la correction de #107. `AppHandle::emit` **diffuse à toutes les
+/// webviews** : les réglages devant, `Cmd+W` fermait donc un onglet de la fenêtre
+/// principale, derrière, hors de vue — et y posait sa confirmation si un agent y tournait.
+/// Un raccourci qui détruit une surface invisible est pire que l'absence de raccourci.
+///
+/// La réponse n'est **pas** une entrée « Close Window » dans le menu : son `Cmd+W`
+/// prendrait le pas sur celui des onglets, et `Cmd+W` ferme un onglet dans tout émulateur
+/// de terminal (voir l'en-tête de ce module). C'est la même action qui est routée selon la
+/// surface qui la reçoit.
+///
+/// Trois règles, et une seule est sensible au focus :
+///
+/// 1. le thème, la taille de police et l'ouverture des réglages sont des préférences de
+///    **l'application** : elles se jouent en Rust, quelle que soit la fenêtre devant ;
+/// 2. `CloseTab` appartient à la fenêtre du **premier plan** — la principale y ferme son
+///    onglet actif, une autre se ferme elle-même, et un premier plan inconnu ne ferme rien ;
+/// 3. les autres actions d'onglet (`Cmd+T`, `Cmd+K`, `Cmd+1`…`Cmd+9`) vont à la fenêtre
+///    principale, seule surface qui porte des onglets. Elles ne détruisent rien : les
+///    router selon le focus les rendrait sans effet depuis les réglages, ce que personne
+///    n'a demandé.
+fn route(action: Action, focused: Option<&str>) -> Route<'_> {
+    match action {
+        Action::ChooseTheme(mode) => Route::Backend(Backend::ChooseTheme(mode)),
+        Action::ResizeFont(step) => Route::Backend(Backend::ResizeFont(step)),
+        Action::OpenSettings => Route::Backend(Backend::OpenSettings),
+        Action::CloseTab => match focused {
+            Some(MAIN_WINDOW) => Route::Webview(MAIN_WINDOW),
+            Some(other) => Route::CloseWindow(other),
+            // Aucune fenêtre devant : fermer l'onglet actif de la principale serait
+            // détruire ce que personne ne regarde.
+            None => Route::Nowhere,
+        },
+        _ => Route::Webview(MAIN_WINDOW),
+    }
+}
+
+/// La destination d'une action de menu. Voir [`route`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route<'a> {
+    /// Jouée en Rust : c'est un état de l'application, pas un ordre d'affichage.
+    Backend(Backend),
+    /// Émise à **une** webview, nommée par son label — jamais diffusée.
+    Webview(&'a str),
+    /// Ferme la fenêtre nommée par son label — celle du premier plan.
+    CloseWindow(&'a str),
+    /// Personne ne joue cette action : la surface qu'elle viserait n'est pas devant.
+    Nowhere,
+}
+
+/// Ce que le backend a à jouer, quand [`route`] le désigne.
+///
+/// C'est le sous-ensemble d'[`Action`] qui ne part pas vers une webview, redit comme un type
+/// à part **pour que le compilateur le tienne** : la version précédente rendait un
+/// `Route::Backend` nu, et `dispatch` rejouait un `match action` avec un bras muet — une
+/// quatrième action retenue en Rust y aurait été silencieusement ignorée, et rien n'aurait
+/// échoué. Ici, [`route`] doit nommer ce qu'elle demande, et `dispatch` doit le traiter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backend {
+    /// Le thème, retenu par `features::theme` puis annoncé aux deux fenêtres.
+    ChooseTheme(ThemeMode),
+    /// La taille de police du terminal — un réglage de l'application, pas de l'onglet.
+    ResizeFont(FontStep),
+    /// L'ouverture de la fenêtre de réglages, ou son retour au premier plan.
+    OpenSettings,
 }
 
 /// Coche le mode retenu, et lui seul.
@@ -511,6 +620,79 @@ mod tests {
 
         // Then
         assert_eq!(unknown, None);
+    }
+
+    #[test]
+    fn given_the_settings_window_in_front_when_close_tab_is_chosen_then_that_window_is_closed() {
+        // Given — les réglages devant, un onglet de la fenêtre principale derrière (#107)
+        let focused = Some("settings");
+
+        // When
+        let destination = route(Action::CloseTab, focused);
+
+        // Then — la fenêtre du premier plan se ferme, et **rien** ne part vers la webview
+        // qui porte les onglets : c'est ce qui fermait un onglet hors de vue, et y posait sa
+        // confirmation si un agent y tournait
+        assert_eq!(destination, Route::CloseWindow("settings"));
+    }
+
+    #[test]
+    fn given_the_main_window_in_front_when_close_tab_is_chosen_then_it_reaches_the_tabs() {
+        // Given
+        let focused = Some(MAIN_WINDOW);
+
+        // When
+        let destination = route(Action::CloseTab, focused);
+
+        // Then — `Cmd+W` ferme un onglet, comme dans tout émulateur de terminal, et par un
+        // envoi **ciblé** : `emit` diffuserait à toutes les webviews
+        assert_eq!(destination, Route::Webview("main"));
+    }
+
+    #[test]
+    fn given_no_window_in_front_when_close_tab_is_chosen_then_nothing_is_closed() {
+        // Given — toutes les fenêtres réduites, le menu applicatif reste atteignable
+        let focused = None;
+
+        // When
+        let destination = route(Action::CloseTab, focused);
+
+        // Then — un raccourci qui détruit une surface invisible est pire que l'absence de
+        // raccourci
+        assert_eq!(destination, Route::Nowhere);
+    }
+
+    #[test]
+    fn given_the_settings_window_in_front_when_a_theme_is_chosen_then_it_is_still_played_in_rust() {
+        // Given — le thème est une préférence de l'application, et les réglages sont devant
+        let focused = Some("settings");
+
+        // When
+        let destination = route(Action::ChooseTheme(ThemeMode::Dark), focused);
+
+        // Then — il reste retenu par le backend, qui repeint les deux fenêtres
+        // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md))
+        assert_eq!(
+            destination,
+            Route::Backend(Backend::ChooseTheme(ThemeMode::Dark))
+        );
+    }
+
+    #[test]
+    fn given_the_settings_window_in_front_when_a_new_tab_is_asked_then_the_main_window_gets_it() {
+        // Given — la seule action sensible au focus est `CloseTab`, parce qu'elle est la
+        // seule à détruire quelque chose
+        let focused = Some("settings");
+
+        // When
+        let destinations = [
+            route(Action::NewTab, focused),
+            route(Action::ClearScrollback, focused),
+            route(Action::SelectTab(1), focused),
+        ];
+
+        // Then — `Cmd+T`, `Cmd+K` et `Cmd+1` gardent leur effet sur la fenêtre à onglets
+        assert_eq!(destinations, [Route::Webview("main"); 3]);
     }
 
     #[test]

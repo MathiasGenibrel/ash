@@ -8,6 +8,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
  * le chemin souris, et il consomme la touche avant que la webview — donc le shell — ne
  * la voie. Ce module ne fait que traduire l'identifiant reçu en action typée.
  *
+ * **L'event n'arrive qu'à la fenêtre que le backend a désignée**, et c'est lui qui décide
+ * laquelle : une action de menu naît sans surface, et `route` dans `src-tauri/src/menu.rs`
+ * lui en donne une à partir de la fenêtre au premier plan. C'est pourquoi il n'y a rien à
+ * filtrer ici — la fenêtre de réglages ne reçoit tout simplement pas `tab:close` (#107).
+ *
  * `⌃⇥` et `⌃⇧⇥` sont les deux seules à ne pas arriver par ici quand elles viennent du
  * clavier : leur entrée de menu existe, mais AppKit ne l'allume pas — voir l'en-tête de
  * `src-tauri/src/menu.rs`. C'est `shortcuts.ts` qui les capte, et il produit les mêmes
