@@ -15,9 +15,16 @@
 //! d'apparence s'y ajoute, le fichier n'a pas à changer de forme ». Elle vaut pour
 //! **toute l'application**, et non par onglet : voir [`FontSize`].
 //!
-//! Le point d'entrée est le **menu natif** (`src-tauri/src/menu.rs`), et c'est délibéré :
-//! la fenêtre de réglages existe désormais, mais sa section `appearance` est l'issue #22 —
-//! elle ne fait qu'y renvoyer.
+//! **Les deux préférences ont désormais deux points d'entrée, et un seul détenteur** : le
+//! menu natif (`src-tauri/src/menu.rs`) et la section `appearance` de la fenêtre de réglages
+//! (spec §9). Les deux demandent la même chose de la même façon — un mode, un **pas** de
+//! taille —, et les deux l'apprennent par les mêmes annonces : ni l'une ni l'autre ne retient
+//! quoi que ce soit. Le choix de thème passe par `menu.rs` dans les deux cas, parce que la
+//! coche du menu doit suivre un choix fait ailleurs et qu'une feature n'a pas à connaître la
+//! forme d'un menu.
+//!
+//! Ce qui reste à l'issue #22 : la police au choix, la densité, et l'aperçu du thème montrant
+//! les cinq états d'agent — ce qui demande des planches de design, pas un état de plus.
 //!
 //! **L'effet système de la feature**, avec ses deux adaptateurs :
 //!

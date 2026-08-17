@@ -1,8 +1,10 @@
 import type {
+    Appearance,
     HooksReport,
     NotificationPermission,
     NotificationsReport,
     SettingsSnapshot,
+    Shortcut,
     TestDescription,
     ToolDeclaration,
     ToolDraft,
@@ -114,6 +116,21 @@ export function aNotificationsReport(
         notified: ["waiting", "error"],
         ...overrides,
     };
+}
+
+/**
+ * L'apparence par défaut, celle d'une session qui n'a rien choisi : macOS décide, 13 points.
+ *
+ * Les deux valeurs sont celles de `features::theme` (`ThemeMode::System`, `FontSize::DEFAULT`)
+ * — un scénario qui les réécrirait décrirait un backend qui n'existe pas.
+ */
+export function anAppearance(overrides: Partial<Appearance> = {}): Appearance {
+    return { mode: "system", fontSize: 13, ...overrides };
+}
+
+/** Un raccourci tel que `menu_shortcuts` le rend — combinaison déjà en glyphes. */
+export function aShortcut(overrides: Partial<Shortcut> = {}): Shortcut {
+    return { group: "terminal", label: "New Tab", keys: "⌘T", ...overrides };
 }
 
 export function aSnapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {

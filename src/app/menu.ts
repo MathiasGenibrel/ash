@@ -1,4 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+import type { Shortcut } from "@/features/settings";
 
 /**
  * Le contrat du menu applicatif, côté webview.
@@ -44,6 +47,19 @@ export type MenuAction =
     | { kind: "previous-tab" }
     /** `Cmd+B` : replie ou déplie la colonne. */
     | { kind: "toggle-sidebar" };
+
+/**
+ * Les raccourcis que le menu déclare, tels que la section `shortcuts` des réglages les liste
+ * (spec §4.4).
+ *
+ * Ils sont **lus** et non écrits : les accélérateurs sont en Rust, dans `src-tauri/src/menu.rs`,
+ * et une table recopiée ici aurait fini par annoncer un raccourci que le menu ne déclare plus.
+ * C'est le même partage que le reste de ce module — il connaît les noms du backend, pas ses
+ * décisions.
+ */
+export function menuShortcuts(): Promise<readonly Shortcut[]> {
+    return invoke<readonly Shortcut[]>("menu_shortcuts");
+}
 
 /** S'abonne aux actions de menu. Rend de quoi se désabonner. */
 export function onMenuAction(handle: (action: MenuAction) => void): Promise<UnlistenFn> {

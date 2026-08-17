@@ -1,4 +1,10 @@
-import type { HookAction, ToolDeclaration, ToolDraft, Verification } from "./contract";
+import type {
+    HookAction,
+    Shortcut,
+    ToolDeclaration,
+    ToolDraft,
+    Verification,
+} from "./contract";
 
 /**
  * Les règles de la liste d'outils : ce qu'une ligne dit, ce que l'en-tête compte, et ce
@@ -329,4 +335,31 @@ export function degradedModeSubject(draft: ToolDraft): string | null {
     if (draft.adapter !== GENERIC_ADAPTER) return null;
     const command = draft.command.trim();
     return command === "" ? "this tool" : command;
+}
+
+/** Un groupe de la section `shortcuts` : le nom du sous-menu, et ses lignes. */
+export interface ShortcutGroup {
+    readonly group: string;
+    readonly shortcuts: readonly Shortcut[];
+}
+
+/**
+ * Les raccourcis, groupés — **dans l'ordre où le backend les envoie**, jamais trié ici.
+ *
+ * L'ordre est celui du menu natif, et c'est tout l'intérêt : on retrouve un raccourci dans
+ * l'écran là où on l'a vu dans le menu. Trier alphabétiquement, ou ranger les groupes selon
+ * une liste écrite ici, donnerait à cette fenêtre un second avis sur une question dont le
+ * menu a déjà décidé — et un groupe ajouté en Rust n'apparaîtrait pas du tout.
+ *
+ * Un même groupe qui reviendrait après un autre est **replié dans le premier** plutôt que
+ * dupliqué : deux titres identiques dans une liste se lisent comme un bug d'affichage.
+ */
+export function groupShortcuts(shortcuts: readonly Shortcut[]): readonly ShortcutGroup[] {
+    const grouped: { group: string; shortcuts: Shortcut[] }[] = [];
+    for (const shortcut of shortcuts) {
+        const opened = grouped.find((candidate) => candidate.group === shortcut.group);
+        if (opened === undefined) grouped.push({ group: shortcut.group, shortcuts: [shortcut] });
+        else opened.shortcuts.push(shortcut);
+    }
+    return grouped;
 }
