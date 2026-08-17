@@ -69,6 +69,12 @@ const MENU_ACTION_EVENT: &str = "ash://menu-action";
 /// `tauri.conf.json` déclare la fenêtre principale sans la nommer : Tauri lui donne alors
 /// `"main"`. C'est la surface de terminal, et la seule qui sache jouer une action d'onglet
 /// — voir [`route`].
+///
+/// Ce nom-là n'est pas seulement une valeur par défaut de bibliothèque : c'est le contrat
+/// avec `src-tauri/capabilities/default.json`, qui accorde ses permissions à `"main"` et à
+/// elle seule — comme `settings.json` le fait pour
+/// [`crate::features::settings::commands::SETTINGS_WINDOW`]. Renommer la fenêtre sans y
+/// toucher lui ôterait toutes ses permissions, donc l'écart ne peut pas passer inaperçu.
 const MAIN_WINDOW: &str = "main";
 
 /// Nombre d'onglets directement adressables — `Cmd+1` … `Cmd+9` (spec §4.4).
@@ -348,21 +354,17 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
         .find(|(_, window)| window.is_focused().unwrap_or(false));
 
     match route(action, focused.as_ref().map(|(label, _)| label.as_str())) {
-        Route::Backend => match action {
-            Action::ChooseTheme(mode) => {
-                theme::choose(app, mode);
-                // **Toujours**, et pas seulement quand le mode a changé : un `CheckMenuItem`
-                // bascule sa propre coche au clic. Cliquer l'entrée déjà cochée la décocherait
-                // donc, et le menu n'aurait plus aucun mode coché.
-                check_only(app, mode);
-            }
-            Action::ResizeFont(step) => theme::resize_terminal_font(app, step),
-            // Une fenêtre est un objet du backend, comme le thème : l'ouvrir depuis la webview
-            // demanderait à la fenêtre principale d'exister pour que la seconde puisse naître.
-            Action::OpenSettings => settings::open(app),
-            // `route` ne rend `Backend` que pour les trois ci-dessus.
-            _ => {}
-        },
+        Route::Backend(Backend::ChooseTheme(mode)) => {
+            theme::choose(app, mode);
+            // **Toujours**, et pas seulement quand le mode a changé : un `CheckMenuItem`
+            // bascule sa propre coche au clic. Cliquer l'entrée déjà cochée la décocherait
+            // donc, et le menu n'aurait plus aucun mode coché.
+            check_only(app, mode);
+        }
+        Route::Backend(Backend::ResizeFont(step)) => theme::resize_terminal_font(app, step),
+        // Une fenêtre est un objet du backend, comme le thème : l'ouvrir depuis la webview
+        // demanderait à la fenêtre principale d'exister pour que la seconde puisse naître.
+        Route::Backend(Backend::OpenSettings) => settings::open(app),
         // L'échec d'émission signifie qu'il n'y a plus de webview à prévenir : rien à
         // rattraper, et surtout pas de panique dans un gestionnaire d'event.
         Route::Webview(label) => {
@@ -371,8 +373,12 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
         // Fermer, et non cacher : la fenêtre de réglages est construite à l'exécution, donc
         // `settings::open` la refait à la demande suivante — c'est la décision de
         // `features::settings::commands::open`, et rien n'a à porter un état « ouverte ».
-        Route::CloseWindow(_) => {
-            if let Some((_, window)) = focused.as_ref() {
+        //
+        // La fenêtre est retrouvée **par le label que `route` a rendu**, et non reprise dans
+        // `focused` : ce gestionnaire obéit à la destination, il ne la redécide pas. Une
+        // fenêtre disparue entre la lecture du focus et ici ne ferme rien.
+        Route::CloseWindow(label) => {
+            if let Some(window) = app.get_webview_window(label) {
                 let _ = window.close();
             }
         }
@@ -404,7 +410,9 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
 ///    n'a demandé.
 fn route(action: Action, focused: Option<&str>) -> Route<'_> {
     match action {
-        Action::ChooseTheme(_) | Action::ResizeFont(_) | Action::OpenSettings => Route::Backend,
+        Action::ChooseTheme(mode) => Route::Backend(Backend::ChooseTheme(mode)),
+        Action::ResizeFont(step) => Route::Backend(Backend::ResizeFont(step)),
+        Action::OpenSettings => Route::Backend(Backend::OpenSettings),
         Action::CloseTab => match focused {
             Some(MAIN_WINDOW) => Route::Webview(MAIN_WINDOW),
             Some(other) => Route::CloseWindow(other),
@@ -420,13 +428,30 @@ fn route(action: Action, focused: Option<&str>) -> Route<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Route<'a> {
     /// Jouée en Rust : c'est un état de l'application, pas un ordre d'affichage.
-    Backend,
+    Backend(Backend),
     /// Émise à **une** webview, nommée par son label — jamais diffusée.
     Webview(&'a str),
-    /// Ferme la fenêtre au premier plan, nommée par son label.
+    /// Ferme la fenêtre nommée par son label — celle du premier plan.
     CloseWindow(&'a str),
     /// Personne ne joue cette action : la surface qu'elle viserait n'est pas devant.
     Nowhere,
+}
+
+/// Ce que le backend a à jouer, quand [`route`] le désigne.
+///
+/// C'est le sous-ensemble d'[`Action`] qui ne part pas vers une webview, redit comme un type
+/// à part **pour que le compilateur le tienne** : la version précédente rendait un
+/// `Route::Backend` nu, et `dispatch` rejouait un `match action` avec un bras muet — une
+/// quatrième action retenue en Rust y aurait été silencieusement ignorée, et rien n'aurait
+/// échoué. Ici, [`route`] doit nommer ce qu'elle demande, et `dispatch` doit le traiter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backend {
+    /// Le thème, retenu par `features::theme` puis annoncé aux deux fenêtres.
+    ChooseTheme(ThemeMode),
+    /// La taille de police du terminal — un réglage de l'application, pas de l'onglet.
+    ResizeFont(FontStep),
+    /// L'ouverture de la fenêtre de réglages, ou son retour au premier plan.
+    OpenSettings,
 }
 
 /// Coche le mode retenu, et lui seul.
@@ -644,7 +669,10 @@ mod tests {
 
         // Then — il reste retenu par le backend, qui repeint les deux fenêtres
         // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md))
-        assert_eq!(destination, Route::Backend);
+        assert_eq!(
+            destination,
+            Route::Backend(Backend::ChooseTheme(ThemeMode::Dark))
+        );
     }
 
     #[test]
