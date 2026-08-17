@@ -2,7 +2,7 @@
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Ash",
     "version": "0.0.0",
-    "identifier": "fr.isee-u.ash",
+    "identifier": "com.mg-studio.ash",
     "build": {
         "beforeDevCommand": "bun run dev",
         "devUrl": "http://localhost:1420",

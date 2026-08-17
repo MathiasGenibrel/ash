@@ -16,6 +16,26 @@ mod menu;
 /// Banc de mesure du spike xterm.js — jetable, retiré avec le spike.
 pub mod spike;
 
+/// Le nom sous lequel Ash se présente — et il n'est **pas** le même en debug.
+///
+/// Ash est le terminal quotidien de son auteur : une instance installée tourne pendant
+/// qu'on en développe une autre. Deux fenêtres du même nom, avec la même icône, c'est une
+/// commande tapée dans la mauvaise, un bug attribué au mauvais binaire, et un agent `qa`
+/// qui rend son verdict sur l'application qu'il n'a pas construite. La compilation en
+/// debug porte donc un autre nom, et
+/// [`tauri.dev.conf.json`](../tauri.dev.conf.json) lui donne l'icône aux couleurs
+/// inversées et son propre identifiant de paquet.
+///
+/// `debug_assertions` est le bon interrupteur parce que c'est **exactement** celui que
+/// `tauri build --debug` laisse allumé et que `tauri build` éteint : le nom compilé ici et
+/// le nom du paquet ne peuvent donc pas diverger.
+#[cfg(debug_assertions)]
+pub const APP_NAME: &str = "Ash-dev";
+
+/// Le nom d'Ash installé. Voir la variante `debug_assertions` juste au-dessus.
+#[cfg(not(debug_assertions))]
+pub const APP_NAME: &str = "Ash";
+
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -407,6 +427,19 @@ pub fn run() -> tauri::Result<()> {
             spike::spike_report
         ])
         .build(tauri::generate_context!())?;
+
+    {
+        // Le titre de la fenêtre vient d'ici plutôt que de la configuration : la
+        // configuration de développement ne surcharge que des valeurs scalaires
+        // (`productName`, `identifier`, l'icône), parce qu'y redéclarer `app.windows`
+        // remplacerait le tableau entier — donc aussi la taille et le style de la barre de
+        // titre, qui n'ont rien à voir avec le nom. Une seule source pour le nom, et c'est
+        // [`APP_NAME`].
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_title(APP_NAME);
+        }
+    }
 
     // Le port de notification n'avait pas d'application à qui parler avant cette ligne. Il
     // la reçoit ici, dans le même créneau que la surveillance git et le socket d'events, et

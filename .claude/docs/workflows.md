@@ -162,8 +162,12 @@ Conventional Commits, en anglais, avec le nom de la feature en portée. Exemple 
 
 ## QA
 
-L'agent `qa` exécute les validations coûteuses : `bun run tauri build`, lancement réel
+L'agent `qa` exécute les validations coûteuses : `bun run package:debug`, lancement réel
 de l'application, parcours touché par la tâche.
+
+Il construit et observe **Ash-dev** — nom distinct, icône aux couleurs inversées,
+identifiant `com.mg-studio.ash.dev` —, jamais l'`Ash` installé qui te sert de terminal
+quotidien. Voir « Ash et Ash-dev sont deux applications » dans `CLAUDE.md`.
 
 Mode : **sur demande**. `/dev` le **propose** en fin de tâche, et tu décides. C'est le
 mode retenu parce qu'un build Tauri complet coûte plusieurs minutes et ne détecte rien

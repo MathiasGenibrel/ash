@@ -161,6 +161,12 @@ abstraction spéculative, et ne le supprime pas.
 - **Tu ne renégocies pas une ADR.** Si ta passe montre qu'une décision est fausse,
   écris-le dans ton compte rendu comme une proposition d'amendement — daté, à côté du
   raisonnement d'origine, jamais à sa place. C'est une décision de l'utilisateur.
+- **Tu ne construis ni ne lances l'`Ash` installé.** L'utilisateur s'en sert comme
+  terminal quotidien. La compilation de développement s'appelle `Ash-dev` — icône aux
+  couleurs inversées, identifiant `com.mg-studio.ash.dev` — et vient de `bun run app` ou
+  `bun run package:debug` ; `bun run package` et `bun run tauri build` rendent un `Ash` qui
+  entre en collision avec le sien. Le nom affiché a une source unique, `APP_NAME` dans
+  `src-tauri/src/lib.rs` : ne le duplique pas au fil d'une passe.
 - Les tests que tu touches suivent la même convention `Given / When / Then` que le reste.
   N'ajoute pas de test sans risque identifié, et ne remplace pas un test de comportement
   par un test de structure.

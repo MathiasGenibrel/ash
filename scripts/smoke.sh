@@ -67,7 +67,9 @@ say "lancement de l'application"
 APP_PID=$!
 
 # On ne cherche jamais le processus par son nom : l'utilisateur peut avoir sa propre
-# instance d'Ash ouverte, et la tuer serait impardonnable.
+# instance d'Ash ouverte, et la tuer serait impardonnable. Le binaire lancé ci-dessus est
+# celui de développement — il se présente comme `Ash-dev`, et n'a ni le nom, ni l'icône, ni
+# l'identifiant de paquet de l'Ash installé (voir CLAUDE.md).
 deadline=$((SECONDS + TIMEOUT))
 shell_seen=""
 while [ $SECONDS -lt $deadline ]; do
