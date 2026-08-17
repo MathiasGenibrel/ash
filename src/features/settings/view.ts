@@ -173,23 +173,46 @@ export function settingsNav(
     });
 }
 
-/** Le panneau de droite — l'un des quatre écrans, jamais deux. */
+/**
+ * Le panneau de droite — l'un des quatre écrans, jamais deux.
+ *
+ * Le `switch` couvre `SettingsSection` **en entier**, et il n'a pas de `default` : c'est ce
+ * qui fait échouer `bun run typecheck` le jour où une cinquième section s'ajoute, à l'endroit
+ * exact où son écran manque. Une chaîne de `if` avec `tools` en dernier recours l'aurait
+ * silencieusement affichée sous le titre d'une autre section — c'est le filet que le
+ * `Record<EmptySection, string>` des sections vides tendait avant qu'elles aient du contenu.
+ */
 export function settingsPanel(
     scene: SettingsScene,
     actions: SettingsRendering,
 ): readonly UiChild[] {
-    if (scene.section === "notifications") return notificationsSection(scene.notifications);
-    if (scene.section === "shortcuts") return shortcutsSection(scene.shortcuts);
-    if (scene.section === "appearance") {
-        return appearanceSection(scene.appearance, {
-            chooseTheme: (mode) => {
-                actions.chooseTheme(mode);
-            },
-            stepFontSize: (step) => {
-                actions.stepFontSize(step);
-            },
-        });
+    switch (scene.section) {
+        case "notifications":
+            return notificationsSection(scene.notifications);
+        case "shortcuts":
+            return shortcutsSection(scene.shortcuts);
+        case "appearance":
+            return appearanceSection(scene.appearance, {
+                chooseTheme: (mode) => {
+                    actions.chooseTheme(mode);
+                },
+                stepFontSize: (step) => {
+                    actions.stepFontSize(step);
+                },
+            });
+        case "tools":
+            return toolsPanel(scene, actions);
     }
+}
+
+/**
+ * La section `tools` et les deux écrans qui la remplacent — le formulaire d'ajout, et la
+ * carte en conflit.
+ *
+ * Ils sont ici et non dans le `switch` parce que ce ne sont pas des sections : la navigation
+ * ne les atteint pas, et on y entre depuis `tools` pour y revenir.
+ */
+function toolsPanel(scene: SettingsScene, actions: SettingsRendering): readonly UiChild[] {
     if (scene.draft !== null) {
         return addForm(
             scene.draft,
