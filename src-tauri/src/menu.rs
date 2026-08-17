@@ -370,30 +370,6 @@ pub struct Shortcut {
     pub keys: String,
 }
 
-/// Les actions que la section `shortcuts` liste, dans l'ordre du menu.
-///
-/// Toutes n'y sont pas, et les deux absences se justifient : les trois thèmes n'ont pas
-/// d'accélérateur, et `SelectTab` n'apparaît qu'**une fois** — la spec §4.4 écrit ses neuf
-/// entrées `Cmd+1 … Cmd+9` sur une seule ligne, et [`shortcut`] la compose depuis les deux
-/// extrémités de la famille plutôt qu'en recopiant les bornes.
-///
-/// Les trois pas de taille de police, eux, gardent une ligne chacun : ils n'ont pas le même
-/// effet, là où les neuf positions d'onglet ont le même à un rang près.
-const LISTED: [Action; 12] = [
-    Action::OpenSettings,
-    Action::NewTab,
-    Action::NewHomeTab,
-    Action::CloseTab,
-    Action::NextTab,
-    Action::PreviousTab,
-    Action::ClearScrollback,
-    Action::SelectTab(1),
-    Action::ToggleSidebar,
-    Action::ResizeFont(FontStep::Bigger),
-    Action::ResizeFont(FontStep::Smaller),
-    Action::ResizeFont(FontStep::Default),
-];
-
 /// Les raccourcis que **cette** application déclare, pour la fenêtre de réglages (spec §4.4).
 ///
 /// La liste est celle du menu, jamais une copie : c'est le sens de la remarque d'en-tête sur
@@ -401,9 +377,25 @@ const LISTED: [Action; 12] = [
 /// groupe git (`Cmd+Ctrl+B`, `G`, `W`, `M`, `I`) n'a pas encore d'entrée de menu, donc pas
 /// encore d'effet, et annoncer un raccourci qui ne fait rien serait exactement le mensonge
 /// que la lecture depuis la source évite.
+///
+/// **Elle se déduit de [`Action::every`], et n'est pas une seconde liste** : une action de plus
+/// dans le menu apparaît donc ici sans qu'on y pense, là où une table à tenir à la main aurait
+/// laissé un raccourci déclaré et pourtant invisible dans l'écran qui prétend les montrer tous.
+/// Ce qui la raccourcit tient en deux règles, pas en une sélection :
+///
+/// - une action sans accélérateur n'a pas de ligne — c'est [`shortcut`] qui le dit, et ça vaut
+///   pour les trois thèmes ;
+/// - la famille des positions d'onglet n'en a qu'**une**, composée de ses deux extrémités
+///   (`Tab 1 … Tab 9`, `⌘1 … ⌘9`) : la spec §4.4 l'écrit ainsi, et neuf lignes identiques à un
+///   rang près feraient perdre les huit autres raccourcis dans la liste. Les trois pas de
+///   taille de police, eux, gardent une ligne chacun — ils n'ont pas le même effet.
 #[tauri::command]
 pub fn menu_shortcuts() -> Vec<Shortcut> {
-    LISTED.into_iter().filter_map(shortcut).collect()
+    Action::every()
+        .into_iter()
+        .filter(|action| !matches!(action, Action::SelectTab(position) if *position != 1))
+        .filter_map(shortcut)
+        .collect()
 }
 
 /// Une ligne de la liste, ou `None` quand l'action n'a pas de raccourci.
@@ -702,6 +694,37 @@ enum Action {
 }
 
 impl Action {
+    /// Toutes les actions du module, **dans l'ordre où le menu les montre**.
+    ///
+    /// C'est la seule énumération de l'espace des actions, et elle a deux lecteurs : la liste
+    /// de raccourcis de la fenêtre de réglages ([`menu_shortcuts`]) et le test d'aller-retour
+    /// des identifiants. Deux tables à tenir à la main auraient divergé à la première action
+    /// ajoutée, et la divergence n'aurait eu aucun symptôme avant qu'on ouvre l'écran.
+    ///
+    /// Les trois familles — positions d'onglet, pas de taille, thèmes — ne sont pas recopiées
+    /// non plus : elles viennent de `DIRECT_TABS`, de `FontStep::ALL` et de `ThemeMode::ALL`,
+    /// donc un quatrième thème entre ici tout seul. Ce qui reste écrit à la main, ce sont les
+    /// huit variantes sans donnée, et c'est le seul endroit du module où elles le sont.
+    ///
+    /// **L'ordre est celui de la barre de menus**, tel que [`build`] l'assemble — Application,
+    /// View, Terminal —, et non l'ordre de déclaration de l'énumération : la fenêtre de réglages
+    /// ne trie pas, précisément pour qu'on retrouve un raccourci là où on l'a vu dans le menu.
+    fn every() -> Vec<Action> {
+        let mut every = vec![Action::OpenSettings, Action::ToggleSidebar];
+        every.extend(FontStep::ALL.map(Action::ResizeFont));
+        every.extend(ThemeMode::ALL.map(Action::ChooseTheme));
+        every.extend([
+            Action::NewTab,
+            Action::NewHomeTab,
+            Action::CloseTab,
+            Action::NextTab,
+            Action::PreviousTab,
+            Action::ClearScrollback,
+        ]);
+        every.extend((1..=DIRECT_TABS).map(Action::SelectTab));
+        every
+    }
+
     fn id(self) -> String {
         match self {
             Action::NewTab => "tab:new".to_owned(),
@@ -751,32 +774,18 @@ mod tests {
     #[test]
     fn given_a_menu_item_identifier_when_it_is_read_back_then_it_names_the_same_action() {
         // Given — l'identifiant est le contrat avec `src/app/menu.ts` ; il traverse
-        // la frontière sous forme de chaîne et rien ne le vérifie à la compilation.
-        let actions = [
-            Action::NewTab,
-            Action::NewHomeTab,
-            Action::CloseTab,
-            Action::ClearScrollback,
-            Action::SelectTab(1),
-            Action::SelectTab(9),
-            Action::NextTab,
-            Action::PreviousTab,
-            Action::ToggleSidebar,
-            Action::ChooseTheme(ThemeMode::Light),
-            Action::ChooseTheme(ThemeMode::Dark),
-            Action::ChooseTheme(ThemeMode::System),
-            Action::ResizeFont(FontStep::Bigger),
-            Action::ResizeFont(FontStep::Smaller),
-            Action::ResizeFont(FontStep::Default),
-            Action::OpenSettings,
-        ];
+        // la frontière sous forme de chaîne et rien ne le vérifie à la compilation. La liste
+        // est celle du module, pas une copie : une action recensée ici et nulle part ailleurs
+        // n'aurait rien prouvé de ce que la fenêtre de réglages lit.
+        let actions = Action::every();
 
         // When
         let round_trip: Vec<Option<Action>> =
             actions.iter().map(|a| Action::from_id(&a.id())).collect();
 
         // Then
-        assert_eq!(round_trip, actions.map(Some).to_vec());
+        let expected: Vec<Option<Action>> = actions.iter().copied().map(Some).collect();
+        assert_eq!(round_trip, expected);
     }
 
     #[test]
@@ -915,6 +924,23 @@ mod tests {
             .iter()
             .any(|row| row.label == "New Tab" && row.keys == "⌘T"));
         assert!(!listed.iter().any(|row| row.label == "Light"));
+    }
+
+    #[test]
+    fn given_the_menu_bar_order_when_the_shortcuts_are_listed_then_the_groups_come_in_that_order() {
+        // Given / When — la fenêtre de réglages ne trie pas : elle groupe dans l'ordre reçu,
+        // pour qu'on retrouve un raccourci là où on l'a vu dans le menu. C'est donc ici que
+        // l'ordre est décidé, et il est celui que `build` assemble — Application, View, Terminal
+        let listed = menu_shortcuts();
+
+        // Then
+        let mut groups: Vec<&str> = Vec::new();
+        for row in &listed {
+            if groups.last() != Some(&row.group.as_str()) {
+                groups.push(&row.group);
+            }
+        }
+        assert_eq!(groups, ["application", "view", "terminal"]);
     }
 
     #[test]

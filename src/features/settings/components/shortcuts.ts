@@ -14,6 +14,13 @@ import { foot, sectionHeader } from "./chrome";
  * croit quand elles ne disent pas la même chose. Les groupes sont les sous-menus, dans
  * l'ordre du menu — voir [`groupShortcuts`](../model.ts).
  *
+ * **La liste est donc plus courte que le tableau de la spec §4.4, et ce n'est pas un oubli** :
+ * la famille git (`⌘⌃B`, `G`, `W`, `M`, `I`) n'a pas encore d'entrée de menu — ni popup de
+ * branches, ni graphe, ni onglet de merge n'existent —, donc pas encore d'accélérateur déclaré.
+ * Rien ne peut être ajouté ici pour combler l'écart : ce serait recopier une combinaison à la
+ * main, et annoncer un raccourci qui ne fait rien. La décision vit du côté qui déclare —
+ * `menu_shortcuts` dans `src-tauri/src/menu.rs`, où elle est écrite.
+ *
  * **Elle est en lecture seule, et le dit.** Aucun bouton, aucun champ : Ash ne sait pas encore
  * rebinder, et la capture d'une combinaison, les conflits et le retour au défaut sont l'issue
  * #22. Un contrôle posé là en attendant promettrait un geste qui ne mène nulle part — et la
