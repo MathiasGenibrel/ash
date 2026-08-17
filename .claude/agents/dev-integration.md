@@ -90,10 +90,31 @@ sonde se lit avec ADR-0005 ouverte.
    cargo fmt --check && cargo clippy -- -D warnings && cargo test
    bun run lint && bun run typecheck && bun test
    ```
+   Si tu as besoin de voir l'application tourner, c'est `bun run app` — **jamais**
+   `bun run tauri dev`, et jamais un build de release. Voir la section suivante.
 6. **Documenter** — si une décision non évidente a été prise, écris-la : en commentaire à
    l'endroit concerné si elle est locale, dans `.claude/docs/` si elle engage le projet.
    Si elle contredit une ADR, voir « Quand une ADR est fausse » plus bas.
 7. **Préparer la PR** — voir la dernière section.
+
+## Ash-dev n'est pas Ash
+
+**L'utilisateur se sert d'Ash comme terminal quotidien : son instance installée tourne
+pendant que tu codes.** Ce que tu construis porte donc un autre nom — `Ash-dev` —, l'icône
+du dépôt **aux couleurs inversées**, et l'identifiant `com.mg-studio.ash.dev`.
+
+- Lancer : `bun run app`. Empaqueter pour de vrai : `bun run package:debug`. Les deux
+  passent `--config src-tauri/tauri.dev.conf.json`, et c'est cette surcharge qui donne les
+  trois. `bun run tauri dev` et `bun run tauri build` la court-circuitent : ils rendent une
+  application nommée `Ash`, qui se dispute le Dock et le centre de notifications avec celle
+  de l'utilisateur. Ne les lance pas.
+- `bun run package` — le bundle installable — n'est **jamais** de ton ressort.
+- Tu ne tues que les processus que tu as lancés, **par leur PID**. Jamais `pkill ash` :
+  l'utilisateur travaille peut-être dedans.
+
+Le nom affiché a une seule source côté code, `APP_NAME` dans `src-tauri/src/lib.rs`, et il
+suit `debug_assertions`. Si une tâche te fait afficher le nom de l'application quelque
+part, lis-le de là — n'écris pas `"Ash"` en dur.
 
 ## Architecture
 

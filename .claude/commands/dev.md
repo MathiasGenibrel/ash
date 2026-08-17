@@ -144,7 +144,11 @@ bun test
 Rapporte les résultats **réels**. Si quelque chose échoue, ne va pas plus loin : renvoie à
 `dev-integration` avec la sortie d'erreur.
 
-Le build complet (`bun run tauri build`) n'est **pas** lancé ici — c'est le rôle de `qa`.
+Le build complet (`bun run package:debug`, qui rend `Ash-dev.app`) n'est **pas** lancé
+ici — c'est le rôle de `qa`. Et `bun run package`, le bundle installable nommé `Ash`,
+n'est lancé par personne dans cette boucle : l'utilisateur s'en sert comme terminal
+quotidien, et le reconstruire dans son dos écraserait l'application dans laquelle il
+travaille.
 
 ## 7. Pull request
 
@@ -167,8 +171,8 @@ gh issue comment <n> --body "…"
 ## 9. QA
 
 Mode **sur demande** : ne lance pas `qa` automatiquement. **Propose-le** en indiquant ce
-qu'il vérifierait — build Tauri complet, lancement réel de l'application, parcours touché
-par la tâche — et laisse l'utilisateur décider.
+qu'il vérifierait — bundle de développement `Ash-dev.app`, lancement réel de
+l'application, parcours touché par la tâche — et laisse l'utilisateur décider.
 
 C'est le mode retenu : un build Tauri coûte plusieurs minutes et ne détecte rien sur une
 tâche qui ne touche pas l'interface. En revanche, **propose-le explicitement** quand la

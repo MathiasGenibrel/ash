@@ -91,8 +91,9 @@ crate ne compilerait même pas dans un conteneur.
 
 ```bash
 bun install                       # dépendances TypeScript
-bun run tauri dev                 # lancer l'app en développement
-bun run tauri build               # bundle macOS
+bun run app                       # lancer l'app en développement  → Ash-dev
+bun run package:debug             # bundle macOS de développement  → Ash-dev.app
+bun run package                   # bundle macOS installable       → Ash.app
 
 bun run lint                      # lint TypeScript
 bun run typecheck                 # tsc --noEmit
@@ -116,6 +117,56 @@ survit à son démarrage **et** qu'il a lancé son shell. Il ouvre une fenêtre 
 quelques secondes — c'est le prix, `run()` crée la fenêtre et c'est là que les pannes de
 câblage sortent. Il ne remplace pas l'agent `qa` : il ne regarde rien, il ne clique nulle
 part.
+
+### Ash et Ash-dev sont deux applications
+
+**Ash est le terminal quotidien de son auteur, et il tourne pendant qu'on le développe.**
+Une compilation de développement qui porterait le même nom et la même icône ferait taper
+une commande dans la mauvaise fenêtre, attribuer un bug au mauvais binaire, et rendre à
+l'agent `qa` un verdict sur une application qu'il n'a pas construite. Les deux identités
+sont donc distinctes, et ça ne se rediscute pas dans une tâche :
+
+| | Installé | Développement |
+|---|---|---|
+| Nom, fenêtre, menu | **Ash** | **Ash-dev** |
+| Icône | celle du dépôt | la **même aux couleurs inversées** (fond clair) |
+| Identifiant de paquet | `com.mg-studio.ash` | `com.mg-studio.ash.dev` |
+| Construit par | `bun run package` | `bun run app`, `bun run package:debug` |
+
+Ce qui les sépare tient en deux fils, et un seul interrupteur — `debug_assertions`, que
+`tauri build --debug` laisse allumé et que `tauri build` éteint :
+
+- `src-tauri/tauri.dev.conf.json` porte le nom du paquet, son identifiant et son icône.
+  C'est une configuration **surchargée**, passée par `--config` dans les scripts `app` et
+  `package:debug` de `package.json`. Elle ne surcharge que des valeurs scalaires : y
+  redéclarer `app.windows` remplacerait le tableau entier, donc aussi la taille de la
+  fenêtre et son style de barre de titre.
+- `APP_NAME`, dans `src-tauri/src/lib.rs`, porte le nom **affiché** — le menu applicatif
+  et le titre de la fenêtre. C'est la seule source de ce nom côté code.
+
+**N'utilise plus `bun run tauri dev` ni `bun run tauri build --debug` :** ils
+court-circuitent le `--config`, et rendent une application nommée `Ash` qui écrase
+l'installée dans le Dock, le centre de notifications et LaunchServices. Passe toujours
+par les scripts.
+
+L'identifiant distinct a un effet de bord voulu : Ash-dev a ses propres autorisations de
+notification et son propre stockage — développer ne touche donc pas aux réglages de l'Ash
+installé.
+
+**Ce que le nom ne sépare pas encore : les hooks.** Le bloc écrit dans un `settings.json`
+nomme le `ash-event` **d'à côté de l'application qui l'a posé**, et les deux builds
+portent le même marqueur `# ash:hook v`. Installer les hooks depuis Ash-dev sur
+`~/.claude` remplace donc ceux de l'Ash installé, qui n'a alors plus d'état d'agent
+jusqu'à réinstallation. Tant qu'un marqueur par build n'existe pas, on n'instrumente
+depuis Ash-dev qu'un dossier de configuration jetable (`CLAUDE_CONFIG_DIR`), jamais celui
+de l'utilisateur.
+
+Deux points restent hors de portée, et il faut les savoir plutôt que s'en étonner :
+`bun run app` produit un binaire **non empaqueté**, donc le Dock l'affiche sous le nom
+`ash` avec une icône générique — c'est le menu applicatif et le titre de la fenêtre qui
+disent `Ash-dev` — et les bannières macOS n'y fonctionnent pas du tout (voir plus haut).
+La seule façon de voir l'icône inversée et de tester les notifications est
+`bun run package:debug`.
 
 Cibler un seul test pendant une itération :
 

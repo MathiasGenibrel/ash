@@ -82,9 +82,12 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
         Some("Cmd+Comma"),
     )?;
 
+    // Le menu applicatif porte le nom du binaire courant, pas un littéral : en debug il dit
+    // « Ash-dev », et c'est souvent le seul endroit où l'on voit d'un coup d'œil laquelle
+    // des deux instances a le clavier (voir [`crate::APP_NAME`]).
     let application = Submenu::with_items(
         app,
-        "Ash",
+        crate::APP_NAME,
         true,
         &[
             &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,

@@ -46,12 +46,49 @@ aucune valeur. Tu ne supprimes **jamais** de worktree.
   ```
 - **Build réel** :
   ```bash
-  bun run tauri build
+  bun run package:debug
   ```
   Plusieurs minutes, et `target/` n'est pas partagé entre worktrees : c'est précisément
   pourquoi cette étape t'est confiée plutôt qu'à `dev-integration`.
 - **Lancement de l'application** et parcours touché par la tâche, quand il est
   observable.
+
+## Tu valides Ash-dev, jamais Ash
+
+**L'utilisateur se sert d'Ash comme terminal quotidien : une instance installée tourne
+pendant que tu travailles.** C'est pour ça que la compilation de développement porte un
+autre nom, une autre icône — la même **aux couleurs inversées**, fond clair — et un autre
+identifiant de paquet :
+
+| | Installé | Ce que tu construis et lances |
+|---|---|---|
+| Nom, fenêtre, menu | **Ash** | **Ash-dev** |
+| Icône | fond sombre | **couleurs inversées**, fond clair |
+| Identifiant | `com.mg-studio.ash` | `com.mg-studio.ash.dev` |
+| Emplacement | `/Applications/Ash.app` | `src-tauri/target/debug/bundle/macos/Ash-dev.app` |
+
+Trois règles en découlent, et aucune n'est négociable :
+
+1. **Ne lance jamais `bun run package` ni `bun run tauri build`.** Ils produisent une
+   application nommée `Ash`, qui vient se disputer le Dock, le centre de notifications et
+   LaunchServices avec celle de l'utilisateur. Ton build, c'est `bun run package:debug`.
+2. **Vérifie sur quoi tu observes avant d'observer.** Une fenêtre nommée `Ash`, ou une
+   icône à fond sombre, n'est **pas** ton build : c'est l'application de l'utilisateur, et
+   tout ce que tu y verrais serait un verdict rendu sur du code que tu n'as pas construit.
+   La fenêtre de ton build dit `Ash-dev`, et son icône est claire.
+   ```bash
+   open -n src-tauri/target/debug/bundle/macos/Ash-dev.app   # -n : ta propre instance
+   ```
+3. **Tu ne fermes, ne tues et ne quittes que ce que tu as lancé.** Jamais un processus
+   trouvé par son nom — `pkill ash` couperait le terminal dans lequel l'utilisateur est en
+   train de travailler.
+
+**Et les hooks ne sont pas séparés, eux.** Le bloc écrit dans un `settings.json` nomme le
+`ash-event` d'à côté de l'application qui l'a posé, et les deux builds portent le même
+marqueur `# ash:hook v`. Instrumenter `~/.claude` depuis Ash-dev **remplace** donc les
+hooks de l'Ash installé, qui perd ses états d'agent. Quand une tâche te demande de
+vérifier une installation de hooks, vise un dossier de configuration jetable via
+`CLAUDE_CONFIG_DIR` — jamais celui de l'utilisateur.
 
 ## Ce qu'un smoke test veut dire sur Ash
 
@@ -66,6 +103,7 @@ de ces zones, la vérification correspondante fait partie de ton travail :
 | Hooks | le `settings.json` visé contient le bloc délimité, le `.bak` existe, et rien n'a bougé hors marqueurs |
 | Git | l'état affiché correspond à ce que `git status` / `git rebase` disent réellement |
 | Rendu | la sortie verbeuse ne fait pas ramer la fenêtre — c'est le risque n°1 du projet, et il se mesure |
+| Notifications | elles n'existent **que** dans un paquet : `bun run package:debug`, jamais `bun run app` |
 
 Tu n'automatises rien de tout ça : il n'y a pas de suite E2E, et c'est un choix assumé
 (`.claude/docs/testing.md`). Tu observes, et tu décris ce que tu as observé.
