@@ -301,9 +301,16 @@ textarea {
  * `display: block` empêche le SVG de reposer sur une ligne de texte — sinon il porterait
  * l'espace sous la ligne de base et la boîte grandirait de deux ou trois pixels, donc la
  * ligne de sidebar avec elle. Ses 12 px de haut restent sous les 16,1 px du nom qui décide
- * de la hauteur d'une ligne : le dessin s'y aligne sans la faire grandir. */
+ * de la hauteur d'une ligne : le dessin s'y aligne sans la faire grandir.
+ *
+ * La taille est décidée **ici et nulle part ailleurs** : `width: 100%` reprend les 12 px de
+ * la boîte au-dessus, et la `viewBox` du tracé en donne la hauteur. Un nombre de pixels
+ * écrit aussi dans `shared/agent-state` devrait s'accorder à la main avec celui-là — et les
+ * quatre caractères, eux, tiennent déjà leur taille du seul CSS. */
 .ash-glyph > svg {
     display: block;
+    width: 100%;
+    height: auto;
 }
 
 .ash-glyph.is-idle {
