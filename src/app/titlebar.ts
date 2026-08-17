@@ -20,10 +20,13 @@
  * `tauri/src/window/scripts/drag.js` : la réécrire ici n'en ferait qu'une seconde version
  * à maintenir.
  *
- * Celle de la fenêtre principale est vide. La maquette y dessine `ash — omelette-web /
- * claude` au centre et un rappel `◧ sidebar ⌘B` à droite ; ni l'un ni l'autre n'est
- * nécessaire pour rendre la fenêtre déplaçable, et « l'agent actif » n'a pas encore de
- * source ([ADR-0007](../../docs/adr/0007-etats-par-hooks.md)).
+ * Celle de la fenêtre principale porte le contexte de l'onglet actif — `ash — omelette-web
+ * / feat/agent-sidebar` —, et c'est la barre d'onglets retirée qui le lui a laissé (spec
+ * §4.2, amendée le 2026-08-17). Il se **met à jour** : le contexte suit les `cd` et les
+ * changements d'onglet, d'où `setTitle` plutôt qu'un texte posé une fois. La règle qui décide
+ * du texte, elle, n'est pas ici mais dans `window-title.ts` : cette bande pose ce qu'on lui
+ * donne, comme la ligne de statut pose son modèle. Le rappel `◧ sidebar ⌘B` que la maquette
+ * dessine à droite n'existe toujours pas.
  *
  * La fenêtre de réglages, elle, porte un titre — `settings — ash`, centré. Il est **posé
  * ici et pas dans la feature** parce que c'est du chrome de fenêtre : les deux fenêtres
@@ -36,21 +39,33 @@
  * ferait retomber sur le contenu — et cette raison vaut pour les deux fenêtres. Deux
  * pixels ne justifient pas deux valeurs.
  */
-export function createTitleBar(title?: string): HTMLElement {
+/** La bande, et de quoi réécrire son titre — rien d'autre ne s'y change. */
+export interface TitleBar {
+    readonly element: HTMLElement;
+    setTitle(title: string): void;
+}
+
+export function createTitleBar(title: string): TitleBar {
     const bar = document.createElement("div");
     bar.className = "ash-titlebar";
     bar.setAttribute("data-tauri-drag-region", "deep");
 
-    if (title !== undefined) {
-        // Trois cellules, dont deux réserves de 160 px : c'est la réserve de gauche qui
-        // dégage les pastilles, et celle de droite — vide — qui rend le titre
-        // **optiquement** centré au lieu de centré sur l'espace restant.
-        bar.classList.add("is-titled");
-        const label = document.createElement("span");
-        label.className = "ash-titlebar-title";
-        label.textContent = title;
-        bar.append(document.createElement("span"), label, document.createElement("span"));
-    }
+    // Trois cellules, dont deux réserves de 160 px : c'est la réserve de gauche qui
+    // dégage les pastilles, et celle de droite — vide — qui rend le titre
+    // **optiquement** centré au lieu de centré sur l'espace restant.
+    bar.classList.add("is-titled");
+    const label = document.createElement("span");
+    label.className = "ash-titlebar-title";
+    label.textContent = title;
+    bar.append(document.createElement("span"), label, document.createElement("span"));
 
-    return bar;
+    return {
+        element: bar,
+        setTitle: (next) => {
+            // Un titre identique n'est pas réécrit : la bande est repeinte au rythme de la
+            // ligne de statut, une fois par seconde, et une écriture par seconde sur un
+            // nœud de texte est du travail que personne n'a demandé.
+            if (label.textContent !== next) label.textContent = next;
+        },
+    };
 }

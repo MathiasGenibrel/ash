@@ -21,7 +21,9 @@ import { createTitleBar } from "./titlebar";
  */
 function mount(root: HTMLElement): void {
     root.classList.add("ash-shell");
-    root.append(createTitleBar("settings — ash"));
+    // Son titre ne bouge jamais : la fenêtre de réglages n'a pas d'onglet actif dont suivre
+    // le contexte.
+    root.append(createTitleBar("settings — ash").element);
     mountSettings(root, tauriSettings);
 }
 

@@ -11,7 +11,7 @@ import {
     elapsedSince as sinceEntering,
     presentAgentState,
 } from "@/shared/agent-state";
-import { tabTitle } from "./tab-bar";
+import { locationLabel } from "@/shared/tab-location";
 import type { TabsState } from "./tabs";
 
 /**
@@ -266,7 +266,10 @@ function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip {
     const position = state.tabs.indexOf(first) + 1;
     const shortcut = position <= DIRECT_TABS ? ` ⌘${position}` : "";
     return {
-        text: `${waiting.length} waiting · ${tabTitle(first, true)}${shortcut}`,
+        // `omelette-web/claude` : le dépôt, puis le programme qui tient l'avant-plan. C'est
+        // ce que le libellé d'onglet portait quand la barre existait, et la colonne repliée
+        // est justement le moment où le contexte manque.
+        text: `${waiting.length} waiting · ${locationLabel(first)}/${first.process}${shortcut}`,
         tone: "accent",
         title: null,
     };

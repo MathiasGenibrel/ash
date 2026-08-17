@@ -7,7 +7,7 @@
  * contraste sur fond papier. Aucune mesure ne change entre les deux.
  *
  * Ils vivent ici, dans le composition root, et pas dans une feature : la sidebar, la
- * barre d'onglets et la ligne de statut les partagent. Les features posent la mise en
+ * bande de titre et la ligne de statut les partagent. Les features posent la mise en
  * forme, l'application pose la palette.
  *
  * **Trois modes, deux palettes, une définition par token.** `data-theme` est posé par
@@ -493,8 +493,8 @@ body {
  * — donc il reste saisissable à droite des pastilles, et `⌘B` ne le change pas.
  *
  * Sa hauteur n'est pas décorative : les pastilles de macOS sont posées à un décalage fixe
- * en haut à gauche de la fenêtre. Une bande plus courte les ferait retomber sur la barre
- * d'onglets, où elles avaleraient des clics.
+ * en haut à gauche de la fenêtre. Une bande plus courte les ferait retomber sur le contenu,
+ * où elles avaleraient des clics.
  *
  * `user-select: none` : sans lui, un glissement qui part de la bande sélectionne du texte
  * dans la fenêtre au lieu de la déplacer. */
@@ -510,7 +510,8 @@ body {
     cursor: default;
 }
 
-/* La bande titrée de la fenêtre de réglages : deux réserves de 160 px et un titre au
+/* La bande **titrée** — les deux fenêtres le sont : la principale porte le contexte de
+ * l'onglet actif, celle des réglages son nom. Deux réserves de 160 px et un titre au
  * milieu. La réserve de gauche dégage les pastilles de macOS ; celle de droite ne sert
  * qu'à centrer optiquement le titre, et c'est sa seule raison d'être. */
 .ash-titlebar.is-titled {
@@ -538,8 +539,8 @@ body {
 }
 
 /* La zone terminal occupe la seconde colonne, sous la bande de titre. Elle ne réserve
- * plus rien en haut : la bande dégage les pastilles pour toute la fenêtre, et une seconde
- * réserve ici décalerait la barre d'onglets sans raison.
+ * rien en haut : la bande dégage les pastilles pour toute la fenêtre, et une seconde
+ * réserve ici décalerait le terminal sans raison.
  *
  * `overflow: hidden` n'est pas cosmétique : le `FitAddon` calcule une grille entière, et
  * le reste — quelques pixels de moins d'une ligne — suffit à faire apparaître les barres
