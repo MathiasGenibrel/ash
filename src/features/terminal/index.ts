@@ -7,14 +7,14 @@
 
 import "./terminal.css";
 
+import type { WorktreeMetadata } from "@/shared/ipc";
 import type { FontSizeSignal, TabId, TabInfo, ThemeSignal } from "./ports";
 import { askToClose } from "./confirm-dialog";
 import { tauriGit } from "./git-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
 import { tauriPty } from "./pty-bridge";
 import { StatusLine, composeStatusLine } from "./status-line";
-import { TabBar } from "./tab-bar";
-import { noTabs, type Step, type TabsState } from "./tabs";
+import { activeTab, noTabs, type Step, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
 
@@ -33,7 +33,27 @@ export { TERMINAL_THEME_TOKENS } from "./theme";
 /** Ce que la feature annonce de ses onglets à qui les affiche autrement — la sidebar. */
 export type TabsListener = (tabs: readonly TabInfo[], activeTabId: TabId | null) => void;
 
-/** Les actions d'onglet, telles que le menu applicatif et la barre les déclenchent. */
+/**
+ * L'onglet actif et l'état git du worktree qui le porte — de quoi dire **où l'on est**.
+ *
+ * Les deux faits sont déjà réunis ici, et une seule fois : la ligne de statut les lit à
+ * chaque rendu, et `metadata` sort du cache qu'un unique abonnement à la surveillance
+ * d'ADR-0011 alimente. La bande de titre de la fenêtre a besoin des mêmes ; les lui faire
+ * relire par un second abonnement donnerait deux vérités qui se croisent
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ *
+ * `metadata` à `null` veut dire « hors dépôt, ou pas encore lu » — la feature ne distingue
+ * pas les deux, et rien de ce qui l'affiche n'a à le faire.
+ */
+export interface ActiveTab {
+    readonly tab: TabInfo;
+    readonly metadata: WorktreeMetadata | null;
+}
+
+/** `null` quand il n'y a aucun onglet — au démarrage, ou après la fermeture du dernier. */
+export type ActiveTabListener = (active: ActiveTab | null) => void;
+
+/** Les actions d'onglet, telles que le menu applicatif et la sidebar les déclenchent. */
 export interface Terminals {
     openTab(origin: Origin): Promise<void>;
     closeActiveTab(): Promise<void>;
@@ -57,18 +77,37 @@ export interface Terminals {
      */
     onTabs(listener: TabsListener): void;
     /**
+     * S'abonne à l'onglet **actif** et à l'état git de son worktree.
+     *
+     * Pour la bande de titre de la fenêtre (spec §4.2), que le composition root relie : la
+     * feature ne la connaît pas plus qu'elle ne connaît la sidebar.
+     *
+     * L'avis part **au changement**, et à l'abonnement : à un changement d'onglet, à un `cd`,
+     * et quand la surveillance git répond. Pas au rythme du compteur de la ligne de statut,
+     * qui bat chaque seconde et ne dit rien de nouveau sur l'endroit où l'on est — un abonné
+     * n'a donc pas à se défendre de ce qu'on lui envoie.
+     *
+     * Un canal séparé d'`onTabs`, et non un élargissement de celui-ci : ce sont deux
+     * questions différentes — *quels onglets, et lequel est actif* pour la sidebar, *où l'on
+     * est* pour la bande de titre. Les fondre obligerait la sidebar à recevoir un état git
+     * dont elle ne fait rien, ou la bande à le relire par un second abonnement à la
+     * surveillance d'ADR-0011, et c'est ce second abonnement qui ferait deux vérités.
+     */
+    onActiveTab(listener: ActiveTabListener): void;
+    /**
      * `⌘B` a replié ou déplié la sidebar.
      *
-     * Repliée, elle ne porte plus le contexte, et la zone terminal le reprend à deux
-     * endroits : le titre d'un onglet devient `omelette-web/claude`, et la ligne de statut
-     * gagne le rappel de l'agent qui attend. Les deux sont la même information déplacée,
-     * d'où un seul appel — deux réglages séparés finiraient par se contredire.
+     * Repliée, elle ne nomme plus les agents, et la ligne de statut reprend celui qui attend
+     * avec son raccourci. C'est tout ce qu'il en reste : le contexte — dépôt et branche — est
+     * dans la bande de titre, qui surplombe les deux colonnes et ne dépend donc pas de `⌘B`.
+     * Du temps de la barre d'onglets, le repli faisait aussi grossir le libellé de chaque
+     * onglet ; la barre est partie avec cette moitié-là (spec §4.2, amendée le 2026-08-17).
      */
     setSidebarCollapsed(collapsed: boolean): void;
 }
 
 /**
- * Monte la barre d'onglets et la pile de terminaux dans `host`.
+ * Monte la pile de terminaux et sa ligne de statut dans `host`.
  *
  * Rien n'est ouvert ici : c'est au composition root de décider que l'application démarre
  * sur un onglet. C'est lui, aussi, qui passe `theme` et `fontSize` : la feature ne détecte
@@ -93,6 +132,10 @@ export function mountTerminals(
     stack.className = "terminal-stack";
 
     const listeners: TabsListener[] = [];
+    const activeListeners: ActiveTabListener[] = [];
+    // Le dernier contexte annoncé, pour ne pas le redire à chaque battement — voir
+    // `announceActive`.
+    let announced: ActiveTab | null = null;
 
     // La ligne de statut parle de l'onglet **actif** et du worktree qui le porte
     // (ADR-0012). Elle ne détient rien : le `cwd` vient de la sonde, l'état git de la
@@ -101,14 +144,50 @@ export function mountTerminals(
     let shown: TabsState = noTabs;
     let sidebarCollapsed = false;
 
+    /**
+     * L'onglet actif et l'état git de son worktree, lus au même instant.
+     *
+     * Un seul endroit les rapproche, et c'est ce qui garantit que la ligne de statut et la
+     * bande de titre ne peuvent pas raconter deux endroits différents.
+     */
+    function currentActive(): ActiveTab | null {
+        const tab = activeTab(shown);
+        if (tab === null) return null;
+        return { tab, metadata: metadata.of(tab.location?.worktreeRoot ?? null) };
+    }
+
     // Déclaration de fonction, et non `const` : le cache l'appelle depuis un rappel posé
     // dans son constructeur, donc avant la fin de ce bloc.
     function drawStatus(): void {
-        const active = shown.tabs.find((tab) => tab.tabId === shown.activeTabId) ?? null;
-        const worktreeRoot = active?.location?.worktreeRoot ?? null;
-        status.render(
-            composeStatusLine(shown, metadata.of(worktreeRoot), sidebarCollapsed, Date.now()),
-        );
+        const seen = currentActive();
+        const known = seen?.metadata ?? null;
+        status.render(composeStatusLine(shown, known, sidebarCollapsed, Date.now()));
+        announceActive(seen);
+    }
+
+    /**
+     * Prévient les abonnés — mais **seulement quand ça a changé**.
+     *
+     * `drawStatus` bat une fois par seconde pour faire avancer la durée de la ligne de statut ;
+     * l'onglet actif, lui, ne change pas à ce rythme. Sans ce filtre, `onActiveTab` promettrait
+     * un changement et livrerait un tic d'horloge, et chaque abonné devrait se défendre de
+     * l'écriture par seconde — une règle à retenir de plus à l'interface, pour rien.
+     *
+     * Comparaison par **référence** : l'onglet vient de l'état que le backend annonce, qui
+     * garde ses objets tant que rien ne bouge (`tabs.ts`), et `metadata` sort d'un cache qui
+     * ne remplace le sien qu'à la réponse d'une surveillance.
+     */
+    function announceActive(seen: ActiveTab | null): void {
+        const unchanged =
+            seen === announced ||
+            (seen !== null &&
+                announced !== null &&
+                seen.tab === announced.tab &&
+                seen.metadata === announced.metadata);
+        if (unchanged) return;
+
+        announced = seen;
+        for (const listener of activeListeners) listener(seen);
     }
 
     const metadata = new WorktreeMetadataStore(tauriGit, drawStatus);
@@ -135,24 +214,14 @@ export function mountTerminals(
         createView: () => new XtermView(stack, theme, fontSize),
         confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
-            bar.render(state);
             shown = state;
             drawStatus();
             for (const listener of listeners) listener(state.tabs, state.activeTabId);
         },
     });
 
-    const bar = new TabBar({
-        select: (tabId) => void workbench.select(tabId),
-        close: (tabId) => void workbench.closeTab(tabId),
-        openInCurrentWorktree: () => void workbench.openTab("current-worktree"),
-        openAtHome: () => void workbench.openTab("home"),
-        clearActive: () => void workbench.clearActive(),
-    });
-
-    bar.render(workbench.tabs);
     drawStatus();
-    host.append(bar.element, stack, status.element);
+    host.append(stack, status.element);
 
     return {
         openTab: (origin) => workbench.openTab(origin),
@@ -167,9 +236,15 @@ export function mountTerminals(
             // suite lui évite d'attendre le prochain `cd` pour afficher quoi que ce soit.
             listener(workbench.tabs.tabs, workbench.tabs.activeTabId);
         },
+        onActiveTab: (listener) => {
+            activeListeners.push(listener);
+            // Même raison que pour `onTabs`, et de la même façon — au seul nouvel abonné :
+            // il arrive après le premier rendu, et une bande de titre qui attendrait le
+            // premier `cd` pour s'écrire serait vide au démarrage.
+            listener(currentActive());
+        },
         setSidebarCollapsed: (collapsed) => {
             sidebarCollapsed = collapsed;
-            if (bar.showLocationInTitles(collapsed)) bar.render(workbench.tabs);
             drawStatus();
         },
     };

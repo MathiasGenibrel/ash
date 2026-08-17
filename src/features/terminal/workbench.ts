@@ -23,7 +23,7 @@ export interface WorkbenchPorts {
     bridge: PtyBridge;
     createView: TerminalViewFactory;
     confirmClose: (tab: TabInfo) => Promise<boolean>;
-    /** Appelé après chaque changement : c'est la barre d'onglets qui écoute. */
+    /** Appelé après chaque changement : la ligne de statut et la sidebar écoutent. */
     onRender: (state: TabsState) => void;
 }
 
@@ -61,7 +61,7 @@ export class TerminalWorkbench {
             });
     }
 
-    /** Ouvre un onglet et le sélectionne. `Cmd+T` / `Cmd+Shift+T`, et le bouton `+`. */
+    /** Ouvre un onglet et le sélectionne. `Cmd+T` / `Cmd+Shift+T`, et le `+` de la sidebar. */
     openTab(origin: Origin): Promise<void> {
         return this.serialize(async () => {
             // `Cmd+T` part du répertoire **courant** de l'onglet actif, pas de celui
@@ -100,7 +100,7 @@ export class TerminalWorkbench {
         });
     }
 
-    /** `Cmd+1` … `Cmd+9`, à partir de 1. Hors de la barre, ne fait rien. */
+    /** `Cmd+1` … `Cmd+9`, à partir de 1. Sur une position vide, ne fait rien. */
     selectAt(position: number): Promise<void> {
         return this.serialize(() => {
             this.state = selectAt(this.state, position);
@@ -118,7 +118,7 @@ export class TerminalWorkbench {
         });
     }
 
-    /** Le clic sur un onglet de la barre. */
+    /** Le clic sur une ligne d'onglet de la sidebar. */
     select(tabId: TabId): Promise<void> {
         return this.serialize(() => {
             this.state = select(this.state, tabId);
@@ -134,7 +134,7 @@ export class TerminalWorkbench {
     }
 
     /**
-     * Ferme un onglet — la croix de la barre, ou `Cmd+W`.
+     * Ferme un onglet — `Cmd+W`, ou le menu Terminal.
      *
      * Si quelque chose tourne dedans, **rien n'est détruit tant que l'utilisateur n'a
      * pas répondu**, et un refus laisse l'onglet exactement comme il était.

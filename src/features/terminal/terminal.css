@@ -1,7 +1,7 @@
 /* Les styles de la feature terminal, à côté du code qui pose ces classes.
  *
  * Ils ne sont pas dans la feuille globale de `app/` : les noms de classe sont écrits en
- * TypeScript dans `tab-bar.ts`, `xterm-view.ts`, `confirm-dialog.ts` et `index.ts`, et
+ * TypeScript dans `status-line.ts`, `xterm-view.ts`, `confirm-dialog.ts` et `index.ts`, et
  * rien ne relie les deux à la compilation. Séparés, un renommage casse silencieusement
  * l'affichage et le composition root porte des règles qu'il ne peut pas relire. Ensemble,
  * la feature emporte sa mise en forme — et le jour où elle disparaît, elle l'emporte avec
@@ -10,72 +10,23 @@
  * Les variables (`--ash-bg`, `--ash-fg`) viennent de `app/styles.css` : le thème est à
  * l'application, la mise en forme est à la feature. */
 
-/* Barre d'onglets en haut, terminaux au milieu, ligne de statut en bas (spec §4.2). */
+/* Terminaux au-dessus, ligne de statut en bas (spec §4.2).
+ *
+ * Deux rangées et non trois : la barre d'onglets qui occupait la première est partie —
+ * la sidebar range déjà les onglets, et mieux (§4.2, amendée le 2026-08-17).
+ *
+ * La position sert d'ancre à la confirmation de fermeture. */
 .terminal-workbench {
     display: grid;
-    grid-template-rows: auto 1fr auto;
-    /* La position sert d'ancre à la confirmation de fermeture. */
+    grid-template-rows: 1fr auto;
     position: relative;
-}
-
-.terminal-bar {
-    display: flex;
-    align-items: stretch;
-    gap: 2px;
-    /* Beaucoup d'onglets ne doivent pas pousser la pile hors de la fenêtre. */
-    overflow-x: auto;
-    scrollbar-width: none;
-    padding: 0 8px 4px;
-}
-
-.terminal-tab {
-    display: flex;
-    align-items: center;
-    border-radius: 6px 6px 0 0;
-    background: color-mix(in srgb, var(--ash-fg) 8%, transparent);
-    /* L'onglet actif est « nettement marqué » : une bordure basse pleine largeur, pas
-     * une nuance de gris qu'on hésite à lire. */
-    border-bottom: 2px solid transparent;
-}
-
-.terminal-tab.is-active {
-    background: color-mix(in srgb, var(--ash-fg) 18%, transparent);
-    border-bottom-color: currentcolor;
-}
-
-.terminal-tab-label,
-.terminal-tab-close,
-.terminal-bar-button {
-    font: inherit;
-    color: inherit;
-    background: none;
-    border: 0;
-    cursor: pointer;
-    padding: 4px 8px;
-    white-space: nowrap;
-}
-
-.terminal-tab-close {
-    padding-left: 0;
-    opacity: 0.6;
-}
-
-.terminal-tab-close:hover,
-.terminal-bar-button:hover {
-    opacity: 1;
-    background: color-mix(in srgb, var(--ash-fg) 12%, transparent);
-    border-radius: 4px;
-}
-
-.terminal-bar-controls {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding-left: 4px;
 }
 
 /* Les onglets se superposent tous à la même place ; seul l'actif est visible
  * (ADR-0003).
+ *
+ * La marge est celle que le bas de la barre d'onglets donnait : sans elle, la première
+ * ligne du terminal collerait à la bande de titre.
  *
  * `isolation: isolate` **contient les couches de xterm.js**, et ce n'est pas une précaution
  * : c'est la correction d'un bug. `position: relative` seul ne crée pas de contexte
@@ -97,7 +48,7 @@
     position: relative;
     isolation: isolate;
     min-height: 0;
-    margin: 0 8px 8px;
+    margin: 8px;
 }
 
 /* --- la ligne de statut (spec §4.2) -----------------------------------------
