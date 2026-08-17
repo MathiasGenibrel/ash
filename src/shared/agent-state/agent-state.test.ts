@@ -63,6 +63,21 @@ describe("les cinq états d'un agent", () => {
         expect(shape).toMatch(ONLY_MOVES_AND_ARCS);
         expect(travel(shape)).toBeGreaterThan(1);
     });
+
+    it("Given the five states, when a state moves, then it is a drawn state — a spun character says nothing", () => {
+        // Given — la règle que les deux champs `shape` et `spinning` doivent respecter
+        // ensemble, et que `styles.css` n'écrit qu'en prose (« ne remets jamais une forme
+        // ronde et pleine derrière cette classe »). Elle est énoncée sur les cinq états, et
+        // non sur `working` nommément : un sixième état y passerait aussi.
+        const states = AGENT_STATES.map((state) => presentAgentState(state));
+
+        // When — les états qui bougent sans porter de tracé : un caractère mis en rotation,
+        // dont la police décide s'il se voit tourner. C'est exactement la panne d'#108.
+        const spunCharacters = states.filter((shown) => shown.spinning && shown.shape === null);
+
+        // Then
+        expect(spunCharacters).toEqual([]);
+    });
 });
 
 /**

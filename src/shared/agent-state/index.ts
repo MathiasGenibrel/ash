@@ -64,7 +64,15 @@ export interface AgentPresentation {
     readonly rail: "none" | "accent" | "error";
     /** Le nom barré : un agent mort ne se lit pas comme un agent vivant. */
     readonly struck: boolean;
-    /** Le glyphe tourne — `working`, pour que le mouvement seul le distingue de `done`. */
+    /**
+     * Le glyphe tourne — `working`, pour que le mouvement seul le distingue de `done`.
+     *
+     * Il ne vaut que pour un état **dessiné** : une rotation ne se voit que sur une forme
+     * sans symétrie de rotation, et aucun des quatre caractères n'en est une (issue #108).
+     * Les deux champs disent donc bien deux choses — l'un la forme, l'autre le mouvement —,
+     * mais le second suppose le premier, et c'est un test qui le tient plutôt qu'un
+     * commentaire : voir « un état qui bouge est un état dessiné ».
+     */
     readonly spinning: boolean;
     /** La classe qui porte la couleur. */
     readonly className: string;
@@ -88,9 +96,6 @@ export interface AgentPresentation {
  * dans le même repère partout.
  */
 const WORKING_ARC = "M12 3a9 9 0 0 1 7.794 13.5";
-
-/** La taille du dessin, en pixels : celle de la boîte de `.ash-glyph`. */
-const GLYPH_SIZE = "12";
 
 const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
     working: {
@@ -203,12 +208,16 @@ export function agentGlyph(state: AgentState): HTMLElement {
  *
  * `aria-hidden` : le mot est déjà porté par la boîte, et un lecteur d'écran dirait
  * « working » deux fois.
+ *
+ * **Aucune taille en pixels ici** : celle de la boîte est décidée une seule fois, par
+ * `.ash-glyph` dans `app/styles.css`, comme celle des quatre caractères — que leur
+ * `font-size` fait suivre. Écrite aussi ici, elle devrait s'accorder à la main avec le CSS,
+ * et une sidebar plus dense laisserait le seul état dessiné à son ancienne taille. Le
+ * dessin remplit sa boîte ; la `viewBox` seule décide de sa hauteur.
  */
 function drawing(shape: string): SVGElement {
     const svg = document.createElementNS(SVG_NAMESPACE, "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("width", GLYPH_SIZE);
-    svg.setAttribute("height", GLYPH_SIZE);
     svg.setAttribute("fill", "none");
     svg.setAttribute("stroke", "currentColor");
     // Plus épais que les glyphes des réglages (1,75) : ceux-là sont lus de près, celui-ci
