@@ -16,6 +16,7 @@
  */
 
 export { addForm, draftFocusKey, type AddFormActions } from "./add-form";
+export { appearanceSection, type AppearanceActions } from "./appearance";
 export { foot, noToolsYet, scaleNote, sectionHeader } from "./chrome";
 export { conflictScreen } from "./conflict";
 export { pathFocusKey, toolCard, type CardActions, type CardContext } from "./card";
@@ -25,5 +26,6 @@ export { duplicateBanner, type DuplicateBannerActions } from "./duplicate-banner
 export { hooksNote, hooksRow, type HooksRowActions } from "./hooks-row";
 export { navColumn } from "./nav";
 export { notificationsSection } from "./notifications";
+export { shortcutsSection } from "./shortcuts";
 export { testDetail, testRow, type TestDetailActions } from "./test-row";
 export { cell, label, para, spacer, tag } from "./atoms";

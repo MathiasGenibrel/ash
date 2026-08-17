@@ -13,12 +13,15 @@
 import "./settings.css";
 
 import type {
+    Appearance,
     FixAction,
     NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
+    Shortcut,
     ToolDraft,
     Verification,
+    WindowPorts,
 } from "./contract";
 import { GENERIC_ADAPTER } from "./model";
 import { createRelaunch, type Timer, windowTimer } from "./relaunch";
@@ -26,13 +29,18 @@ import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
 
 export type {
+    Appearance,
+    FontStep,
     NotificationPermission,
     NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
+    Shortcut,
+    ThemeMode,
     ToolDeclaration,
     ToolDraft,
     Verification,
+    WindowPorts,
 } from "./contract";
 export { tauriSettings } from "./bridge";
 export { RELAUNCH_DELAY, type Timer } from "./relaunch";
@@ -72,10 +80,15 @@ function emptyDraft(adapters: readonly string[]): ToolDraft {
  *
  * `timer` est injecté pour la même raison que l'horloge de `shared/time.rs` : le debounce
  * de 400 ms est une règle, et une règle se prouve sans faire dormir un test.
+ *
+ * `windowPorts` porte ce qui n'appartient pas à `features::settings` — le thème, la taille de
+ * police, la liste des raccourcis. Deux jeux de ports plutôt qu'un, parce que ce sont deux
+ * backends : la fenêtre les **rend** tous les deux et n'en détient aucun.
  */
 export function mountSettings(
     root: HTMLElement,
     ports: SettingsPorts,
+    windowPorts: WindowPorts,
     timer: Timer = windowTimer,
 ): Settings {
     let section: SettingsSection = "tools";
@@ -87,6 +100,16 @@ export function mountSettings(
     let conflict: string | null = null;
     /** Ce que le backend dit des notifications macOS, ou `null` tant qu'il n'a rien dit. */
     let notifications: NotificationsReport | null = null;
+    /**
+     * Le thème et la taille de police que `features::theme` détient.
+     *
+     * Ce n'est pas un état de la fenêtre : c'est une copie de rendu, remplacée à chaque
+     * annonce du backend — le menu Vue en produit autant que cet écran
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    let appearance: Appearance | null = null;
+    /** Les raccourcis que le menu natif déclare. Lus une fois : le menu ne change plus. */
+    let shortcuts: readonly Shortcut[] | null = null;
     /** Ce qui est tapé dans le champ de chemin d'une carte, tant qu'il n'a pas été jugé. */
     const edits = new Map<string, string>();
 
@@ -216,6 +239,17 @@ export function mountSettings(
             conflict = null;
             draw();
         },
+        // Les deux gestes de la section `appearance` **ne changent rien ici** : ils demandent,
+        // et c'est l'annonce du backend qui repose la scène. Poser le nouveau mode au passage
+        // ferait de cette fenêtre un second détenteur de l'apparence, et une bascule refusée
+        // — ou un mode déjà en vigueur, que le backend ne réémet pas — laisserait l'écran
+        // affirmer un choix qui n'a pas eu lieu.
+        chooseTheme: (mode) => {
+            void windowPorts.chooseThemeMode(mode).catch(() => undefined);
+        },
+        stepFontSize: (step) => {
+            void windowPorts.stepTerminalFontSize(step).catch(() => undefined);
+        },
     });
 
     /** Ce qu'`apply` fait d'une correction proposée — un seul champ change à la fois. */
@@ -233,6 +267,26 @@ export function mountSettings(
     async function askNotifications(): Promise<void> {
         try {
             notifications = await ports.notifications();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
+    /** Relit l'apparence. Un refus la laisse à ce qu'elle montrait, comme `notifications`. */
+    async function askAppearance(): Promise<void> {
+        try {
+            appearance = await windowPorts.appearance();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
+    /** Lit les raccourcis du menu, une seule fois. */
+    async function askShortcuts(): Promise<void> {
+        try {
+            shortcuts = await windowPorts.shortcuts();
         } catch {
             return;
         }
@@ -283,6 +337,8 @@ export function mountSettings(
             edits,
             conflict,
             notifications,
+            appearance,
+            shortcuts,
         });
     }
 
@@ -331,6 +387,20 @@ export function mountSettings(
     draw();
     void apply(ports.tools());
     void askNotifications();
+    // L'apparence et les raccourcis sont lus au montage et non à l'ouverture de leur section,
+    // contrairement à l'autorisation macOS : celle-ci se change dans les Réglages Système
+    // pendant qu'Ash tourne, alors que le thème et le menu ne changent que par Ash lui-même —
+    // et le thème qui change, on l'apprend par l'annonce ci-dessous.
+    void askAppearance();
+    void askShortcuts();
+
+    // L'apparence change aussi depuis le menu Vue, pendant que cette fenêtre est ouverte.
+    // C'est le **même** chemin qu'un choix fait ici : les deux surfaces ne peuvent donc pas
+    // se contredire ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+    windowPorts.onAppearanceChanged((changed) => {
+        appearance = changed;
+        draw();
+    });
 
     /**
      * Le **second temps** : le test 4 a répondu, parfois plusieurs secondes après le

@@ -1,12 +1,15 @@
-//! La surface de la feature vers le frontend : une commande, un event.
+//! La surface de la feature vers le frontend : trois commandes, deux events.
 //!
-//! Le frontend ne connaît du thème que ces deux noms et les trois identifiants de mode. Il
-//! **rend** la palette ; le choix, lui, est ici
+//! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode et les
+//! trois pas de taille. Il **rend** la palette ; les choix, eux, sont ici
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 //!
 //! Ce que ce module ne contient **pas**, et c'est délibéré : le menu natif. Ses
 //! identifiants d'entrée et ses coches vivent dans `src-tauri/src/menu.rs`, avec le code
-//! qui construit l'arbre — une feature n'a pas à connaître la forme du menu.
+//! qui construit l'arbre — une feature n'a pas à connaître la forme du menu. C'est pour cette
+//! raison que le **choix** de thème n'a pas de commande ici alors que le pas de taille en a
+//! une : une bascule de thème doit corriger trois coches, un pas de taille ne touche rien du
+//! menu. Voir `menu::theme_set_mode`.
 
 use std::sync::Arc;
 
@@ -55,6 +58,25 @@ pub fn choose<R: Runtime>(app: &AppHandle<R>, mode: ThemeMode) -> bool {
 #[tauri::command]
 pub fn terminal_font_size(state: tauri::State<'_, Arc<ThemeState>>) -> FontSize {
     state.font_size()
+}
+
+/// Le pas de taille de police demandé par la fenêtre de réglages — la **seconde surface** du
+/// même état.
+///
+/// Elle demande un **pas**, comme le menu, et pour la même raison : les bornes et la valeur
+/// courante sont à `FontSize`, et une fenêtre qui enverrait un nombre en deviendrait le
+/// second détenteur ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// Rien n'est rendu à l'appelante : elle apprend la nouvelle taille par
+/// [`TERMINAL_FONT_SIZE_EVENT`], que Tauri diffuse à **toutes** les fenêtres. C'est le même
+/// chemin qu'un `Cmd++`, donc la fenêtre principale réajuste la grille de ses terminaux comme
+/// elle le fait déjà — et les deux surfaces ne peuvent pas diverger.
+///
+/// Contrairement au thème, ce pas-ci n'a aucune coche de menu à corriger : les trois entrées
+/// de « View » ne portent pas d'état, elles jouent un pas.
+#[tauri::command]
+pub fn step_terminal_font_size<R: Runtime>(app: AppHandle<R>, step: FontStep) {
+    resize_terminal_font(&app, step);
 }
 
 /// Joue un pas de taille de police et l'annonce à la webview.

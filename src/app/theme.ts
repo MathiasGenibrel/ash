@@ -68,9 +68,33 @@ export interface ThemeChanges {
     subscribe(listener: () => void): () => void;
 }
 
+/**
+ * Le **mode**, pour qui doit le montrer et non seulement le peindre.
+ *
+ * La fenêtre de réglages en a besoin là où la fenêtre principale se contentait de la palette
+ * (§9) : elle affiche lequel des trois est en vigueur, et propose de le changer. Les deux
+ * choses restent des lectures — le mode est détenu par `features::theme`
+ * ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et [`ThemeModes.choose`] ne
+ * fait que le lui demander : la valeur ne bouge ici qu'au retour de l'annonce, celle que le
+ * menu natif fait déjà partir.
+ *
+ * `subscribe` prévient à chaque changement de **mode**, là où `ThemeChanges` prévient à chaque
+ * changement de **palette** : passer de *système* à *sombre* sur un macOS déjà sombre change
+ * le premier sans toucher au second, et c'est exactement ce que la section `appearance` doit
+ * montrer.
+ */
+export interface ThemeModes {
+    readonly current: ThemeMode;
+    subscribe(listener: (mode: ThemeMode) => void): () => void;
+    /** Demande un mode au backend. Rejette si l'appel n'aboutit pas. */
+    choose(mode: ThemeMode): Promise<void>;
+}
+
 /** Ce que `followThemeMode` rend : de quoi suivre, et de quoi attendre le backend. */
 export interface ThemeBinding {
     changes: ThemeChanges;
+    /** Le mode lui-même, pour la fenêtre qui le montre. */
+    modes: ThemeModes;
     /** Le raccordement au mode que le backend détient. Rejette s'il n'a pas lieu. */
     ready: Promise<void>;
 }
@@ -89,6 +113,7 @@ export interface ThemeBinding {
 export function followThemeMode(root: HTMLElement): ThemeBinding {
     const system = window.matchMedia("(prefers-color-scheme: dark)");
     const listeners = new Set<() => void>();
+    const modeListeners = new Set<(mode: ThemeMode) => void>();
     let mode: ThemeMode = "system";
     let painted: Theme | null = null;
 
@@ -104,18 +129,31 @@ export function followThemeMode(root: HTMLElement): ThemeBinding {
     };
     draw();
 
+    /**
+     * Retient un mode annoncé par le backend, et le fait savoir.
+     *
+     * `draw` est appelée dans tous les cas — elle sait ne rien repeindre pour rien — mais les
+     * abonnés au **mode**, eux, ne sont prévenus que s'il a bougé : la relecture au démarrage
+     * rend presque toujours la valeur déjà posée.
+     */
+    const announce = (next: ThemeMode): void => {
+        const changed = next !== mode;
+        mode = next;
+        draw();
+        if (!changed) return;
+        for (const listener of modeListeners) listener(mode);
+    };
+
     // Basculer macOS de clair à sombre pendant qu'Ash tourne doit changer l'application :
     // en mode *système*, c'est cet abonnement qui le fait, et lui seul.
     system.addEventListener("change", draw);
 
     const ready = (async (): Promise<void> => {
         await listen<unknown>(THEME_MODE_EVENT, (event) => {
-            mode = parseThemeMode(event.payload) ?? mode;
-            draw();
+            announce(parseThemeMode(event.payload) ?? mode);
         });
 
-        mode = parseThemeMode(await invoke<unknown>("theme_mode")) ?? mode;
-        draw();
+        announce(parseThemeMode(await invoke<unknown>("theme_mode")) ?? mode);
     })();
 
     return {
@@ -126,6 +164,22 @@ export function followThemeMode(root: HTMLElement): ThemeBinding {
                     listeners.delete(listener);
                 };
             },
+        },
+        modes: {
+            get current(): ThemeMode {
+                return mode;
+            },
+            subscribe: (listener) => {
+                modeListeners.add(listener);
+                return () => {
+                    modeListeners.delete(listener);
+                };
+            },
+            // Rien n'est posé ici : le backend retient le mode et l'annonce à **toutes** les
+            // fenêtres, et c'est l'annonce qui repasse par `announce`. C'est ce qui fait qu'un
+            // choix venu de cette fenêtre et un choix venu du menu natif suivent le même
+            // chemin, donc qu'ils ne peuvent pas se contredire.
+            choose: (chosen) => invoke<void>("theme_set_mode", { mode: chosen }),
         },
         ready,
     };
