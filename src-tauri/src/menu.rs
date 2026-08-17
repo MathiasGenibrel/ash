@@ -491,7 +491,8 @@ pub fn theme_set_mode<R: Runtime>(app: AppHandle<R>, mode: ThemeMode) {
 ///   avant d'être annoncés ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)) —
 ///   une bascule qui ne vivrait que dans la webview serait perdue à la première seconde
 ///   fenêtre ;
-/// - les actions d'onglet partent vers **une** webview, celle qui détient les onglets ;
+/// - les actions d'onglet partent vers **une** webview, celle qui détient les onglets, et
+///   seulement quand c'est elle qu'on regarde ;
 /// - `Cmd+W` sur une fenêtre sans onglets ferme cette fenêtre-là.
 ///
 /// La règle de destination est dans [`route`], qui est pure et testée : ce gestionnaire
@@ -559,16 +560,29 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, id: &str) {
 /// de terminal (voir l'en-tête de ce module). C'est la même action qui est routée selon la
 /// surface qui la reçoit.
 ///
-/// Trois règles, et une seule est sensible au focus :
+/// Trois règles, et une seule ne regarde pas le focus :
 ///
 /// 1. le thème, la taille de police et l'ouverture des réglages sont des préférences de
-///    **l'application** : elles se jouent en Rust, quelle que soit la fenêtre devant ;
+///    **l'application** : elles ne visent aucune surface, donc elles se jouent en Rust
+///    quelle que soit la fenêtre devant. C'est ce qui laisse la section `appearance` des
+///    réglages repeindre les deux fenêtres et déplacer la coche du menu (#110) ;
 /// 2. `CloseTab` appartient à la fenêtre du **premier plan** — la principale y ferme son
 ///    onglet actif, une autre se ferme elle-même, et un premier plan inconnu ne ferme rien ;
-/// 3. les autres actions d'onglet (`Cmd+T`, `Cmd+K`, `Cmd+1`…`Cmd+9`) vont à la fenêtre
-///    principale, seule surface qui porte des onglets. Elles ne détruisent rien : les
-///    router selon le focus les rendrait sans effet depuis les réglages, ce que personne
-///    n'a demandé.
+/// 3. **toutes** les autres actions d'onglet (`Cmd+T`, `Cmd+⇧T`, `Cmd+K`, `Cmd+B`, `Ctrl+⇥`,
+///    `Cmd+1`…`Cmd+9`) ne partent que si la fenêtre à onglets est celle qu'on regarde.
+///
+/// La troisième règle est la correction de #116, et elle remplace celle de #107, qui ne
+/// rendait sensible au focus que `CloseTab` au motif qu'elle seule détruit quelque chose.
+/// Le critère n'est pas « est-ce destructeur » : `Cmd+K` efface un scrollback hors de vue et
+/// l'utilisateur ne le découvre qu'en revenant, `Cmd+T` ouvre un onglet dans une fenêtre à
+/// laquelle il ne pensait pas. Le critère est « la surface visée est-elle celle qu'on
+/// regarde » — dès qu'Ash pose une surface par-dessus, c'est elle qui a le regard, et le
+/// geste y reste sans effet comme partout ailleurs sur macOS.
+///
+/// **Aucun bras `_`** : chaque action est nommée, donc une action de plus ne compile pas
+/// tant qu'elle n'a pas dit si elle vise une surface ou l'application. C'est la raison qui a
+/// fait naître [`Backend`], et elle vaut au moins autant ici — un bras muet aurait
+/// silencieusement rendu la prochaine action insensible au premier plan, sans rien casser.
 fn route(action: Action, focused: Option<&str>) -> Route<'_> {
     match action {
         Action::ChooseTheme(mode) => Route::Backend(Backend::ChooseTheme(mode)),
@@ -581,7 +595,19 @@ fn route(action: Action, focused: Option<&str>) -> Route<'_> {
             // détruire ce que personne ne regarde.
             None => Route::Nowhere,
         },
-        _ => Route::Webview(MAIN_WINDOW),
+        Action::NewTab
+        | Action::NewHomeTab
+        | Action::NextTab
+        | Action::PreviousTab
+        | Action::ClearScrollback
+        | Action::ToggleSidebar
+        | Action::SelectTab(_) => match focused {
+            Some(MAIN_WINDOW) => Route::Webview(MAIN_WINDOW),
+            // Une autre fenêtre devant, ou aucune : la surface à onglets n'est pas celle
+            // qu'on regarde, et une fenêtre de plus n'y changera rien — elle tombe dans ce
+            // bras d'elle-même.
+            Some(_) | None => Route::Nowhere,
+        },
     }
 }
 
@@ -866,21 +892,95 @@ mod tests {
         );
     }
 
+    /// Les actions qui visent la surface à onglets — tout sauf `CloseTab`, dont le premier
+    /// plan décide autrement, et tout sauf les trois préférences de l'application.
+    fn tab_actions() -> Vec<Action> {
+        let mut actions = vec![
+            Action::NewTab,
+            Action::NewHomeTab,
+            Action::NextTab,
+            Action::PreviousTab,
+            Action::ClearScrollback,
+            Action::ToggleSidebar,
+        ];
+        actions.extend((1..=DIRECT_TABS).map(Action::SelectTab));
+        actions
+    }
+
     #[test]
-    fn given_the_settings_window_in_front_when_a_new_tab_is_asked_then_the_main_window_gets_it() {
-        // Given — la seule action sensible au focus est `CloseTab`, parce qu'elle est la
-        // seule à détruire quelque chose
+    fn given_the_settings_window_in_front_when_a_tab_action_is_asked_then_nothing_is_played() {
+        // Given — les réglages devant, la fenêtre à onglets derrière. C'est la correction de
+        // #116 : le critère n'est pas « est-ce destructeur » mais « la surface visée est-elle
+        // celle qu'on regarde », et un `Cmd+T` frappé ici ne veut pas dire « ouvre un onglet
+        // dans la fenêtre que je ne regarde pas »
+        let focused = Some("settings");
+
+        // When
+        let destinations: Vec<Route<'_>> = tab_actions()
+            .into_iter()
+            .map(|action| route(action, focused))
+            .collect();
+
+        // Then — aucun onglet ouvert, aucun scrollback effacé, aucune sélection changée
+        assert_eq!(destinations, vec![Route::Nowhere; tab_actions().len()]);
+    }
+
+    #[test]
+    fn given_no_window_in_front_when_a_tab_action_is_asked_then_nothing_is_played() {
+        // Given — toutes les fenêtres réduites, le menu applicatif reste atteignable
+        let focused = None;
+
+        // When
+        let destinations: Vec<Route<'_>> = tab_actions()
+            .into_iter()
+            .map(|action| route(action, focused))
+            .collect();
+
+        // Then
+        assert_eq!(destinations, vec![Route::Nowhere; tab_actions().len()]);
+    }
+
+    #[test]
+    fn given_the_main_window_in_front_when_a_tab_action_is_asked_then_it_reaches_the_tabs() {
+        // Given — la fenêtre à onglets est celle qu'on regarde
+        let focused = Some(MAIN_WINDOW);
+
+        // When
+        let destinations: Vec<Route<'_>> = tab_actions()
+            .into_iter()
+            .map(|action| route(action, focused))
+            .collect();
+
+        // Then — tout fonctionne comme avant, et par un envoi **ciblé** : `emit`
+        // diffuserait à toutes les webviews
+        assert_eq!(
+            destinations,
+            vec![Route::Webview(MAIN_WINDOW); tab_actions().len()]
+        );
+    }
+
+    #[test]
+    fn given_the_settings_window_in_front_when_the_font_is_resized_then_it_is_still_played_in_rust()
+    {
+        // Given — la taille de police est une préférence de l'application, comme le thème et
+        // l'ouverture des réglages : elle ne vise aucune surface
         let focused = Some("settings");
 
         // When
         let destinations = [
-            route(Action::NewTab, focused),
-            route(Action::ClearScrollback, focused),
-            route(Action::SelectTab(1), focused),
+            route(Action::ResizeFont(FontStep::Bigger), focused),
+            route(Action::OpenSettings, focused),
         ];
 
-        // Then — `Cmd+T`, `Cmd+K` et `Cmd+1` gardent leur effet sur la fenêtre à onglets
-        assert_eq!(destinations, [Route::Webview("main"); 3]);
+        // Then — #116 ne retire le focus qu'aux actions qui visent une surface ; retirer
+        // celles-ci casserait la section `appearance` des réglages (#110)
+        assert_eq!(
+            destinations,
+            [
+                Route::Backend(Backend::ResizeFont(FontStep::Bigger)),
+                Route::Backend(Backend::OpenSettings),
+            ]
+        );
     }
 
     #[test]
