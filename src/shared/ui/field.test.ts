@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { FOCUS_KEY, field } from "./field";
+import { field } from "./field";
+import { FOCUS_KEY } from "./node";
 
 describe("un champ de saisie", () => {
     it("Given a field being typed into, when its input handler fires, then the view receives the typed value and never an event", () => {

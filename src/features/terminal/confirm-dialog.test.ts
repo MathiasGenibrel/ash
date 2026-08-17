@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "bun:test";
 
-import { find, plainText, type UiElementNode } from "@/shared/ui";
+import { find, FOCUS_KEY, plainText, type UiElementNode } from "@/shared/ui";
 
-import { composeCloseBox, INITIAL_FOCUS } from "./confirm-dialog";
+import { CANCEL_FOCUS_KEY, composeCloseBox } from "./confirm-dialog";
 
 /**
  * La confirmation de fermeture, lue comme une description.
@@ -15,9 +15,19 @@ import { composeCloseBox, INITIAL_FOCUS } from "./confirm-dialog";
  * ne se répond qu'au clavier est un piège, et la spec §4.4 veut tout atteignable à la souris.
  *
  * Ce qui se vérifie ici est ce qui décide : quel bouton répond quoi, et lequel prend le focus.
- * La couche qui empile — le voile, le `z-index`, le canevas — est du CSS, et le dernier test
- * du fichier est ce qui reste vérifiable d'elle sans navigateur.
+ * La couche qui empile — le voile, le `z-index`, le canevas — est du CSS, et les deux derniers
+ * tests du fichier sont ce qui reste vérifiable d'elle sans navigateur.
  */
+
+/** La feuille de la feature, lue comme un texte : c'est tout ce que `bun test` peut en faire. */
+const SHEET = readFileSync(new URL("./terminal.css", import.meta.url), "utf8");
+
+/** Le corps d'une règle dont le sélecteur est exactement celui-là. */
+function ruleBody(selector: string): string {
+    const rule = new RegExp(`^\\${selector}\\s*\\{([^}]*)\\}`, "m").exec(SHEET);
+    if (rule === null) throw new Error(`aucune règle « ${selector} » dans terminal.css`);
+    return rule[1] ?? "";
+}
 
 /** Test Data Builder : la boîte, et ce qu'elle a répondu jusqu'ici. */
 class Dialog {
@@ -89,9 +99,9 @@ describe("la confirmation de fermeture d'un onglet", () => {
         const focused = find(dialog.box, "ash-confirm-cancel");
 
         // Then
-        expect(focused?.attrs[INITIAL_FOCUS]).toBe("");
+        expect(focused?.attrs[FOCUS_KEY]).toBe(CANCEL_FOCUS_KEY);
         expect(plainText(focused ?? dialog.box)).toBe("Annuler");
-        expect(find(dialog.box, "is-danger")?.attrs[INITIAL_FOCUS]).toBeUndefined();
+        expect(find(dialog.box, "is-danger")?.attrs[FOCUS_KEY]).toBeUndefined();
     });
 
     it("Given the question, when the box is composed, then it names what is still running", () => {
@@ -109,8 +119,7 @@ describe("la confirmation de fermeture d'un onglet", () => {
         // de la table de `app/styles.css`, et ce test est ce qui empêche d'en réécrire une à
         // la main. L'ombre est hors du compte : un noir translucide est un repère de
         // profondeur, pas une couleur de la palette — `.terminal-search-box` a le même.
-        const sheet = readFileSync(new URL("./terminal.css", import.meta.url), "utf8");
-        const rules = [...sheet.matchAll(/^\.ash-confirm[^{]*\{([^}]*)\}/gm)].map(
+        const rules = [...SHEET.matchAll(/^\.ash-confirm[^{]*\{([^}]*)\}/gm)].map(
             (match) => match[1] ?? "",
         );
 
@@ -126,5 +135,23 @@ describe("la confirmation de fermeture d'un onglet", () => {
         // Then
         expect(rules.length).toBeGreaterThan(0);
         expect(literals).toEqual([]);
+    });
+
+    it("Given the stylesheet, when the terminal stack is read, then it still contains the layers xterm.js paints inside it", () => {
+        // Given — c'est **la** ligne qui rend la boîte cliquable, et la seule chose du
+        // correctif qu'aucun comportement ne peut attraper : `position: relative` seul ne
+        // crée pas de contexte d'empilement, donc sans `isolation: isolate` le canevas de
+        // liens de xterm.js (`z-index: 2`, sans `pointer-events: none`) remonte au contexte
+        // racine et se repose par-dessus la confirmation. Elle resterait parfaitement
+        // visible, ses deux boutons redeviendraient muets, et `bun test` resterait vert.
+        // Une assertion de texte est tout ce qu'on peut en dire sans navigateur — la même
+        // mécanique que le test des couleurs ci-dessus.
+        const stack = ruleBody(".terminal-stack");
+
+        // When
+        const isolated = /isolation:\s*isolate/.test(stack);
+
+        // Then
+        expect(isolated).toBe(true);
     });
 });
