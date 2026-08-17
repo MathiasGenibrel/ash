@@ -15,7 +15,7 @@ import { planGroup, planRailEntry, planTab, planWorktree } from "./visible";
  * recalcule pas ; c'est ce qui rend la garantie « une ligne repliée ne cache jamais un
  * agent qui attend » testable.
  *
- * Le DOM est reconstruit à chaque rendu, comme la barre d'onglets : quelques dizaines de
+ * Le DOM est reconstruit à chaque rendu, comme la ligne de statut : quelques dizaines de
  * nœuds, contre le risque bien réel d'une colonne qui diverge de l'ordre que le backend
  * détient.
  */

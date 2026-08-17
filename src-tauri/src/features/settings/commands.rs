@@ -378,7 +378,17 @@ pub fn open<R: Runtime>(app: &AppHandle<R>) {
         SETTINGS_WINDOW,
         tauri::WebviewUrl::App(SETTINGS_PAGE.into()),
     )
-    .title("settings — ash")
+    // Le même mot que la bande d'`app/settings.ts`, qui recouvre ce titre dès que la page
+    // est peinte : c'est celui-là qu'on voit, mais celui-ci est ce que macOS met dans
+    // Fenêtre → et dans Mission Control, et deux noms pour une fenêtre seraient un bug.
+    //
+    // `crate::APP_NAME` est lu directement plutôt que passé en paramètre parce que le nom
+    // n'a **qu'une** source (voir sa documentation) et que la faire descendre jusqu'ici
+    // demanderait de la porter dans le routage du menu, qui est le seul appelant. Une
+    // constante de build lue depuis la racine n'est pas une feature qui en connaît une
+    // autre. Si les réglages devaient un jour connaître autre chose de l'identité de
+    // l'application, c'est par injection que ça passerait, pas par un second `crate::`.
+    .title(format!("settings — {}", crate::APP_NAME))
     .inner_size(800.0, 600.0)
     .min_inner_size(800.0, 600.0)
     // Comme la fenêtre principale : les pastilles de macOS sont dans la webview, et c'est

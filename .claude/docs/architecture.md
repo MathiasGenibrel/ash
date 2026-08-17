@@ -28,7 +28,7 @@ src-tauri/src/
 src/
   app/                   composition root du frontend
   features/
-    terminal/            xterm.js, barre d'onglets
+    terminal/            xterm.js, pile de terminaux, ligne de statut
     sidebar/             dépôts, worktrees, agents, subagents
     git/                 popup de branches, graphe, merge, fiche
     settings/            la fenêtre de réglages

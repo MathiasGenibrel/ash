@@ -1,12 +1,14 @@
 import "./styles.css";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
+import { loadAppName } from "./app-name";
 import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
 import { onMenuAction, type MenuAction } from "./menu";
 import { onSelectTab } from "./select-tab";
 import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
+import { windowTitle } from "./window-title";
 
 /**
  * Composition root du frontend.
@@ -19,7 +21,12 @@ import { createTitleBar } from "./titlebar";
  * feature terminal. La feature ne connaît pas le menu, et le menu ne connaît pas la
  * feature.
  */
-function mount(root: HTMLElement, theme: ThemeChanges, fontSize: FontSizeChanges): void {
+function mount(
+    root: HTMLElement,
+    theme: ThemeChanges,
+    fontSize: FontSizeChanges,
+    appName: string,
+): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
     // largeur — c'est ce qui la laisse saisissable à droite des pastilles, et ce qui la
     // rend indifférente à `⌘B`.
@@ -50,15 +57,29 @@ function mount(root: HTMLElement, theme: ThemeChanges, fontSize: FontSizeChanges
         sidebar.render(tabs, activeTabId);
     });
 
+    // La bande de titre dit qui l'on est et où l'on est : `<nom> — <dépôt> / <branche>` de
+    // l'onglet actif (spec §4.2, amendée le 2026-08-17). Elle est reliée ici, comme la
+    // sidebar, et pour la même raison — c'est du chrome de fenêtre, il surplombe les deux
+    // colonnes, et ni la feature terminal ni la bande n'ont à se connaître. La règle qui
+    // compose le texte est dans `window-title.ts` ; ici, il n'y a qu'un câble.
+    //
+    // Le nom traverse en paramètre plutôt que d'être relu à chaque titre : il est constant
+    // pour toute la session, et le relire à chaque changement d'onglet ferait un
+    // aller-retour Tauri par `cd`.
+    const titleBar = createTitleBar(windowTitle(null, appName));
+    terminals.onActiveTab((active) => {
+        titleBar.setTitle(windowTitle(active, appName));
+    });
+
     layout.append(sidebar.element, host);
-    root.append(createTitleBar(), layout);
+    root.append(titleBar.element, layout);
 
     const fail = (error: unknown): void => {
         // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
         // vaut mieux qu'une fenêtre noire dont l'utilisateur ne peut rien conclure.
         const banner = document.createElement("p");
         banner.className = "ash-banner";
-        banner.textContent = `ash : le shell n'a pas démarré — ${
+        banner.textContent = `${appName} : le shell n'a pas démarré — ${
             error instanceof Error ? error.message : String(error)
         }`;
         host.append(banner);
@@ -102,9 +123,9 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
         case "previous-tab":
             return terminals.cycleTab(-1);
         case "toggle-sidebar":
-            // Repliée, la sidebar ne porte plus le contexte : la zone terminal le reprend
-            // — un onglet s'intitule `omelette-web/claude`, et la ligne de statut nomme
-            // l'agent qui attend.
+            // Repliée, la sidebar ne nomme plus les agents : la ligne de statut reprend
+            // celui qui attend. Le contexte — dépôt et branche — n'a rien à reprendre, il
+            // est dans la bande de titre, que `⌘B` ne touche pas.
             terminals.setSidebarCollapsed(sidebar.toggleCollapsed());
             return Promise.resolve();
     }
@@ -157,6 +178,14 @@ theme.ready.catch(() => undefined);
 const fontSize = followTerminalFontSize();
 fontSize.ready.catch(() => undefined);
 
+// Le nom de l'application, lui, est **attendu** au lieu d'être posé par défaut puis
+// corrigé : il est constant pour toute la session, donc il n'y a pas de « valeur d'attente »
+// honnête à écrire dans la bande — un `Ash` remplacé par `Ash-dev` au premier aller-retour
+// serait un clignotement, et sur le seul mot qui distingue les deux applications. La
+// demande part **ici**, avant l'attente de la police, pour que les deux se recouvrent : le
+// démarrage ne s'allonge donc pas d'un aller-retour, il attend le plus lent des deux.
+const appName = loadAppName();
+
 // **Rien ne se monte avant que JetBrains Mono ne soit retombée.** Une vue de terminal
 // mesure sa cellule une fois, à sa construction, et ne la remesure jamais : la construire
 // trop tôt fige la largeur d'une face de repli, et donne des glyphes rognés à une lamelle
@@ -178,6 +207,10 @@ void document.fonts.ready.finally(() => {
             root.textContent = `spike — ÉCHEC : ${error instanceof Error ? error.message : String(error)}`;
         });
     } else {
-        mount(root, theme.changes, fontSize.changes);
+        // `loadAppName` ne rejette jamais — elle se replie sur un nom plutôt que de laisser
+        // une fenêtre sans rien —, donc il n'y a pas d'échec à rattraper ici.
+        void appName.then((name) => {
+            mount(root, theme.changes, fontSize.changes, name);
+        });
     }
 });

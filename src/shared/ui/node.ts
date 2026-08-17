@@ -2,7 +2,7 @@
  * La description d'un morceau d'interface — **une valeur, pas un élément**.
  *
  * Le dépôt a un motif, tenu partout sauf à un endroit : on compose un modèle, puis on le
- * peint (`terminal/status-line.ts`, `terminal/tab-bar.ts`, `sidebar/tree.ts`). Ce qui
+ * peint (`terminal/status-line.ts`, `sidebar/view.ts`, `sidebar/tree.ts`). Ce qui
  * décide vit dans des fonctions pures, testées ; ce qui touche le DOM ne décide rien.
  * `features/settings/view.ts` a rompu ce motif — 986 lignes, 79 `document`, aucune
  * fonction pure — et trois passes architecturales d'affilée y ont trouvé une règle

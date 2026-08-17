@@ -43,7 +43,7 @@ apporte trois choses par-dessus :
 
 | Terme | Définition |
 |---|---|
-| **Onglet** | Une surface sélectionnable dans la barre d'onglets. Un onglet **shell** porte un PTY ; un onglet **outil** (merge) n'en a pas. |
+| **Onglet** | Une surface sélectionnable depuis la sidebar (§4.2 — il n'y a pas de barre d'onglets). Un onglet **shell** porte un PTY ; un onglet **outil** (merge) n'en a pas. |
 | **Worktree** | Un arbre de travail git — le dossier dans lequel on est. Unité de rattachement des onglets. Émergent, pas déclaré. |
 | **Dépôt** | Le groupe qui réunit les worktrees d'un même projet. Nœud d'affichage, sans onglets en propre. |
 | **Agent** | Un onglet shell dont le processus en avant-plan est un outil reconnu. Un onglet devient un agent, puis redevient un shell. |
@@ -132,12 +132,14 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
 ([ADR-0003](./adr/0003-zone-terminal-unique.md)).
 
 ```
-┌─ sidebar (≈240px) ──┬─ onglets ──────────────────────────────┐
-│ workspaces          │  claude │ bun dev │ merge · 2 │ +      │
-│ 1 waiting / 7 agents├────────────────────────────────────────┤
-│                     │ $ claude                               │
-│ ▾ omelette-web      │ > implémente la sonde cwd              │
-│   3 worktrees       │ ⁘ Baking… (15m22s · esc to interrupt)  │
+┌─ bande de titre ─────────────────────────────────────────────┐
+│       ash — omelette-web / feat/agent-sidebar                │
+├─ sidebar (≈240px) ──┬─ terminal ─────────────────────────────┤
+│ workspaces          │ $ claude                               │
+│ 1 waiting / 7 agents│ > implémente la sonde cwd              │
+│                     │ ⁘ Baking… (15m22s · esc to interrupt)  │
+│ ▾ omelette-web      │                                        │
+│   3 worktrees       │                                        │
 │   ▾ feat/agent-side…│                                        │
 │      ·sidebar       │                                        │
 │     ● claude 15m22s │                                        │
@@ -147,7 +149,7 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
 │                     │                                        │
 │ ▾ ash-core     main ├─ panneau bas (repliable) ──────────────┤
 │   ◉ codex  waiting  │ graph │ worktrees · 4 │ conflicts      │
-│                     │ …                                      │
+│ + tab            ⌘T │ …                                      │
 ├─────────────────────┴────────────────────────────────────────┤
 │ ~/dev/wt/…-sidebar │ feat/agent-sidebar +3 ~1 ⌘⌃B │ claude · │
 │                                              working 15m22s  │
@@ -175,10 +177,35 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
 ### 4.2 Zone terminal
 
 - Affiche l'onglet sélectionné, et lui seul.
-- Barre d'onglets en haut, onglet actif nettement marqué, bouton `+`. Un onglet outil
-  (merge) y figure comme les autres, avec son compte restant (`merge · 2`).
-- Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent. La
-  branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
+- **Pas de barre d'onglets** — amendé le 2026-08-17. La barre dessinée par la
+  maquette a été construite au J1, puis retirée : à l'usage, elle ne dit rien que
+  la sidebar ne dise mieux. La sidebar range les onglets sous leur worktree et
+  leur dépôt (§4.1), marque l'actif, porte leur état et leur durée ; la barre les
+  remettait à plat, sans contexte, et son libellé — le nom du processus en
+  avant-plan — était le moins lisible des deux.
+  - Ce que la barre portait, et où c'est passé : sélectionner un onglet → la
+    sidebar ; en ouvrir un → le `+` de son pied et `⌘T` ; fermer, ouvrir à `~`,
+    effacer le scrollback → le menu natif, qui les portait déjà. La règle de
+    §4.4 est donc tenue sans elle : ces actions restent atteignables à la souris.
+  - **L'onglet outil du merge** (§7.4) n'a plus de barre où figurer. Il devient
+    une ligne de la sidebar, sous le worktree dont le rebase s'est arrêté, avec
+    son compte restant (`merge · 2`). C'est sa place naturelle : l'opération
+    appartient à un worktree, pas à la fenêtre. À réaliser avec #30, pas avant.
+- **Bande de titre** : la seule prise de la fenêtre porte, centré,
+  `<application> — <dépôt> / <branche>` de l'onglet actif. C'est le contexte que
+  la barre d'onglets ne portait qu'à demi, et il reste visible sidebar repliée
+  (`⌘B`) — ce qui remplace le repli qui faisait grossir le libellé d'un onglet.
+  - **Le premier mot est le nom de l'application, pas un mot de la maquette** —
+    amendé le 2026-08-17. La maquette écrivait `ash` en minuscules ; ce mot est
+    abandonné, parce qu'il aurait fait deux noms pour une même application. Ce
+    qui s'écrit est `APP_NAME`, seule source du nom affiché : donc `Ash` dans
+    l'application installée, et `Ash-dev` dans une compilation de développement.
+    Ce n'est pas un effet de bord mais le but — Ash est le terminal quotidien de
+    son auteur, une instance installée tourne pendant qu'on en développe une
+    autre, et la bande de titre est l'endroit où l'œil les sépare. La fenêtre de
+    réglages suit la même règle : `settings — <application>`.
+- Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent.
+  La branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
 - Le rendu est délégué à xterm.js. Le terminal doit rester pleinement fonctionnel
   pour les TUI plein écran (c'est le cas de tous les outils visés).
 - **Police par défaut : JetBrains Mono**, embarquée avec l'application — pas chargée

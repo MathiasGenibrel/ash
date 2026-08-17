@@ -36,6 +36,30 @@ pub const APP_NAME: &str = "Ash-dev";
 #[cfg(not(debug_assertions))]
 pub const APP_NAME: &str = "Ash";
 
+/// Rend [`APP_NAME`] à la webview, qui l'écrit dans ses bandes de titre.
+///
+/// **Une commande, et non un event ni un signal**, contrairement au thème et à la taille de
+/// police : ceux-là changent pendant la session — un menu, un `⌘+` — et ont donc besoin
+/// d'un aller *et* d'un retour. Le nom, lui, est fixé à la compilation par
+/// `debug_assertions` : il ne peut pas changer tant que le processus tourne. Un signal
+/// n'aurait jamais rien à diffuser, et le seul abonnement qu'il vendrait serait un
+/// abonnement mort.
+///
+/// **Elle vit dans le composition root plutôt que dans une feature**, ce qui est
+/// l'exception dans ce crate. Aucune feature n'est propriétaire de l'identité de
+/// l'application : `theme` détient une préférence d'apparence, `settings` une fenêtre et
+/// des blocs de hooks, `pty` des onglets — aucune ne *décide* du nom. Le loger dans l'une
+/// d'elles lui ferait revendiquer ce qu'elle ne tient pas, et donnerait au lecteur une
+/// seconde adresse pour un fait qui n'en a qu'une (voir `CLAUDE.md` : `APP_NAME` est la
+/// seule source du nom affiché). Elle reste ici parce qu'elle est exactement aussi grosse
+/// que la constante qu'elle rend : pas d'état, pas de chemin faillible, rien à tester.
+/// **Une deuxième commande dans ce fichier serait le signe qu'une feature manque**, pas
+/// une invitation à en ajouter une troisième.
+#[tauri::command]
+fn app_name() -> &'static str {
+    APP_NAME
+}
+
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -400,6 +424,7 @@ pub fn run() -> tauri::Result<()> {
         .menu(move |app| menu::build(app, theme_mode))
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
+            app_name,
             features::pty::commands::pty_open,
             features::pty::commands::pty_write,
             features::pty::commands::pty_resize,
