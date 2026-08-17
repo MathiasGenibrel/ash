@@ -20,7 +20,7 @@
  * `tauri/src/window/scripts/drag.js` : la réécrire ici n'en ferait qu'une seconde version
  * à maintenir.
  *
- * Celle de la fenêtre principale porte le contexte de l'onglet actif — `ash — omelette-web
+ * Celle de la fenêtre principale porte le contexte de l'onglet actif — `Ash — omelette-web
  * / feat/agent-sidebar` —, et c'est la barre d'onglets retirée qui le lui a laissé (spec
  * §4.2, amendée le 2026-08-17). Il se **met à jour** : le contexte suit les `cd` et les
  * changements d'onglet, d'où `setTitle` plutôt qu'un texte posé une fois. La règle qui décide
@@ -28,7 +28,7 @@
  * donne, comme la ligne de statut pose son modèle. Le rappel `◧ sidebar ⌘B` que la maquette
  * dessine à droite n'existe toujours pas.
  *
- * La fenêtre de réglages, elle, porte un titre — `settings — ash`, centré. Il est **posé
+ * La fenêtre de réglages, elle, porte un titre — `settings — Ash`, centré. Il est **posé
  * ici et pas dans la feature** parce que c'est du chrome de fenêtre : les deux fenêtres
  * ont la même bande, la même hauteur et la même réserve pour les pastilles de macOS, et
  * les écrire deux fois les ferait diverger au premier pixel.

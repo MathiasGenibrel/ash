@@ -192,9 +192,18 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     son compte restant (`merge · 2`). C'est sa place naturelle : l'opération
     appartient à un worktree, pas à la fenêtre. À réaliser avec #30, pas avant.
 - **Bande de titre** : la seule prise de la fenêtre porte, centré,
-  `ash — <dépôt> / <branche>` de l'onglet actif. C'est le contexte que la barre
-  d'onglets ne portait qu'à demi, et il reste visible sidebar repliée (`⌘B`) —
-  ce qui remplace le repli qui faisait grossir le libellé d'un onglet.
+  `<application> — <dépôt> / <branche>` de l'onglet actif. C'est le contexte que
+  la barre d'onglets ne portait qu'à demi, et il reste visible sidebar repliée
+  (`⌘B`) — ce qui remplace le repli qui faisait grossir le libellé d'un onglet.
+  - **Le premier mot est le nom de l'application, pas un mot de la maquette** —
+    amendé le 2026-08-17. La maquette écrivait `ash` en minuscules ; ce mot est
+    abandonné, parce qu'il aurait fait deux noms pour une même application. Ce
+    qui s'écrit est `APP_NAME`, seule source du nom affiché : donc `Ash` dans
+    l'application installée, et `Ash-dev` dans une compilation de développement.
+    Ce n'est pas un effet de bord mais le but — Ash est le terminal quotidien de
+    son auteur, une instance installée tourne pendant qu'on en développe une
+    autre, et la bande de titre est l'endroit où l'œil les sépare. La fenêtre de
+    réglages suit la même règle : `settings — <application>`.
 - Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent.
   La branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
 - Le rendu est délégué à xterm.js. Le terminal doit rester pleinement fonctionnel

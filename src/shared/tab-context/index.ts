@@ -5,7 +5,7 @@ import type { GitHead, TabInfo, WorktreeMetadata } from "@/shared/ipc";
  *
  * « Contexte » est le mot du produit : c'est celui que la spec §4.2 emploie pour ce que la
  * barre d'onglets ne portait qu'à demi et que la bande de titre porte depuis
- * (`ash — <dépôt> / <branche>`). Les deux moitiés sont ici parce qu'elles sont **la même
+ * (`<application> — <dépôt> / <branche>`). Les deux moitiés sont ici parce qu'elles sont **la même
  * phrase** : les écrire à deux endroits, c'est accepter que la bande de titre et la ligne de
  * statut finissent par désigner deux endroits différents — exactement ce que le canal unique
  * d'`ActiveTab` cherche à empêcher.
