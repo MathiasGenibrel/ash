@@ -28,7 +28,7 @@ import {
 /**
  * La fenêtre de réglages : **un assemblage au-dessus, une classe mince en dessous**.
  *
- * C'est le motif du dépôt (`terminal/status-line.ts`, `terminal/tab-bar.ts`,
+ * C'est le motif du dépôt (`terminal/status-line.ts`, `sidebar/view.ts`,
  * `sidebar/tree.ts`) : on compose un modèle, puis on le peint. Ce fichier l'avait rompu —
  * 986 lignes, 79 `document`, aucune fonction pure — et trois passes architecturales
  * d'affilée y ont trouvé une règle produit cachée, toujours la même famille : **la vue qui

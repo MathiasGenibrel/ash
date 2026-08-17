@@ -7,6 +7,7 @@ import { onSelectTab } from "./select-tab";
 import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
+import { windowTitle } from "./window-title";
 
 /**
  * Composition root du frontend.
@@ -50,8 +51,18 @@ function mount(root: HTMLElement, theme: ThemeChanges, fontSize: FontSizeChanges
         sidebar.render(tabs, activeTabId);
     });
 
+    // La bande de titre dit où l'on est : `ash — <dépôt> / <branche>` de l'onglet actif
+    // (spec §4.2, amendée le 2026-08-17). Elle est reliée ici, comme la sidebar, et pour la
+    // même raison — c'est du chrome de fenêtre, il surplombe les deux colonnes, et ni la
+    // feature terminal ni la bande n'ont à se connaître. La règle qui compose le texte est
+    // dans `window-title.ts` ; ici, il n'y a qu'un câble.
+    const titleBar = createTitleBar(windowTitle(null));
+    terminals.onActiveTab((active) => {
+        titleBar.setTitle(windowTitle(active));
+    });
+
     layout.append(sidebar.element, host);
-    root.append(createTitleBar(), layout);
+    root.append(titleBar.element, layout);
 
     const fail = (error: unknown): void => {
         // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
@@ -102,9 +113,9 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
         case "previous-tab":
             return terminals.cycleTab(-1);
         case "toggle-sidebar":
-            // Repliée, la sidebar ne porte plus le contexte : la zone terminal le reprend
-            // — un onglet s'intitule `omelette-web/claude`, et la ligne de statut nomme
-            // l'agent qui attend.
+            // Repliée, la sidebar ne nomme plus les agents : la ligne de statut reprend
+            // celui qui attend. Le contexte — dépôt et branche — n'a rien à reprendre, il
+            // est dans la bande de titre, que `⌘B` ne touche pas.
             terminals.setSidebarCollapsed(sidebar.toggleCollapsed());
             return Promise.resolve();
     }

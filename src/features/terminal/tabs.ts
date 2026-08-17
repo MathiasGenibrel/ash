@@ -24,7 +24,7 @@ export const noTabs: TabsState = { tabs: [], activeTabId: null };
  * Quand l'onglet actif n'est plus là — fermé à la main, ou shell sorti tout seul — le
  * suivant prend sa place ; à défaut, le précédent. C'est la règle des navigateurs et
  * d'iTerm2, et elle a une raison : fermer plusieurs onglets d'affilée laisse le curseur
- * là où il est, sans le renvoyer au début de la barre. Le repli vers la gauche évite le
+ * là où il est, sans le renvoyer en tête de liste. Le repli vers la gauche évite le
  * seul cas où « le suivant » n'existe pas, celui du dernier onglet.
  */
 export function adopt(state: TabsState, tabs: readonly TabInfo[]): TabsState {
@@ -115,11 +115,11 @@ export type Step = 1 | -1;
  *
  * Le voisinage se lit dans l'ordre du backend, le seul qui existe
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : c'est aussi celui que
- * la barre affiche et que `Cmd+1`…`Cmd+9` numérote, donc « suivant » désigne bien ce que
- * l'utilisateur voit à droite.
+ * la sidebar affiche et que `Cmd+1`…`Cmd+9` numérote, donc « suivant » désigne bien ce que
+ * l'utilisateur voit dessous.
  *
  * Le bouclage n'est pas un détail d'implémentation : sans lui, le raccourci s'arrêterait
- * au bout de la barre, et il faudrait regarder où l'on est avant de savoir s'il va faire
+ * au bout de la liste, et il faudrait regarder où l'on est avant de savoir s'il va faire
  * quelque chose. Avec un seul onglet, il ne bouge donc rien — l'onglet suivant du seul
  * onglet, c'est lui-même.
  */
