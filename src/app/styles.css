@@ -498,26 +498,22 @@ body {
  *
  * `user-select: none` : sans lui, un glissement qui part de la bande sélectionne du texte
  * dans la fenêtre au lieu de la déplacer. */
+/* Trois cellules : deux réserves de 160 px et un titre au milieu. La réserve de gauche
+ * dégage les pastilles de macOS ; celle de droite ne sert qu'à centrer optiquement le titre,
+ * et c'est sa seule raison d'être.
+ *
+ * Une seule forme, et plus de modificateur `is-titled` : les deux fenêtres portent un titre —
+ * la principale le contexte de l'onglet actif, celle des réglages son nom. */
 .ash-titlebar {
     height: 38px;
-    display: flex;
+    display: grid;
+    grid-template-columns: 160px 1fr 160px;
     align-items: center;
-    padding: 0 12px;
     background: var(--ash-bg-chrome);
     border-bottom: 1px solid var(--ash-border);
     user-select: none;
     -webkit-user-select: none;
     cursor: default;
-}
-
-/* La bande **titrée** — les deux fenêtres le sont : la principale porte le contexte de
- * l'onglet actif, celle des réglages son nom. Deux réserves de 160 px et un titre au
- * milieu. La réserve de gauche dégage les pastilles de macOS ; celle de droite ne sert
- * qu'à centrer optiquement le titre, et c'est sa seule raison d'être. */
-.ash-titlebar.is-titled {
-    display: grid;
-    grid-template-columns: 160px 1fr 160px;
-    padding: 0;
 }
 
 .ash-titlebar-title {

@@ -1,18 +1,11 @@
-import type {
-    AgentState,
-    GitHead,
-    GitOperation,
-    GitStatus,
-    TabInfo,
-    WorktreeMetadata,
-} from "@/shared/ipc";
+import type { AgentState, GitOperation, GitStatus, TabInfo, WorktreeMetadata } from "@/shared/ipc";
 import {
     agentGlyph,
     elapsedSince as sinceEntering,
     presentAgentState,
 } from "@/shared/agent-state";
-import { locationLabel } from "@/shared/tab-location";
-import type { TabsState } from "./tabs";
+import { branchOf, locationLabel } from "@/shared/tab-context";
+import { activeTab, type TabsState } from "./tabs";
 
 /**
  * La ligne de statut de la zone terminal (spec §4.2) : `cwd` · branche et état de l'arbre ·
@@ -103,7 +96,7 @@ export function composeStatusLine(
     sidebarCollapsed: boolean,
     now: number,
 ): StatusLineModel {
-    const tab = state.tabs.find((candidate) => candidate.tabId === state.activeTabId) ?? null;
+    const tab = activeTab(state);
 
     // L'état vide (bloc `1d`) : pas d'onglet, donc pas de répertoire, pas de dépôt et pas
     // d'agent. Toute la ligne passe en `faint` — il n'y a rien à hiérarchiser.
@@ -154,14 +147,15 @@ function elapsedSince(tab: TabInfo, now: number): string | null {
  *
  * Trois cas que la maquette ne dessine pas, et qui sont tranchés ici :
  *
- * - **`HEAD` détaché** — la maquette ne montre qu'une branche. On écrit `@a1b2c3d` :
- *   court, et impossible à confondre avec un nom de branche. Le mot « detached » est dans
- *   l'infobulle, pas dans une ligne de 25 px.
+ * - **`HEAD` détaché** — la maquette ne montre qu'une branche. Le mot à écrire vient de
+ *   `shared/tab-context`, qui le rend `@a1b2c3d` — court, et impossible à confondre avec un
+ *   nom de branche. Ce qui est tranché **ici**, c'est que « detached » va dans l'infobulle et
+ *   pas dans une ligne de 25 px.
  * - **Une opération en cours** — elle prend un morceau à elle, après la branche, dans la
  *   couleur la plus forte de la ligne. Elle ne remplace pas la branche : pendant un rebase
- *   `HEAD` est détaché, et c'est `head-name` — donc `operation.branch` — qui dit encore où
- *   l'on travaille. La place, elle, vient du `flex: 1` qui poussait le rappel à droite.
- *   L'accent n'est **pas** utilisé : il reste au seul état qui attend l'utilisateur.
+ *   `HEAD` est détaché, et `shared/tab-context` sait que c'est `operation.branch` qui dit
+ *   encore où l'on travaille. La place, elle, vient du `flex: 1` qui poussait le rappel à
+ *   droite. L'accent n'est **pas** utilisé : il reste au seul état qui attend l'utilisateur.
  * - **`status` à `null`** — `git` absent, lent ou en échec. Ce n'est pas un arbre propre :
  *   on écrit `+? ~?`, qui garde la grammaire des compteurs et se lit comme l'absence
  *   qu'il est. Un arbre réellement propre, lui, n'affiche rien après sa branche.
@@ -170,12 +164,19 @@ function gitSegment(metadata: WorktreeMetadata | null): readonly StatusChip[] {
     if (metadata === null) return [{ text: "no repo", tone: "faint", title: null }];
 
     const operation = metadata.operation;
-    const where = operation?.branch ?? null;
+
+    // La branche est nommée par `shared/tab-context`, comme dans la bande de titre : c'est la
+    // même phrase à deux endroits de la fenêtre, et deux lectures finiraient par désigner deux
+    // branches. Ce qui reste d'ici, c'est l'infobulle — un détachement mérite une phrase, et
+    // une bande de titre n'a pas d'infobulle.
+    const branch = branchOf(metadata);
 
     const chips: StatusChip[] = [
-        where !== null
-            ? { text: where, tone: "text", title: null }
-            : headChip(metadata.head),
+        {
+            text: branch.label,
+            tone: "text",
+            title: branch.detachedAt === null ? null : `detached HEAD at ${branch.detachedAt}`,
+        },
     ];
 
     if (operation !== null) {
@@ -184,12 +185,6 @@ function gitSegment(metadata: WorktreeMetadata | null): readonly StatusChip[] {
 
     chips.push(...counts(metadata.status));
     return chips;
-}
-
-function headChip(head: GitHead): StatusChip {
-    return head.kind === "branch"
-        ? { text: head.name, tone: "text", title: null }
-        : { text: `@${head.commit}`, tone: "text", title: `detached HEAD at ${head.commit}` };
 }
 
 /** `rebasing onto main · 2/5`, `applying · 1/3`, `merging feat`. */

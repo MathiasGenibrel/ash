@@ -53,7 +53,6 @@ export function createTitleBar(title: string): TitleBar {
     // Trois cellules, dont deux réserves de 160 px : c'est la réserve de gauche qui
     // dégage les pastilles, et celle de droite — vide — qui rend le titre
     // **optiquement** centré au lieu de centré sur l'espace restant.
-    bar.classList.add("is-titled");
     const label = document.createElement("span");
     label.className = "ash-titlebar-title";
     label.textContent = title;
@@ -62,9 +61,10 @@ export function createTitleBar(title: string): TitleBar {
     return {
         element: bar,
         setTitle: (next) => {
-            // Un titre identique n'est pas réécrit : la bande est repeinte au rythme de la
-            // ligne de statut, une fois par seconde, et une écriture par seconde sur un
-            // nœud de texte est du travail que personne n'a demandé.
+            // Un titre identique n'est pas réécrit. Ce n'est pas une défense contre un
+            // appelant bavard — `onActiveTab` ne parle qu'au changement — mais contre le fait
+            // que tout changement d'onglet ne change pas le titre : un agent qui démarre
+            // renouvelle l'onglet sans déplacer ni le dépôt ni la branche.
             if (label.textContent !== next) label.textContent = next;
         },
     };
