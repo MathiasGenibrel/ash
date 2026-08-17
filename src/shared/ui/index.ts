@@ -31,11 +31,12 @@ export {
     type EmptyStateBuilder,
     type UiTone,
 } from "./feedback";
-export { field, FOCUS_KEY, type FieldBuilder, type Submission } from "./field";
+export { field, type FieldBuilder, type Submission } from "./field";
 export { column, row, type Stack } from "./layout";
 export { badge, glyph, type BadgeBuilder, type GlyphBuilder } from "./marks";
 export {
     ElementBuilder,
+    FOCUS_KEY,
     SVG_NAMESPACE,
     text,
     toNode,

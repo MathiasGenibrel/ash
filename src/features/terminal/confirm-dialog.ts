@@ -16,19 +16,20 @@
  * seule chose qui marchait encore quand ses boutons avalaient la souris.
  */
 
-import { button, paint, row, text, type UiComponent } from "@/shared/ui";
+import { button, FOCUS_KEY, paint, row, text, type UiComponent } from "@/shared/ui";
 
 /** La réponse de l'utilisateur : `true` détruit le PTY, `false` ne touche à rien. */
 export type CloseAnswer = (closeIt: boolean) => void;
 
 /**
- * L'attribut du bouton qui reçoit le focus à l'ouverture.
+ * La clé du bouton qui reçoit le focus à l'ouverture.
  *
- * Il est ici et pas dans le peintre pour la même raison que la clé de focus du champ de
- * recherche : c'est la description qui sait **lequel** des deux boutons ne détruit rien, et
- * un test le vérifie. Le peintre, lui, ne fait que suivre le marqueur.
+ * Elle est dans la description et pas dans le peintre pour la même raison que celle du champ
+ * de recherche : c'est la description qui sait **lequel** des deux boutons ne détruit rien,
+ * et un test le vérifie. Le peintre, lui, ne fait que suivre la clé — et c'est
+ * [la même](../../shared/ui/node.ts) que celle de la recherche, pas un second protocole.
  */
-export const INITIAL_FOCUS = "data-initial-focus";
+export const CANCEL_FOCUS_KEY = "close-confirm-cancel";
 
 /** La classe du bouton qui n'a d'effet que de refermer. Lue par `terminal.css`, et par le test. */
 const CANCEL_CLASS = "ash-confirm-cancel";
@@ -47,7 +48,7 @@ export function composeCloseBox(what: string, answer: CloseAnswer): UiComponent 
     // vient d'apparaître ne doit pas tuer un processus.
     const cancel = button("Annuler")
         .class(CANCEL_CLASS)
-        .attr(INITIAL_FOCUS, "")
+        .focusKey(CANCEL_FOCUS_KEY)
         .onClick(() => {
             answer(false);
         });
@@ -107,6 +108,6 @@ export function askToClose(host: HTMLElement, what: string): Promise<boolean> {
         document.addEventListener("keydown", onKey, true);
         host.append(overlay);
 
-        overlay.querySelector<HTMLElement>(`[${INITIAL_FOCUS}]`)?.focus();
+        overlay.querySelector<HTMLElement>(`[${FOCUS_KEY}="${CANCEL_FOCUS_KEY}"]`)?.focus();
     });
 }
