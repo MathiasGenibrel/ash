@@ -49,9 +49,21 @@ qu'aucun événement d'enfant n'atteint l'état de l'onglet. Un sous-agent n'est
 `agents/subagents.rs`. Une ligne fille finie reste visible dix secondes ; la durée est un
 réglage, injecté au superviseur, que la fenêtre de réglages ne porte pas encore.
 
-Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, et la
-reconnaissance d'une commande d'agent par son nom (ADR-0006), sans laquelle Ash ne distingue
-pas `claude` de `vim` dans l'avant-plan d'un onglet.
+**Les agents sont désormais reconnus, pas déclarés** (ADR-0006) : la sonde rend le chemin de
+l'exécutable, son nom et son `argv[0]`, et `features/agents/providers.rs` les compare — dans
+cet ordre, du plus fiable au moins fiable — à une table embarquée. Le chemin passe avant le
+nom parce que l'installateur officiel de Claude Code pose un binaire nommé d'après sa version
+(`~/.local/share/claude/versions/2.1.234`) : une table de noms ne matcherait jamais
+l'installation la plus courante. `settings` concilie la table avec les entrées déclarées à la
+main, qui **l'emportent**, et dit si la configuration de l'outil porte le marqueur
+`# ash:hook v`. Reconnaître est de la **lecture** : aucun fichier écrit, aucune autorisation
+macOS, aucun scan de disque. Un agent reconnu mais non instrumenté porte un marqueur discret
+dans la sidebar, dont le geste ouvre les réglages sur cet outil — la sidebar informe, l'écran
+agit (ADR-0010), et rien ne s'écrit sans un geste explicite.
+
+Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, et le
+branchement de cette reconnaissance sur la machine à états — c'est elle qui donnera enfin son
+producteur à `AgentEvent::AgentStarted` (voir `agents/supervisor.rs`).
 
 **L'entrée dans un état est datée, et la ligne de statut affiche sa durée** (`working ·
 15m22s`). Ce qui traverse la frontière est une **date absolue** — `TabInfo.stateSince`, en

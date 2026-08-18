@@ -27,6 +27,15 @@ export interface SidebarPorts {
     /** Le `+` du pied. */
     newTab(): void;
     /**
+     * Le marqueur « non instrumenté » d'une ligne d'agent : ouvrir les réglages sur cet outil.
+     *
+     * La sidebar **informe** ; c'est l'écran qui agit
+     * ([ADR-0010](../../../docs/adr/0010-sidebar-informe-terminal-agit.md)). Elle ne sait ni
+     * écrire un fichier, ni ce qu'instrumenter veut dire — elle nomme l'outil, et passe la
+     * main.
+     */
+    instrument(command: string, adapter: string): void;
+    /**
      * L'heure qu'il est, pour les durées des lignes de sous-agents.
      *
      * Injectée plutôt que lue, comme partout ailleurs où le temps entre dans le produit :
@@ -78,6 +87,9 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         },
         newTab: () => {
             ports.newTab();
+        },
+        instrument: (command, adapter) => {
+            ports.instrument(command, adapter);
         },
     });
 

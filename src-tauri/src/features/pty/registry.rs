@@ -3,13 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::features::agents::{AgentState, Presence, Subagent};
+use crate::features::agents::{AgentState, Presence, ProgramIdentity, RecognizedAgent, Subagent};
 use crate::shared::time::UnixMillis;
 
 use super::agent_states::AgentStates;
 use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
+use super::recognition::AgentRecognition;
 use super::session::{PtySession, PtySpawner, PtySpec};
 use super::terminal_env::terminal_env;
 use crate::features::probe::{Probe, TabObservation, TabWatch};
@@ -41,6 +42,13 @@ pub struct PtyRegistry {
     probe: Arc<dyn Probe>,
     /// La résolution `cwd` → worktree + dépôt, injectée elle aussi (voir [`super::locate`]).
     locator: Arc<dyn WorktreeLocator>,
+    /// Qui reconnaît l'outil qui tient l'avant-plan d'un onglet (voir [`super::recognition`]).
+    ///
+    /// Injectée pour la même raison que l'état : la table des outils connus appartient à
+    /// `agents` et les entrées déclarées à `settings`
+    /// ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)). Le
+    /// registre demande, il ne déduit pas — il ne connaît pas un seul nom d'outil.
+    recognition: Arc<dyn AgentRecognition>,
     /// Qui décide de l'état d'agent d'un onglet (voir [`super::agent_states`]).
     ///
     /// Le registre pose la question et transporte la réponse ; il ne la calcule pas. C'est
@@ -137,7 +145,25 @@ pub struct TabInfo {
     /// répertoire où l'onglet en est, pas celui d'où il est parti.
     pub cwd: String,
     /// Le programme qui tient l'avant-plan — le nom que la sidebar et la barre affichent.
+    ///
+    /// C'est le nom de **l'outil** quand il en est un : un Claude Code posé par son
+    /// installateur officiel tourne sous un exécutable nommé `2.1.234`, et l'onglet doit
+    /// dire `claude` — aujourd'hui comme après la mise à jour suivante
+    /// ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)).
     pub process: String,
+    /// L'outil reconnu dans l'avant-plan, et ce que sa configuration porte. `None` pour un
+    /// shell à son invite comme pour un `vim`.
+    ///
+    /// Il ne bouge **pas** d'une passe de sonde à l'autre tant que le même programme tient
+    /// l'avant-plan : la fiche est comparée entière pour décider d'émettre (voir
+    /// [`Self::state_since`]), et un champ qui changerait toutes les 300 ms réveillerait la
+    /// sidebar entière en permanence.
+    ///
+    /// Il ne porte **aucun état d'agent** : reconnaître un outil n'est pas savoir ce qu'il
+    /// fait ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)). Ce qu'il dit en plus
+    /// du nom, c'est si la configuration de l'outil porte le marqueur d'Ash — donc pourquoi
+    /// cet onglet ne montrera jamais `waiting` tant qu'elle ne le porte pas.
+    pub agent: Option<RecognizedAgent>,
     pub state: AgentState,
     /// Quand l'onglet est **entré** dans cet état, en millisecondes depuis l'époque Unix.
     ///
@@ -186,12 +212,14 @@ impl PtyRegistry {
         spawner: Box<dyn PtySpawner>,
         probe: Arc<dyn Probe>,
         locator: Arc<dyn WorktreeLocator>,
+        recognition: Arc<dyn AgentRecognition>,
         agents: Arc<dyn AgentStates>,
     ) -> Self {
         Self {
             spawner,
             probe,
             locator,
+            recognition,
             agents,
             revision: AtomicU64::new(0),
             tabs: Mutex::new(Vec::new()),
@@ -413,17 +441,33 @@ impl PtyRegistry {
 
         // Un onglet que la sonde ne sait pas décrire garde le nom de son shell : rien ne
         // permet d'affirmer qu'un programme y tourne, ni le contraire.
-        let (process, presence) = seen.map_or_else(
-            || (tab.shell_name.clone(), Presence::Unknown),
+        let (mut process, presence, program) = seen.map_or_else(
+            || (tab.shell_name.clone(), Presence::Unknown, None),
             |seen| {
-                let presence = if seen.foreground.is_shell {
-                    Presence::Prompt
-                } else {
-                    Presence::Program
+                let foreground = seen.foreground;
+                if foreground.is_shell {
+                    return (foreground.name, Presence::Prompt, None);
+                }
+                let program = ProgramIdentity {
+                    executable: foreground.executable,
+                    name: foreground.name.clone(),
+                    argv0: foreground.argv0,
                 };
-                (seen.foreground.name, presence)
+                (foreground.name, Presence::Program, Some(program))
             },
         );
+
+        // Le registre **demande** aussi l'identité de l'outil : il ne connaît pas un seul
+        // nom de commande, et la table qui les porte vit dans `agents` (ADR-0006). Un shell
+        // à son invite n'est jamais un agent, donc on ne demande rien pour lui.
+        let agent = program
+            .as_ref()
+            .and_then(|program| self.recognition.recognize(program));
+        if let Some(recognized) = &agent {
+            // `claude`, et non `2.1.234` : c'est l'outil que la ligne nomme, pas le fichier
+            // que son installateur a posé.
+            process.clone_from(&recognized.command);
+        }
 
         // Le registre **demande** l'état, il ne le déduit pas : ce que la sonde voit est une
         // présence, et une présence n'est pas un état d'agent (ADR-0007). La date d'entrée
@@ -435,6 +479,7 @@ impl PtyRegistry {
             location: self.locate(&tab.place, &cwd),
             cwd: cwd.display().to_string(),
             process,
+            agent,
             state: agents.status.state,
             state_since: agents.status.since,
             subagents: agents.subagents,
@@ -558,10 +603,11 @@ fn shell_name(spec: &PtySpec) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::agents::Instrumented;
     use crate::features::probe::{Pid, ProbeError, ProcessInfo};
     use crate::features::pty::fakes::{
-        located_registry, observed_registry, registry, spec, supervised_registry, CountingLocator,
-        FakeAgentStates, FakeSpawner, SpecBuilder,
+        located_registry, observed_registry, recognizing_registry, registry, spec,
+        supervised_registry, CountingLocator, FakeAgentStates, FakeSpawner, SpecBuilder,
     };
     use std::os::fd::RawFd;
     use std::sync::atomic::Ordering;
@@ -697,6 +743,70 @@ mod tests {
             ids(&registry),
             vec!["B".to_owned(), "C".to_owned(), "D".to_owned()]
         );
+    }
+
+    #[test]
+    fn given_a_tab_running_a_recognized_tool_when_the_frontend_lists_the_tabs_then_the_line_names_the_tool_and_not_its_binary(
+    ) {
+        // Given — l'installateur officiel de Claude Code pose un binaire dont le nom de
+        // fichier est le numéro de version, et c'est ce nom que l'onglet affichait
+        // (ADR-0006). Le registre **demande** l'identité, il ne la déduit pas
+        let (registry, probe, _locator, _agents, recognition) = recognizing_registry("/dev/ash");
+        let binary = "/Users/ash/.local/share/claude/versions/2.1.234";
+        recognition.knows(binary, "claude", Instrumented::Missing);
+        registry.open(spec(), "A".to_owned()).unwrap();
+        probe.hand_over_to_binary(binary);
+
+        // When
+        let described = registry.tabs().unwrap().into_iter().next();
+
+        // Then — la ligne dit `claude`, et l'écran sait que rien ne l'instrumente
+        let tab = described.expect("l'onglet existe");
+        assert_eq!(tab.process, "claude".to_owned());
+        assert_eq!(
+            tab.agent,
+            Some(RecognizedAgent {
+                command: "claude".to_owned(),
+                adapter: "claude-code".to_owned(),
+                instrumented: Instrumented::Missing,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_tab_running_a_recognized_tool_when_the_probe_loop_passes_again_then_nothing_is_announced(
+    ) {
+        // Given — la fiche d'onglet est comparée **entière** pour décider d'émettre
+        // `ash://tab-changed`. Une reconnaissance qui changerait d'une passe à l'autre —
+        // parce qu'elle relirait un fichier, ou daterait sa réponse — ferait redessiner la
+        // sidebar entière trois fois par seconde
+        let (registry, probe, _locator, _agents, recognition) = recognizing_registry("/dev/ash");
+        let binary = "/Users/ash/.local/share/claude/versions/2.1.234";
+        recognition.knows(binary, "claude", Instrumented::Missing);
+        registry.open(spec(), "A".to_owned()).unwrap();
+        probe.hand_over_to_binary(binary);
+        registry.changes().unwrap();
+
+        // When
+        let again: Vec<TabInfo> = (0..10).flat_map(|_| registry.changes().unwrap()).collect();
+
+        // Then
+        assert_eq!(again, Vec::new());
+    }
+
+    #[test]
+    fn given_a_tab_at_its_prompt_when_the_frontend_lists_the_tabs_then_no_tool_is_named() {
+        // Given — un onglet posé à son invite n'est pas un agent, et ne le devient qu'en
+        // lançant quelque chose (ADR-0006)
+        let (registry, _probe, _locator, _agents, recognition) = recognizing_registry("/dev/ash");
+        recognition.knows("/bin/bash", "claude", Instrumented::Installed);
+        registry.open(spec(), "A".to_owned()).unwrap();
+
+        // When
+        let described = registry.tabs().unwrap().into_iter().next();
+
+        // Then — la reconnaissance n'est même pas consultée pour un shell
+        assert_eq!(described.and_then(|tab| tab.agent), None);
     }
 
     #[test]
@@ -1107,6 +1217,7 @@ mod tests {
                 release: Mutex::new(wait_for_release),
             }),
             Arc::new(CountingLocator::default()),
+            Arc::new(super::super::recognition::NoRecognition),
             Arc::new(FakeAgentStates::default()),
         ));
         registry.open(spec(), "A".to_owned()).unwrap();
@@ -1158,8 +1269,13 @@ mod tests {
             Ok(ProcessInfo {
                 pid,
                 name: "bash".to_owned(),
+                executable: PathBuf::from("/bin/bash"),
                 cwd: PathBuf::from("/dev/ash"),
             })
+        }
+
+        fn argv0(&self, _pid: Pid) -> Option<String> {
+            None
         }
     }
 }

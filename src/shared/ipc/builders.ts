@@ -3,6 +3,8 @@ import type {
     GitHead,
     GitOperation,
     GitStatus,
+    Instrumented,
+    RecognizedAgent,
     Subagent,
     TabInfo,
     WorktreeMetadata,
@@ -41,6 +43,8 @@ export class TabBuilder {
     private stateSince = 0;
     /** Aucun sous-agent : le cas de l'écrasante majorité des onglets. */
     private subagents: Subagent[] = [];
+    /** Aucun outil reconnu : un shell à son invite, ou un programme quelconque (ADR-0006). */
+    private agent: RecognizedAgent | null = null;
 
     static create(): TabBuilder {
         return new TabBuilder();
@@ -54,6 +58,18 @@ export class TabBuilder {
     running(process: string, state: AgentState = "working"): this {
         this.process = process;
         this.state = state;
+        return this;
+    }
+
+    /**
+     * Le backend a reconnu un outil dans l'avant-plan de cet onglet.
+     *
+     * Le nom de l'outil **est** ce que la ligne affiche : c'est le backend qui le pose dans
+     * `process`, et un scénario qui parle d'un agent reconnu décrit les deux ensemble.
+     */
+    runningAgent(command: string, instrumented: Instrumented = "installed", adapter = "claude-code"): this {
+        this.process = command;
+        this.agent = { command, adapter, instrumented };
         return this;
     }
 
@@ -120,6 +136,7 @@ export class TabBuilder {
             tabId: this.tabId,
             cwd: this.cwd,
             process: this.process,
+            agent: this.agent,
             state: this.state,
             stateSince: this.stateSince,
             subagents: this.subagents,

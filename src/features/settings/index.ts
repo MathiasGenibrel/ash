@@ -15,6 +15,7 @@ import "./settings.css";
 import type {
     Appearance,
     FixAction,
+    FocusedTool,
     NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
@@ -23,13 +24,14 @@ import type {
     Verification,
     WindowPorts,
 } from "./contract";
-import { GENERIC_ADAPTER } from "./model";
+import { focusedDraft, GENERIC_ADAPTER } from "./model";
 import { createRelaunch, type Timer, windowTimer } from "./relaunch";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
 
 export type {
     Appearance,
+    FocusedTool,
     FontStep,
     NotificationPermission,
     NotificationsReport,
@@ -42,7 +44,7 @@ export type {
     Verification,
     WindowPorts,
 } from "./contract";
-export { tauriSettings } from "./bridge";
+export { revealTool, tauriSettings } from "./bridge";
 export { RELAUNCH_DELAY, type Timer } from "./relaunch";
 export { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 export {
@@ -283,6 +285,36 @@ export function mountSettings(
         draw();
     }
 
+    /**
+     * Se pose sur l'outil que la sidebar a désigné (ADR-0006).
+     *
+     * **Après** la liste, et non en parallèle : sans elle, un outil déjà déclaré ne serait
+     * pas reconnu comme tel et l'écran ouvrirait une saisie en double. Un refus ne fait
+     * rien — la fenêtre s'ouvre alors comme elle s'ouvre toujours.
+     */
+    function focusTool(focused: FocusedTool): void {
+        section = "tools";
+        const prefilled = focusedDraft(focused, snapshot);
+        if (prefilled !== null) {
+            draft = prefilled;
+            draftVerification = null;
+            failure = null;
+            // La séquence part tout de suite, comme après un choix d'adaptateur : la saisie
+            // est complète, et rien n'est encore écrit chez l'utilisateur.
+            relaunch.now(DRAFT);
+        }
+        draw();
+    }
+
+    async function askFocus(): Promise<void> {
+        try {
+            const focused = await ports.pendingFocus();
+            if (focused !== null) focusTool(focused);
+        } catch {
+            // Aucune demande lisible : la fenêtre s'ouvre comme elle s'ouvre toujours.
+        }
+    }
+
     /** Lit les raccourcis du menu, une seule fois. */
     async function askShortcuts(): Promise<void> {
         try {
@@ -385,7 +417,8 @@ export function mountSettings(
     });
 
     draw();
-    void apply(ports.tools());
+    // La demande de la sidebar se lit **après** la liste : voir [`focusTool`].
+    void apply(ports.tools()).then(askFocus);
     void askNotifications();
     // L'apparence et les raccourcis sont lus au montage et non à l'ouverture de leur section,
     // contrairement à l'autorisation macOS : celle-ci se change dans les Réglages Système
@@ -416,6 +449,9 @@ export function mountSettings(
      * l'attendait. La garder ferait montrer un bouton `install` allumé sur une entrée que
      * le backend refuse désormais.
      */
+    // Le même geste quand la fenêtre était déjà ouverte : l'event, lui, a un abonné.
+    void ports.onFocusTool(focusTool);
+
     void ports.onVerified(({ command, verification, verified, hooks }) => {
         if (draft !== null && draft.command.trim() === command) {
             draftVerification = verification;

@@ -75,7 +75,7 @@ use features::pty::{
 };
 use features::settings::{
     AdapterProfile, BlockAt, ConfigTarget, HookBlocks, SystemCommands, SystemConfigFiles,
-    ToolRegistry, Verifier,
+    ToolRecognition, ToolRegistry, Verifier,
 };
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
@@ -379,8 +379,12 @@ pub fn run() -> tauri::Result<()> {
     // [`AppNotifier`].
     let notifier = Arc::new(AppNotifier::default());
 
+    // Une seule horloge pour toute l'application : le superviseur date les états avec, et la
+    // reconnaissance d'ADR-0006 mesure la fraîcheur de ce qu'elle a lu avec la même.
+    let clock = Arc::new(shared::time::SystemClock);
+
     let agents = Arc::new(Supervisor::new(
-        Arc::new(shared::time::SystemClock),
+        Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
         adapters.clone(),
         Arc::clone(&notifier) as Arc<dyn Notifier>,
         // Le réglage de la spec §6.5, à sa valeur par défaut : combien de temps la ligne
@@ -388,13 +392,6 @@ pub fn run() -> tauri::Result<()> {
         // au fond de la feature, pour que le jour où la fenêtre de réglages le porte, il n'y
         // ait qu'un fil à rebrancher.
         SUBAGENT_LINGER,
-    ));
-
-    let ptys = Arc::new(PtyRegistry::new(
-        Box::new(SystemPtySpawner),
-        Arc::new(SystemProbe),
-        Arc::new(GitWorktrees),
-        Arc::new(SupervisedTabs(Arc::clone(&agents))),
     ));
 
     // L'apparence — le thème et la taille de police du terminal — est relue **avant** la
@@ -416,10 +413,30 @@ pub fn run() -> tauri::Result<()> {
             files: Arc::new(features::hooks::SystemConfigFiles),
         }),
     ));
+
+    let ptys = Arc::new(PtyRegistry::new(
+        Box::new(SystemPtySpawner),
+        Arc::new(SystemProbe),
+        Arc::new(GitWorktrees),
+        // La reconnaissance d'ADR-0006 : la table embarquée d'`agents`, les entrées
+        // déclarées de `settings`, et la précédence des secondes sur la première. C'est ici
+        // — et seulement ici — que les trois features se rejoignent ; aucune ne connaît les
+        // deux autres.
+        Arc::new(ToolRecognition::new(
+            Arc::clone(&tools),
+            Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
+        )),
+        Arc::new(SupervisedTabs(Arc::clone(&agents))),
+    ));
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&tools))
+        // Ce que la sidebar demande à la fenêtre de réglages de montrer, tant qu'elle ne
+        // l'a pas lu (ADR-0006, ADR-0010).
+        .manage(Arc::new(
+            features::settings::commands::PendingFocus::default(),
+        ))
         .manage(spike::Flow::default())
         .menu(move |app| menu::build(app, theme_mode))
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
@@ -444,6 +461,8 @@ pub fn run() -> tauri::Result<()> {
             menu::menu_shortcuts,
             features::settings::commands::settings_notifications,
             features::settings::commands::settings_tools,
+            features::settings::commands::settings_reveal_tool,
+            features::settings::commands::settings_pending_focus,
             features::settings::commands::settings_declare_tool,
             features::settings::commands::settings_forget_tool,
             features::settings::commands::settings_retarget_tool,

@@ -27,6 +27,13 @@ export interface SidebarViewActions {
     toggleGroup(key: string): void;
     /** Le `+` du pied : un onglet de plus dans le worktree courant. */
     newTab(): void;
+    /**
+     * Le geste du marqueur : ouvrir la fenêtre de réglages sur cet outil.
+     *
+     * Il **n'écrit rien** — l'écriture chez l'utilisateur reste un geste explicite fait dans
+     * l'écran, par le flux qui existe déjà (ADR-0007, ADR-0010).
+     */
+    instrument(command: string, adapter: string): void;
 }
 
 export class SidebarView {
@@ -202,10 +209,49 @@ export class SidebarView {
         if (shown.struck) name.classList.add("is-struck");
 
         row.append(glyph(tab.state), name, text("span", shown.label, "ash-agent-state"));
+        if (tab.mark !== null) row.append(this.instrumentationMark(tab));
         row.addEventListener("click", () => {
             this.actions.selectTab(tab.tabId);
         });
         return row;
+    }
+
+    /**
+     * Le marqueur « non instrumenté » d'une ligne d'agent (ADR-0006).
+     *
+     * **Ce n'est pas un `<button>`** : la ligne d'onglet en est déjà un, et un bouton dans un
+     * bouton est un DOM invalide que les lecteurs d'écran rendent au hasard. C'est un `span`
+     * à qui l'on donne le rôle, le nom et la place dans le parcours clavier — et dont le clic
+     * **n'atteint pas** la ligne : instrumenter n'est pas sélectionner.
+     *
+     * Quand rien ne peut être instrumenté, il n'y a pas de geste : le marqueur reste, sans
+     * rôle ni tabulation, et sa phrase dit pourquoi.
+     */
+    private instrumentationMark(tab: SidebarTabNode): HTMLElement {
+        const mark = tab.mark;
+        const element = text("span", mark?.glyph ?? "", "ash-agent-mark");
+        element.title = mark?.title ?? "";
+        element.setAttribute("aria-label", mark?.title ?? "");
+
+        if (mark?.actionable !== true || tab.agent === null) return element;
+
+        element.setAttribute("role", "button");
+        element.tabIndex = 0;
+        element.classList.add("is-actionable");
+        const open = (event: Event): void => {
+            // La sidebar informe, l'écran agit (ADR-0010) : le geste ouvre les réglages, et
+            // n'écrit rien de lui-même. Sans cet arrêt, il sélectionnerait aussi l'onglet.
+            event.stopPropagation();
+            this.actions.instrument(tab.agent!.command, tab.agent!.adapter);
+        };
+        element.addEventListener("click", open);
+        element.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                open(event);
+            }
+        });
+        return element;
     }
 
     /**

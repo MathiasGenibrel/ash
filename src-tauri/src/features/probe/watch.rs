@@ -24,6 +24,18 @@ pub struct TabObservation {
 pub struct Foreground {
     pub pid: Pid,
     pub name: String,
+    /// Le chemin entier de l'exécutable — le signal le plus stable d'ADR-0006.
+    ///
+    /// Un binaire posé par l'installateur officiel de Claude Code s'appelle `2.1.234` : son
+    /// nom change à chaque mise à jour, son chemin non.
+    pub executable: PathBuf,
+    /// Le premier mot de sa ligne de commande, quand le système a bien voulu le dire.
+    ///
+    /// C'est ce qui reconnaît un outil lancé par npm — l'exécutable est alors `node`. Il est
+    /// lu **une fois par processus en avant-plan** et non à chaque passe : il ne change
+    /// jamais pour un pid donné, et le relire trois fois par seconde ferait recopier
+    /// l'espace d'arguments du processus pour rien.
+    pub argv0: Option<String>,
     /// Vrai quand c'est le shell lui-même — l'onglet est à son invite.
     ///
     /// C'est la frontière que la découverte d'agents (ADR-0006) regardera : un onglet
@@ -41,6 +53,11 @@ pub struct TabWatch {
     /// Le pid du shell, retenu à l'ouverture — le repli quand l'avant-plan se dérobe.
     shell: Pid,
     last: Option<TabObservation>,
+    /// Le `argv[0]` du dernier avant-plan observé, avec le pid auquel il appartient.
+    ///
+    /// La mémoire est ce qui rend le troisième signal gratuit : un pid ne change pas de
+    /// ligne de commande, donc une seule lecture par programme lancé suffit.
+    known_argv0: Option<(Pid, Option<String>)>,
 }
 
 impl TabWatch {
@@ -49,6 +66,7 @@ impl TabWatch {
             terminal,
             shell,
             last: None,
+            known_argv0: None,
         }
     }
 
@@ -76,12 +94,15 @@ impl TabWatch {
 
         match seen {
             Ok(info) => {
+                let argv0 = self.argv0_of(probe, info.pid);
                 let observation = TabObservation {
                     cwd: info.cwd,
                     foreground: Foreground {
                         pid: info.pid,
                         is_shell: info.pid == self.shell,
                         name: info.name,
+                        executable: info.executable,
+                        argv0,
                     },
                 };
                 self.last = Some(observation.clone());
@@ -89,6 +110,25 @@ impl TabWatch {
             }
             Err(silence) => self.last.clone().ok_or(silence),
         }
+    }
+
+    /// Le `argv[0]` d'un pid, demandé au système **au plus une fois**.
+    ///
+    /// Le shell n'est jamais interrogé : il n'est reconnu comme aucun outil, et l'onglet à
+    /// son invite est le cas le plus fréquent de tous. C'est ce qui garde la passe de sonde
+    /// à ses deux appels système d'ADR-0005 tant que rien de neuf ne tient l'avant-plan.
+    fn argv0_of(&mut self, probe: &dyn Probe, pid: Pid) -> Option<String> {
+        if pid == self.shell {
+            return None;
+        }
+        if let Some((known, argv0)) = &self.known_argv0 {
+            if *known == pid {
+                return argv0.clone();
+            }
+        }
+        let argv0 = probe.argv0(pid);
+        self.known_argv0 = Some((pid, argv0.clone()));
+        argv0
     }
 }
 
@@ -110,12 +150,16 @@ mod tests {
     struct FakeProbe {
         foreground: Option<Pid>,
         processes: HashMap<Pid, ProcessInfo>,
+        /// Ce que `sysctl` répondrait, et **combien de fois** on le lui a demandé.
+        argv0: HashMap<Pid, String>,
+        asked: std::sync::Mutex<Vec<Pid>>,
     }
 
     /// Test Data Builder : un système cohérent par défaut — un shell à son invite.
     struct SystemBuilder {
         foreground: Option<Pid>,
         processes: HashMap<Pid, ProcessInfo>,
+        argv0: HashMap<Pid, String>,
     }
 
     impl SystemBuilder {
@@ -123,6 +167,7 @@ mod tests {
             let mut builder = Self {
                 foreground: Some(SHELL),
                 processes: HashMap::new(),
+                argv0: HashMap::new(),
             };
             builder = builder.with_process(SHELL, "bash", "/dev/ash");
             builder
@@ -134,9 +179,16 @@ mod tests {
                 ProcessInfo {
                     pid,
                     name: name.to_owned(),
+                    executable: PathBuf::from(format!("/usr/local/bin/{name}")),
                     cwd: PathBuf::from(cwd),
                 },
             );
+            self
+        }
+
+        /// Le processus présente ce premier mot de ligne de commande.
+        fn announcing(mut self, pid: Pid, argv0: &str) -> Self {
+            self.argv0.insert(pid, argv0.to_owned());
             self
         }
 
@@ -161,6 +213,8 @@ mod tests {
             FakeProbe {
                 foreground: self.foreground,
                 processes: self.processes,
+                argv0: self.argv0,
+                asked: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -175,6 +229,11 @@ mod tests {
                 .get(&pid)
                 .cloned()
                 .ok_or(ProbeError::Vanished(pid))
+        }
+
+        fn argv0(&self, pid: Pid) -> Option<String> {
+            self.asked.lock().unwrap().push(pid);
+            self.argv0.get(&pid).cloned()
         }
     }
 
@@ -197,6 +256,44 @@ mod tests {
         assert_eq!(seen.cwd, PathBuf::from("/dev/ash/worktrees/probe"));
         assert_eq!(seen.foreground.name, "claude");
         assert!(!seen.foreground.is_shell);
+    }
+
+    #[test]
+    fn given_a_program_that_keeps_the_foreground_when_probing_twice_then_its_command_line_is_read_only_once(
+    ) {
+        // Given — `sysctl(KERN_PROCARGS2)` fait recopier l'espace d'arguments du processus,
+        // et la boucle d'ADR-0005 passe trois fois par seconde. Un `argv[0]` ne change
+        // jamais pour un pid donné : le redemander serait un coût pur.
+        let system = SystemBuilder::new()
+            .with_process(AGENT, "node", "/dev/ash")
+            .announcing(AGENT, "claude")
+            .handed_over_to(AGENT)
+            .build();
+        let mut watch = watch();
+
+        // When
+        let first = watch.observe(&system).expect("le système doit répondre");
+        let second = watch.observe(&system).expect("le système doit répondre");
+
+        // Then — le troisième signal d'ADR-0006 est là, et il n'a coûté qu'un appel
+        assert_eq!(first.foreground.argv0.as_deref(), Some("claude"));
+        assert_eq!(second.foreground.argv0, first.foreground.argv0);
+        assert_eq!(system.asked.lock().unwrap().as_slice(), [AGENT]);
+    }
+
+    #[test]
+    fn given_a_tab_at_its_prompt_when_probing_then_the_shell_command_line_is_never_read() {
+        // Given — un onglet posé à son invite est le cas le plus fréquent de tous, et aucun
+        // shell n'est un agent (ADR-0006) : l'interroger serait un appel système par passe
+        // et par onglet, pour une réponse dont personne ne ferait rien
+        let system = SystemBuilder::new().build();
+
+        // When
+        let seen = watch().observe(&system).expect("le shell reste observable");
+
+        // Then
+        assert!(seen.foreground.is_shell);
+        assert!(system.asked.lock().unwrap().is_empty());
     }
 
     #[test]

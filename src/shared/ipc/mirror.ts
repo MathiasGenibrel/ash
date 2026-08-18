@@ -16,10 +16,12 @@
 
 import type { AgentState as RustAgentState } from "./generated/AgentState";
 import type { Head as RustHead } from "./generated/Head";
+import type { Instrumented as RustInstrumented } from "./generated/Instrumented";
 import type { MetadataChanged as RustMetadataChanged } from "./generated/MetadataChanged";
 import type { Operation as RustOperation } from "./generated/Operation";
 import type { OperationKind as RustOperationKind } from "./generated/OperationKind";
 import type { Progress as RustProgress } from "./generated/Progress";
+import type { RecognizedAgent as RustRecognizedAgent } from "./generated/RecognizedAgent";
 import type { RepoRef as RustRepoRef } from "./generated/RepoRef";
 import type { Status as RustStatus } from "./generated/Status";
 import type { Subagent as RustSubagent } from "./generated/Subagent";
@@ -30,6 +32,7 @@ import type { Upstream as RustUpstream } from "./generated/Upstream";
 import type { WorktreeMetadata as RustWorktreeMetadata } from "./generated/WorktreeMetadata";
 import type {
     AgentState,
+    Instrumented,
     GitHead,
     GitOperation,
     GitOperationKind,
@@ -37,6 +40,7 @@ import type {
     GitStatus,
     GitTreeStatus,
     GitUpstream,
+    RecognizedAgent,
     RepoRef,
     Subagent,
     TabInfo,
@@ -53,6 +57,15 @@ import type { Assert, Mirrors } from "./mirroring";
 export type AgentStateStillMirrorsRust = Assert<Mirrors<RustAgentState, AgentState>>;
 
 export type RepoRefStillMirrorsRust = Assert<Mirrors<RustRepoRef, RepoRef>>;
+
+/**
+ * Les trois mots de la reconnaissance d'ADR-0006. Un mot ajouté en Rust — un quatrième cas
+ * d'instrumentation — ne compile plus tant que la sidebar n'a pas dit ce qu'elle en montre.
+ */
+export type InstrumentedStillMirrorsRust = Assert<Mirrors<RustInstrumented, Instrumented>>;
+export type RecognizedAgentStillMirrorsRust = Assert<
+    Mirrors<RustRecognizedAgent, RecognizedAgent>
+>;
 export type TabLocationStillMirrorsRust = Assert<Mirrors<RustTabLocation, TabLocation>>;
 export type SubagentStillMirrorsRust = Assert<Mirrors<RustSubagent, Subagent>>;
 export type TabInfoStillMirrorsRust = Assert<Mirrors<RustTabInfo, TabInfo>>;
