@@ -35,6 +35,9 @@ pub const SETTINGS_WINDOW: &str = "settings";
 /// L'event du **second temps** : le test 4 a répondu pour une entrée.
 pub const SETTINGS_VERIFIED: &str = "ash://settings-verified";
 
+/// L'event qui amène la fenêtre déjà ouverte sur un outil (ADR-0006, ADR-0010).
+pub const SETTINGS_FOCUS_TOOL: &str = "ash://settings-focus-tool";
+
 /// La page de la webview. Contrat avec `settings.html` et l'entrée du même nom dans
 /// `vite.config.ts` : une seconde fenêtre est une seconde page, pas un second état de la
 /// première.
@@ -188,6 +191,71 @@ fn announce(
 pub async fn settings_notifications<R: Runtime>(app: AppHandle<R>) -> NotificationsReport {
     let banners = app.state::<Arc<dyn crate::features::notifications::Banners>>();
     notifications::report(notifications::observed(banners.authorization()))
+}
+
+/// L'outil sur lequel la fenêtre de réglages doit s'ouvrir, tant qu'elle ne l'a pas lu.
+///
+/// **Une demande, jamais une écriture** : elle nomme l'outil que le marqueur de la sidebar
+/// désigne, et l'écran décide quoi en montrer. Rien n'est écrit chez l'utilisateur avant son
+/// geste dans cette fenêtre (ADR-0007).
+///
+/// Elle est *retenue* et pas seulement émise parce que la fenêtre est **créée** par le même
+/// geste : un event parti avant que la page n'existe n'aurait aucun abonné. La page vient
+/// donc la chercher en s'affichant, et l'event ne sert qu'au cas où elle était déjà ouverte.
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct FocusedTool {
+    pub command: String,
+    pub adapter: String,
+}
+
+/// Ce que la fenêtre doit montrer à son ouverture — posé par la sidebar, consommé par l'écran.
+///
+/// Elle ne porte **aucune vérité** que quelqu'un d'autre tienne déjà
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : ni l'outil reconnu,
+/// qui vit dans le `TabInfo` de `pty`, ni ce que sa configuration porte, qui se relit du
+/// disque — seulement un geste en cours, qui n'est posé que quand la fenêtre reste à naître
+/// et que la première page affichée consomme.
+#[derive(Default)]
+pub struct PendingFocus(std::sync::Mutex<Option<FocusedTool>>);
+
+/// Ouvre les réglages sur un outil — le geste du marqueur « non instrumenté ».
+///
+/// **N'écrit rien** : elle ouvre la fenêtre et lui dit sur quoi se poser. Toute écriture chez
+/// l'utilisateur passe ensuite par le flux qui existe déjà — vérification, sauvegarde `.bak`,
+/// entrées marquées, diff à relire (ADR-0007).
+#[tauri::command]
+pub fn settings_reveal_tool<R: Runtime>(
+    app: AppHandle<R>,
+    pending: tauri::State<'_, Arc<PendingFocus>>,
+    command: String,
+    adapter: String,
+) {
+    let focus = FocusedTool { command, adapter };
+
+    // La demande n'est retenue que pour une fenêtre **qui n'existe pas encore** : c'est le
+    // seul cas où l'event partirait avant d'avoir un abonné. La retenir alors que la page
+    // écoute déjà laisserait une demande que personne ne vient chercher — et la prochaine
+    // ouverture par le menu, une heure plus tard, se poserait sur cet outil-là.
+    if app.get_webview_window(SETTINGS_WINDOW).is_none() {
+        if let Ok(mut held) = pending.0.lock() {
+            *held = Some(focus.clone());
+        }
+    }
+    open(&app);
+    // Pour la fenêtre **déjà** ouverte : celle qui vient de naître, elle, viendra la
+    // chercher elle-même en s'affichant.
+    let _ = app.emit(SETTINGS_FOCUS_TOOL, focus);
+}
+
+/// Ce sur quoi la fenêtre doit se poser, **une seule fois** : la lire la consomme.
+///
+/// Sans cette consommation, rouvrir les réglages par le menu ramènerait l'écran sur un outil
+/// désigné il y a une heure.
+#[tauri::command]
+pub fn settings_pending_focus(pending: tauri::State<'_, Arc<PendingFocus>>) -> Option<FocusedTool> {
+    pending.0.lock().ok().and_then(|mut held| held.take())
 }
 
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.

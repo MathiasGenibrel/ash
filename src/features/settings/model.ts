@@ -1,5 +1,7 @@
 import type {
+    FocusedTool,
     HookAction,
+    SettingsSnapshot,
     Shortcut,
     ToolDeclaration,
     ToolDraft,
@@ -362,4 +364,30 @@ export function groupShortcuts(shortcuts: readonly Shortcut[]): readonly Shortcu
         else opened.shortcuts.push(shortcut);
     }
     return grouped;
+}
+
+/**
+ * Ce que la fenêtre fait d'un outil désigné par la sidebar (ADR-0006).
+ *
+ * `null` veut dire « il n'y a rien à saisir » : l'outil est **déjà déclaré**, et sa carte est
+ * là avec sa ligne `hooks` et son bouton. Proposer une saisie de plus ferait apparaître deux
+ * fois le même outil dans l'écran, dont une qui serait refusée à l'ajout.
+ *
+ * Sinon, on rend une saisie **pré-remplie** — et rien n'est écrit : c'est le formulaire
+ * d'ajout ordinaire, avec sa vérification et son bouton, donc le flux qui existe déjà
+ * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+ *
+ * L'adaptateur reconnu n'est pas forcément embarqué par cette compilation — `claude-code`
+ * disparaît quand `ash-event` est introuvable : on retombe alors sur le premier proposé,
+ * plutôt que d'afficher un menu sur une valeur qu'il ne contient pas.
+ */
+export function focusedDraft(
+    focused: FocusedTool,
+    snapshot: SettingsSnapshot,
+): ToolDraft | null {
+    if (snapshot.tools.some((tool) => tool.command === focused.command)) return null;
+    const adapter = snapshot.adapters.includes(focused.adapter)
+        ? focused.adapter
+        : (snapshot.adapters[0] ?? GENERIC_ADAPTER);
+    return { command: focused.command, label: "", adapter, config: "" };
 }

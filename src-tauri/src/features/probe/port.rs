@@ -17,6 +17,16 @@ pub struct ProcessInfo {
     pub pid: Pid,
     /// Dernier segment du chemin de l'exécutable — `claude`, `bash`, `less`.
     pub name: String,
+    /// Le chemin **entier** de l'exécutable, tel que `proc_pidpath` le rend.
+    ///
+    /// Il voyage à côté du nom parce que le nom ne suffit pas à reconnaître un outil :
+    /// l'installateur officiel de Claude Code pose un binaire dont le nom de fichier est le
+    /// numéro de version (`~/.local/share/claude/versions/2.1.234`), et c'est le **chemin**
+    /// qui reste stable d'une mise à jour à l'autre
+    /// ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)).
+    ///
+    /// La sonde ne porte aucune règle de provider : elle rend le fait, `agents` décide.
+    pub executable: PathBuf,
     pub cwd: PathBuf,
 }
 
@@ -35,6 +45,20 @@ pub trait Probe: Send + Sync {
 
     /// Le `cwd` et l'identité d'un processus — `proc_pidinfo`.
     fn inspect(&self, pid: Pid) -> Result<ProcessInfo, ProbeError>;
+
+    /// Le premier mot de la ligne de commande d'un processus — `sysctl(KERN_PROCARGS2)`.
+    ///
+    /// C'est le troisième signal d'ADR-0006, et le seul qui reconnaisse un outil installé
+    /// par npm : le processus s'appelle alors `node`, et c'est `argv[0]` qui dit `claude`.
+    /// Il est **à part** d'[`Self::inspect`] parce qu'il coûte bien plus cher — le noyau
+    /// recopie l'espace d'arguments entier — et qu'il ne change jamais pour un pid donné :
+    /// [`super::TabWatch`] ne le redemande donc qu'au changement d'avant-plan, là où le
+    /// `cwd` se relit à chaque passe.
+    ///
+    /// `None` veut dire « le système ne l'a pas dit », jamais « il n'y en a pas » : aucune
+    /// autorisation supplémentaire n'est demandée pour l'obtenir, et un refus se replie sur
+    /// les deux premiers signaux.
+    fn argv0(&self, pid: Pid) -> Option<String>;
 }
 
 /// Le nom d'un processus : le dernier segment du chemin de son exécutable.
