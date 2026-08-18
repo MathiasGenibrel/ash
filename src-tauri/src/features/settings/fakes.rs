@@ -14,6 +14,7 @@ use super::hooks::BlockAt;
 use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, HookBlocks, Launch};
 use super::values::{Command, ConfigTarget};
 use crate::features::hooks::Presence;
+use crate::features::hooks::{Removal, Withdrawal};
 
 /// Un système de fichiers en mémoire : ce qu'on trouve à chaque chemin, et le foyer.
 pub struct FakeFolders {
@@ -131,14 +132,43 @@ impl HookBlocks for FakeBlocks {
         Ok(())
     }
 
-    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
+    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<Removal, String> {
         if let Ok(mut seen) = self.written.lock() {
             seen.push(format!(
                 "remove {adapter} {}",
                 config_dir.resolved().display()
             ));
         }
-        Ok(())
+        Ok(Removal::Removed {
+            file: config_dir.resolved().join("settings.json"),
+            deleted_the_file: false,
+        })
+    }
+
+    fn foresee_removal(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<Withdrawal> {
+        if self.silent.iter().any(|id| id == adapter) {
+            return None;
+        }
+        // Le double ne rejoue pas le classement de `features::hooks` : il rend ce que les
+        // deux états qui portent des entrées d'Ash rendraient, et rien pour les autres.
+        match self.found.get(config_dir.resolved()) {
+            Some(Presence::Current { .. }) | Some(Presence::Superseded { .. }) => {
+                Some(withdrawal(config_dir, false))
+            }
+            Some(Presence::HandEdited { .. }) => Some(withdrawal(config_dir, true)),
+            _ => None,
+        }
+    }
+}
+
+/// Ce qu'un retrait emporterait, tel que le double le raconte.
+fn withdrawal(config_dir: &ConfigTarget, hand_edited: bool) -> Withdrawal {
+    Withdrawal {
+        file: config_dir.resolved().join("settings.json"),
+        entries: 5,
+        deletes_the_file: false,
+        hand_edited,
+        diff: String::new(),
     }
 }
 
