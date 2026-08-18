@@ -1,7 +1,7 @@
 import "./styles.css";
 import { revealTool } from "@/features/settings";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
-import type { Workspaces } from "@/shared/ipc";
+import type { SidebarRows } from "@/shared/ipc";
 import { mountTerminals, type TabId, type TabInfo, type Terminals } from "@/features/terminal";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
@@ -11,7 +11,7 @@ import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
 import { windowTitle } from "./window-title";
-import { followWorkspaces, type WorkspacesBinding } from "./workspaces";
+import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 
 /**
  * Composition root du frontend.
@@ -28,7 +28,7 @@ function mount(
     root: HTMLElement,
     theme: ThemeChanges,
     fontSize: FontSizeChanges,
-    workspaces: WorkspacesBinding,
+    sidebarRows: SidebarRowsBinding,
     appName: string,
 ): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
@@ -69,10 +69,10 @@ function mount(
         // donc rien à rattraper ici, et une bannière parlerait d'une épingle au moment où
         // l'utilisateur regarde son terminal.
         setPinned: (worktreeRoot, pinned) => {
-            workspaces.pin(worktreeRoot, pinned).catch(() => undefined);
+            sidebarRows.pin(worktreeRoot, pinned).catch(() => undefined);
         },
         setCollapsed: (key, collapsed) => {
-            workspaces.collapse(key, collapsed).catch(() => undefined);
+            sidebarRows.collapse(key, collapsed).catch(() => undefined);
         },
         // Le marqueur « non instrumenté » d'une ligne d'agent (ADR-0006) : la sidebar nomme
         // l'outil, la fenêtre de réglages agit. C'est ici que les deux features se
@@ -84,7 +84,7 @@ function mount(
     // avis n'apporte jamais que sa moitié.
     let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
-    let kept: Workspaces = workspaces.changes.current;
+    let kept: SidebarRows = sidebarRows.changes.current;
 
     const drawSidebar = (): void => {
         sidebar.render(tabs, activeTabId, kept);
@@ -95,7 +95,7 @@ function mount(
         activeTabId = nextActive;
         drawSidebar();
     });
-    workspaces.changes.subscribe((next) => {
+    sidebarRows.changes.subscribe((next) => {
         kept = next;
         drawSidebar();
     });
@@ -227,8 +227,8 @@ fontSize.ready.catch(() => undefined);
 // l'attente de la police, comme les deux autres, pour que les allers-retours se recouvrent.
 // Un échec du raccordement donne une colonne sans épingle — c'est exactement ce qu'un premier
 // démarrage montre, donc il n'y a rien à rattraper.
-const workspaces = followWorkspaces();
-workspaces.ready.catch(() => undefined);
+const sidebarRows = followSidebarRows();
+sidebarRows.ready.catch(() => undefined);
 
 // Le nom de l'application, lui, est **attendu** au lieu d'être posé par défaut puis
 // corrigé : il est constant pour toute la session, donc il n'y a pas de « valeur d'attente »
@@ -262,7 +262,7 @@ void document.fonts.ready.finally(() => {
         // `loadAppName` ne rejette jamais — elle se replie sur un nom plutôt que de laisser
         // une fenêtre sans rien —, donc il n'y a pas d'échec à rattraper ici.
         void appName.then((name) => {
-            mount(root, theme.changes, fontSize.changes, workspaces, name);
+            mount(root, theme.changes, fontSize.changes, sidebarRows, name);
         });
     }
 });

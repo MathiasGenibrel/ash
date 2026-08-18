@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use super::persisted::Persisted;
 use super::places::{PinnedWorktree, WorktreePlaces};
-use super::store::WorkspacesStore;
+use super::store::SidebarStore;
 
-/// Ce que la colonne reçoit : les épingles **situées**, et les lignes repliées.
+/// Les lignes que la colonne garde d'une session à l'autre : celles qu'une épingle fait
+/// exister — **situées**, donc relues —, et celles qui sont repliées.
 ///
 /// Ce n'est pas ce que le disque garde ([`Persisted`]) : le disque garde des chemins, ceci
 /// porte des worktrees relus. Deux formes plutôt qu'une, parce que ce sont deux choses — un
@@ -13,7 +14,7 @@ use super::store::WorkspacesStore;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
-pub struct Workspaces {
+pub struct SidebarRows {
     /// Les épingles **encore trouvables**, dans l'ordre où elles ont été posées.
     pub pinned: Vec<PinnedWorktree>,
     pub collapsed: Vec<String>,
@@ -25,15 +26,15 @@ pub struct Workspaces {
 /// il ne le détient pas
 /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Pour une épingle, la
 /// question ne se pose même pas — elle doit survivre à la fenêtre qui l'affiche.
-pub struct WorkspacesState {
+pub struct SidebarState {
     kept: Mutex<Persisted>,
-    store: Arc<dyn WorkspacesStore>,
+    store: Arc<dyn SidebarStore>,
     places: Arc<dyn WorktreePlaces>,
 }
 
-impl WorkspacesState {
+impl SidebarState {
     /// Repart de l'état de la session précédente, ou d'une colonne sans épingle.
-    pub fn restore(store: Arc<dyn WorkspacesStore>, places: Arc<dyn WorktreePlaces>) -> Self {
+    pub fn restore(store: Arc<dyn SidebarStore>, places: Arc<dyn WorktreePlaces>) -> Self {
         let kept = store.load().unwrap_or_default();
         Self {
             kept: Mutex::new(kept),
@@ -50,9 +51,9 @@ impl WorkspacesState {
     /// ouvrir tromperait, et retirer l'épingle serait effacer un geste de l'utilisateur pour
     /// une absence peut-être temporaire — or Ash **signale**, il ne supprime jamais (spec
     /// §5.4). Rebrancher le disque suffit à faire revenir la ligne.
-    pub fn snapshot(&self) -> Workspaces {
+    pub fn snapshot(&self) -> SidebarRows {
         let kept = self.locked().clone();
-        Workspaces {
+        SidebarRows {
             pinned: kept
                 .pinned
                 .iter()
@@ -100,7 +101,7 @@ impl WorkspacesState {
 mod tests {
     use super::*;
 
-    use super::super::error::WorkspacesError;
+    use super::super::error::SidebarError;
     use super::super::places::PinnedRepo;
 
     /// `~/.ash/state.json`, en mémoire.
@@ -111,14 +112,14 @@ mod tests {
         read_only: bool,
     }
 
-    impl WorkspacesStore for FakeStore {
+    impl SidebarStore for FakeStore {
         fn load(&self) -> Option<Persisted> {
             self.content.lock().unwrap().clone()
         }
 
-        fn save(&self, state: &Persisted) -> Result<(), WorkspacesError> {
+        fn save(&self, state: &Persisted) -> Result<(), SidebarError> {
             if self.read_only {
-                return Err(WorkspacesError::Io {
+                return Err(SidebarError::Io {
                     path: std::path::PathBuf::from("/dev/null/state.json"),
                     why: "lecture seule".to_owned(),
                 });
@@ -169,8 +170,8 @@ mod tests {
         }
     }
 
-    fn restored(store: Arc<FakeStore>, places: Arc<FakePlaces>) -> WorkspacesState {
-        WorkspacesState::restore(store, places)
+    fn restored(store: Arc<FakeStore>, places: Arc<FakePlaces>) -> SidebarState {
+        SidebarState::restore(store, places)
     }
 
     #[test]
