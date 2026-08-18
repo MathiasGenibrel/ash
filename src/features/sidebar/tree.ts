@@ -1,4 +1,4 @@
-import type { AgentState, PinnedWorktree, TabId, TabInfo } from "@/shared/ipc";
+import type { AgentState, PinnedWorktree, TabId, TabInfo, TabLocation } from "@/shared/ipc";
 import { instrumentationMark, type InstrumentationMark } from "./instrumentation";
 import { basename, shortSuffix, truncate } from "./labels";
 import { bubbleState } from "./states";
@@ -132,10 +132,16 @@ export interface SidebarOptions {
      * geste de désépinglage soit là où l'épingle a été posée.
      */
     readonly pinned: readonly PinnedWorktree[];
-    /** Les worktrees repliés, par racine. */
-    readonly collapsedWorktrees: ReadonlySet<string>;
-    /** Les groupes de dépôt repliés, par clé de groupe. */
-    readonly collapsedGroups: ReadonlySet<string>;
+    /**
+     * Les lignes repliées — **un seul ensemble pour les deux niveaux**.
+     *
+     * Un worktree replié y est par sa racine, un groupe de dépôt par sa clé préfixée
+     * (`repo:`, `flat:`) : les deux familles ne peuvent pas se confondre. C'est aussi une
+     * seule liste dans `~/.ash/state.json`, et le backend est le seul à la détenir — deux
+     * ensembles ici obligeraient l'appelant à passer deux fois la même chose, donc à pouvoir
+     * les faire mentir.
+     */
+    readonly collapsed: ReadonlySet<string>;
 }
 
 export const emptyTree: SidebarTree = { groups: [], tabCount: 0, waitingCount: 0 };
@@ -174,7 +180,7 @@ export function buildSidebar(
     // dont elle tiendrait le rang. Un worktree déjà habité ne bouge donc pas de place le jour
     // où on l'épingle — il gagne seulement sa marque.
     for (const pinned of options.pinned) {
-        const place = placeOfPin(pinned);
+        const place = placeOfWorktree(pinned);
         worktreeFor(groupFor(groups, place), place);
     }
 
@@ -208,29 +214,26 @@ function placeOf(tab: TabInfo): Place {
             worktreeName: basename(tab.cwd),
         };
     }
-
-    const repo = location.repo;
-    return {
-        groupKey: repo === null ? `flat:${location.worktreeRoot}` : `repo:${repo.id}`,
-        repo,
-        worktreeKey: location.worktreeRoot,
-        worktreeName: location.worktreeName,
-    };
+    return placeOfWorktree(location);
 }
 
 /**
- * La même règle de rangement qu'un onglet, pour une ligne qui n'en a pas.
+ * Où se range un worktree que le backend a su situer — **la** règle de rangement, écrite une
+ * fois.
  *
- * Un worktree épinglé se range **exactement** comme s'il portait un onglet : même clé de
- * groupe, même clé de worktree. C'est ce qui fait qu'épingler un worktree déjà ouvert ne
- * duplique pas sa ligne, et qu'une épingle rejoint le dépôt de ses frères.
+ * Un onglet et une épingle y passent tous les deux, et c'est ce qui fait qu'épingler un
+ * worktree déjà ouvert ne duplique pas sa ligne : deux règles jumelles finiraient par
+ * diverger d'un préfixe, et la colonne montrerait deux fois le même worktree sans que rien
+ * ne l'annonce. Le contrat s'en assure de son côté — un worktree épinglé **est** un
+ * `TabLocation` (`shared/ipc`).
  */
-function placeOfPin(pinned: PinnedWorktree): Place {
+function placeOfWorktree(worktree: TabLocation): Place {
+    const repo = worktree.repo;
     return {
-        groupKey: pinned.repo === null ? `flat:${pinned.worktreeRoot}` : `repo:${pinned.repo.id}`,
-        repo: pinned.repo,
-        worktreeKey: pinned.worktreeRoot,
-        worktreeName: pinned.worktreeName,
+        groupKey: repo === null ? `flat:${worktree.worktreeRoot}` : `repo:${repo.id}`,
+        repo,
+        worktreeKey: worktree.worktreeRoot,
+        worktreeName: worktree.worktreeName,
     };
 }
 
@@ -281,7 +284,7 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
 
     const pinned = new Set(options.pinned.map((entry) => entry.worktreeRoot));
     const nodes = worktrees.map((worktree, index) =>
-        node(worktree, suffixes[index] ?? null, options.collapsedWorktrees, pinned),
+        node(worktree, suffixes[index] ?? null, options.collapsed, pinned),
     );
     const state = bubbleState(nodes.map((worktree) => worktree.state));
 
@@ -299,7 +302,7 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
         key: group.key,
         label: truncate(group.repo?.name ?? ""),
         title: group.repo?.name ?? "",
-        collapsed: options.collapsedGroups.has(group.key),
+        collapsed: options.collapsed.has(group.key),
         worktrees: nodes,
         state,
     };

@@ -170,7 +170,7 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
             // Repliée, la sidebar ne nomme plus les agents : la ligne de statut reprend
             // celui qui attend. Le contexte — dépôt et branche — n'a rien à reprendre, il
             // est dans la bande de titre, que `⌘B` ne touche pas.
-            terminals.setSidebarCollapsed(sidebar.toggleCollapsed());
+            terminals.setSidebarCollapsed(sidebar.toggleColumnCollapsed());
             return Promise.resolve();
     }
 }

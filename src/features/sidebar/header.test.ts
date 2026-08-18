@@ -19,8 +19,7 @@ function sevenAgents(waiting: number): readonly TabInfo[] {
 function header(tabs: readonly TabInfo[], columnCollapsed: boolean): SidebarHeaderModel {
     const tree = buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(),
-        collapsedGroups: new Set(),
+        collapsed: new Set(),
         pinned: [],
     });
     return composeSidebarHeader(tree, columnCollapsed);
