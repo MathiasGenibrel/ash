@@ -115,12 +115,14 @@ impl WorktreeLocator for GitWorktrees {
 /// fait ici pour la raison qui vaut pour [`GitWorktrees`] : `sidebar` ne sait pas ce qu'est
 /// un dépôt, `git` ne sait pas ce qu'est une épingle.
 ///
-/// **L'existence du dossier est vérifiée avant la résolution, et ce n'est pas une
-/// précaution** : `resolve_worktree` remonte les dossiers parents à la recherche d'un `.git`.
-/// Un worktree supprimé sous `/dev/ash/worktrees/` se résoudrait donc en `/dev/ash` — et la
-/// ligne épinglée d'un worktree disparu se mettrait à désigner le dépôt principal, en
-/// silence. La conduite décidée pour un dossier disparu est dans
-/// `features::sidebar::state` : la ligne s'efface, l'épingle reste.
+/// **Le chemin doit être un dossier, et c'est vérifié avant la résolution.**
+/// `resolve_worktree` remonte les dossiers parents à la recherche d'un `.git` : une racine
+/// épinglée devenue un **fichier** — un `git worktree move` suivi d'une archive posée au même
+/// nom — se résoudrait en `/dev/ash`, et la ligne d'un worktree disparu se mettrait à
+/// désigner le dépôt principal, en silence. Le cas du dossier simplement **supprimé** est
+/// déjà couvert un cran plus bas, `resolve_worktree` commençant par canonicaliser ; les deux
+/// donnent `None`, et la conduite qui s'ensuit est dans `features::sidebar::state` : la ligne
+/// s'efface, l'épingle reste.
 struct GitPins;
 
 impl WorktreePlaces for GitPins {
