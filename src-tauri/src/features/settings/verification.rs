@@ -372,6 +372,36 @@ impl Verifier {
         ))
     }
 
+    /// Le dossier conventionnel d'un adaptateur, **et seulement s'il est là** (ADR-0006).
+    ///
+    /// C'est ce qu'on propose dans le champ d'un formulaire d'ajout ouvert par le marqueur
+    /// de la sidebar : le dossier de configuration se propose, il ne se demande pas. Rien
+    /// n'est écrit — c'est une valeur de champ, que l'utilisateur peut effacer, et la
+    /// séquence des quatre tests la juge ensuite comme elle jugerait un chemin tapé.
+    ///
+    /// **Le disque a le dernier mot, et c'est le seul critère.** Proposer `~/.codex` à qui
+    /// n'a jamais lancé codex fabriquerait une entrée dont le test 1 dirait aussitôt
+    /// « nothing at ~/.codex » : une proposition qui échoue est pire qu'un champ vide,
+    /// parce qu'elle a l'air d'une réponse. On ne propose donc que ce que le test 1
+    /// accepterait — [`Folder::Readable`], et rien d'autre : un dossier illisible ou un
+    /// fichier s'arrêteraient au même test, avec la même impression de piège.
+    ///
+    /// **Une seule lecture, du seul dossier que l'adaptateur nomme.** Aucun parcours de
+    /// `$HOME`, aucun scan, donc aucune permission macOS à demander (ADR-0006 : reconnaître
+    /// est de la lecture, et de la lecture bornée). Elle est posée au moment où l'écran
+    /// s'ouvre, sur un geste, et jamais dans la boucle de sonde.
+    ///
+    /// `None` veut dire « rien à proposer », et couvre les trois cas d'un seul mot :
+    /// adaptateur inconnu de cette compilation, adaptateur sans dossier conventionnel
+    /// (`generic`, par construction), ou dossier absent.
+    pub fn proposed_config(&self, adapter: &str) -> Option<String> {
+        let target = self.target(adapter, None)?;
+        match self.files.read_folder(target.resolved()) {
+            Folder::Readable(_) => Some(target.declared().to_owned()),
+            Folder::Missing | Folder::NotADirectory | Folder::Unreadable => None,
+        }
+    }
+
     /// Le premier temps : les tests 1 à 3. **Ne lance rien.**
     pub fn first_pass(&self, command: &Command, adapter: &str, config: Option<&str>) -> FirstPass {
         let Some(profile) = self.profiles.iter().find(|p| p.id == adapter) else {
@@ -1117,5 +1147,69 @@ mod tests {
 
         // Then
         assert_eq!(summarised, "12 .md files, .git");
+    }
+
+    #[test]
+    fn given_an_adapter_whose_conventional_folder_is_on_disk_when_a_form_opens_on_it_then_that_folder_is_proposed(
+    ) {
+        // Given — le dossier que `claude-code` lit quand personne ne lui en impose un,
+        // et il est là : l'utilisateur a déjà lancé `claude`
+        let (verifier, _) = VerifierBuilder::new()
+            .folder("/Users/ash/.claude", &["settings.json", "projects"])
+            .build();
+
+        // When
+        let proposed = verifier.proposed_config("claude-code");
+
+        // Then — la forme **déclarée**, celle que le champ montre et que l'utilisateur
+        // reconnaît, pas le chemin résolu
+        assert_eq!(proposed.as_deref(), Some("~/.claude"));
+    }
+
+    #[test]
+    fn given_a_conventional_folder_that_is_not_there_when_a_form_opens_on_it_then_nothing_is_proposed(
+    ) {
+        // Given — rien à `~/.claude` : proposer le dossier ferait une entrée dont le
+        // test 1 dirait aussitôt « nothing at ~/.claude »
+        let (verifier, _) = VerifierBuilder::new().build();
+
+        // When
+        let proposed = verifier.proposed_config("claude-code");
+
+        // Then
+        assert_eq!(proposed, None);
+    }
+
+    #[test]
+    fn given_a_conventional_folder_that_ash_cannot_read_when_a_form_opens_on_it_then_nothing_is_proposed(
+    ) {
+        // Given — il existe, mais le test 1 s'y arrêterait quand même : une proposition
+        // qui échoue a l'air d'une réponse
+        let (verifier, _) = VerifierBuilder::new()
+            .at("/Users/ash/.claude", Folder::Unreadable)
+            .build();
+
+        // When
+        let proposed = verifier.proposed_config("claude-code");
+
+        // Then
+        assert_eq!(proposed, None);
+    }
+
+    #[test]
+    fn given_an_adapter_with_no_conventional_folder_when_a_form_opens_on_it_then_nothing_is_proposed(
+    ) {
+        // Given — `generic` est l'adaptateur de l'outil dont on ne sait rien : il ne
+        // nomme aucun dossier, par construction (ADR-0008)
+        let (verifier, _) = VerifierBuilder::new()
+            .folder("/Users/ash/.claude", &["settings.json", "projects"])
+            .build();
+
+        // When
+        let proposed = verifier.proposed_config("generic");
+
+        // Then — et le champ vide n'est pas muet : la séquence part sur le brouillon, et
+        // son test 1 dit « no configuration folder — the generic adapter has no default »
+        assert_eq!(proposed, None);
     }
 }

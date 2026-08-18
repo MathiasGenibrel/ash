@@ -380,14 +380,37 @@ export function groupShortcuts(shortcuts: readonly Shortcut[]): readonly Shortcu
  * L'adaptateur reconnu n'est pas forcément embarqué par cette compilation — `claude-code`
  * disparaît quand `ash-event` est introuvable : on retombe alors sur le premier proposé,
  * plutôt que d'afficher un menu sur une valeur qu'il ne contient pas.
+ *
+ * **Le dossier de configuration est proposé, pas demandé** (ADR-0006) : `proposedConfig` est
+ * ce que le backend a trouvé pour cet adaptateur — le dossier conventionnel, et seulement
+ * s'il est sur le disque. `null` laisse le champ **vide**, et c'est le bon état par défaut :
+ * un adaptateur sans dossier conventionnel (`generic`) et un dossier qui n'existe pas se
+ * disent tous deux par le silence du champ, puis par le test 1 que la séquence lance
+ * aussitôt sur ce brouillon — « no configuration folder — the generic adapter has no
+ * default ». Rempli, le champ reste un champ : on l'édite, et les quatre tests le jugent
+ * comme un chemin tapé à la main.
  */
 export function focusedDraft(
     focused: FocusedTool,
     snapshot: SettingsSnapshot,
+    proposedConfig: string | null,
 ): ToolDraft | null {
+    const adapter = focusedAdapter(focused, snapshot);
+    if (adapter === null) return null;
+    return { command: focused.command, label: "", adapter, config: proposedConfig ?? "" };
+}
+
+/**
+ * L'adaptateur sur lequel le formulaire se posera, ou `null` s'il n'y a rien à saisir.
+ *
+ * Séparé de [`focusedDraft`] parce qu'il se lit **avant** : le dossier proposé se demande au
+ * backend, et il se demande pour l'adaptateur qu'on va réellement montrer. Un outil déjà
+ * déclaré rend `null`, et rien n'est alors demandé du tout — pas de saisie, donc pas de
+ * lecture de disque pour la remplir.
+ */
+export function focusedAdapter(focused: FocusedTool, snapshot: SettingsSnapshot): string | null {
     if (snapshot.tools.some((tool) => tool.command === focused.command)) return null;
-    const adapter = snapshot.adapters.includes(focused.adapter)
+    return snapshot.adapters.includes(focused.adapter)
         ? focused.adapter
         : (snapshot.adapters[0] ?? GENERIC_ADAPTER);
-    return { command: focused.command, label: "", adapter, config: "" };
 }

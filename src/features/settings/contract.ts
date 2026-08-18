@@ -369,6 +369,17 @@ export interface SettingsPorts {
     pendingFocus(): Promise<FocusedTool | null>;
     /** Le même geste, quand la fenêtre était **déjà** ouverte. */
     onFocusTool(listener: (focused: FocusedTool) => void): Promise<() => void>;
+    /**
+     * Le dossier conventionnel d'un adaptateur, `null` s'il n'y en a pas ou s'il n'est pas
+     * là (ADR-0006).
+     *
+     * Demandée **au moment où le formulaire s'ouvre**, et non transportée par
+     * [`FocusedTool`] : la demande de la sidebar ne porte qu'un geste, et un résultat de
+     * lecture disque glissé dedans daterait de l'instant du clic, pas de celui où la
+     * fenêtre le montre. Le backend est seul à savoir ce que l'adaptateur nomme et si ce
+     * dossier existe ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    proposedConfig(adapter: string): Promise<string | null>;
 }
 
 /**

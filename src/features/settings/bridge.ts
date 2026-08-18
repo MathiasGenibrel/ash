@@ -75,6 +75,8 @@ export const tauriSettings: SettingsPorts = {
     removeHooks: (command: string) =>
         invoke<SettingsSnapshot>("settings_remove_hooks", { command }),
     pendingFocus: () => invoke<FocusedTool | null>("settings_pending_focus"),
+    proposedConfig: (adapter: string) =>
+        invoke<string | null>("settings_proposed_config", { adapter }),
     onFocusTool: async (listener) => {
         const stop = await listen<FocusedTool>(SETTINGS_FOCUS_TOOL, (event) => {
             listener(event.payload);
