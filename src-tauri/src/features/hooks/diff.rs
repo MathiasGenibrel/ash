@@ -19,13 +19,27 @@
 /// Les deux en-têtes sont en anglais parce qu'ils s'affichent (#68) ; le reste du fichier
 /// est commenté en français, comme tout le dépôt.
 pub fn preview(the_file_carries: &str, ash_would_leave: &str) -> String {
+    between(the_file_carries, ash_would_leave, "what ash would write")
+}
+
+/// Le même diff, pour le geste inverse — ce que le fichier redevient quand Ash s'en va.
+///
+/// Seul l'en-tête change, et c'est tout ce qui doit changer : le sens de lecture est le
+/// même — `-` le fichier tel qu'il est, `+` tel qu'Ash le laisserait — mais « ce qu'ash
+/// écrirait » devant un retrait ferait lire un ajout là où il n'y a qu'une reprise.
+pub fn preview_removal(the_file_carries: &str, ash_would_leave: &str) -> String {
+    between(
+        the_file_carries,
+        ash_would_leave,
+        "what ash would leave behind",
+    )
+}
+
+fn between(the_file_carries: &str, ash_would_leave: &str, header: &str) -> String {
     let expected: Vec<&str> = the_file_carries.lines().collect();
     let found: Vec<&str> = ash_would_leave.lines().collect();
 
-    let mut lines = vec![
-        "--- the file as it is".to_owned(),
-        "+++ what ash would write".to_owned(),
-    ];
+    let mut lines = vec!["--- the file as it is".to_owned(), format!("+++ {header}")];
     lines.extend(walk(&expected, &found, &common_lengths(&expected, &found)));
     lines.join("\n")
 }

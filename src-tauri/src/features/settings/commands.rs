@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : treize commandes, un event, et l'ouverture de
+//! La surface de la feature vers le frontend : ses commandes, un event, et l'ouverture de
 //! sa fenêtre.
 //!
 //! Le frontend ne connaît de `settings` que ces noms et la forme de [`SettingsSnapshot`].
@@ -29,6 +29,7 @@ use super::registry::{Changed, SecondPass, ToolRegistry};
 use super::tool::{NewTool, ToolDeclaration};
 use super::values::Command;
 use super::verification::{ToolTest, Verification};
+use super::withdrawal::{RemovalPlan, RemovalReport};
 
 /// Le label de la seconde fenêtre. Contrat avec `src-tauri/capabilities/settings.json`,
 /// qui lui accorde ses permissions par ce nom.
@@ -430,6 +431,44 @@ pub fn settings_remove_hooks(
         registry.remove_hooks(&Command::parse(&command)?)?,
         &registry,
     ))
+}
+
+/// Ce que « retirer Ash de tous les fichiers » ferait — **elle n'écrit rien**.
+///
+/// Elle est demandée par le bouton, et son résultat s'affiche avant que quoi que ce soit ne
+/// soit posé : quels fichiers, combien d'entrées, ce que le retrait emporterait, et si une
+/// main est passée dessus (spec §10). C'est la même discipline que le diff d'installation —
+/// rien ne s'écrit sans un geste explicite pris devant ce qui va changer.
+#[tauri::command]
+pub fn settings_removal_plan(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+) -> Result<RemovalPlan, SettingsError> {
+    registry.removal_plan()
+}
+
+/// Retire Ash de tous les fichiers où il a écrit — le second geste, celui qui écrit.
+///
+/// Elle rend le compte rendu **et** l'instantané : la liste est celle du backend, et une
+/// désinstallation change l'état de chaque ligne `hooks`. Les renvoyer séparément laisserait
+/// l'écran afficher un compte rendu à côté de lignes qui disent encore `installed`.
+#[tauri::command]
+pub fn settings_remove_all_hooks(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+) -> Result<RemovalOutcome, SettingsError> {
+    let (report, tools) = registry.remove_everything()?;
+    Ok(RemovalOutcome {
+        report,
+        snapshot: SettingsSnapshot::around(tools, &registry),
+    })
+}
+
+/// Ce que le retrait a fait, et la liste telle qu'elle est après lui.
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct RemovalOutcome {
+    pub report: RemovalReport,
+    pub snapshot: SettingsSnapshot,
 }
 
 /// Vérifie une saisie du formulaire d'ajout, sans rien ajouter.

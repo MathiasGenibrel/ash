@@ -6,6 +6,8 @@ import type { AgentState } from "@/shared/ipc";
 import type {
     FocusedTool,
     NotificationsReport,
+    RemovalOutcome,
+    RemovalPlan,
     SettingsPorts,
     SettingsSnapshot,
     ToolDraft,
@@ -14,7 +16,7 @@ import type {
 } from "./contract";
 
 /**
- * L'implémentation réelle du pont vers `features::settings` : treize commandes, un event, et
+ * L'implémentation réelle du pont vers `features::settings` : ses commandes, un event, et
  * rien d'autre.
  *
  * Le pendant de `pty-bridge.ts` et de `git-bridge.ts`, posé pour la même raison : la
@@ -78,6 +80,8 @@ export const tauriSettings: SettingsPorts = {
         invoke<SettingsSnapshot>("settings_install_hooks", { command }),
     removeHooks: (command: string) =>
         invoke<SettingsSnapshot>("settings_remove_hooks", { command }),
+    removalPlan: () => invoke<RemovalPlan>("settings_removal_plan"),
+    removeAllHooks: () => invoke<RemovalOutcome>("settings_remove_all_hooks"),
     pendingFocus: () => invoke<FocusedTool | null>("settings_pending_focus"),
     proposedConfig: (adapter: string) =>
         invoke<string | null>("settings_proposed_config", { adapter }),

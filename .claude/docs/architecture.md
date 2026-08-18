@@ -21,7 +21,8 @@ src-tauri/src/
       adapters/          claude-code, codex, generic
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12
     journal/             attribution commit → agent → prompt       — ADR-0014
-    hooks/               les entrées marquées d'Ash dans les settings.json
+    hooks/               les entrées marquées d'Ash dans les settings.json, leur pose
+                         et leur retrait — à l'octet près              — spec §10
     theme/               l'apparence de la fenêtre — mode clair / sombre /
                          système, taille de police du terminal — et sa persistance
     sidebar/             ce qui survit à la fermeture : worktrees épinglés et

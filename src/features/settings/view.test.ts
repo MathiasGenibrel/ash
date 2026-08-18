@@ -32,6 +32,7 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         failure: null,
         edits: new Map(),
         conflict: null,
+        removal: null,
         notifications: aNotificationsReport(),
         appearance: anAppearance(),
         shortcuts: [aShortcut()],
@@ -168,6 +169,40 @@ describe("le panneau de la fenêtre de réglages", () => {
         expect(said(composed)).not.toContain("nothing is notified yet");
     });
 
+    it("Given a removal that has been announced, when the panel is composed, then it replaces the list instead of floating over it", () => {
+        // Given — ce qui va toucher plusieurs fichiers de l'utilisateur se lit en entier
+        // (spec §10), comme l'écran du diff : ni modale, ni panneau qu'un `esc` chasse
+        const plan = {
+            files: [
+                {
+                    file: "/home/someone/.claude/settings.json",
+                    commands: ["claude"],
+                    entries: 5,
+                    deletesTheFile: false,
+                    handEdited: false,
+                    diff: "",
+                },
+            ],
+            summary: "5 entries in /home/someone/.claude/settings.json",
+            handEdited: false,
+            kept: ["the .bak copies stay where they are."],
+        };
+
+        // When
+        const composed = settingsPanel(
+            scene({
+                snapshot: aSnapshot({ tools: [aTool()] }),
+                removal: { step: "asked", plan },
+            }),
+            IDLE_ACTIONS,
+        );
+
+        // Then
+        expect(composed.flatMap((child) => findAll(child, "settings-card"))).toHaveLength(0);
+        expect(said(composed)).toContain("/home/someone/.claude/settings.json");
+        expect(said(composed)).toContain("the .bak copies stay where they are.");
+    });
+
     it("Given two entries pointing at the same folder, when the panel is composed, then the banner sits between the header and the list", () => {
         // Given — elle ne décrit aucune des deux cartes en particulier (§3.7) : posée dans
         // l'une d'elles, elle accuserait celle qu'on regarde
@@ -183,8 +218,8 @@ describe("le panneau de la fenêtre de réglages", () => {
         );
         const shapes = composed.map((child) => find(child, "settings-banner") !== null);
 
-        // Then — l'en-tête, la note, la bannière, le corps, le pied
-        expect(shapes).toEqual([false, false, true, false, false]);
+        // Then — l'en-tête, la note, la bannière, le corps, la désinstallation, le pied
+        expect(shapes).toEqual([false, false, true, false, false, false]);
         expect(composed.flatMap((child) => findAll(child, "settings-card"))).toHaveLength(2);
     });
 });

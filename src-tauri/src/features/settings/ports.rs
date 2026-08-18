@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use super::hooks::BlockAt;
 use super::values::{Command, ConfigTarget};
+use crate::features::hooks::{Removal, Withdrawal};
 
 /// Ce qu'on trouve à un chemin de configuration — le test 1, en entier.
 ///
@@ -155,8 +156,19 @@ pub trait HookBlocks: Send + Sync {
     /// Pose ou met à jour le bloc. Rend la raison du refus, telle qu'on la montre.
     fn install(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String>;
 
-    /// Retire le bloc et ses marqueurs.
-    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String>;
+    /// Retire le bloc et ses marqueurs, et dit ce qu'il en est advenu.
+    ///
+    /// Le [`Removal`] plutôt qu'un `()` : le retrait global rend un compte à l'utilisateur,
+    /// et « rien à retirer ici » n'est pas « retiré ». Un fichier devenu illisible entre
+    /// l'annonce et le geste sort par cette porte-là — sans erreur, sans écriture, et sans
+    /// que le compte rendu prétende avoir fait quelque chose.
+    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<Removal, String>;
+
+    /// Ce qu'un retrait emporterait dans ce fichier, **sans rien écrire**.
+    ///
+    /// C'est ce qui rend « retirer Ash de tous les fichiers » annonçable avant d'être posé
+    /// (spec §10). `None` : il n'y a rien d'Ash dans ce fichier, ou rien de lisible.
+    fn foresee_removal(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<Withdrawal>;
 }
 
 /// Résout le `~` de tête d'un chemin de configuration.

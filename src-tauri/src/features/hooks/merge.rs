@@ -290,6 +290,34 @@ pub fn removal(content: &str, instrumentation: &Instrumentation) -> Option<Docum
     Some(Document::edited(content, edits))
 }
 
+/// Combien d'entrées marquées le fichier porte, sur les chemins de cette instrumentation.
+///
+/// C'est ce qu'un retrait emporterait, **compté sur le fichier** et non sur ce qu'Ash
+/// écrirait : une entrée d'une version antérieure compte, une entrée que l'utilisateur a
+/// dupliquée compte deux fois, et une entrée qui ne porte pas le marqueur ne compte pas.
+/// Annoncer le nombre d'entrées de l'instrumentation courante ferait promettre un retrait
+/// que le fichier ne justifie pas (spec §10 : dire ce qu'on va faire avant de le faire).
+pub fn ours(content: &str, instrumentation: &Instrumentation) -> usize {
+    let Some(root) = json::root_object(content) else {
+        return 0;
+    };
+    instrumentation
+        .entries
+        .iter()
+        .map(|entry| match walk(content, &root, &entry.path).sighting {
+            Sighting::Array { ours, .. } => ours
+                .iter()
+                .filter(|span| {
+                    content
+                        .get((*span).clone())
+                        .is_some_and(|item| item.contains(HOOK_MARK))
+                })
+                .count(),
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Les points d'insertion à ce niveau, sans doublon, pour les entrées qui restent.
 fn anchors_at(walks: &[Walk], level: usize, settled: &[bool], held: &[Option<&str>]) -> Vec<usize> {
     let mut found: Vec<usize> = Vec::new();

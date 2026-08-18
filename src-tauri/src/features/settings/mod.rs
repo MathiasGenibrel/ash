@@ -40,6 +40,13 @@
 //! mémoire du dernier dossier valide consomment tous la même valeur, donc ne peuvent plus
 //! diverger sur ce que « le même dossier » veut dire.
 //!
+//! **« Retirer Ash de tous les fichiers » vit ici aussi** ([`withdrawal`]), et pour la même
+//! raison que l'installation : c'est le registre qui sait *quels* fichiers, et le port
+//! `HookBlocks` qui sait les lire et les reprendre. La feature ajoute les deux règles que ce
+//! geste demande — un fichier n'est visé qu'une fois même si deux entrées le partagent, et
+//! le retrait **n'est soumis à aucune vérification**, parce qu'il ne touche que ce qui porte
+//! déjà le marqueur d'Ash (spec §10).
+//!
 //! **La section `notifications` de la fenêtre est ici aussi** ([`notifications`]), et pas
 //! dans `agents` : cette feature-là n'expose rien au frontend et n'a pas de `commands.rs`,
 //! quand celle-ci a déjà sa fenêtre, sa capacité et ses commandes. Elle ne décide pas ce
@@ -71,6 +78,7 @@ mod system;
 mod tool;
 mod values;
 mod verification;
+mod withdrawal;
 
 pub use error::SettingsError;
 pub use hooks::{BlockAt, HookAction, HookChoice, HookState, HooksReport};
@@ -84,3 +92,4 @@ pub use system::{SystemCommands, SystemConfigFiles};
 pub use tool::{NewTool, ToolDeclaration};
 pub use values::{Command, ConfigTarget};
 pub use verification::{AdapterProfile, Verification, Verifier};
+pub use withdrawal::{Outcome, PlannedRemoval, RemovalPlan, RemovalReport, RemovedFile};
