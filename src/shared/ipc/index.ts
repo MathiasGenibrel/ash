@@ -258,21 +258,19 @@ export interface WorktreeMetadataChanged {
  * Un worktree **épinglé** : une ligne de la colonne qui existe sans qu'aucun onglet ne
  * l'habite (spec §5.2).
  *
- * Mêmes champs qu'un [`TabLocation`], et ce n'est pas une coïncidence : une ligne de worktree
- * se range de la même façon qu'elle vienne d'un onglet ou d'une épingle. C'est bien deux
- * `struct` côté Rust, dans deux features qui ne se connaissent pas — `mirror.ts` vérifie que
- * cette interface reflète encore les deux.
+ * C'est **un [`TabLocation`]**, et pas une seconde forme qui lui ressemble : une ligne de
+ * worktree se range de la même façon qu'elle vienne d'un onglet ou d'une épingle, donc
+ * `tree.ts` n'a qu'une règle de rangement, pas deux qui pourraient diverger — le jour où
+ * elles divergeraient, un worktree épinglé **et** ouvert aurait deux lignes. Côté Rust ce
+ * sont bien deux `struct` dans deux features qui ne se connaissent pas ; c'est ici, une
+ * seule fois, qu'on écrit la forme, et `mirror.ts` la confronte aux deux — exactement comme
+ * [`RepoRef`].
  *
  * Ce qui traverse est **relu à chaque fois**, jamais recopié du fichier : une épingle dont le
  * dossier a disparu n'arrive pas ici du tout, et la ligne s'efface sans que l'épingle soit
  * perdue.
  */
-export interface PinnedWorktree {
-    worktreeRoot: string;
-    /** Le nom **brut** du dossier — la matière du suffixe `·sidebar`, pas le suffixe. */
-    worktreeName: string;
-    repo: RepoRef | null;
-}
+export type PinnedWorktree = TabLocation;
 
 /**
  * Ce que la colonne garde d'une session à l'autre — et **rien d'autre** (spec §3.1, §9.2).

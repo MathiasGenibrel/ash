@@ -75,8 +75,16 @@ export interface Sidebar {
         activeTabId: TabId | null,
         workspaces: Workspaces,
     ): void;
-    /** Rend l'état après bascule, pour que l'appelant en tire la mise en page. */
-    toggleCollapsed(): boolean;
+    /**
+     * `⌘B` : replie ou déplie **la colonne entière**, et rend son état pour que l'appelant en
+     * tire la mise en page.
+     *
+     * À ne pas confondre avec le repli d'une **ligne** : celui-là part au backend et survit à
+     * la fermeture, celui-ci ne survit à rien. Les deux gestes ne portent donc pas le même
+     * nom, et ce n'est pas une commodité de lecture — c'est ce qui empêche d'appeler l'un en
+     * croyant appeler l'autre.
+     */
+    toggleColumnCollapsed(): boolean;
 }
 
 export function mountSidebar(ports: SidebarPorts): Sidebar {
@@ -108,7 +116,7 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         },
         // Les deux replis de ligne partent au backend et reviennent par son annonce : rien
         // n'est posé ici, sans quoi la colonne et le fichier pourraient se contredire.
-        toggleCollapsed: (key) => {
+        toggleRowCollapsed: (key) => {
             ports.setCollapsed(key, !collapsed().has(key));
         },
         newTab: () => {
@@ -137,11 +145,9 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
     }
 
     function draw(): void {
-        const rows = collapsed();
         const tree = buildSidebar(tabs, {
             activeTabId,
-            collapsedWorktrees: rows,
-            collapsedGroups: rows,
+            collapsed: collapsed(),
             pinned: workspaces.pinned,
         });
         view.render(tree, columnCollapsed, now());
@@ -180,7 +186,7 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
             workspaces = nextWorkspaces;
             draw();
         },
-        toggleCollapsed() {
+        toggleColumnCollapsed() {
             columnCollapsed = !columnCollapsed;
             draw();
             return columnCollapsed;

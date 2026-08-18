@@ -15,8 +15,7 @@ describe("le geste d'une ligne de worktree", () => {
         // Given — la ligne que l'épingle fait exister (spec §5.2)
         const tree = buildSidebar([], {
             activeTabId: null,
-            collapsedWorktrees: new Set(),
-            collapsedGroups: new Set(),
+            collapsed: new Set(),
             pinned: [PinBuilder.create("/wt/ash-sidebar").ofRepo("ash").build()],
         });
 
@@ -31,8 +30,7 @@ describe("le geste d'une ligne de worktree", () => {
         // Given — le geste historique, que l'épingle ne remplace pas
         const tree = buildSidebar([TabBuilder.create().inFlatWorktree("/dev/ash").build()], {
             activeTabId: null,
-            collapsedWorktrees: new Set(),
-            collapsedGroups: new Set(),
+            collapsed: new Set(),
             pinned: [PinBuilder.create("/dev/ash").build()],
         });
 
@@ -49,8 +47,7 @@ describe("l'épingle d'une ligne", () => {
         // Given
         const tree = buildSidebar([TabBuilder.create().inFlatWorktree("/dev/ash").build()], {
             activeTabId: null,
-            collapsedWorktrees: new Set(),
-            collapsedGroups: new Set(),
+            collapsed: new Set(),
             pinned: [PinBuilder.create("/dev/ash").build()],
         });
 
@@ -67,8 +64,7 @@ describe("l'épingle d'une ligne", () => {
         // Given
         const tree = buildSidebar([TabBuilder.create().inFlatWorktree("/dev/ash").build()], {
             activeTabId: null,
-            collapsedWorktrees: new Set(),
-            collapsedGroups: new Set(),
+            collapsed: new Set(),
             pinned: [],
         });
 

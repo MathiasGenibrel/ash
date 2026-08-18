@@ -9,32 +9,28 @@ import { buildSidebar, type SidebarGroup, type SidebarTree } from "./tree";
 const build = (tabs: readonly TabInfo[], activeTabId: string | null = null): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId,
-        collapsedWorktrees: new Set(),
-        collapsedGroups: new Set(),
+        collapsed: new Set(),
         pinned: [],
     });
 
 const collapsing = (tabs: readonly TabInfo[], ...roots: string[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(roots),
-        collapsedGroups: new Set(),
+        collapsed: new Set(roots),
         pinned: [],
     });
 
 const pinning = (tabs: readonly TabInfo[], ...pinned: PinnedWorktree[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(),
-        collapsedGroups: new Set(),
+        collapsed: new Set(),
         pinned,
     });
 
 const collapsingGroups = (tabs: readonly TabInfo[], ...keys: string[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(),
-        collapsedGroups: new Set(keys),
+        collapsed: new Set(keys),
         pinned: [],
     });
 

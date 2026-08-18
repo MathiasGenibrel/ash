@@ -24,13 +24,14 @@ import { planGroup, planRailEntry, planTab, planWorktree } from "./visible";
 export interface SidebarViewActions {
     selectTab(tabId: string): void;
     /**
-     * Replier ou déplier une ligne, par sa clé.
+     * Replier ou déplier **une ligne**, par sa clé — jamais la colonne, qui est `⌘B` et ne
+     * passe pas par ici.
      *
      * Un worktree et un groupe de dépôt sont deux lignes (ADR-0012, spec §4.1) mais un seul
      * fait : leurs clés ne peuvent pas se confondre — un chemin absolu d'un côté, une clé
      * préfixée de l'autre — et `~/.ash/state.json` n'en garde qu'une liste.
      */
-    toggleCollapsed(key: string): void;
+    toggleRowCollapsed(key: string): void;
     /** Le `+` du pied : un onglet de plus dans le worktree courant. */
     newTab(): void;
     /**
@@ -189,7 +190,7 @@ export class SidebarView {
         if (badge !== null) row.append(glyph(badge));
 
         row.addEventListener("click", () => {
-            this.actions.toggleCollapsed(group.key);
+            this.actions.toggleRowCollapsed(group.key);
         });
         return row;
     }
@@ -227,7 +228,7 @@ export class SidebarView {
                 this.actions.openTabIn(worktree.key);
                 return;
             }
-            this.actions.toggleCollapsed(worktree.key);
+            this.actions.toggleRowCollapsed(worktree.key);
         });
         return row;
     }
