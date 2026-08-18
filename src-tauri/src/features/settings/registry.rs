@@ -71,6 +71,16 @@ impl ToolRegistry {
         self.verifier.adapters()
     }
 
+    /// Le dossier que le formulaire d'ajout propose pour cet adaptateur, s'il existe.
+    ///
+    /// Un passe-plat vers [`Verifier::proposed_config`], comme [`Self::adapters`] : les
+    /// profils appartiennent au vérificateur, et le registre est ce que la fenêtre a sous la
+    /// main. Elle **lit un dossier** — un seul, celui que l'adaptateur nomme — et son
+    /// appelant est le geste qui ouvre l'écran, pas une boucle.
+    pub fn proposed_config(&self, adapter: &str) -> Option<String> {
+        self.verifier.proposed_config(adapter)
+    }
+
     /// Les entrées telles qu'elles sont retenues, **sans rien demander au disque**.
     ///
     /// C'est ce que [`Self::tools`] enrichit avant de le rendre à la fenêtre. La

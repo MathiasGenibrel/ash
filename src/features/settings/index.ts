@@ -292,24 +292,41 @@ export function mountSettings(
      * pas reconnu comme tel et l'écran ouvrirait une saisie en double. Un refus ne fait
      * rien — la fenêtre s'ouvre alors comme elle s'ouvre toujours.
      */
-    function focusTool(focused: FocusedTool): void {
+    async function focusTool(focused: FocusedTool): Promise<void> {
         section = "tools";
         const prefilled = focusedDraft(focused, snapshot);
-        if (prefilled !== null) {
-            draft = prefilled;
-            draftVerification = null;
-            failure = null;
-            // La séquence part tout de suite, comme après un choix d'adaptateur : la saisie
-            // est complète, et rien n'est encore écrit chez l'utilisateur.
-            relaunch.now(DRAFT);
+        if (prefilled === null) {
+            // Un outil déjà déclaré n'ouvre aucune saisie, donc ne fait lire aucun dossier :
+            // c'est cette sortie-là qui garantit qu'on ne touche au disque que pour remplir
+            // un champ qui existe.
+            draw();
+            return;
         }
+        // Le dossier conventionnel est demandé **ici**, pour l'adaptateur que cette saisie
+        // porte — celui qu'on va vraiment montrer, pas celui qui a été reconnu. Un refus
+        // laisse le champ vide : on tape son chemin comme avant cette proposition.
+        draft = { ...prefilled, config: (await proposeConfig(prefilled.adapter)) ?? "" };
+        draftVerification = null;
+        failure = null;
+        // La séquence part tout de suite, comme après un choix d'adaptateur : la saisie est
+        // complète, et rien n'est encore écrit chez l'utilisateur.
+        relaunch.now(DRAFT);
         draw();
+    }
+
+    /** Ce que le backend propose pour cet adaptateur, ou rien s'il ne répond pas. */
+    async function proposeConfig(adapter: string): Promise<string | null> {
+        try {
+            return await ports.proposedConfig(adapter);
+        } catch {
+            return null;
+        }
     }
 
     async function askFocus(): Promise<void> {
         try {
             const focused = await ports.pendingFocus();
-            if (focused !== null) focusTool(focused);
+            if (focused !== null) await focusTool(focused);
         } catch {
             // Aucune demande lisible : la fenêtre s'ouvre comme elle s'ouvre toujours.
         }
@@ -450,7 +467,9 @@ export function mountSettings(
      * le backend refuse désormais.
      */
     // Le même geste quand la fenêtre était déjà ouverte : l'event, lui, a un abonné.
-    void ports.onFocusTool(focusTool);
+    void ports.onFocusTool((focused) => {
+        void focusTool(focused);
+    });
 
     void ports.onVerified(({ command, verification, verified, hooks }) => {
         if (draft !== null && draft.command.trim() === command) {
