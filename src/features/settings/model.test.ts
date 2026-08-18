@@ -500,8 +500,14 @@ describe("l'outil que la sidebar désigne", () => {
         // When
         const prefilled = focusedDraft(focused, aSnapshot());
 
-        // Then
-        expect(prefilled).toEqual({ command: "claude", label: "", adapter: "claude-code", config: "" });
+        // Then — la commande et l'adaptateur viennent du geste ; le dossier reste vide ici,
+        // et c'est l'écran qui le propose ensuite, pour cet adaptateur (ADR-0006)
+        expect(prefilled).toEqual({
+            command: "claude",
+            label: "",
+            adapter: "claude-code",
+            config: "",
+        });
     });
 
     it("Given a tool already declared, when the sidebar points at it, then no second entry is proposed", () => {
@@ -512,7 +518,8 @@ describe("l'outil que la sidebar désigne", () => {
         // When
         const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot);
 
-        // Then
+        // Then — et c'est ce `null` qui fait qu'aucun dossier n'est même demandé au
+        // backend : pas de saisie à remplir, donc pas de lecture de disque pour la remplir
         expect(prefilled).toBeNull();
     });
 

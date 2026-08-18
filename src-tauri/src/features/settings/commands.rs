@@ -258,6 +258,31 @@ pub fn settings_pending_focus(pending: tauri::State<'_, Arc<PendingFocus>>) -> O
     pending.0.lock().ok().and_then(|mut held| held.take())
 }
 
+/// Le dossier conventionnel d'un adaptateur, s'il est sur le disque — sinon rien.
+///
+/// **Demandée à l'ouverture, et non transportée par [`FocusedTool`]**, et c'est une décision :
+/// [`PendingFocus`] ne porte qu'un geste en cours, jamais une vérité que quelqu'un d'autre
+/// tient déjà ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Y glisser
+/// un résultat de lecture disque le figerait à l'instant du clic, et cette demande-là est
+/// justement celle qui peut attendre — la fenêtre n'existe pas encore, elle vient la
+/// chercher en s'affichant. Le dossier serait alors daté d'avant la fenêtre qui le montre,
+/// ce qui est exactement la panne que #118 a corrigée un cran plus haut.
+///
+/// L'adaptateur est un paramètre parce que l'écran est seul à savoir sur lequel il s'est
+/// posé : l'adaptateur reconnu n'est pas forcément embarqué par cette compilation, et le
+/// formulaire retombe alors sur un autre — proposer le dossier du premier remplirait le
+/// champ pour un adaptateur qui n'est plus celui du menu.
+///
+/// Une seule lecture, du seul dossier nommé : ni parcours de `$HOME`, ni `PATH`, ni
+/// permission.
+#[tauri::command]
+pub fn settings_proposed_config(
+    registry: tauri::State<'_, Arc<ToolRegistry>>,
+    adapter: String,
+) -> Option<String> {
+    registry.proposed_config(adapter.trim())
+}
+
 /// Les commandes déclarées, lues par la fenêtre en s'affichant.
 #[tauri::command]
 pub fn settings_tools(
