@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : douze commandes, un event, et l'ouverture de
+//! La surface de la feature vers le frontend : treize commandes, un event, et l'ouverture de
 //! sa fenêtre.
 //!
 //! Le frontend ne connaît de `settings` que ces noms et la forme de [`SettingsSnapshot`].
@@ -19,6 +19,8 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+use crate::features::agents::{AgentState, NotificationPreferences};
 
 use super::error::SettingsError;
 use super::hooks::HooksReport;
@@ -190,7 +192,39 @@ fn announce(
 #[tauri::command]
 pub async fn settings_notifications<R: Runtime>(app: AppHandle<R>) -> NotificationsReport {
     let banners = app.state::<Arc<dyn crate::features::notifications::Banners>>();
-    notifications::report(notifications::observed(banners.authorization()))
+    let preferences = app.state::<Arc<NotificationPreferences>>();
+    notifications::report(
+        notifications::observed(banners.authorization()),
+        preferences.choices(),
+    )
+}
+
+/// Met l'un des trois interrupteurs dans cette position — le geste de la section (spec §9).
+///
+/// **Le choix n'est pas appliqué ici** : il est confié à `agents`, qui le garde et que le
+/// superviseur consulte au moment de poster. La fenêtre reçoit la section recomposée à partir
+/// de ce que le backend détient désormais, et non de ce qu'elle vient de demander — sans quoi
+/// elle deviendrait le second détenteur d'un réglage qu'elle ne fait qu'afficher
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// `state` est l'un des cinq mots du contrat, et rien sur le fil ne garantit que ce soit l'un
+/// des trois qui aient un interrupteur : [`NotificationChoices::with`] le tranche, une fois,
+/// là où la règle vit.
+///
+/// `async` pour la raison de [`settings_notifications`] : elle relit l'autorisation macOS pour
+/// recomposer la section, et cette lecture-là attend une réponse du système.
+#[tauri::command]
+pub async fn settings_set_notification<R: Runtime>(
+    app: AppHandle<R>,
+    state: AgentState,
+    enabled: bool,
+) -> NotificationsReport {
+    let choices = {
+        let preferences = app.state::<Arc<NotificationPreferences>>();
+        preferences.choose(state, enabled)
+    };
+    let banners = app.state::<Arc<dyn crate::features::notifications::Banners>>();
+    notifications::report(notifications::observed(banners.authorization()), choices)
 }
 
 /// L'outil sur lequel la fenêtre de réglages doit s'ouvrir, tant qu'elle ne l'a pas lu.

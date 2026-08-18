@@ -64,8 +64,9 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use features::agents::{
-    Adapter, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice, Notifier, Presence,
-    Supervisor, TabAgents, SUBAGENT_LINGER,
+    Adapter, ClaudeCodeAdapter, EventFrame, EventSink, FileNotificationStore, GenericAdapter,
+    Notice, NotificationPreferences, NotificationStore, Notifier, Presence, Supervisor, TabAgents,
+    SUBAGENT_LINGER,
 };
 use features::git::{resolve_worktree, Entry, FileSystem, SystemFileSystem};
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
@@ -420,10 +421,20 @@ pub fn run() -> tauri::Result<()> {
     // reconnaissance d'ADR-0006 mesure la fraîcheur de ce qu'elle a lu avec la même.
     let clock = Arc::new(shared::time::SystemClock);
 
+    // Les trois interrupteurs de la spec §9, relus du disque avant tout : le superviseur les
+    // consulte à chaque changement d'état, et c'est lui qui poste. Ils sont aussi confiés à
+    // Tauri plus bas — la fenêtre de réglages les montre et les bascule, sans jamais les
+    // détenir.
+    let notification_preferences = Arc::new(NotificationPreferences::restore(Arc::new(
+        FileNotificationStore::in_home(),
+    )
+        as Arc<dyn NotificationStore>));
+
     let agents = Arc::new(Supervisor::new(
         Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
         adapters.clone(),
         Arc::clone(&notifier) as Arc<dyn Notifier>,
+        Arc::clone(&notification_preferences),
         // Le réglage de la spec §6.5, à sa valeur par défaut : combien de temps la ligne
         // d'un sous-agent fini reste lisible. Il est posé **ici** et non lu d'une constante
         // au fond de la feature, pour que le jour où la fenêtre de réglages le porte, il n'y
@@ -479,6 +490,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&tools))
         .manage(Arc::clone(&sidebar_rows))
+        .manage(Arc::clone(&notification_preferences))
         // Ce que la sidebar demande à la fenêtre de réglages de montrer, tant qu'elle ne
         // l'a pas lu (ADR-0006, ADR-0010).
         .manage(Arc::new(
@@ -510,6 +522,7 @@ pub fn run() -> tauri::Result<()> {
             menu::theme_set_mode,
             menu::menu_shortcuts,
             features::settings::commands::settings_notifications,
+            features::settings::commands::settings_set_notification,
             features::settings::commands::settings_tools,
             features::settings::commands::settings_reveal_tool,
             features::settings::commands::settings_pending_focus,

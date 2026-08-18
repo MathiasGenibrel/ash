@@ -41,6 +41,7 @@
 //! |---|---|---|
 //! | `EventSink` (`socket.rs`) | `HookEvents` (`lib.rs`) | `FakeSink` (`socket.rs`) |
 //! | `Notifier` (`notify.rs`) | `AppNotifier` (`lib.rs`) | `FakeNotifier` (`fakes.rs`) |
+//! | `NotificationStore` (`preferences.rs`) | `FileNotificationStore` (idem) | `FakeNotificationStore` (`fakes.rs`) |
 //!
 //! Le premier n'est **pas** le socket : celui-ci est l'effet que la feature exerce
 //! elle-même, et ses tests l'exercent pour de vrai. Ce que `EventSink` abstrait, c'est la
@@ -53,6 +54,13 @@
 //! interrompent, jamais quand Ash est devant, et jamais deux fois pour le même changement —
 //! est décidé dans [`notify`], et posé par [`Supervisor`], seul endroit du système qui sache
 //! qu'un état vient de **changer** plutôt que d'être.
+//!
+//! Le troisième garde ce que l'utilisateur, lui, laisse passer — les trois interrupteurs de
+//! la spec §9 ([`NotificationChoices`]). Il est un effet système pour la même raison que celui
+//! du thème : un choix qui survit au redémarrage vit dans un fichier, et aucun test ne doit
+//! écrire dans le `$HOME` de qui le lance. **Le filtre est consulté sur le chemin qui poste**,
+//! par [`Supervisor`] : une bannière ne sort que quand Ash est en arrière-plan, donc rien de
+//! ce que la fenêtre pourrait filtrer n'arriverait à temps.
 
 mod adapter;
 mod adapters;
@@ -66,6 +74,7 @@ mod error;
 mod fakes;
 mod machine;
 mod notify;
+mod preferences;
 mod providers;
 mod socket;
 mod state;
@@ -80,7 +89,10 @@ pub use adapter::{
 pub use adapters::{ClaudeCodeAdapter, GenericAdapter};
 pub use error::AgentError;
 pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};
-pub use notify::{Notice, Notifier, NOTIFIED_STATES};
+pub use notify::{Notice, Notifier, SWITCHABLE_STATES};
+pub use preferences::{
+    FileNotificationStore, NotificationChoices, NotificationPreferences, NotificationStore,
+};
 pub use providers::{
     recognize, Declared as DeclaredProvider, Instrumented, ProgramIdentity, Provider,
     RecognizedAgent, RecognizedProvider, KNOWN_PROVIDERS,
