@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+    FocusedTool,
     NotificationsReport,
     SettingsPorts,
     SettingsSnapshot,
@@ -27,6 +28,21 @@ import type {
  * arrive par cet event, parfois plusieurs secondes plus tard.
  */
 export const SETTINGS_VERIFIED = "ash://settings-verified";
+
+/** L'event qui amène une fenêtre **déjà ouverte** sur un outil (ADR-0006). */
+export const SETTINGS_FOCUS_TOOL = "ash://settings-focus-tool";
+
+/**
+ * Ouvre les réglages sur un outil — le geste du marqueur « non instrumenté » de la sidebar.
+ *
+ * Elle est exportée par la feature parce que son appelant est la **fenêtre principale**, qui
+ * ne connaît de `settings` que ce nom : la sidebar informe, l'écran agit
+ * ([ADR-0010](../../../docs/adr/0010-sidebar-informe-terminal-agit.md)). Elle n'écrit rien —
+ * elle ouvre une fenêtre.
+ */
+export function revealTool(command: string, adapter: string): void {
+    void invoke("settings_reveal_tool", { command, adapter });
+}
 
 /** Le dossier vide se dit `null` au backend : « celui de l'adaptateur », pas « aucun ». */
 function folder(config: string): string | null {
@@ -58,6 +74,13 @@ export const tauriSettings: SettingsPorts = {
         invoke<SettingsSnapshot>("settings_install_hooks", { command }),
     removeHooks: (command: string) =>
         invoke<SettingsSnapshot>("settings_remove_hooks", { command }),
+    pendingFocus: () => invoke<FocusedTool | null>("settings_pending_focus"),
+    onFocusTool: async (listener) => {
+        const stop = await listen<FocusedTool>(SETTINGS_FOCUS_TOOL, (event) => {
+            listener(event.payload);
+        });
+        return stop;
+    },
     onVerified: async (listener) => {
         const stop = await listen<Verified>(SETTINGS_VERIFIED, (event) => {
             listener(event.payload);

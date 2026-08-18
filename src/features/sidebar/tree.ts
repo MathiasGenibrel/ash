@@ -1,4 +1,5 @@
 import type { AgentState, TabId, TabInfo } from "@/shared/ipc";
+import { instrumentationMark, type InstrumentationMark } from "./instrumentation";
 import { basename, shortSuffix, truncate } from "./labels";
 import { bubbleState } from "./states";
 import { subagentNodes, type SubagentNode } from "./subagents";
@@ -25,6 +26,14 @@ export interface SidebarTabNode {
     readonly title: string;
     readonly state: AgentState;
     readonly active: boolean;
+    /**
+     * Le marqueur « non instrumenté », ou `null` quand la ligne n'a rien à signaler.
+     *
+     * Composé ici plutôt que dans la vue, comme les états repliés : la règle qui décide de ce
+     * qu'une ligne signale se vérifie sans DOM (voir [`./instrumentation`]). Il porte aussi
+     * **l'outil que son geste nomme** (ADR-0006), pour que la vue n'ait rien à recoller.
+     */
+    readonly mark: InstrumentationMark | null;
     /**
      * Les sous-agents qui tournent sous cet onglet (spec §6.5), dans leur ordre d'apparition.
      *
@@ -138,6 +147,7 @@ export function buildSidebar(
             title: tab.process,
             state: tab.state,
             active: tab.tabId === options.activeTabId,
+            mark: instrumentationMark(tab.agent),
             subagents: subagentNodes(tab.subagents),
         });
     }

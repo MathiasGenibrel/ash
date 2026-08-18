@@ -6,6 +6,8 @@ use super::ports::{HookBlocks, Launch};
 use super::tool::{NewTool, ToolDeclaration};
 use super::values::{optional, Command, ConfigTarget};
 use super::verification::{FirstPass, Verification, Verifier};
+use crate::features::agents::Instrumented;
+use crate::features::hooks::Presence;
 
 /// Les commandes déclarées, ce qu'elles ont prouvé, et les adaptateurs qu'on peut leur
 /// donner.
@@ -67,6 +69,50 @@ impl ToolRegistry {
     /// Les adaptateurs proposés par le formulaire d'ajout.
     pub fn adapters(&self) -> Vec<String> {
         self.verifier.adapters()
+    }
+
+    /// Les entrées telles qu'elles sont retenues, **sans rien demander au disque**.
+    ///
+    /// C'est ce que [`Self::tools`] enrichit avant de le rendre à la fenêtre. La
+    /// reconnaissance d'ADR-0006, elle, n'a besoin que de la déclaration brute — et elle est
+    /// consultée à chaque passe de la boucle de sonde, pour chaque onglet : lui faire
+    /// relire un `settings.json` par passe serait un fichier ouvert trois fois par seconde
+    /// et par onglet, pour une réponse qui ne change qu'à la minute.
+    pub fn declarations(&self) -> Result<Vec<ToolDeclaration>, SettingsError> {
+        Ok(self.lock()?.clone())
+    }
+
+    /// La configuration de cet outil porte-t-elle le marqueur d'Ash ?
+    ///
+    /// **Trois réponses et non un oui/non**, parce que « rien n'est posé » et « rien ne peut
+    /// l'être » ne se corrigent pas du tout de la même façon : la première mène au flux
+    /// d'installation qui existe déjà, la seconde n'a pas de geste — aucun adaptateur de
+    /// cette version ne sait instrumenter cet outil (ADR-0008). Les confondre ferait
+    /// proposer un bouton qui n'écrirait jamais rien.
+    ///
+    /// La question est bien « le marqueur est-il là ? » et pas « le bloc est-il celui qu'on
+    /// écrirait » : un bloc d'une version antérieure, ou modifié à la main, **est** une
+    /// instrumentation — l'outil parle, et c'est la fenêtre de réglages qui dit dans quel
+    /// état elle est. La sidebar, elle, ne signale que ce qui explique une absence de
+    /// `waiting` ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+    ///
+    /// **Elle lit un fichier** : son appelant est seul responsable de ne pas la poser trois
+    /// fois par seconde (voir [`super::recognition`]).
+    pub fn instrumentation(&self, adapter: &str, config: Option<&str>) -> Instrumented {
+        let Some(target) = self.verifier.target(adapter, config) else {
+            return Instrumented::Unsupported;
+        };
+        match self.blocks.inspect(adapter, &target) {
+            None => Instrumented::Unsupported,
+            Some(BlockAt { presence, .. }) => match presence {
+                Presence::Current { .. }
+                | Presence::Superseded { .. }
+                | Presence::HandEdited { .. } => Instrumented::Installed,
+                Presence::Missing { .. } | Presence::NotAnObject | Presence::Unreadable { .. } => {
+                    Instrumented::Missing
+                }
+            },
+        }
     }
 
     pub fn tools(&self) -> Result<Vec<ToolDeclaration>, SettingsError> {

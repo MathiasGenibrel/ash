@@ -1,4 +1,5 @@
 import "./styles.css";
+import { revealTool } from "@/features/settings";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
 import { mountTerminals, type Terminals } from "@/features/terminal";
 import { loadAppName } from "./app-name";
@@ -52,6 +53,10 @@ function mount(
     const sidebar = mountSidebar({
         selectTab: (tabId) => void terminals.selectTab(tabId),
         newTab: () => void terminals.openTab("current-worktree"),
+        // Le marqueur « non instrumenté » d'une ligne d'agent (ADR-0006) : la sidebar nomme
+        // l'outil, la fenêtre de réglages agit. C'est ici que les deux features se
+        // rencontrent, et nulle part ailleurs — la sidebar ne connaît pas `settings`.
+        instrument: revealTool,
     });
     terminals.onTabs((tabs, activeTabId) => {
         sidebar.render(tabs, activeTabId);

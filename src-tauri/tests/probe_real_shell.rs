@@ -189,3 +189,35 @@ fn given_a_full_screen_program_holding_the_terminal_when_probing_then_it_is_name
     let _ = session.kill();
     assert!(named, "la sonde doit nommer le programme en avant-plan");
 }
+
+#[test]
+fn given_a_program_holding_the_terminal_when_probing_then_the_system_also_gives_its_command_line() {
+    // Given — le troisième signal d'ADR-0006 : un outil installé par npm tourne sous un
+    // exécutable nommé `node`, et seul `argv[0]` dit lequel c'est. Aucun double ne peut
+    // prouver que `sysctl(KERN_PROCARGS2)` répond **sans autorisation supplémentaire** — ni
+    // `task_for_pid`, ni entitlement, ni consentement à demander : c'est exactement ce que ce
+    // test-ci vérifie sur un système vivant.
+    let dir = scratch("argv0");
+    let (mut session, mut watch) = observable_shell(&dir);
+
+    // When
+    session
+        .write(b"less /etc/hosts\n")
+        .expect("l'écriture dans le PTY doit aboutir");
+
+    // Then — le chemin de l'exécutable et sa ligne de commande arrivent ensemble
+    let announced = wait_until(&mut watch, PATIENCE, |seen| {
+        !seen.foreground.is_shell
+            && seen.foreground.executable.ends_with("less")
+            && seen
+                .foreground
+                .argv0
+                .as_deref()
+                .is_some_and(|argv0| argv0.ends_with("less"))
+    });
+    let _ = session.kill();
+    assert!(
+        announced,
+        "la sonde doit rendre le chemin de l'exécutable et son argv[0]"
+    );
+}

@@ -66,6 +66,7 @@ mod error;
 mod fakes;
 mod machine;
 mod notify;
+mod providers;
 mod socket;
 mod state;
 mod subagents;
@@ -80,6 +81,10 @@ pub use adapters::{ClaudeCodeAdapter, GenericAdapter};
 pub use error::AgentError;
 pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};
 pub use notify::{Notice, Notifier, NOTIFIED_STATES};
+pub use providers::{
+    recognize, Declared as DeclaredProvider, Instrumented, ProgramIdentity, Provider,
+    RecognizedAgent, RecognizedProvider, KNOWN_PROVIDERS,
+};
 pub use socket::{listen, EventSink, EventSocket};
 pub use state::{AgentState, AgentStatus};
 // `Subagents` reste privé : c'est la mémoire du superviseur, pas un type que `pty` ou le
