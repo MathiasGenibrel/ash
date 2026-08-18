@@ -3,11 +3,11 @@
 //! C'est le seul endroit du produit qui a le droit de sortir de la fenêtre. Trois règles le
 //! gouvernent, et elles sont ici — pures, donc éprouvées — plutôt que dans le fil qui poste :
 //!
-//! - **trois états, et trois seulement** : `waiting`, `error` et `done` — les seuls qui aient
-//!   une phrase à dire. `working` et `idle` n'en ont pas : un agent qui travaille n'a rien à
-//!   annoncer, et aucun réglage ne peut lui en donner. Des trois, **`done` est éteint par
-//!   défaut** (spec §8), et l'allumer est un geste de l'utilisateur, tenu par
-//!   [`super::NotificationChoices`] ;
+//! - **trois états, et trois seulement** : [`SwitchableState`] — `waiting`, `error` et
+//!   `done`, les seuls qui aient une phrase à dire. `working` et `idle` n'en ont pas : un
+//!   agent qui travaille n'a rien à annoncer, et aucun réglage ne peut lui en donner, parce
+//!   qu'ils n'ont pas de variante. Des trois, **`done` est éteint par défaut** (spec §8), et
+//!   l'allumer est un geste de l'utilisateur, tenu par [`super::NotificationChoices`] ;
 //! - **seulement quand Ash n'est pas au premier plan.** L'utilisateur qui regarde la
 //!   sidebar a déjà l'information : la doubler d'une bannière système serait du bruit ;
 //! - **seulement sur un changement d'état.** L'état est *lu* trois fois par seconde par la
@@ -32,30 +32,82 @@
 use super::preferences::NotificationChoices;
 use super::state::AgentState;
 
-/// Les états qui **peuvent** interrompre l'utilisateur, dans l'ordre de la spec §8.
+/// Un état qui **peut** interrompre l'utilisateur — c'est-à-dire un des trois interrupteurs.
 ///
-/// C'est-à-dire, exactement, les trois interrupteurs que la fenêtre de réglages montre : la
-/// liste est publique parce que c'est elle qui les fait exister. Ce qu'Ash sait notifier est
-/// une décision de cette feature, pas une liste recopiée dans une vue.
+/// Un type plutôt qu'une convention, parce que c'est lui qui tient la propriété de la
+/// section : **un interrupteur commande une bannière, et une bannière a un interrupteur.**
+/// Les trois listes qui devaient jusqu'ici s'accorder — la constante, les phrases de
+/// [`words`], les champs de [`super::NotificationChoices`] — s'accordent maintenant sur des
+/// variantes, et chacune de ces fonctions est **totale** : offrir un interrupteur qui ne
+/// commande rien demanderait une variante sans phrase, et poser une bannière sans
+/// interrupteur demanderait une phrase sans variante. Ni l'un ni l'autre ne compile.
 ///
-/// **Elle décrit [`words`], elle ne la double pas.** C'est le fait d'avoir un texte à dire
-/// qui décide qu'un état puisse interrompre, et rien d'autre : une liste qui déciderait
-/// *aussi* ferait deux règles à tenir d'accord, et la fenêtre de réglages offrirait un
-/// interrupteur qui ne commande rien. Le test de fin de fichier tient les deux ensemble.
+/// Les deux états qui n'y sont pas n'ont rien à annoncer, et aucun réglage ne peut leur en
+/// donner : un agent qui travaille, ou qui ne fait rien, n'interrompt personne.
+///
+/// **Ce type ne traverse pas la frontière Tauri** : ce que la fenêtre reçoit et renvoie est
+/// l'un des cinq mots d'[`AgentState`], et [`TryFrom`] est le seul passage des cinq aux
+/// trois.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchableState {
+    Waiting,
+    Error,
+    Done,
+}
+
+impl From<SwitchableState> for AgentState {
+    fn from(state: SwitchableState) -> Self {
+        match state {
+            SwitchableState::Waiting => AgentState::Waiting,
+            SwitchableState::Error => AgentState::Error,
+            SwitchableState::Done => AgentState::Done,
+        }
+    }
+}
+
+impl TryFrom<AgentState> for SwitchableState {
+    type Error = NotInterrupting;
+
+    /// Le seul rétrécissement des cinq états aux trois, et donc le seul endroit où décider
+    /// qu'un état n'interrompt pas. Le `match` est exhaustif : un sixième état d'agent ne
+    /// compilerait pas tant que personne n'aurait dit s'il a une bannière.
+    fn try_from(state: AgentState) -> Result<Self, NotInterrupting> {
+        match state {
+            AgentState::Waiting => Ok(SwitchableState::Waiting),
+            AgentState::Error => Ok(SwitchableState::Error),
+            AgentState::Done => Ok(SwitchableState::Done),
+            AgentState::Idle | AgentState::Working => Err(NotInterrupting),
+        }
+    }
+}
+
+/// Cet état n'a rien à annoncer — il n'a donc ni bannière, ni interrupteur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotInterrupting;
+
+/// Les trois interrupteurs, dans l'ordre de la spec §8.
+///
+/// La liste est publique parce que c'est elle qui les **ordonne** : la fenêtre de réglages
+/// dessine une ligne par élément, et cet ordre est une décision de cette feature, pas d'une
+/// vue. Ce qu'elle contient, en revanche, ne se décide plus ici — c'est
+/// [`SwitchableState`] tout entier.
 ///
 /// Ce que l'utilisateur en laisse passer est l'autre moitié de la règle, et elle est dans
 /// [`super::preferences`] : cette liste-ci dit ce qui est **possible**, elle ne dit pas ce
 /// qui est allumé.
-pub const SWITCHABLE_STATES: [AgentState; 3] =
-    [AgentState::Waiting, AgentState::Error, AgentState::Done];
+pub const SWITCHABLE_STATES: [SwitchableState; 3] = [
+    SwitchableState::Waiting,
+    SwitchableState::Error,
+    SwitchableState::Done,
+];
 
 /// Ce qu'une notification porte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     /// L'onglet concerné — celui que le clic sur la bannière sélectionne.
     pub tab_id: String,
-    /// L'état qui a justifié l'interruption. Toujours l'un de [`SWITCHABLE_STATES`].
-    pub state: AgentState,
+    /// L'état qui a justifié l'interruption — l'un des trois, par construction.
+    pub state: SwitchableState,
     pub title: String,
     pub body: String,
 }
@@ -76,13 +128,16 @@ pub trait Notifier: Send + Sync {
 /// ce qui fait qu'un `waiting` qui dure ne notifie qu'une fois.
 ///
 /// Les quatre règles sont ici, et une seule fois chacune : Ash est-il devant, l'état a-t-il
-/// un texte à dire — c'est ce qui définit [`SWITCHABLE_STATES`] —, l'utilisateur laisse-t-il
-/// cet état l'interrompre, et le `changed` du seul appelant qui sache distinguer un
-/// changement d'une lecture.
+/// quelque chose à annoncer — c'est-à-dire est-il un [`SwitchableState`] —, l'utilisateur
+/// laisse-t-il cet état l'interrompre, et le `changed` du seul appelant qui sache distinguer
+/// un changement d'une lecture.
 ///
-/// **`choices` filtre, il n'ajoute rien** : un état sans phrase ne devient pas notifiable
-/// parce qu'un fichier de préférence le dit. C'est ce qui garde `words` seul maître de ce
-/// qu'une bannière peut annoncer.
+/// **L'ordre des trois premières compte**, et il ne se rediscute pas dans un réglage : le
+/// premier plan passe avant tout, donc aucun interrupteur ne peut faire sortir une bannière
+/// pendant que l'utilisateur regarde Ash.
+///
+/// **`choices` filtre, il n'ajoute rien** : un état sans variante n'arrive même pas jusqu'à
+/// lui, quoi qu'un fichier de préférence raconte.
 pub fn notice(
     tab_id: &str,
     changed: AgentState,
@@ -92,42 +147,44 @@ pub fn notice(
     if focused {
         return None;
     }
-    if !choices.allows(changed) {
+    let announced = SwitchableState::try_from(changed).ok()?;
+    if !choices.allows(announced) {
         return None;
     }
-    let (title, body) = words(changed)?;
+    let (title, body) = words(announced);
     Some(Notice {
         tab_id: tab_id.to_owned(),
-        state: changed,
+        state: announced,
         title: title.to_owned(),
         body: body.to_owned(),
     })
 }
 
-/// Ce que la bannière dit, pour chacun des deux états qui interrompent.
+/// Ce que la bannière dit, pour chacun des trois états qui interrompent.
+///
+/// **Totale** : chaque interrupteur a sa phrase, et c'est le type qui l'exige.
 ///
 /// Le texte ne nomme pas encore l'onglet : cette feature ne connaît d'un onglet que son
 /// identifiant, qui n'est pas un nom à montrer. Le jour où la notification saura dire
 /// « ash · sidebar », c'est ici que le nom entrera — et pas dans le composition root.
-fn words(state: AgentState) -> Option<(&'static str, &'static str)> {
+fn words(state: SwitchableState) -> (&'static str, &'static str) {
     match state {
-        AgentState::Waiting => Some((
+        SwitchableState::Waiting => (
             "an agent is waiting",
             "it asked a question, and nothing moves until you answer.",
-        )),
-        AgentState::Error => Some((
+        ),
+        SwitchableState::Error => (
             "an agent stopped on an error",
             "it left without finishing its work.",
-        )),
+        ),
         // `done` a une phrase, et pourtant il ne dérange personne par défaut : c'est
         // l'interrupteur éteint de la spec §8 qui le retient, pas l'absence de texte. Écrire
         // la phrase est ce qui rend le réglage possible ; la laisser sous l'interrupteur est
         // ce qui garde la règle.
-        AgentState::Done => Some((
+        SwitchableState::Done => (
             "an agent finished",
             "it declared the end of its work, and its tab is idle again.",
-        )),
-        AgentState::Idle | AgentState::Working => None,
+        ),
     }
 }
 
@@ -217,7 +274,7 @@ mod tests {
 
         // Then
         let posted = posted.expect("done notifies once it is turned on");
-        assert_eq!(posted.state, AgentState::Done);
+        assert_eq!(posted.state, SwitchableState::Done);
         assert_eq!(posted.title, "an agent finished");
     }
 
@@ -232,7 +289,7 @@ mod tests {
 
         // Then
         let posted = posted.expect("error notifies");
-        assert_eq!(posted.state, AgentState::Error);
+        assert_eq!(posted.state, SwitchableState::Error);
         assert_eq!(posted.title, "an agent stopped on an error");
     }
 
@@ -241,16 +298,16 @@ mod tests {
     ) {
         // Given — la fenêtre de réglages dessine un interrupteur par `SWITCHABLE_STATES`
         // (spec §8, dernière puce ; spec §9, `[notifications]`) pendant que la bannière, elle,
-        // obéit à `words`. Deux listes, donc deux façons de dériver : un état ajouté à la
-        // constante seule offrirait un interrupteur qui ne commande rien, et le retirer d'elle
-        // seule cacherait une bannière qui continuerait de sortir. Rien d'autre que ceci ne
-        // les tient ensemble.
+        // obéit à `words`. Depuis que les deux sont indexées par `SwitchableState`, un
+        // interrupteur sans bannière ne compile plus ; ce qui reste à vérifier est le pont
+        // avec les cinq états du contrat — que `TryFrom` en laisse passer exactement trois,
+        // et pas un `working` qui offrirait une bannière permanente.
         let states = [
             AgentState::Idle,
             AgentState::Working,
             AgentState::Waiting,
-            AgentState::Done,
             AgentState::Error,
+            AgentState::Done,
         ];
         // Tout allumé : cette liste-ci décrit ce qui est **possible**, pas ce qui est choisi.
         let everything = NotificationChoices {
@@ -267,12 +324,9 @@ mod tests {
 
         // Then
         assert_eq!(
-            with_something_to_say.len(),
-            SWITCHABLE_STATES.len(),
+            with_something_to_say,
+            SWITCHABLE_STATES.map(AgentState::from).to_vec(),
             "chaque interrupteur commande une bannière, et réciproquement"
         );
-        for state in SWITCHABLE_STATES {
-            assert!(with_something_to_say.contains(&state));
-        }
     }
 }
