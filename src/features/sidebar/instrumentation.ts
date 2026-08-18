@@ -21,12 +21,22 @@ export interface InstrumentationMark {
     /** La phrase entière — infobulle et nom accessible. */
     readonly title: string;
     /**
-     * Le geste mène-t-il quelque part ?
+     * L'outil que le geste nomme, ou `null` quand il n'y a **pas** de geste.
      *
-     * `false` quand aucun adaptateur de cette version ne sait instrumenter cet outil : la
+     * `null` quand aucun adaptateur de cette version ne sait instrumenter cet outil : la
      * ligne le dit, et n'offre pas un bouton qui n'écrirait jamais rien.
+     *
+     * Le nom voyage **dans le marqueur** et non à côté : « la ligne a un geste » et « voici
+     * l'outil qu'il nomme » sont un seul fait, et les séparer obligerait la vue à les
+     * recoller — donc à affirmer, sans que le type le prouve, qu'ils sont d'accord.
      */
-    readonly actionable: boolean;
+    readonly instrument: InstrumentTarget | null;
+}
+
+/** L'outil qu'un geste d'instrumentation désigne — le strict nécessaire pour l'écran. */
+export interface InstrumentTarget {
+    readonly command: string;
+    readonly adapter: string;
 }
 
 /**
@@ -46,22 +56,22 @@ const WHY = "idle and working still show; waiting never will";
  */
 export function instrumentationMark(agent: RecognizedAgent | null): InstrumentationMark | null {
     if (agent === null) return null;
-    return MARKS[agent.instrumented](agent.command);
+    return MARKS[agent.instrumented](agent);
 }
 
-const MARKS: Record<Instrumented, (command: string) => InstrumentationMark | null> = {
+const MARKS: Record<Instrumented, (agent: RecognizedAgent) => InstrumentationMark | null> = {
     // Rien à signaler : les hooks sont posés, l'onglet montrera les cinq états.
     installed: () => null,
-    missing: (command) => ({
+    missing: ({ command, adapter }) => ({
         glyph: "!",
         title: `${command} is not instrumented — ${WHY}. open settings to install ash's hooks.`,
-        actionable: true,
+        instrument: { command, adapter },
     }),
     // Aucun geste : `generic` est l'adaptateur de l'outil dont on ne sait rien, et il ne pose
     // aucun hook (ADR-0008). Proposer d'instrumenter mènerait à un bouton éteint.
-    unsupported: (command) => ({
+    unsupported: ({ command }) => ({
         glyph: "!",
         title: `ash has no adapter for ${command} yet — ${WHY}.`,
-        actionable: false,
+        instrument: null,
     }),
 };

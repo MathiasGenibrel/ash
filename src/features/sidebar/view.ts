@@ -1,5 +1,6 @@
 import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
+import type { InstrumentationMark } from "./instrumentation";
 import { abbreviate } from "./labels";
 import { composeSubagentRow, type SubagentNode } from "./subagents";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
@@ -209,7 +210,7 @@ export class SidebarView {
         if (shown.struck) name.classList.add("is-struck");
 
         row.append(glyph(tab.state), name, text("span", shown.label, "ash-agent-state"));
-        if (tab.mark !== null) row.append(this.instrumentationMark(tab));
+        if (tab.mark !== null) row.append(this.instrumentationMark(tab.mark));
         row.addEventListener("click", () => {
             this.actions.selectTab(tab.tabId);
         });
@@ -227,13 +228,13 @@ export class SidebarView {
      * Quand rien ne peut être instrumenté, il n'y a pas de geste : le marqueur reste, sans
      * rôle ni tabulation, et sa phrase dit pourquoi.
      */
-    private instrumentationMark(tab: SidebarTabNode): HTMLElement {
-        const mark = tab.mark;
-        const element = text("span", mark?.glyph ?? "", "ash-agent-mark");
-        element.title = mark?.title ?? "";
-        element.setAttribute("aria-label", mark?.title ?? "");
+    private instrumentationMark(mark: InstrumentationMark): HTMLElement {
+        const element = text("span", mark.glyph, "ash-agent-mark");
+        element.title = mark.title;
+        element.setAttribute("aria-label", mark.title);
 
-        if (mark?.actionable !== true || tab.agent === null) return element;
+        const target = mark.instrument;
+        if (target === null) return element;
 
         element.setAttribute("role", "button");
         element.tabIndex = 0;
@@ -242,7 +243,7 @@ export class SidebarView {
             // La sidebar informe, l'écran agit (ADR-0010) : le geste ouvre les réglages, et
             // n'écrit rien de lui-même. Sans cet arrêt, il sélectionnerait aussi l'onglet.
             event.stopPropagation();
-            this.actions.instrument(tab.agent!.command, tab.agent!.adapter);
+            this.actions.instrument(target.command, target.adapter);
         };
         element.addEventListener("click", open);
         element.addEventListener("keydown", (event) => {
