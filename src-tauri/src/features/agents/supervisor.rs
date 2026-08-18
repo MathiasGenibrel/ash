@@ -84,6 +84,7 @@ use std::time::Duration;
 use super::adapter::{Adapter, ChildEvent, RawEvent};
 use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
 use super::notify::{notice, Notice, Notifier};
+use super::preferences::{NotificationChoices, NotificationPreferences};
 use super::state::{AgentState, AgentStatus};
 use super::subagents::{Subagent, Subagents};
 use super::wire::EventFrame;
@@ -126,6 +127,14 @@ pub struct Supervisor {
     /// notification ailleurs reviendrait à la poser sur une lecture, donc trois fois par
     /// seconde ([`super::notify`]).
     notifier: Arc<dyn Notifier>,
+    /// Ce que l'utilisateur laisse interrompre (spec §9, `[notifications]`).
+    ///
+    /// **Consulté ici, sur le chemin qui poste**, et non par la fenêtre qui affiche : une
+    /// bannière ne sort que quand Ash est en arrière-plan, donc un filtre côté interface ne
+    /// pourrait cacher que ce que l'utilisateur a déjà vu passer. C'est aussi ce qui fait
+    /// que le réglage vaut pour la notification et pour rien d'autre — la sidebar continue
+    /// de montrer les cinq états, quels que soient les trois interrupteurs.
+    preferences: Arc<NotificationPreferences>,
     /// Combien de temps la ligne d'un sous-agent fini reste visible (spec §6.5).
     ///
     /// Injectée, et non lue d'une constante : c'est un **réglage**, dont le composition root
@@ -200,12 +209,14 @@ impl Supervisor {
         clock: Arc<dyn Clock>,
         adapters: Vec<Arc<dyn Adapter>>,
         notifier: Arc<dyn Notifier>,
+        preferences: Arc<NotificationPreferences>,
         subagent_linger: Duration,
     ) -> Self {
         Self {
             clock,
             adapters,
             notifier,
+            preferences,
             subagent_linger,
             tabs: Mutex::new(Tabs::default()),
         }
@@ -273,7 +284,7 @@ impl Supervisor {
             if let Some(state) = changed {
                 tab.answered = Some(AgentStatus::entering(tab.answered, state, now));
             }
-            interrupt(&event.tab_id, changed, focused)
+            interrupt(&event.tab_id, changed, focused, self.preferences.choices())
         };
         self.post(interruption);
     }
@@ -372,7 +383,7 @@ impl Supervisor {
                 status,
                 subagents: tab.children.shown(),
             },
-            interrupt(tab_id, changed, focused),
+            interrupt(tab_id, changed, focused, self.preferences.choices()),
         )
     }
 
@@ -473,8 +484,13 @@ fn note_child(
 /// `None` dès que rien n'a changé : c'est la porte étroite par laquelle la spec §8 passe, et
 /// elle est étroite exprès — un état lu n'arrive jamais ici, donc un `waiting` qui dure ne
 /// peut pas notifier deux fois.
-fn interrupt(tab_id: &str, changed: Option<AgentState>, focused: bool) -> Option<Notice> {
-    notice(tab_id, changed?, focused)
+fn interrupt(
+    tab_id: &str,
+    changed: Option<AgentState>,
+    focused: bool,
+    choices: NotificationChoices,
+) -> Option<Notice> {
+    notice(tab_id, changed?, focused, choices)
 }
 
 /// Une machine neuve, à qui l'on dit tout de suite si l'utilisateur regarde.
@@ -499,7 +515,9 @@ fn probed(seen: Presence) -> AgentState {
 mod tests {
     use super::*;
     use crate::features::agents::adapters::{ClaudeCodeAdapter, GenericAdapter};
-    use crate::features::agents::fakes::{FakeNotifier, ManualClock, FAKE_EPOCH};
+    use crate::features::agents::fakes::{
+        FakeNotificationStore, FakeNotifier, ManualClock, FAKE_EPOCH,
+    };
     use crate::features::agents::subagents::SUBAGENT_LINGER;
     use std::path::PathBuf;
 
@@ -522,6 +540,8 @@ mod tests {
         clock: Arc<ManualClock>,
         focused: bool,
         subagent_linger: Duration,
+        /// Les trois interrupteurs de la spec §9, à leurs défauts sauf mention contraire.
+        choices: NotificationChoices,
     }
 
     impl SupervisorBuilder {
@@ -530,7 +550,14 @@ mod tests {
                 clock: ManualClock::new(),
                 focused: false,
                 subagent_linger: SUBAGENT_LINGER,
+                choices: NotificationChoices::default(),
             }
+        }
+
+        /// Un utilisateur qui a mis l'un des trois interrupteurs dans cette position.
+        fn notifying(mut self, state: AgentState, enabled: bool) -> Self {
+            self.choices = self.choices.with(state, enabled);
+            self
         }
 
         /// La fenêtre Ash est au premier plan — l'utilisateur regarde.
@@ -557,6 +584,7 @@ mod tests {
                 Arc::clone(&self.clock) as Arc<dyn Clock>,
                 adapters,
                 Arc::clone(&notifier) as Arc<dyn Notifier>,
+                FakeNotificationStore::holding(self.choices),
                 self.subagent_linger,
             );
             supervisor.on_window_focus(self.focused);
@@ -1127,6 +1155,56 @@ mod tests {
 
         // Then
         assert_eq!(notifier.titles(), vec!["an agent is waiting".to_owned()]);
+    }
+
+    #[test]
+    fn given_a_user_who_turned_waiting_off_when_an_agent_asks_a_question_then_nothing_reaches_his_screen(
+    ) {
+        // Given — l'interrupteur de la spec §9 doit couper la bannière **là où elle part**.
+        // Ce scénario est le seul qui le prouve de bout en bout : le superviseur est le seul
+        // producteur de bannières du produit, et il ne demande son avis à personne au moment
+        // de poster — une bannière sort précisément quand la fenêtre n'est pas là pour
+        // filtrer quoi que ce soit
+        let Assembled {
+            supervisor,
+            notifier,
+            ..
+        } = SupervisorBuilder::new()
+            .notifying(AgentState::Waiting, false)
+            .build();
+        sweep(&supervisor, Presence::Program);
+
+        // When — l'agent pose sa question, et la boucle continue de passer
+        supervisor.on_hook(&hook("waiting", TAB));
+        let asking = sweep(&supervisor, Presence::Program);
+
+        // Then — la sidebar continue de dire `waiting` : l'interrupteur coupe la bannière,
+        // pas l'état
+        assert_eq!(asking, AgentState::Waiting);
+        assert_eq!(notifier.titles(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_a_user_who_turned_done_on_when_an_agent_declares_the_end_of_its_work_then_a_banner_reaches_him(
+    ) {
+        // Given — le symétrique, et la seule chose qui rende le troisième interrupteur autre
+        // qu'un bouton décoratif : `done` ne notifie pas en v1 (spec §8), et l'allumer est le
+        // seul moyen de changer ça
+        let Assembled {
+            supervisor,
+            notifier,
+            ..
+        } = SupervisorBuilder::new()
+            .notifying(AgentState::Done, true)
+            .build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB));
+
+        // When
+        supervisor.on_hook(&hook("done", TAB));
+
+        // Then
+        assert_eq!(notifier.titles(), vec!["an agent finished".to_owned()]);
     }
 
     #[test]
