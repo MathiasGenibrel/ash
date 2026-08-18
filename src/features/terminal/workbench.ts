@@ -27,8 +27,15 @@ export interface WorkbenchPorts {
     onRender: (state: TabsState) => void;
 }
 
-/** D'où part un nouvel onglet. */
-export type Origin = "current-worktree" | "home";
+/**
+ * D'où part un nouvel onglet.
+ *
+ * Les deux premières formes sont les deux raccourcis de la spec §4.4 — `⌘T` reprend le
+ * répertoire courant de l'onglet actif, `⌘⇧T` part de `~`. La troisième est le clic sur une
+ * ligne de worktree **épinglée sans onglet** (spec §5.2) : il n'y a alors aucun onglet dont
+ * reprendre un répertoire, et c'est la ligne elle-même qui dit lequel.
+ */
+export type Origin = "current-worktree" | "home" | { readonly directory: string };
 
 /**
  * Les onglets shell et leur unique terminal visible.
@@ -73,6 +80,7 @@ export class TerminalWorkbench {
                 await this.reload();
                 from = activeTab(this.state);
             }
+            const cwd = typeof origin === "object" ? origin.directory : (from?.cwd ?? null);
 
             // Le shell peut sortir avant même que `start` ait rendu la main — un `cwd`
             // qui n'existe plus, un `~/.zshrc` qui appelle `exit`. La session est donc
@@ -83,7 +91,7 @@ export class TerminalWorkbench {
                 this.ports.createView(),
                 this.ports.bridge,
                 {
-                    cwd: from?.cwd ?? null,
+                    cwd,
                     onExit: () => {
                         const gone = pane.session;
                         if (gone !== undefined) void this.forget(gone.tabId);

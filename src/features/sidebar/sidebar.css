@@ -197,6 +197,35 @@
     color: var(--ash-fg-faint);
 }
 
+/* L'épingle d'une ligne de worktree (spec §5.2).
+ *
+ * Discrète jusqu'à ce qu'on s'approche : une colonne où chaque ligne porterait une épingle
+ * visible en permanence dirait surtout qu'on peut épingler, alors que ce qu'elle doit dire
+ * est *ce qui est* épinglé. Une ligne épinglée garde donc sa marque pleine, les autres ne la
+ * montrent qu'au survol — et au focus clavier, sans quoi le geste serait atteignable à la
+ * tabulation mais invisible. */
+
+.ash-worktree-pin {
+    margin-left: 4px;
+    font-size: 8px;
+    line-height: 1;
+    color: var(--ash-fg-dim);
+    flex: none;
+    cursor: pointer;
+    opacity: 0;
+}
+
+.ash-worktree-pin.is-pinned,
+.ash-worktree:hover .ash-worktree-pin,
+.ash-worktree-pin:focus-visible {
+    opacity: 1;
+}
+
+.ash-worktree-pin:hover,
+.ash-worktree-pin:focus-visible {
+    color: var(--ash-fg);
+}
+
 .ash-chevron {
     font-size: 8px;
     color: var(--ash-fg-dim);

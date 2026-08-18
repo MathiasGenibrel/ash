@@ -5,6 +5,7 @@ import type {
     GitStatus,
     Instrumented,
     RecognizedAgent,
+    PinnedWorktree,
     Subagent,
     TabInfo,
     WorktreeMetadata,
@@ -147,6 +148,43 @@ export class TabBuilder {
                       repo: this.repo,
                   }
                 : null,
+        };
+    }
+}
+
+/**
+ * Test Data Builder : un worktree **épinglé**, tel que le backend l'aurait relu (spec §5.2).
+ *
+ * Les défauts sont valides et déterministes — un worktree seul sous son dépôt, donc la forme
+ * **à plat**, comme pour un onglet. Un scénario ne surcharge que ce qu'il regarde.
+ *
+ * Il vit à côté de [`TabBuilder`] parce qu'une ligne de la colonne se range de la même façon
+ * qu'elle vienne d'un onglet ou d'une épingle : les deux fabriques doivent décrire le même
+ * worktree quand elles nomment la même racine.
+ */
+export class PinBuilder {
+    private worktreeRoot = "/dev/solo";
+    private worktreeName = "solo";
+    private repo: { id: string; name: string } | null = null;
+
+    static create(root: string): PinBuilder {
+        const pin = new PinBuilder();
+        pin.worktreeRoot = root;
+        pin.worktreeName = basename(root);
+        return pin;
+    }
+
+    /** Un worktree **groupé** sous son dépôt commun — les mêmes clés que `TabBuilder`. */
+    ofRepo(repoName: string, repoId = `/dev/${repoName}/.git`): this {
+        this.repo = { id: repoId, name: repoName };
+        return this;
+    }
+
+    build(): PinnedWorktree {
+        return {
+            worktreeRoot: this.worktreeRoot,
+            worktreeName: this.worktreeName,
+            repo: this.repo,
         };
     }
 }

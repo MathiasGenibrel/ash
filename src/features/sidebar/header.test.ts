@@ -21,6 +21,7 @@ function header(tabs: readonly TabInfo[], columnCollapsed: boolean): SidebarHead
         activeTabId: null,
         collapsedWorktrees: new Set(),
         collapsedGroups: new Set(),
+        pinned: [],
     });
     return composeSidebarHeader(tree, columnCollapsed);
 }
