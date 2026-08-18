@@ -6,7 +6,13 @@ Ash est une application macOS qui entoure un shell plutôt que de le remplacer :
 supervise les agents de code lancés dans de vrais PTY, et apporte un git conscient de
 ces agents. Voir [`docs/spec.md`](./docs/spec.md) et [`docs/adr/`](./docs/adr/).
 
-**J0 et J1 sont terminés : Ash peut déjà remplacer un terminal quotidien.** De vrais
+**J0, J1, J2 et J3 sont terminés ; J4 — « Ouverture » — est le jalon en cours.**
+Restent ouverts : l'épinglage d'un worktree (#20), l'adaptateur `codex` qui commence par
+une enquête (#21), le reste des réglages — raccourcis, apparence, notifications (#22) —
+et la désinstallation propre (#23), plus le spike #62 sur les limites de la découverte
+bornée. Son critère de sortie : **un deuxième outil supporté sans toucher au cœur.**
+
+**Ash remplace déjà un terminal quotidien.** De vrais
 shells dans des onglets avec leurs raccourcis et un menu natif, une sonde qui suit le
 `cwd` et le processus en avant-plan, la résolution d'un `cwd` vers son worktree et son
 dépôt, une sidebar qui groupe les onglets par worktree et les worktrees par dépôt, les
@@ -61,9 +67,9 @@ macOS, aucun scan de disque. Un agent reconnu mais non instrumenté porte un mar
 dans la sidebar, dont le geste ouvre les réglages sur cet outil — la sidebar informe, l'écran
 agit (ADR-0010), et rien ne s'écrit sans un geste explicite.
 
-Ce qui reste à faire du côté des agents : la remontée d'état dans la sidebar, et le
-branchement de cette reconnaissance sur la machine à états — c'est elle qui donnera enfin son
-producteur à `AgentEvent::AgentStarted` (voir `agents/supervisor.rs`).
+Ce qui reste à faire du côté des agents : brancher cette reconnaissance sur la machine à
+états — c'est elle qui donnera enfin son producteur à `AgentEvent::AgentStarted`, que
+`supervisor.rs` n'émet toujours pas (il le dit lui-même en tête de fichier).
 
 **L'entrée dans un état est datée, et la ligne de statut affiche sa durée** (`working ·
 15m22s`). Ce qui traverse la frontière est une **date absolue** — `TabInfo.stateSince`, en
@@ -84,8 +90,8 @@ ne peut retenir un hook, donc bloquer un agent.
 - **Coquille** : Tauri v2 ([ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md))
 - **Backend** : Rust — `portable-pty`, `libc` (la sonde), `notify` (la surveillance de
   `.git`), `objc2` + `objc2-user-notifications` (les bannières). Le socket unix et le
-  binaire `ash-event`
-  ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)) n'existent pas encore : c'est J2
+  binaire `ash-event` ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)) existent depuis
+  J2 : le crate porte **deux binaires**, `ash` et `ash-event` (`src/bin/ash-event.rs`)
 - **Frontend** : TypeScript + xterm.js, dans la webview système (WKWebView)
 - **Gestionnaire de paquets** : **bun** — n'utilise aucun autre gestionnaire dans ce dépôt
 - **Tests** : `cargo test` côté Rust, `bun test` côté TypeScript
@@ -210,8 +216,10 @@ demande pas** : la cible dit où les choses iront, pas où elles sont.
 
 ```
 src-tauri/src/
-  main.rs                composition root : assemblage, configuration, démarrage
+  main.rs              ✓ point d'entrée, qui appelle `lib.rs`
+  lib.rs               ✓ composition root : assemblage, configuration, démarrage
   menu.rs              ✓ menu natif macOS et routage de ses actions
+  bin/ash-event.rs     ✓ le binaire que les hooks appellent            — ADR-0007
   features/
     pty/               ✓ PTY, onglets, boucle de sonde 300 ms       — ADR-0003
     probe/             ✓ sonde fg_pid + cwd (libc)                  — ADR-0005
@@ -220,22 +228,27 @@ src-tauri/src/
     git/               ✓ résolution worktree/dépôt, surveillance de
                          `.git`, métadonnées                        — ADR-0011/12
     theme/             ✓ clair / sombre / système, persisté
-    agents/              découverte, états, trait Adapter           — ADR-0006/7/8
-      adapters/          claude-code, codex, generic
+    agents/            ✓ socket, machine à états, superviseur, sous-agents,
+                         reconnaissance des providers                — ADR-0006/7/8
+      adapters/        ✓ claude-code, generic (codex reste à écrire — #21)
+    hooks/             ✓ entrées marquées dans settings.json, fusion,
+                         diff, sauvegarde                            — ADR-0007
+    settings/          ✓ outils, vérification d'un chemin, état des hooks
     journal/             attribution commit → agent → prompt        — ADR-0014
-    hooks/               installation du bloc dans settings.json
-  shared/                réellement transverse, et justifié
+  shared/              ✓ réellement transverse, et justifié (l'horloge)
 src/
   app/                 ✓ composition root, tokens des thèmes, menu
   features/
-    terminal/          ✓ xterm.js, barre d'onglets, ligne de statut
-    sidebar/           ✓ dépôts, worktrees, onglets
+    terminal/          ✓ xterm.js, ligne de statut
+    sidebar/           ✓ dépôts, worktrees, onglets, lignes filles
+    settings/          ✓ la fenêtre de réglages
     git/                 popup de branches, graphe, merge, fiche
-    settings/            la fenêtre de réglages
   shared/
     ipc/               ✓ le contrat Rust ↔ TypeScript, et ses builders
     agent-state/       ✓ présentation des cinq états, partagée par
                          la sidebar et la ligne de statut
+    ui/                ✓ couche de composants — un composant est une valeur
+    tab-context/       ✓ l'onglet courant, partagé par la sidebar et le terminal
 ```
 
 `features/git/` est déjà la plus grosse : elle porte la résolution, la surveillance de
