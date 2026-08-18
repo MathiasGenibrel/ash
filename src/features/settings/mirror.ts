@@ -11,6 +11,7 @@
  */
 
 import type { FixAction as RustFixAction } from "@/shared/ipc/generated/FixAction";
+import type { FocusedTool as RustFocusedTool } from "@/shared/ipc/generated/FocusedTool";
 import type { FontStep as RustFontStep } from "@/shared/ipc/generated/FontStep";
 import type { HookAction as RustHookAction } from "@/shared/ipc/generated/HookAction";
 import type { HooksReport as RustHooksReport } from "@/shared/ipc/generated/HooksReport";
@@ -33,6 +34,7 @@ import type { Accepts, Assert, Mirrors } from "@/shared/ipc/mirroring";
 
 import type {
     FixAction,
+    FocusedTool,
     FontStep,
     HookAction,
     HooksReport,
@@ -52,6 +54,9 @@ import type {
     VerificationState,
     Verified,
 } from "./contract";
+
+/** L'outil que la sidebar désigne — une demande d'affichage, jamais une écriture. */
+export type FocusedToolStillMirrorsRust = Assert<Mirrors<RustFocusedTool, FocusedTool>>;
 
 export type HookStateStillMirrorsRust = Assert<Mirrors<RustHookState, HookState>>;
 export type HookActionStillMirrorsRust = Assert<Mirrors<RustHookAction, HookAction>>;

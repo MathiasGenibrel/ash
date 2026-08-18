@@ -75,6 +75,36 @@ export interface Subagent {
 }
 
 /**
+ * Ce que la configuration d'un outil reconnu porte, du point de vue d'Ash.
+ *
+ * Ce n'est **pas** un état d'agent : un outil non instrumenté montre `idle` et `working`
+ * comme les autres. Ce que le mot dit, c'est *pourquoi* il ne montrera jamais `waiting`
+ * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)) — sans quoi son absence se lirait
+ * comme une panne.
+ *
+ * `unsupported` n'est pas `missing` : le premier n'a **aucun geste** — aucun adaptateur de
+ * cette version ne sait instrumenter cet outil —, le second mène au flux d'installation des
+ * hooks, qui existe déjà dans la fenêtre de réglages.
+ */
+export type Instrumented = "installed" | "missing" | "unsupported";
+
+/**
+ * L'outil reconnu dans l'avant-plan d'un onglet (ADR-0006).
+ *
+ * Reconnaître est de la **lecture** : rien n'a été écrit, aucune autorisation macOS n'a été
+ * demandée. Le backend a comparé ce que la sonde a vu — le chemin de l'exécutable, son nom,
+ * son `argv[0]` — à la table embarquée et aux entrées déclarées, et la sidebar rend le
+ * résultat ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface RecognizedAgent {
+    /** Le nom de l'outil — `claude`, et non le `2.1.234` de son binaire. */
+    command: string;
+    /** L'adaptateur qui le traduit — `claude-code`, `generic`. */
+    adapter: string;
+    instrumented: Instrumented;
+}
+
+/**
  * Un onglet, tel que le backend le décrit.
  *
  * `cwd` est le répertoire **courant** : la sonde d'ADR-0005 le suit à travers les `cd`, et
@@ -89,8 +119,20 @@ export interface Subagent {
 export interface TabInfo {
     tabId: TabId;
     cwd: string;
-    /** Le programme qui tient l'avant-plan de l'onglet — `zsh`, `claude`, `bun`. */
+    /**
+     * Le programme qui tient l'avant-plan de l'onglet — `zsh`, `claude`, `bun`.
+     *
+     * C'est le nom de l'**outil** quand c'en est un : le binaire d'un Claude Code posé par
+     * son installateur officiel s'appelle `2.1.234`, et l'onglet dit `claude` (ADR-0006).
+     */
     process: string;
+    /**
+     * L'outil reconnu dans l'avant-plan, ou `null` — un shell à son invite, un `vim`.
+     *
+     * Il ne change pas d'une passe de sonde à l'autre : la fiche d'onglet reste donc stable,
+     * et `ash://tab-changed` ne repart pas pour lui.
+     */
+    agent: RecognizedAgent | null;
     state: AgentState;
     /**
      * Quand l'onglet est **entré** dans cet état — un `Date.now()`, en millisecondes.

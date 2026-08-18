@@ -358,4 +358,27 @@ export interface SettingsPorts {
      * dire. Rend de quoi se désabonner.
      */
     onVerified(listener: (verified: Verified) => void): Promise<() => void>;
+    /**
+     * L'outil sur lequel la fenêtre doit se poser, demandé **en s'affichant**.
+     *
+     * Le marqueur « non instrumenté » de la sidebar (ADR-0006) ouvre cette fenêtre : l'event
+     * qui accompagne le geste part avant que la page n'existe, donc c'est la page qui vient
+     * chercher la demande. La lire la consomme — rouvrir les réglages par le menu ne ramène
+     * pas sur un outil désigné il y a une heure.
+     */
+    pendingFocus(): Promise<FocusedTool | null>;
+    /** Le même geste, quand la fenêtre était **déjà** ouverte. */
+    onFocusTool(listener: (focused: FocusedTool) => void): Promise<() => void>;
+}
+
+/**
+ * L'outil que la sidebar désigne — une **demande d'affichage**, jamais une écriture.
+ *
+ * Miroir de `FocusedTool` en Rust. Ce que la fenêtre en fait est sa décision : montrer
+ * l'entrée si elle existe, ou proposer de la déclarer si elle n'existe pas. Rien n'est écrit
+ * chez l'utilisateur sans un geste fait dans cet écran (ADR-0007).
+ */
+export interface FocusedTool {
+    command: string;
+    adapter: string;
 }

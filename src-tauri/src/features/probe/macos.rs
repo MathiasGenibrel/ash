@@ -1,7 +1,7 @@
 //! La sonde réelle : `tcgetpgrp` puis `libproc`, comme le décrit ADR-0005.
 //!
 //! **C'est le seul module `unsafe` du crate**, et c'est la raison d'être de la feature :
-//! trois appels système bruts, chacun enveloppé dans une fonction sûre qui traduit les
+//! quatre appels système bruts, chacun enveloppé dans une fonction sûre qui traduit les
 //! conventions C (`-1`, tampon partiellement rempli, chaîne terminée par un nul) en
 //! `Result`. Personne d'autre dans Ash n'a à connaître ces conventions.
 #![allow(unsafe_code)]
@@ -40,8 +40,13 @@ impl Probe for SystemProbe {
         Ok(ProcessInfo {
             pid,
             name: process_name(&executable),
+            executable,
             cwd,
         })
+    }
+
+    fn argv0(&self, pid: Pid) -> Option<String> {
+        first_argument(pid)
     }
 }
 
@@ -110,4 +115,94 @@ fn executable_path(pid: Pid) -> Result<PathBuf, ProbeError> {
 
     buffer.truncate(length);
     Ok(PathBuf::from(String::from_utf8_lossy(&buffer).into_owned()))
+}
+
+/// `argv[0]` d'un processus — `sysctl(KERN_PROCARGS2)`.
+///
+/// C'est le troisième signal d'ADR-0006 : un outil installé par npm tourne sous un
+/// exécutable nommé `node`, et seul son premier argument dit `claude`. L'appel est le même
+/// que celui de `ps`, **sans autorisation supplémentaire** : ni `task_for_pid`, ni
+/// entitlement, ni consentement à demander à l'utilisateur.
+///
+/// Le format que le noyau rend est fixé et sans en-tête décrivant les longueurs :
+///
+/// ```text
+/// [argc: i32][chemin de l'exécutable\0][\0 de bourrage]…[argv[0]\0][argv[1]\0]…
+/// ```
+///
+/// On saute donc le compteur, puis le chemin, puis les nuls de bourrage, et ce qui vient
+/// ensuite est `argv[0]`. Toute anomalie rend `None` : ce signal est un **bonus**, et son
+/// silence laisse les deux premiers décider.
+fn first_argument(pid: Pid) -> Option<String> {
+    let raw = process_arguments(pid)?;
+
+    // Le compteur d'arguments, dont on ne se sert pas : ce qui suit est le chemin.
+    let after_argc = raw.get(std::mem::size_of::<libc::c_int>()..)?;
+
+    let path_end = after_argc.iter().position(|&byte| byte == 0)?;
+    let after_path = after_argc.get(path_end..)?;
+    let start = after_path.iter().position(|&byte| byte != 0)?;
+    let rest = after_path.get(start..)?;
+    let end = rest
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(rest.len());
+
+    let argument = String::from_utf8_lossy(rest.get(..end)?).into_owned();
+    (!argument.is_empty()).then_some(argument)
+}
+
+/// L'espace d'arguments d'un processus, tel quel.
+///
+/// La taille du tampon vient de `KERN_ARGMAX` et non d'une constante choisie ici : le noyau
+/// refuse (`ENOMEM`) un tampon plus petit que ce qu'il a à recopier, et un tampon deviné
+/// trop court ferait taire le signal exactement pour les commandes aux longues lignes.
+fn process_arguments(pid: Pid) -> Option<Vec<u8>> {
+    let capacity = usize::try_from(argument_max()?).ok()?;
+    let mut buffer = vec![0u8; capacity];
+    let mut written = capacity;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+
+    // SAFETY: `mib` fait bien les trois entiers annoncés, le tampon appartient à cette pile
+    // et vit jusqu'à la fin de l'appel, et `written` dit au noyau combien d'octets il a le
+    // droit d'y écrire — il le remplace ensuite par ce qu'il a réellement écrit. Un pid mort
+    // ou illisible rend -1 et pose `errno`, cas traité juste après.
+    let answered = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast(),
+            &mut written,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+
+    if answered != 0 || written == 0 || written > buffer.len() {
+        return None;
+    }
+    buffer.truncate(written);
+    Some(buffer)
+}
+
+/// `KERN_ARGMAX` : la taille que le noyau peut avoir à recopier.
+fn argument_max() -> Option<libc::c_int> {
+    let mut max: libc::c_int = 0;
+    let mut written = std::mem::size_of::<libc::c_int>();
+    let mut mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+
+    // SAFETY: le noyau écrit au plus `written` octets à l'adresse d'un `c_int` de cette
+    // pile, et `written` est exactement sa taille. L'appel est synchrone.
+    let answered = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            2,
+            std::ptr::addr_of_mut!(max).cast(),
+            &mut written,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+
+    (answered == 0 && max > 0).then_some(max)
 }

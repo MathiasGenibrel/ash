@@ -16,9 +16,13 @@ use std::sync::{Arc, Mutex};
 use super::agent_states::AgentStates;
 use super::error::PtyError;
 use super::locate::{RepoRef, TabLocation, WorktreeLocator};
+use super::recognition::{AgentRecognition, NoRecognition};
 use super::registry::{PtyRegistry, TabId};
 use super::session::{OpenPty, PtySession, PtySpawner, PtySpec, Terminal};
-use crate::features::agents::{AgentState, AgentStatus, Presence, Subagent, TabAgents};
+use crate::features::agents::{
+    AgentState, AgentStatus, Instrumented, Presence, ProgramIdentity, RecognizedAgent, Subagent,
+    TabAgents,
+};
 use crate::features::probe::{Pid, Probe, ProbeError, ProcessInfo};
 use crate::shared::time::UnixMillis;
 
@@ -40,6 +44,8 @@ pub struct FakeProbe {
     cwd: Mutex<Option<PathBuf>>,
     /// Le programme à qui le shell a donné l'avant-plan, quand il y en a un.
     foreground: Mutex<Option<String>>,
+    /// Le chemin de son exécutable, quand le scénario le décrit autrement que par son nom.
+    executable: Mutex<Option<PathBuf>>,
 }
 
 /// Le pid du programme lancé depuis le shell, quand le scénario en demande un.
@@ -55,6 +61,7 @@ impl FakeProbe {
         Self {
             cwd: Mutex::new(Some(PathBuf::from(cwd))),
             foreground: Mutex::new(None),
+            executable: Mutex::new(None),
         }
     }
 
@@ -67,6 +74,19 @@ impl FakeProbe {
     /// Le shell a donné le terminal à un programme : l'onglet n'est plus à son invite.
     pub fn hand_over_to(&self, program: &str) {
         *self.foreground.lock().unwrap() = Some(program.to_owned());
+        *self.executable.lock().unwrap() = None;
+    }
+
+    /// Idem, mais le scénario décrit le **chemin** de l'exécutable — c'est ce que
+    /// `proc_pidpath` rend, et le signal le plus fiable d'ADR-0006.
+    pub fn hand_over_to_binary(&self, executable: &str) {
+        let path = PathBuf::from(executable);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        *self.foreground.lock().unwrap() = Some(name);
+        *self.executable.lock().unwrap() = Some(path);
     }
 
     fn seen(&self) -> Option<PathBuf> {
@@ -75,6 +95,14 @@ impl FakeProbe {
 
     fn leader(&self) -> Option<String> {
         self.foreground.lock().unwrap().clone()
+    }
+
+    fn binary(&self, name: &str) -> PathBuf {
+        self.executable
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("/usr/local/bin/{name}")))
     }
 }
 
@@ -90,15 +118,58 @@ impl Probe for FakeProbe {
 
     fn inspect(&self, pid: Pid) -> Result<ProcessInfo, ProbeError> {
         self.seen()
-            .map(|cwd| ProcessInfo {
-                pid,
-                name: match self.leader() {
+            .map(|cwd| {
+                let name = match self.leader() {
                     Some(program) if pid == LAUNCHED => program,
                     _ => "bash".to_owned(),
-                },
-                cwd,
+                };
+                ProcessInfo {
+                    pid,
+                    executable: self.binary(&name),
+                    name,
+                    cwd,
+                }
             })
             .ok_or(ProbeError::Vanished(pid))
+    }
+
+    fn argv0(&self, _pid: Pid) -> Option<String> {
+        None
+    }
+}
+
+/// Une reconnaissance décrite par le scénario : ce que la table et les réglages répondraient.
+///
+/// Elle ne rejoue **pas** les trois signaux d'ADR-0006 — ils sont prouvés là où ils vivent,
+/// dans `features/agents/providers.rs`. Ce qu'elle sert à vérifier ici est ce que le registre
+/// en fait : le nom qu'un onglet affiche, et ce qui traverse la frontière.
+#[derive(Default)]
+pub struct FakeRecognition {
+    known: Mutex<Vec<(String, RecognizedAgent)>>,
+}
+
+impl FakeRecognition {
+    /// Ce chemin d'exécutable est cet outil-là.
+    pub fn knows(&self, executable: &str, command: &str, instrumented: Instrumented) {
+        self.known.lock().unwrap().push((
+            executable.to_owned(),
+            RecognizedAgent {
+                command: command.to_owned(),
+                adapter: "claude-code".to_owned(),
+                instrumented,
+            },
+        ));
+    }
+}
+
+impl AgentRecognition for FakeRecognition {
+    fn recognize(&self, program: &ProgramIdentity) -> Option<RecognizedAgent> {
+        self.known
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(executable, _)| Path::new(executable) == program.executable)
+            .map(|(_, agent)| agent.clone())
     }
 }
 
@@ -355,6 +426,7 @@ pub fn registry(spawner: FakeSpawner) -> PtyRegistry {
         Box::new(spawner),
         Arc::new(FakeProbe::silent()),
         Arc::new(CountingLocator::default()),
+        Arc::new(NoRecognition),
         Arc::new(FakeAgentStates::default()),
     )
 }
@@ -380,14 +452,30 @@ pub fn supervised_registry(
     Arc<CountingLocator>,
     Arc<FakeAgentStates>,
 ) {
+    let (registry, probe, locator, agents, _) = recognizing_registry(cwd);
+    (registry, probe, locator, agents)
+}
+
+/// Idem, plus la reconnaissance des outils — pour ce qui se joue à la frontière d'ADR-0006.
+pub fn recognizing_registry(
+    cwd: &str,
+) -> (
+    PtyRegistry,
+    Arc<FakeProbe>,
+    Arc<CountingLocator>,
+    Arc<FakeAgentStates>,
+    Arc<FakeRecognition>,
+) {
     let probe = Arc::new(FakeProbe::reporting(cwd));
     let locator = Arc::new(CountingLocator::default());
     let agents = Arc::new(FakeAgentStates::default());
+    let recognition = Arc::new(FakeRecognition::default());
     let registry = PtyRegistry::new(
         Box::new(FakeSpawner::observable()),
         Arc::clone(&probe) as Arc<dyn Probe>,
         Arc::clone(&locator) as Arc<dyn WorktreeLocator>,
+        Arc::clone(&recognition) as Arc<dyn AgentRecognition>,
         Arc::clone(&agents) as Arc<dyn AgentStates>,
     );
-    (registry, probe, locator, agents)
+    (registry, probe, locator, agents, recognition)
 }

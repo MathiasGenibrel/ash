@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { aDraft, aShortcut, aTool, aVerification } from "./builders";
+import { aDraft, aShortcut, aSnapshot, aTool, aVerification } from "./builders";
 import {
     ADAPTER_DEFAULT,
     countProblems,
@@ -12,6 +12,7 @@ import {
     describeStop,
     describeTool,
     describeToolCount,
+    focusedDraft,
     groupShortcuts,
     NOTHING_VERIFIED_YET,
     parseDiff,
@@ -488,4 +489,42 @@ describe("les raccourcis groupés", () => {
         expect(grouped[0]?.shortcuts.map((one) => one.label)).toEqual(["New Tab", "Close Tab"]);
     });
 
+});
+
+describe("l'outil que la sidebar désigne", () => {
+    it("Given a recognized tool ash does not know yet, when the sidebar points at it, then the add form opens filled in without writing anything", () => {
+        // Given — le geste du marqueur « non instrumenté » (ADR-0006) mène au flux
+        // d'ajout qui existe déjà : vérification, puis bouton. Rien n'est écrit d'ici là
+        const focused = { command: "claude", adapter: "claude-code" };
+
+        // When
+        const prefilled = focusedDraft(focused, aSnapshot());
+
+        // Then
+        expect(prefilled).toEqual({ command: "claude", label: "", adapter: "claude-code", config: "" });
+    });
+
+    it("Given a tool already declared, when the sidebar points at it, then no second entry is proposed", () => {
+        // Given — sa carte est déjà là, avec sa ligne `hooks` et son bouton. Une saisie de
+        // plus montrerait deux fois le même outil, dont une que l'ajout refuserait
+        const snapshot = aSnapshot({ tools: [aTool({ command: "claude" })] });
+
+        // When
+        const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot);
+
+        // Then
+        expect(prefilled).toBeNull();
+    });
+
+    it("Given an adapter this build does not embed, when the sidebar points at a tool, then the form falls back to one it offers", () => {
+        // Given — `claude-code` disparaît de la liste quand `ash-event` est introuvable :
+        // un menu posé sur une valeur qu'il ne contient pas n'afficherait rien de vrai
+        const snapshot = aSnapshot({ adapters: ["generic"] });
+
+        // When
+        const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot);
+
+        // Then
+        expect(prefilled?.adapter).toBe("generic");
+    });
 });

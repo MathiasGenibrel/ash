@@ -236,6 +236,38 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* --- le marqueur « non instrumenté » d'une ligne d'agent (ADR-0006) ----------
+ *
+ * Discret, et volontairement : il dit qu'un agent reconnu ne montrera jamais `waiting` faute
+ * de hooks (ADR-0007), ce qui n'est ni une urgence ni une erreur. Pas de bandeau, pas de
+ * couleur d'alerte — la sidebar informe, l'écran agit (ADR-0010).
+ *
+ * Il n'a `cursor: pointer` que lorsqu'il mène quelque part : un outil qu'aucun adaptateur ne
+ * sait instrumenter porte la même marque, sans geste. */
+.ash-agent-mark {
+    margin-left: 4px;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--ash-fg-dim);
+    border: 1px solid currentcolor;
+    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+}
+
+.ash-agent-mark.is-actionable {
+    cursor: pointer;
+}
+
+.ash-agent-mark.is-actionable:hover,
+.ash-agent-mark.is-actionable:focus-visible {
+    color: var(--ash-fg);
+}
+
 /* --- les lignes filles : les sous-agents (spec §6.5) -------------------------
  *
  * Un cran de plus à gauche que la ligne de leur onglet, et un filet vertical qui les relie
