@@ -18,7 +18,7 @@ pub struct PinnedRepo {
 /// Un worktree épinglé, tel qu'il traverse la frontière — donc **tel qu'il est aujourd'hui**,
 /// et non tel que le fichier l'a gardé.
 ///
-/// Le disque ne garde qu'une racine ([`super::Persisted`]) ; le nom et le dépôt sont relus à
+/// Le disque ne garde qu'une racine (`Persisted`) ; le nom et le dépôt sont relus à
 /// chaque lecture par [`WorktreePlaces`]. Une ligne épinglée dit donc la vérité après un
 /// `git worktree add` dans le même dépôt, après un renommage de dossier, et après un
 /// déplacement — ce qu'une fiche recopiée dans `state.json` ne saurait pas faire.
