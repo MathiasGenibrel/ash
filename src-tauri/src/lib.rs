@@ -463,6 +463,7 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::settings_tools,
             features::settings::commands::settings_reveal_tool,
             features::settings::commands::settings_pending_focus,
+            features::settings::commands::settings_proposed_config,
             features::settings::commands::settings_declare_tool,
             features::settings::commands::settings_forget_tool,
             features::settings::commands::settings_retarget_tool,

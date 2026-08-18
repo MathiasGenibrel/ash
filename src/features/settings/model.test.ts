@@ -12,6 +12,7 @@ import {
     describeStop,
     describeTool,
     describeToolCount,
+    focusedAdapter,
     focusedDraft,
     groupShortcuts,
     NOTHING_VERIFIED_YET,
@@ -498,10 +499,29 @@ describe("l'outil que la sidebar désigne", () => {
         const focused = { command: "claude", adapter: "claude-code" };
 
         // When
-        const prefilled = focusedDraft(focused, aSnapshot());
+        const prefilled = focusedDraft(focused, aSnapshot(), "~/.claude");
+
+        // Then — le dossier conventionnel est **proposé** : le backend l'a trouvé sur le
+        // disque, et l'utilisateur n'a plus à le taper (ADR-0006)
+        expect(prefilled).toEqual({
+            command: "claude",
+            label: "",
+            adapter: "claude-code",
+            config: "~/.claude",
+        });
+    });
+
+    it("Given an adapter whose conventional folder is nowhere on this machine, when the sidebar points at a tool, then the folder is left to type", () => {
+        // Given — le backend n'a rien trouvé à proposer : ni dossier conventionnel, ni
+        // dossier tout court. Remplir le champ quand même fabriquerait une entrée dont le
+        // test 1 dirait aussitôt qu'il n'y a rien à ce chemin
+        const focused = { command: "codex", adapter: "generic" };
+
+        // When
+        const prefilled = focusedDraft(focused, aSnapshot(), null);
 
         // Then
-        expect(prefilled).toEqual({ command: "claude", label: "", adapter: "claude-code", config: "" });
+        expect(prefilled?.config).toBe("");
     });
 
     it("Given a tool already declared, when the sidebar points at it, then no second entry is proposed", () => {
@@ -510,10 +530,13 @@ describe("l'outil que la sidebar désigne", () => {
         const snapshot = aSnapshot({ tools: [aTool({ command: "claude" })] });
 
         // When
-        const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot);
+        const adapter = focusedAdapter({ command: "claude", adapter: "claude-code" }, snapshot);
+        const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot, null);
 
-        // Then
+        // Then — et pas d'adaptateur non plus : c'est ce qui fait qu'aucun dossier n'est
+        // même demandé au backend pour remplir une saisie qui n'aura pas lieu
         expect(prefilled).toBeNull();
+        expect(adapter).toBeNull();
     });
 
     it("Given an adapter this build does not embed, when the sidebar points at a tool, then the form falls back to one it offers", () => {
@@ -522,7 +545,7 @@ describe("l'outil que la sidebar désigne", () => {
         const snapshot = aSnapshot({ adapters: ["generic"] });
 
         // When
-        const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot);
+        const prefilled = focusedDraft({ command: "claude", adapter: "claude-code" }, snapshot, "~/.claude");
 
         // Then
         expect(prefilled?.adapter).toBe("generic");
