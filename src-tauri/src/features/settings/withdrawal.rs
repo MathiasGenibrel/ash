@@ -15,6 +15,9 @@
 //! Ce module ne lit rien et n'écrit rien : il met en forme ce que le registre a rassemblé.
 //! C'est ce qui rend ses phrases vérifiables sans un seul fichier.
 
+use super::values::Command;
+use crate::features::hooks::Withdrawal;
+
 /// Ce que le retrait laisse derrière lui, dit avant **et** après.
 ///
 /// Ce n'est pas une précaution de rédaction : les deux phrases sont la réponse aux deux
@@ -64,6 +67,33 @@ pub struct PlannedRemoval {
     pub hand_edited: bool,
     /// Le fichier tel qu'il est, face à ce qu'Ash laisserait.
     pub diff: String,
+}
+
+impl PlannedRemoval {
+    /// Ce que `features::hooks` a vu dans ce fichier, mis dans la forme qui va à l'écran.
+    ///
+    /// La traduction est **ici et pas dans le registre** : c'est le seul module qui décide
+    /// de ce que l'annonce contient, donc le seul à changer le jour où elle dit une chose de
+    /// plus. Le registre, lui, sait quels fichiers sont visés — il n'a pas à savoir comment
+    /// un chemin devient une ligne d'écran.
+    pub fn foreseen(found: Withdrawal, command: &Command) -> Self {
+        Self {
+            file: found.file.display().to_string(),
+            commands: vec![command.to_string()],
+            entries: found.entries,
+            deletes_the_file: found.deletes_the_file,
+            hand_edited: found.hand_edited,
+            diff: found.diff,
+        }
+    }
+
+    /// Une seconde entrée déclarée vise le même fichier : les deux noms sur la même ligne.
+    ///
+    /// Le fichier ne s'annonce qu'une fois — l'annoncer deux fois promettrait deux fois les
+    /// mêmes entrées, puis rapporterait un second passage qui n'a rien trouvé.
+    pub fn also_aimed_by(&mut self, command: &Command) {
+        self.commands.push(command.to_string());
+    }
 }
 
 /// Ce que le retrait a réellement fait, fichier par fichier.

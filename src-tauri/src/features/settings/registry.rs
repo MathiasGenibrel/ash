@@ -256,6 +256,11 @@ impl ToolRegistry {
     /// fichier qui porte déjà d'autres hooks ont tous éteint le bouton — et le backend
     /// refuse pour la même raison qu'il l'a éteint. Recopier la condition en ferait deux,
     /// dont une seule protège vraiment le fichier de l'utilisateur.
+    ///
+    /// **Elle garde l'écriture d'entrées nouvelles, pas leur reprise** :
+    /// [`Self::remove_everything`] ne passe pas par ici, et c'est délibéré — l'y faire
+    /// passer abandonnerait sur le disque les entrées d'une déclaration devenue invalide
+    /// depuis. La raison est écrite là-bas, avec le geste qu'elle autorise.
     pub fn install_hooks(&self, command: &Command) -> Result<Vec<ToolDeclaration>, SettingsError> {
         self.write_hooks(command, HookAction::Install)
     }
@@ -328,14 +333,12 @@ impl ToolRegistry {
                 continue;
             };
             // Deux entrées sur le même dossier et le même adaptateur visent le même
-            // fichier : un seul retrait, et les deux noms sur la même ligne. Le retirer
-            // deux fois ferait annoncer deux fois les mêmes entrées, puis rapporter un
-            // second passage qui n'a rien trouvé.
+            // fichier : un seul retrait, et les deux noms sur la même ligne.
             if let Some(seen) = aimed
                 .iter_mut()
                 .find(|seen| seen.adapter == tool.adapter && seen.folder == folder)
             {
-                seen.planned.commands.push(tool.command.to_string());
+                seen.planned.also_aimed_by(&tool.command);
                 continue;
             }
             let Some(found) = self.blocks.foresee_removal(&tool.adapter, &folder) else {
@@ -344,14 +347,7 @@ impl ToolRegistry {
             aimed.push(Aimed {
                 adapter: tool.adapter.clone(),
                 folder,
-                planned: PlannedRemoval {
-                    file: found.file.display().to_string(),
-                    commands: vec![tool.command.to_string()],
-                    entries: found.entries,
-                    deletes_the_file: found.deletes_the_file,
-                    hand_edited: found.hand_edited,
-                    diff: found.diff,
-                },
+                planned: PlannedRemoval::foreseen(found, &tool.command),
             });
         }
         Ok(aimed)
