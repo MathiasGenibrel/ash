@@ -2,13 +2,14 @@
 import type { PinnedWorktree } from "./PinnedWorktree";
 
 /**
- * Ce que la colonne reçoit : les épingles **situées**, et les lignes repliées.
+ * Les lignes que la colonne garde d'une session à l'autre : celles qu'une épingle fait
+ * exister — **situées**, donc relues —, et celles qui sont repliées.
  *
  * Ce n'est pas ce que le disque garde ([`Persisted`]) : le disque garde des chemins, ceci
  * porte des worktrees relus. Deux formes plutôt qu'une, parce que ce sont deux choses — un
  * fichier qu'on veut minimal et durable, une fiche qu'on veut fraîche.
  */
-export type Workspaces = { 
+export type SidebarRows = { 
 /**
  * Les épingles **encore trouvables**, dans l'ordre où elles ont été posées.
  */

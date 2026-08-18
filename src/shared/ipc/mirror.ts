@@ -32,7 +32,7 @@ import type { TabLocation as RustTabLocation } from "./generated/TabLocation";
 import type { TreeStatus as RustTreeStatus } from "./generated/TreeStatus";
 import type { Upstream as RustUpstream } from "./generated/Upstream";
 import type { WorktreeMetadata as RustWorktreeMetadata } from "./generated/WorktreeMetadata";
-import type { Workspaces as RustWorkspaces } from "./generated/Workspaces";
+import type { SidebarRows as RustSidebarRows } from "./generated/SidebarRows";
 import type {
     AgentState,
     Instrumented,
@@ -48,7 +48,7 @@ import type {
     Subagent,
     TabInfo,
     TabLocation,
-    Workspaces,
+    SidebarRows,
     WorktreeMetadata,
     WorktreeMetadataChanged,
 } from "./index";
@@ -73,13 +73,13 @@ export type RecognizedAgentStillMirrorsRust = Assert<
 /**
  * Les épingles (spec §5.2). `RepoRef` et `TabLocation` sont écrits **une** fois côté
  * TypeScript et confrontés chacun à deux `struct` Rust — celles de `pty` et celles de
- * `workspaces` — parce que la sidebar range une ligne de la même façon d'où qu'elle vienne.
+ * `sidebar` — parce que la colonne range une ligne de la même façon d'où qu'elle vienne.
  * Le jour où les deux backends divergeraient, c'est ici que ça se verrait, et non à
  * l'exécution.
  */
 export type PinnedRepoStillMirrorsRust = Assert<Mirrors<RustPinnedRepo, RepoRef>>;
 export type PinnedWorktreeStillMirrorsRust = Assert<Mirrors<RustPinnedWorktree, TabLocation>>;
-export type WorkspacesStillMirrorsRust = Assert<Mirrors<RustWorkspaces, Workspaces>>;
+export type SidebarRowsStillMirrorsRust = Assert<Mirrors<RustSidebarRows, SidebarRows>>;
 
 export type TabLocationStillMirrorsRust = Assert<Mirrors<RustTabLocation, TabLocation>>;
 export type SubagentStillMirrorsRust = Assert<Mirrors<RustSubagent, Subagent>>;

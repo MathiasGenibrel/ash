@@ -13,7 +13,7 @@
 
 import "./sidebar.css";
 
-import type { TabId, TabInfo, Workspaces } from "@/shared/ipc";
+import type { TabId, TabInfo, SidebarRows } from "@/shared/ipc";
 import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
 import { showsSubagents } from "./visible";
@@ -73,7 +73,7 @@ export interface Sidebar {
     render(
         tabs: readonly TabInfo[],
         activeTabId: TabId | null,
-        workspaces: Workspaces,
+        kept: SidebarRows,
     ): void;
     /**
      * `⌘B` : replie ou déplie **la colonne entière**, et rend son état pour que l'appelant en
@@ -100,7 +100,7 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
 
     let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
-    let workspaces: Workspaces = { pinned: [], collapsed: [] };
+    let kept: SidebarRows = { pinned: [], collapsed: [] };
     const now = ports.now ?? ((): number => Date.now());
 
     // Le battement qui fait avancer les durées des lignes filles, **et seulement quand il y
@@ -141,14 +141,14 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
      * confondre — et `state.json` n'a qu'une liste à garder.
      */
     function collapsed(): ReadonlySet<string> {
-        return new Set(workspaces.collapsed);
+        return new Set(kept.collapsed);
     }
 
     function draw(): void {
         const tree = buildSidebar(tabs, {
             activeTabId,
             collapsed: collapsed(),
-            pinned: workspaces.pinned,
+            pinned: kept.pinned,
         });
         view.render(tree, columnCollapsed, now());
         beat(showsSubagents(tree, columnCollapsed));
@@ -180,10 +180,10 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         get isCollapsed() {
             return columnCollapsed;
         },
-        render(nextTabs, nextActive, nextWorkspaces) {
+        render(nextTabs, nextActive, nextKept) {
             tabs = nextTabs;
             activeTabId = nextActive;
-            workspaces = nextWorkspaces;
+            kept = nextKept;
             draw();
         },
         toggleColumnCollapsed() {

@@ -36,7 +36,7 @@ pub struct PinnedWorktree {
 
 /// Où se trouve un worktree épinglé, aujourd'hui.
 ///
-/// Le port que la feature possède : `workspaces` ne connaît ni git, ni le système de
+/// Le port que la feature possède : `sidebar` ne connaît ni git, ni le système de
 /// fichiers, et `git` ne sait rien des épingles. C'est le composition root qui les relie,
 /// exactement comme il relie la résolution des onglets.
 ///

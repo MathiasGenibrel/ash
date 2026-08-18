@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
-use super::error::WorkspacesError;
+use super::error::SidebarError;
 use super::persisted::Persisted;
 
 /// Où l'état de la colonne se garde d'une session à l'autre.
 ///
 /// Un trait, comme tous les effets système de ce dépôt : sans lui, vérifier qu'une épingle
 /// survit au redémarrage demanderait d'écrire dans le `$HOME` de qui lance les tests.
-pub trait WorkspacesStore: Send + Sync {
+pub trait SidebarStore: Send + Sync {
     /// Ce qui est gardé, ou `None` — première ouverture, fichier absent, fichier abîmé.
     fn load(&self) -> Option<Persisted>;
-    fn save(&self, state: &Persisted) -> Result<(), WorkspacesError>;
+    fn save(&self, state: &Persisted) -> Result<(), SidebarError>;
 }
 
 /// L'état dans `~/.ash/state.json` (spec §9.2).
@@ -18,11 +18,11 @@ pub trait WorkspacesStore: Send + Sync {
 /// `~/.ash` existe déjà — le socket d'events et `theme.json` y vivent. Le fichier est lisible
 /// à l'œil nu et se supprime à la main : c'est ce que promet la spec §10, « suppression du
 /// dossier ».
-pub struct FileWorkspacesStore {
+pub struct FileSidebarStore {
     path: PathBuf,
 }
 
-impl FileWorkspacesStore {
+impl FileSidebarStore {
     pub fn at(path: PathBuf) -> Self {
         Self { path }
     }
@@ -36,7 +36,7 @@ impl FileWorkspacesStore {
     }
 }
 
-impl WorkspacesStore for FileWorkspacesStore {
+impl SidebarStore for FileSidebarStore {
     /// **Tolérante à tout.** Un fichier absent, tronqué, vide ou rempli d'autre chose rend
     /// `None`, et Ash repart sur une colonne sans épingle. Un fichier d'état n'est jamais une
     /// raison d'empêcher une fenêtre d'ouvrir.
@@ -44,8 +44,8 @@ impl WorkspacesStore for FileWorkspacesStore {
         decode(&std::fs::read_to_string(&self.path).ok()?)
     }
 
-    fn save(&self, state: &Persisted) -> Result<(), WorkspacesError> {
-        let io = |why: std::io::Error| WorkspacesError::Io {
+    fn save(&self, state: &Persisted) -> Result<(), SidebarError> {
+        let io = |why: std::io::Error| SidebarError::Io {
             path: self.path.clone(),
             why: why.to_string(),
         };
@@ -150,14 +150,14 @@ mod tests {
     {
         // Given
         let path = std::env::temp_dir()
-            .join(format!("ash-workspaces-{}", std::process::id()))
+            .join(format!("ash-sidebar-rows-{}", std::process::id()))
             .join("state.json");
-        let store = FileWorkspacesStore::at(path.clone());
+        let store = FileSidebarStore::at(path.clone());
         let kept = state(&["/wt/ash-sidebar"], &["repo:/dev/ash/.git"]);
 
         // When
         store.save(&kept).unwrap();
-        let next_session = FileWorkspacesStore::at(path.clone()).load();
+        let next_session = FileSidebarStore::at(path.clone()).load();
 
         // Then
         assert_eq!(next_session, Some(kept));
@@ -168,7 +168,7 @@ mod tests {
     fn given_no_state_file_at_all_when_it_is_loaded_then_nothing_is_invented() {
         // Given — la première ouverture d'Ash sur une machine
         let store =
-            FileWorkspacesStore::at(std::env::temp_dir().join("ash-workspaces-absent/state.json"));
+            FileSidebarStore::at(std::env::temp_dir().join("ash-sidebar-rows-absent/state.json"));
 
         // When / Then
         assert_eq!(store.load(), None);

@@ -228,8 +228,9 @@ src-tauri/src/
     git/               ✓ résolution worktree/dépôt, surveillance de
                          `.git`, métadonnées                        — ADR-0011/12
     theme/             ✓ clair / sombre / système, persisté
-    workspaces/        ✓ worktrees épinglés et lignes repliées,
-                         `~/.ash/state.json`                        — spec §3.1/5.2
+    sidebar/           ✓ ce que la colonne garde d'une session à
+                         l'autre : worktrees épinglés et lignes
+                         repliées, `~/.ash/state.json`              — spec §3.1/5.2
     agents/            ✓ socket, machine à états, superviseur, sous-agents,
                          reconnaissance des providers                — ADR-0006/7/8
       adapters/        ✓ claude-code, generic (codex reste à écrire — #21)

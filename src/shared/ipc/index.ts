@@ -284,7 +284,7 @@ export type PinnedWorktree = TabLocation;
  * Le repli de la **colonne** (`⌘B`) n'y est pas : il ne se replie pas par ligne, et rien ne
  * le fait survivre.
  */
-export interface Workspaces {
+export interface SidebarRows {
     pinned: PinnedWorktree[];
     collapsed: string[];
 }

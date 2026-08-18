@@ -77,11 +77,10 @@ use features::settings::{
     AdapterProfile, BlockAt, ConfigTarget, HookBlocks, SystemCommands, SystemConfigFiles,
     ToolRecognition, ToolRegistry, Verifier,
 };
-use features::theme::{FileThemeStore, ThemeState, ThemeStore};
-use features::workspaces::{
-    FileWorkspacesStore, PinnedRepo, PinnedWorktree, WorkspacesState, WorkspacesStore,
-    WorktreePlaces,
+use features::sidebar::{
+    FileSidebarStore, PinnedRepo, PinnedWorktree, SidebarState, SidebarStore, WorktreePlaces,
 };
+use features::theme::{FileThemeStore, ThemeState, ThemeStore};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
 ///
@@ -113,7 +112,7 @@ impl WorktreeLocator for GitWorktrees {
 /// Relie le port des épingles à la même résolution, et au système de fichiers.
 ///
 /// C'est la seconde rencontre entre `git` et une feature qui ne le connaît pas, et elle se
-/// fait ici pour la raison qui vaut pour [`GitWorktrees`] : `workspaces` ne sait pas ce qu'est
+/// fait ici pour la raison qui vaut pour [`GitWorktrees`] : `sidebar` ne sait pas ce qu'est
 /// un dépôt, `git` ne sait pas ce qu'est une épingle.
 ///
 /// **L'existence du dossier est vérifiée avant la résolution, et ce n'est pas une
@@ -121,7 +120,7 @@ impl WorktreeLocator for GitWorktrees {
 /// Un worktree supprimé sous `/dev/ash/worktrees/` se résoudrait donc en `/dev/ash` — et la
 /// ligne épinglée d'un worktree disparu se mettrait à désigner le dépôt principal, en
 /// silence. La conduite décidée pour un dossier disparu est dans
-/// `features::workspaces::state` : la ligne s'efface, l'épingle reste.
+/// `features::sidebar::state` : la ligne s'efface, l'épingle reste.
 struct GitPins;
 
 impl WorktreePlaces for GitPins {
@@ -454,8 +453,8 @@ pub fn run() -> tauri::Result<()> {
     // repliées (spec §3.1, §5.2). Relu **avant** la fenêtre, comme l'apparence : la sidebar le
     // demande en s'affichant, et une épingle qui apparaîtrait une seconde après l'ouverture se
     // lirait comme un sursaut.
-    let workspaces = Arc::new(WorkspacesState::restore(
-        Arc::new(FileWorkspacesStore::in_home()) as Arc<dyn WorkspacesStore>,
+    let sidebar_rows = Arc::new(SidebarState::restore(
+        Arc::new(FileSidebarStore::in_home()) as Arc<dyn SidebarStore>,
         Arc::new(GitPins),
     ));
 
@@ -477,7 +476,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&tools))
-        .manage(Arc::clone(&workspaces))
+        .manage(Arc::clone(&sidebar_rows))
         // Ce que la sidebar demande à la fenêtre de réglages de montrer, tant qu'elle ne
         // l'a pas lu (ADR-0006, ADR-0010).
         .manage(Arc::new(
@@ -496,9 +495,9 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_tabs,
             features::pty::commands::pty_has_foreground_process,
             features::git::commands::git_metadata,
-            features::workspaces::commands::workspaces,
-            features::workspaces::commands::workspaces_pin,
-            features::workspaces::commands::workspaces_collapse,
+            features::sidebar::commands::sidebar_rows,
+            features::sidebar::commands::sidebar_pin,
+            features::sidebar::commands::sidebar_collapse,
             features::theme::commands::theme_mode,
             features::theme::commands::terminal_font_size,
             features::theme::commands::step_terminal_font_size,
