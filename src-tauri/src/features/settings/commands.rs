@@ -211,6 +211,12 @@ pub struct FocusedTool {
 }
 
 /// Ce que la fenêtre doit montrer à son ouverture — posé par la sidebar, consommé par l'écran.
+///
+/// Elle ne porte **aucune vérité** que quelqu'un d'autre tienne déjà
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : ni l'outil reconnu,
+/// qui vit dans le `TabInfo` de `pty`, ni ce que sa configuration porte, qui se relit du
+/// disque — seulement un geste en cours, qui n'est posé que quand la fenêtre reste à naître
+/// et que la première page affichée consomme.
 #[derive(Default)]
 pub struct PendingFocus(std::sync::Mutex<Option<FocusedTool>>);
 
@@ -227,8 +233,15 @@ pub fn settings_reveal_tool<R: Runtime>(
     adapter: String,
 ) {
     let focus = FocusedTool { command, adapter };
-    if let Ok(mut held) = pending.0.lock() {
-        *held = Some(focus.clone());
+
+    // La demande n'est retenue que pour une fenêtre **qui n'existe pas encore** : c'est le
+    // seul cas où l'event partirait avant d'avoir un abonné. La retenir alors que la page
+    // écoute déjà laisserait une demande que personne ne vient chercher — et la prochaine
+    // ouverture par le menu, une heure plus tard, se poserait sur cet outil-là.
+    if app.get_webview_window(SETTINGS_WINDOW).is_none() {
+        if let Ok(mut held) = pending.0.lock() {
+            *held = Some(focus.clone());
+        }
     }
     open(&app);
     // Pour la fenêtre **déjà** ouverte : celle qui vient de naître, elle, viendra la

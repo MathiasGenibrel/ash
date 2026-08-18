@@ -27,15 +27,11 @@ export interface SidebarTabNode {
     readonly state: AgentState;
     readonly active: boolean;
     /**
-     * L'outil reconnu dans cet onglet, quand il y en a un — c'est ce que le geste
-     * d'instrumentation transporte jusqu'à la fenêtre de réglages (ADR-0006).
-     */
-    readonly agent: TabInfo["agent"];
-    /**
      * Le marqueur « non instrumenté », ou `null` quand la ligne n'a rien à signaler.
      *
      * Composé ici plutôt que dans la vue, comme les états repliés : la règle qui décide de ce
-     * qu'une ligne signale se vérifie sans DOM (voir [`./instrumentation`]).
+     * qu'une ligne signale se vérifie sans DOM (voir [`./instrumentation`]). Il porte aussi
+     * **l'outil que son geste nomme** (ADR-0006), pour que la vue n'ait rien à recoller.
      */
     readonly mark: InstrumentationMark | null;
     /**
@@ -151,7 +147,6 @@ export function buildSidebar(
             title: tab.process,
             state: tab.state,
             active: tab.tabId === options.activeTabId,
-            agent: tab.agent,
             mark: instrumentationMark(tab.agent),
             subagents: subagentNodes(tab.subagents),
         });

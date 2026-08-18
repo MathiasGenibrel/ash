@@ -14,7 +14,7 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
         // Then
         expect(mark?.title).toContain("claude");
         expect(mark?.title).toContain("waiting never will");
-        expect(mark?.actionable).toBe(true);
+        expect(mark?.instrument).toEqual({ command: "claude", adapter: "claude-code" });
     });
 
     it("Given a recognized agent whose config carries the marker, when its row is composed, then nothing is signalled", () => {
@@ -38,7 +38,7 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
         const mark = instrumentationMark(agent);
 
         // Then
-        expect(mark?.actionable).toBe(false);
+        expect(mark?.instrument).toBeNull();
         expect(mark?.title).toContain("no adapter for kimi");
     });
 
