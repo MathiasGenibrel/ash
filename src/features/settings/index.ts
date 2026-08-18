@@ -24,7 +24,7 @@ import type {
     Verification,
     WindowPorts,
 } from "./contract";
-import { focusedAdapter, focusedDraft, GENERIC_ADAPTER } from "./model";
+import { focusedDraft, GENERIC_ADAPTER } from "./model";
 import { createRelaunch, type Timer, windowTimer } from "./relaunch";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
@@ -294,21 +294,23 @@ export function mountSettings(
      */
     async function focusTool(focused: FocusedTool): Promise<void> {
         section = "tools";
-        // Le dossier conventionnel est demandé **ici**, pour l'adaptateur qu'on va vraiment
-        // montrer, et seulement s'il y a une saisie à remplir : un outil déjà déclaré ne
-        // fait donc lire aucun dossier. Un refus laisse le champ vide — on tape son chemin
-        // comme avant, ce qui est exactement l'état d'avant cette proposition.
-        const adapter = focusedAdapter(focused, snapshot);
-        const proposed = adapter === null ? null : await proposeConfig(adapter);
-        const prefilled = focusedDraft(focused, snapshot, proposed);
-        if (prefilled !== null) {
-            draft = prefilled;
-            draftVerification = null;
-            failure = null;
-            // La séquence part tout de suite, comme après un choix d'adaptateur : la saisie
-            // est complète, et rien n'est encore écrit chez l'utilisateur.
-            relaunch.now(DRAFT);
+        const prefilled = focusedDraft(focused, snapshot);
+        if (prefilled === null) {
+            // Un outil déjà déclaré n'ouvre aucune saisie, donc ne fait lire aucun dossier :
+            // c'est cette sortie-là qui garantit qu'on ne touche au disque que pour remplir
+            // un champ qui existe.
+            draw();
+            return;
         }
+        // Le dossier conventionnel est demandé **ici**, pour l'adaptateur que cette saisie
+        // porte — celui qu'on va vraiment montrer, pas celui qui a été reconnu. Un refus
+        // laisse le champ vide : on tape son chemin comme avant cette proposition.
+        draft = { ...prefilled, config: (await proposeConfig(prefilled.adapter)) ?? "" };
+        draftVerification = null;
+        failure = null;
+        // La séquence part tout de suite, comme après un choix d'adaptateur : la saisie est
+        // complète, et rien n'est encore écrit chez l'utilisateur.
+        relaunch.now(DRAFT);
         draw();
     }
 

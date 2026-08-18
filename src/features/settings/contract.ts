@@ -370,8 +370,10 @@ export interface SettingsPorts {
     /** Le même geste, quand la fenêtre était **déjà** ouverte. */
     onFocusTool(listener: (focused: FocusedTool) => void): Promise<() => void>;
     /**
-     * Le dossier conventionnel d'un adaptateur, `null` s'il n'y en a pas ou s'il n'est pas
-     * là (ADR-0006).
+     * Le dossier conventionnel d'un adaptateur, `null` s'il n'y en a pas, s'il n'est pas là,
+     * ou si Ash ne peut pas le lire (ADR-0006) — les trois se disent par un champ vide,
+     * parce qu'un chemin proposé que le test 1 refuserait aussitôt aurait l'air d'une
+     * réponse.
      *
      * Demandée **au moment où le formulaire s'ouvre**, et non transportée par
      * [`FocusedTool`] : la demande de la sidebar ne porte qu'un geste, et un résultat de
