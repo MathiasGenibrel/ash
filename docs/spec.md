@@ -334,6 +334,19 @@ cwd       = proc_pidinfo(fg_pgid, PROC_PIDVNODEPATHINFO)   # macOS libproc
   de sortie, puis la ligne redevient un simple onglet shell après un délai d'affichage
   (voir §6.4).
 
+**La découverte reste bornée, et Ash ne demandera pas Full Disk Access pour l'élargir.**
+Le [spike #62](./spike-bounded-discovery.md) a mesuré les quatre outils visés : un seul
+range sa configuration au-delà du premier niveau de `$HOME` — `~/.config/opencode` —, et
+c'est une constante documentée, donc une ligne dans la table des adaptateurs et non une
+permission. Aucun des quatre n'écrit dans un emplacement protégé par TCC : les 156 refus
+relevés en parcourant `$HOME` en entier sont tous des données personnelles Apple (Mail,
+Messages, Safari, Contacts), c'est-à-dire exactement ce que Full Disk Access débloquerait
+et rien de ce qu'on cherche. Le parcours coûte 74 s pour 614 917 dossiers contre 30 ms
+pour seize emplacements connus, et rend une réponse plus mauvaise. Le seul cas qui
+échappe à la table — un dossier déplacé par `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+`KIMI_CODE_HOME` ou `OPENCODE_CONFIG_DIR` — se lit dans l'environnement du processus,
+sans aucune permission ; il ne se cherche pas sur le disque.
+
 ### 6.2 États
 
 ```
