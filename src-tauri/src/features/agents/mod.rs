@@ -89,7 +89,7 @@ pub use adapter::{
 pub use adapters::{ClaudeCodeAdapter, GenericAdapter};
 pub use error::AgentError;
 pub use machine::{AgentEvent, AgentMachine, Declared, Exit, LINGER};
-pub use notify::{Notice, Notifier, SWITCHABLE_STATES};
+pub use notify::{Notice, Notifier, SwitchableState, SWITCHABLE_STATES};
 pub use preferences::{
     FileNotificationStore, NotificationChoices, NotificationPreferences, NotificationStore,
 };

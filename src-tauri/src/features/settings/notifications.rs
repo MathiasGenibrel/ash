@@ -35,7 +35,9 @@
 //! — `bun run tauri dev` —, macOS n'a pas de centre de notifications pour Ash. C'est ce que
 //! [`NotificationPermission::Undisclosed`] dit, et c'est désormais tout ce qu'il dit.
 
-use crate::features::agents::{AgentState, NotificationChoices, SWITCHABLE_STATES};
+use crate::features::agents::{
+    AgentState, NotificationChoices, SwitchableState, SWITCHABLE_STATES,
+};
 use crate::features::notifications::Authorization;
 
 /// Ce que macOS laisse savoir à Ash de sa propre autorisation.
@@ -137,7 +139,7 @@ pub fn report(
         switches: SWITCHABLE_STATES
             .iter()
             .map(|state| NotificationSwitch {
-                state: *state,
+                state: AgentState::from(*state),
                 enabled: choices.allows(*state),
                 means: means(*state).to_owned(),
             })
@@ -147,17 +149,15 @@ pub fn report(
 
 /// Ce que chaque interrupteur promet, mot pour mot depuis le design.
 ///
-/// Le `match` est exhaustif : un sixième état d'agent ne compilerait pas tant que personne
-/// n'aurait dit ce que sa ligne raconte. Les deux états sans interrupteur n'apparaissent
-/// jamais dans la section — [`SWITCHABLE_STATES`] ne les porte pas — mais le type, lui, les
-/// contient.
-fn means(state: AgentState) -> &'static str {
+/// **Totale, sur les trois seuls états qui aient un interrupteur** : un quatrième ne
+/// compilerait pas tant que personne n'aurait dit ce que sa ligne raconte, et les deux états
+/// qui n'interrompent pas n'ont pas de phrase à écrire ici — la section ne les montre
+/// jamais, et le type ne les contient pas.
+fn means(state: SwitchableState) -> &'static str {
     match state {
-        AgentState::Waiting => "an agent is waiting for an answer",
-        AgentState::Error => "an agent failed",
-        AgentState::Done => "an agent finished",
-        AgentState::Idle => "an agent is idle",
-        AgentState::Working => "an agent is working",
+        SwitchableState::Waiting => "an agent is waiting for an answer",
+        SwitchableState::Error => "an agent failed",
+        SwitchableState::Done => "an agent finished",
     }
 }
 

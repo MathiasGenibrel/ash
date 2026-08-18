@@ -2,11 +2,11 @@
 //! (spec §8, et le bloc `[notifications]` de la spec §9).
 //!
 //! **Ce module ne décide pas ce qu'une bannière dit** — c'est [`super::notify`], et lui seul,
-//! qui sait quels états ont quelque chose à dire ([`super::notify::SWITCHABLE_STATES`]). Il
-//! décide de ce que l'utilisateur, lui, laisse passer : trois interrupteurs, et rien d'autre.
-//! Les deux règles se composent dans [`super::notify::notice`], et la seconde ne peut
-//! qu'**enlever** — allumer `idle` ne fabrique aucune bannière, parce qu'il n'y a pas de
-//! phrase pour `idle`.
+//! qui sait quels états ont quelque chose à dire ([`SwitchableState`]). Il décide de ce que
+//! l'utilisateur, lui, laisse passer : un booléen par variante, et rien d'autre. Les deux
+//! règles se composent dans [`super::notify::notice`], et la seconde ne peut qu'**enlever** :
+//! allumer `idle` ne se dit pas, faute de variante, et c'est ce qui empêche un fichier de
+//! préférence de fabriquer une bannière.
 //!
 //! **Le choix vit ici, en Rust, et non dans un état de la webview**
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : le producteur de
@@ -32,6 +32,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use super::notify::SwitchableState;
 use super::state::AgentState;
 
 /// Les trois interrupteurs de la spec §9, avec les défauts de la spec §8.
@@ -72,42 +73,43 @@ impl Default for NotificationChoices {
 }
 
 impl NotificationChoices {
-    /// Cet état a-t-il le droit d'interrompre ?
+    /// Cet interrupteur est-il allumé ?
     ///
-    /// `idle` et `working` n'ont pas d'interrupteur et n'en auront pas : un agent qui
-    /// travaille n'a rien à dire, et le `match` est exhaustif pour que l'ajout d'un sixième
-    /// état oblige à répondre ici.
+    /// **Totale** : elle ne prend que les états qui ont un interrupteur, donc elle n'a pas
+    /// de cas « et sinon non ». Demander si `working` interrompt ne se dit pas —
+    /// [`SwitchableState`] n'a pas de variante pour lui.
     #[must_use]
-    pub fn allows(self, state: AgentState) -> bool {
+    pub fn allows(self, state: SwitchableState) -> bool {
         match state {
-            AgentState::Waiting => self.waiting,
-            AgentState::Error => self.error,
-            AgentState::Done => self.done,
-            AgentState::Idle | AgentState::Working => false,
+            SwitchableState::Waiting => self.waiting,
+            SwitchableState::Error => self.error,
+            SwitchableState::Done => self.done,
         }
     }
 
     /// Les mêmes choix, cet interrupteur-là mis dans cette position.
     ///
-    /// Un état sans interrupteur ne change rien : la fenêtre envoie un des cinq mots du
-    /// contrat, et rien ne garantit ici que ce soit l'un des trois — c'est le seul endroit
-    /// où le vérifier une fois pour toutes.
+    /// **Le seul endroit qui parte des cinq états du contrat** : la fenêtre envoie l'un des
+    /// cinq mots, et rien sur le fil ne garantit que ce soit l'un des trois. Un état sans
+    /// interrupteur ne change donc rien, et c'est tranché ici plutôt que dans la commande.
     #[must_use]
     pub fn with(self, state: AgentState, enabled: bool) -> Self {
+        let Ok(state) = SwitchableState::try_from(state) else {
+            return self;
+        };
         match state {
-            AgentState::Waiting => Self {
+            SwitchableState::Waiting => Self {
                 waiting: enabled,
                 ..self
             },
-            AgentState::Error => Self {
+            SwitchableState::Error => Self {
                 error: enabled,
                 ..self
             },
-            AgentState::Done => Self {
+            SwitchableState::Done => Self {
                 done: enabled,
                 ..self
             },
-            AgentState::Idle | AgentState::Working => self,
         }
     }
 }
@@ -261,9 +263,9 @@ mod tests {
         let choices = preferences.choices();
 
         // Then
-        assert!(choices.allows(AgentState::Waiting));
-        assert!(choices.allows(AgentState::Error));
-        assert!(!choices.allows(AgentState::Done));
+        assert!(choices.allows(SwitchableState::Waiting));
+        assert!(choices.allows(SwitchableState::Error));
+        assert!(!choices.allows(SwitchableState::Done));
     }
 
     #[test]
@@ -281,8 +283,8 @@ mod tests {
         let next = NotificationPreferences::restore(store as Arc<dyn NotificationStore>);
 
         // Then
-        assert!(!next.choices().allows(AgentState::Waiting));
-        assert!(next.choices().allows(AgentState::Done));
+        assert!(!next.choices().allows(SwitchableState::Waiting));
+        assert!(next.choices().allows(SwitchableState::Done));
     }
 
     #[test]
@@ -357,8 +359,8 @@ mod tests {
         let after = preferences.choose(AgentState::Waiting, false);
 
         // Then
-        assert!(!after.allows(AgentState::Waiting));
-        assert!(!preferences.choices().allows(AgentState::Waiting));
+        assert!(!after.allows(SwitchableState::Waiting));
+        assert!(!preferences.choices().allows(SwitchableState::Waiting));
     }
 
     #[test]
@@ -366,7 +368,10 @@ mod tests {
     ) {
         // Given — la fenêtre envoie l'un des cinq mots du contrat, et rien sur le fil ne
         // garantit que ce soit l'un des trois. Un `working` allumé poserait une bannière à
-        // chaque fois qu'un agent se remet au travail, c'est-à-dire en permanence
+        // chaque fois qu'un agent se remet au travail, c'est-à-dire en permanence. Demander
+        // ensuite s'il interrompt ne se dit même plus — `SwitchableState` n'a pas de variante
+        // pour lui —, et il ne reste qu'une chose à vérifier : que le mot du contrat n'ait
+        // rien allumé au passage
         let choices = NotificationChoices::default();
 
         // When
@@ -375,8 +380,6 @@ mod tests {
             .with(AgentState::Idle, true);
 
         // Then
-        assert!(!forced.allows(AgentState::Working));
-        assert!(!forced.allows(AgentState::Idle));
         assert_eq!(forced, choices);
     }
 }
