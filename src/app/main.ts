@@ -1,7 +1,8 @@
 import "./styles.css";
 import { revealTool } from "@/features/settings";
 import { mountSidebar, type Sidebar } from "@/features/sidebar";
-import { mountTerminals, type Terminals } from "@/features/terminal";
+import type { SidebarRows } from "@/shared/ipc";
+import { mountTerminals, type TabId, type TabInfo, type Terminals } from "@/features/terminal";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
 import { onMenuAction, type MenuAction } from "./menu";
@@ -10,6 +11,7 @@ import { installShortcuts } from "./shortcuts";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
 import { windowTitle } from "./window-title";
+import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 
 /**
  * Composition root du frontend.
@@ -26,6 +28,7 @@ function mount(
     root: HTMLElement,
     theme: ThemeChanges,
     fontSize: FontSizeChanges,
+    sidebarRows: SidebarRowsBinding,
     appName: string,
 ): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
@@ -53,14 +56,50 @@ function mount(
     const sidebar = mountSidebar({
         selectTab: (tabId) => void terminals.selectTab(tabId),
         newTab: () => void terminals.openTab("current-worktree"),
+        // Le clic sur une ligne épinglée sans onglet (spec §5.2) : la sidebar nomme le
+        // worktree, la feature terminal ouvre le PTY. Les deux ne se connaissent pas plus ici
+        // qu'ailleurs — c'est le même câble que `selectTab`, dans l'autre sens.
+        openTabIn: (worktreeRoot) => void terminals.openTab({ directory: worktreeRoot }),
+        // Les deux gestes qui survivent à la fermeture partent au backend, et rien n'est posé
+        // au passage : la colonne se redessine sur son annonce
+        // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+        //
+        // Un geste qui n'aboutit pas ne laisse **aucune moitié d'état** : le backend n'a rien
+        // retenu, il n'annonce rien, et la ligne reste exactement comme elle était. Il n'y a
+        // donc rien à rattraper ici, et une bannière parlerait d'une épingle au moment où
+        // l'utilisateur regarde son terminal.
+        setPinned: (worktreeRoot, pinned) => {
+            sidebarRows.pin(worktreeRoot, pinned).catch(() => undefined);
+        },
+        setCollapsed: (key, collapsed) => {
+            sidebarRows.collapse(key, collapsed).catch(() => undefined);
+        },
         // Le marqueur « non instrumenté » d'une ligne d'agent (ADR-0006) : la sidebar nomme
         // l'outil, la fenêtre de réglages agit. C'est ici que les deux features se
         // rencontrent, et nulle part ailleurs — la sidebar ne connaît pas `settings`.
         instrument: revealTool,
     });
-    terminals.onTabs((tabs, activeTabId) => {
-        sidebar.render(tabs, activeTabId);
+    // La colonne se dessine sur deux sources — les onglets que la sonde pousse, et l'état
+    // gardé d'une session à l'autre —, donc les deux dernières valeurs se retiennent ici : un
+    // avis n'apporte jamais que sa moitié.
+    let tabs: readonly TabInfo[] = [];
+    let activeTabId: TabId | null = null;
+    let kept: SidebarRows = sidebarRows.changes.current;
+
+    const drawSidebar = (): void => {
+        sidebar.render(tabs, activeTabId, kept);
+    };
+
+    terminals.onTabs((nextTabs, nextActive) => {
+        tabs = nextTabs;
+        activeTabId = nextActive;
+        drawSidebar();
     });
+    sidebarRows.changes.subscribe((next) => {
+        kept = next;
+        drawSidebar();
+    });
+    drawSidebar();
 
     // La bande de titre dit qui l'on est et où l'on est : `<nom> — <dépôt> / <branche>` de
     // l'onglet actif (spec §4.2, amendée le 2026-08-17). Elle est reliée ici, comme la
@@ -131,7 +170,7 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
             // Repliée, la sidebar ne nomme plus les agents : la ligne de statut reprend
             // celui qui attend. Le contexte — dépôt et branche — n'a rien à reprendre, il
             // est dans la bande de titre, que `⌘B` ne touche pas.
-            terminals.setSidebarCollapsed(sidebar.toggleCollapsed());
+            terminals.setSidebarCollapsed(sidebar.toggleColumnCollapsed());
             return Promise.resolve();
     }
 }
@@ -183,6 +222,14 @@ theme.ready.catch(() => undefined);
 const fontSize = followTerminalFontSize();
 fontSize.ready.catch(() => undefined);
 
+// Et la même forme une troisième fois, pour ce que la colonne garde d'une session à l'autre :
+// les worktrees épinglés et les lignes repliées (spec §3.1, §5.2). La demande part avant
+// l'attente de la police, comme les deux autres, pour que les allers-retours se recouvrent.
+// Un échec du raccordement donne une colonne sans épingle — c'est exactement ce qu'un premier
+// démarrage montre, donc il n'y a rien à rattraper.
+const sidebarRows = followSidebarRows();
+sidebarRows.ready.catch(() => undefined);
+
 // Le nom de l'application, lui, est **attendu** au lieu d'être posé par défaut puis
 // corrigé : il est constant pour toute la session, donc il n'y a pas de « valeur d'attente »
 // honnête à écrire dans la bande — un `Ash` remplacé par `Ash-dev` au premier aller-retour
@@ -215,7 +262,7 @@ void document.fonts.ready.finally(() => {
         // `loadAppName` ne rejette jamais — elle se replie sur un nom plutôt que de laisser
         // une fenêtre sans rien —, donc il n'y a pas d'échec à rattraper ici.
         void appName.then((name) => {
-            mount(root, theme.changes, fontSize.changes, name);
+            mount(root, theme.changes, fontSize.changes, sidebarRows, name);
         });
     }
 });

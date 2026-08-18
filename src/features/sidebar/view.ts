@@ -2,6 +2,7 @@ import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import type { InstrumentationMark } from "./instrumentation";
 import { abbreviate } from "./labels";
+import { pinMark, worktreeGesture } from "./pinning";
 import { composeSubagentRow, type SubagentNode } from "./subagents";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
 import { planGroup, planRailEntry, planTab, planWorktree } from "./visible";
@@ -22,12 +23,31 @@ import { planGroup, planRailEntry, planTab, planWorktree } from "./visible";
  */
 export interface SidebarViewActions {
     selectTab(tabId: string): void;
-    /** Replier ou déplier un worktree — propriété du worktree, pas du dépôt (ADR-0012). */
-    toggleWorktree(key: string): void;
-    /** Replier ou déplier un groupe de dépôt, par sa clé de groupe (spec §4.1). */
-    toggleGroup(key: string): void;
+    /**
+     * Replier ou déplier **une ligne**, par sa clé — jamais la colonne, qui est `⌘B` et ne
+     * passe pas par ici.
+     *
+     * Un worktree et un groupe de dépôt sont deux lignes (ADR-0012, spec §4.1) mais un seul
+     * fait : leurs clés ne peuvent pas se confondre — un chemin absolu d'un côté, une clé
+     * préfixée de l'autre — et `~/.ash/state.json` n'en garde qu'une liste.
+     */
+    toggleRowCollapsed(key: string): void;
     /** Le `+` du pied : un onglet de plus dans le worktree courant. */
     newTab(): void;
+    /**
+     * Le clic sur une ligne de worktree **sans onglet** : en ouvrir un là (spec §5.2).
+     *
+     * Une telle ligne n'existe que parce qu'elle est épinglée, et elle n'a rien à replier :
+     * son clic est donc le seul de la colonne qui ouvre quelque chose. Voir [`./pinning`].
+     */
+    openTabIn(worktreeRoot: string): void;
+    /**
+     * Épingler ou désépingler un worktree.
+     *
+     * Rien n'est posé ici : l'épingle vit en Rust, survit à la fermeture, et revient par
+     * l'annonce du backend ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    setPinned(worktreeRoot: string, pinned: boolean): void;
     /**
      * Le geste du marqueur : ouvrir la fenêtre de réglages sur cet outil.
      *
@@ -66,7 +86,10 @@ export class SidebarView {
         this.element.classList.toggle("is-collapsed", collapsedColumn);
         this.header(composeSidebarHeader(tree, collapsedColumn));
 
-        if (tree.tabCount === 0) {
+        // **`groups`, et non `tabCount`** : une colonne sans onglet n'est plus une colonne
+        // vide depuis qu'une épingle y fait exister une ligne (spec §5.2). Compter les
+        // onglets ici effacerait justement ce que l'épingle sert à garder.
+        if (tree.groups.length === 0) {
             this.body.replaceChildren(emptyState());
             return;
         }
@@ -167,33 +190,79 @@ export class SidebarView {
         if (badge !== null) row.append(glyph(badge));
 
         row.addEventListener("click", () => {
-            this.actions.toggleGroup(group.key);
+            this.actions.toggleRowCollapsed(group.key);
         });
         return row;
     }
 
     private worktreeRow(worktree: WorktreeNode, shape: "flat" | "grouped"): HTMLElement {
+        const gesture = worktreeGesture(worktree);
         const row = document.createElement("button");
         row.type = "button";
         row.className = `ash-worktree is-${shape}`;
-        row.setAttribute("aria-expanded", String(!worktree.collapsed));
+        if (worktree.pinned) row.classList.add("is-pinned");
 
-        const chevron = text("span", worktree.collapsed ? "▸" : "▾", "ash-chevron");
         const name = text("span", worktree.label, "ash-worktree-name");
         name.title = worktree.title;
 
-        row.append(chevron, name, spacer());
+        if (gesture === "open-tab") {
+            // Aucun onglet dessous : pas de chevron — il ne replierait rien —, et une ligne
+            // qui dit ce que son clic fait. C'est la ligne qu'une épingle fait exister.
+            row.title = `open a tab in ${worktree.title}`;
+            row.append(text("span", "+", "ash-chevron"), name, spacer());
+        } else {
+            row.setAttribute("aria-expanded", String(!worktree.collapsed));
+            row.append(text("span", worktree.collapsed ? "▸" : "▾", "ash-chevron"), name, spacer());
+        }
+
         if (worktree.suffix !== null) {
             row.append(text("span", worktree.suffix, "ash-worktree-suffix"));
         }
         // Repliée, la ligne doit encore dire ce qui se passe en dessous d'elle.
         const badge = planWorktree(worktree).badge;
         if (badge !== null) row.append(glyph(badge));
+        row.append(this.pin(worktree));
 
         row.addEventListener("click", () => {
-            this.actions.toggleWorktree(worktree.key);
+            if (gesture === "open-tab") {
+                this.actions.openTabIn(worktree.key);
+                return;
+            }
+            this.actions.toggleRowCollapsed(worktree.key);
         });
         return row;
+    }
+
+    /**
+     * L'épingle d'une ligne de worktree (spec §5.2).
+     *
+     * **Ce n'est pas un `<button>`**, et pour la raison exacte qui vaut au marqueur
+     * d'instrumentation : la ligne en est déjà un, et un bouton dans un bouton est un DOM
+     * invalide que les lecteurs d'écran rendent au hasard. C'est un `span` à qui l'on donne
+     * le rôle, le nom et la place dans le parcours clavier — et dont le clic **n'atteint
+     * pas** la ligne : épingler n'est ni replier ni ouvrir.
+     */
+    private pin(worktree: WorktreeNode): HTMLElement {
+        const mark = pinMark(worktree);
+        const element = text("span", mark.glyph, "ash-worktree-pin");
+        if (worktree.pinned) element.classList.add("is-pinned");
+        element.title = mark.title;
+        element.setAttribute("aria-label", mark.title);
+        element.setAttribute("role", "button");
+        element.tabIndex = 0;
+
+        const toggle = (event: Event): void => {
+            event.stopPropagation();
+            this.actions.setPinned(worktree.key, mark.pin);
+        };
+        element.addEventListener("click", toggle);
+        element.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                toggle(event);
+            }
+        });
+        return element;
     }
 
     private tabRow(tab: SidebarTabNode, shape: "flat" | "grouped"): HTMLElement {

@@ -19,6 +19,8 @@ import type { Head as RustHead } from "./generated/Head";
 import type { Instrumented as RustInstrumented } from "./generated/Instrumented";
 import type { MetadataChanged as RustMetadataChanged } from "./generated/MetadataChanged";
 import type { Operation as RustOperation } from "./generated/Operation";
+import type { PinnedRepo as RustPinnedRepo } from "./generated/PinnedRepo";
+import type { PinnedWorktree as RustPinnedWorktree } from "./generated/PinnedWorktree";
 import type { OperationKind as RustOperationKind } from "./generated/OperationKind";
 import type { Progress as RustProgress } from "./generated/Progress";
 import type { RecognizedAgent as RustRecognizedAgent } from "./generated/RecognizedAgent";
@@ -30,6 +32,7 @@ import type { TabLocation as RustTabLocation } from "./generated/TabLocation";
 import type { TreeStatus as RustTreeStatus } from "./generated/TreeStatus";
 import type { Upstream as RustUpstream } from "./generated/Upstream";
 import type { WorktreeMetadata as RustWorktreeMetadata } from "./generated/WorktreeMetadata";
+import type { SidebarRows as RustSidebarRows } from "./generated/SidebarRows";
 import type {
     AgentState,
     Instrumented,
@@ -45,6 +48,7 @@ import type {
     Subagent,
     TabInfo,
     TabLocation,
+    SidebarRows,
     WorktreeMetadata,
     WorktreeMetadataChanged,
 } from "./index";
@@ -66,6 +70,17 @@ export type InstrumentedStillMirrorsRust = Assert<Mirrors<RustInstrumented, Inst
 export type RecognizedAgentStillMirrorsRust = Assert<
     Mirrors<RustRecognizedAgent, RecognizedAgent>
 >;
+/**
+ * Les épingles (spec §5.2). `RepoRef` et `TabLocation` sont écrits **une** fois côté
+ * TypeScript et confrontés chacun à deux `struct` Rust — celles de `pty` et celles de
+ * `sidebar` — parce que la colonne range une ligne de la même façon d'où qu'elle vienne.
+ * Le jour où les deux backends divergeraient, c'est ici que ça se verrait, et non à
+ * l'exécution.
+ */
+export type PinnedRepoStillMirrorsRust = Assert<Mirrors<RustPinnedRepo, RepoRef>>;
+export type PinnedWorktreeStillMirrorsRust = Assert<Mirrors<RustPinnedWorktree, TabLocation>>;
+export type SidebarRowsStillMirrorsRust = Assert<Mirrors<RustSidebarRows, SidebarRows>>;
+
 export type TabLocationStillMirrorsRust = Assert<Mirrors<RustTabLocation, TabLocation>>;
 export type SubagentStillMirrorsRust = Assert<Mirrors<RustSubagent, Subagent>>;
 export type TabInfoStillMirrorsRust = Assert<Mirrors<RustTabInfo, TabInfo>>;

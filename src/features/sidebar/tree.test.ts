@@ -1,29 +1,37 @@
 import { describe, expect, it } from "bun:test";
 
 import type { TabInfo } from "@/shared/ipc";
-import { TabBuilder } from "@/shared/ipc/builders";
+import type { PinnedWorktree } from "@/shared/ipc";
+import { PinBuilder, TabBuilder } from "@/shared/ipc/builders";
 import { MAX_LABEL } from "./labels";
 import { buildSidebar, type SidebarGroup, type SidebarTree } from "./tree";
 
 const build = (tabs: readonly TabInfo[], activeTabId: string | null = null): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId,
-        collapsedWorktrees: new Set(),
-        collapsedGroups: new Set(),
+        collapsed: new Set(),
+        pinned: [],
     });
 
 const collapsing = (tabs: readonly TabInfo[], ...roots: string[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(roots),
-        collapsedGroups: new Set(),
+        collapsed: new Set(roots),
+        pinned: [],
+    });
+
+const pinning = (tabs: readonly TabInfo[], ...pinned: PinnedWorktree[]): SidebarTree =>
+    buildSidebar(tabs, {
+        activeTabId: null,
+        collapsed: new Set(),
+        pinned,
     });
 
 const collapsingGroups = (tabs: readonly TabInfo[], ...keys: string[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(),
-        collapsedGroups: new Set(keys),
+        collapsed: new Set(keys),
+        pinned: [],
     });
 
 const worktreesOf = (group: SidebarGroup | undefined) =>
@@ -275,5 +283,57 @@ describe("la lisibilité à 240 px", () => {
         );
         expect(labels).toHaveLength(15);
         expect(labels.every((label) => label.length <= MAX_LABEL)).toBe(true);
+    });
+});
+
+describe("les worktrees épinglés (spec §5.2)", () => {
+    it("Given a pinned worktree that no tab inhabits, when the sidebar is built, then it has a row under its repository", () => {
+        // Given — un onglet dans un worktree du dépôt, et une épingle sur un autre, fermé
+        const tabs = [TabBuilder.create().inWorktree("/wt/ash-sidebar", "ash").build()];
+
+        // When
+        const tree = pinning(tabs, PinBuilder.create("/wt/ash-toc").ofRepo("ash").build());
+
+        // Then — un worktree existe tant qu'il a un onglet **ou** qu'il est épinglé, et les
+        // deux se rangent sous le même dépôt
+        expect(tree.groups).toHaveLength(1);
+        const worktrees = worktreesOf(tree.groups[0]);
+        expect(worktrees.map((worktree) => worktree.key)).toEqual([
+            "/wt/ash-sidebar",
+            "/wt/ash-toc",
+        ]);
+        expect(worktrees[1]?.tabs).toEqual([]);
+        expect(worktrees[1]?.pinned).toBe(true);
+    });
+
+    it("Given a worktree that already hosts tabs, when it is pinned, then its row is marked without being duplicated or moved", () => {
+        // Given — l'épingle posée sur une ligne déjà là
+        const tabs = [
+            TabBuilder.create().named("A").inWorktree("/wt/ash-sidebar", "ash").build(),
+            TabBuilder.create().named("B").inWorktree("/wt/ash-toc", "ash").build(),
+        ];
+
+        // When
+        const tree = pinning(tabs, PinBuilder.create("/wt/ash-toc").ofRepo("ash").build());
+
+        // Then — deux lignes, dans l'ordre de première apparition des onglets : épingler ne
+        // fait pas sauter une ligne sous les yeux de l'utilisateur
+        const worktrees = worktreesOf(tree.groups[0]);
+        expect(worktrees.map((worktree) => worktree.key)).toEqual([
+            "/wt/ash-sidebar",
+            "/wt/ash-toc",
+        ]);
+        expect(worktrees.map((worktree) => worktree.pinned)).toEqual([false, true]);
+        expect(worktrees[1]?.tabs).toHaveLength(1);
+    });
+
+    it("Given nothing but a pinned worktree, when the sidebar is built, then the column has a row while counting no agent", () => {
+        // Given — la colonne d'un démarrage : aucun onglet ouvert dans ce projet
+        const tree = pinning([], PinBuilder.create("/dev/ash").build());
+
+        // Then — la ligne est là, et l'en-tête ne prétend pas qu'un agent tourne
+        expect(tree.groups).toHaveLength(1);
+        expect(tree.tabCount).toBe(0);
+        expect(worktreesOf(tree.groups[0])[0]?.state).toBe("idle");
     });
 });

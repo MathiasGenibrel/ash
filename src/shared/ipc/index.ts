@@ -253,3 +253,38 @@ export interface WorktreeMetadataChanged {
     worktreeRoot: string;
     metadata: WorktreeMetadata;
 }
+
+/**
+ * Un worktree **épinglé** : une ligne de la colonne qui existe sans qu'aucun onglet ne
+ * l'habite (spec §5.2).
+ *
+ * C'est **un [`TabLocation`]**, et pas une seconde forme qui lui ressemble : une ligne de
+ * worktree se range de la même façon qu'elle vienne d'un onglet ou d'une épingle, donc
+ * `tree.ts` n'a qu'une règle de rangement, pas deux qui pourraient diverger — le jour où
+ * elles divergeraient, un worktree épinglé **et** ouvert aurait deux lignes. Côté Rust ce
+ * sont bien deux `struct` dans deux features qui ne se connaissent pas ; c'est ici, une
+ * seule fois, qu'on écrit la forme, et `mirror.ts` la confronte aux deux — exactement comme
+ * [`RepoRef`].
+ *
+ * Ce qui traverse est **relu à chaque fois**, jamais recopié du fichier : une épingle dont le
+ * dossier a disparu n'arrive pas ici du tout, et la ligne s'efface sans que l'épingle soit
+ * perdue.
+ */
+export type PinnedWorktree = TabLocation;
+
+/**
+ * Ce que la colonne garde d'une session à l'autre — et **rien d'autre** (spec §3.1, §9.2).
+ *
+ * Deux faits, qui vivent dans `~/.ash/state.json` : les worktrees épinglés et les lignes
+ * repliées. Aucune session, aucun onglet, aucun worktree courant, aucun état d'agent ne
+ * survit à la fermeture ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ *
+ * `collapsed` mêle deux familles de clés qui ne peuvent pas se confondre : la racine d'un
+ * worktree — un chemin absolu — et la clé d'un groupe de dépôt, préfixée (`repo:`, `flat:`).
+ * Le repli de la **colonne** (`⌘B`) n'y est pas : il ne se replie pas par ligne, et rien ne
+ * le fait survivre.
+ */
+export interface SidebarRows {
+    pinned: PinnedWorktree[];
+    collapsed: string[];
+}

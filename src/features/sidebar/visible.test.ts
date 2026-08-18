@@ -61,8 +61,8 @@ function describeFolding(folding: Folding): string {
 function foldedTree(tabs: readonly TabInfo[], folding: Folding): SidebarTree {
     return buildSidebar(tabs, {
         activeTabId: null,
-        collapsedWorktrees: new Set(folding.worktrees),
-        collapsedGroups: new Set(folding.groups),
+        collapsed: new Set([...folding.worktrees, ...folding.groups]),
+        pinned: [],
     });
 }
 
