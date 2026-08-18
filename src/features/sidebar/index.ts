@@ -13,7 +13,7 @@
 
 import "./sidebar.css";
 
-import type { TabId, TabInfo } from "@/shared/ipc";
+import type { TabId, TabInfo, Workspaces } from "@/shared/ipc";
 import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
 import { showsSubagents } from "./visible";
@@ -26,6 +26,24 @@ export interface SidebarPorts {
     selectTab(tabId: TabId): void;
     /** Le `+` du pied. */
     newTab(): void;
+    /**
+     * Le clic sur une ligne de worktree **sans onglet** : en ouvrir un dans ce worktree
+     * (spec §5.2).
+     *
+     * La sidebar ne sait pas ouvrir un PTY — elle nomme le worktree, et passe la main, comme
+     * pour le marqueur d'instrumentation (ADR-0010). C'est le composition root qui relie.
+     */
+    openTabIn(worktreeRoot: string): void;
+    /**
+     * Épingler ou désépingler un worktree.
+     *
+     * Le geste **part**, il ne se pose pas ici : ce qui survit à la fermeture vit en Rust
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et la colonne
+     * redessinera quand le backend l'aura annoncé.
+     */
+    setPinned(worktreeRoot: string, pinned: boolean): void;
+    /** Replier ou déplier une ligne — un worktree, ou un groupe de dépôt. Même chemin. */
+    setCollapsed(key: string, collapsed: boolean): void;
     /**
      * Le marqueur « non instrumenté » d'une ligne d'agent : ouvrir les réglages sur cet outil.
      *
@@ -48,22 +66,33 @@ export interface Sidebar {
     readonly element: HTMLElement;
     /** `⌘B` : replié, il ne reste que le rail. */
     readonly isCollapsed: boolean;
-    render(tabs: readonly TabInfo[], activeTabId: TabId | null): void;
+    /**
+     * Dessine la colonne à partir de ce que le backend détient : les onglets, l'onglet actif,
+     * et l'état gardé d'une session à l'autre — les épingles et les lignes repliées.
+     */
+    render(
+        tabs: readonly TabInfo[],
+        activeTabId: TabId | null,
+        workspaces: Workspaces,
+    ): void;
     /** Rend l'état après bascule, pour que l'appelant en tire la mise en page. */
     toggleCollapsed(): boolean;
 }
 
 export function mountSidebar(ports: SidebarPorts): Sidebar {
     // Trois replis, et ils ne se confondent pas : la **colonne** (`⌘B`), chaque **dépôt**,
-    // et chaque **worktree** pris séparément (ADR-0012, spec §4.1). Ce sont les seuls états
-    // que la sidebar détient — ils ne décrivent aucun agent, seulement ce qu'on regarde,
-    // donc ils ont le droit de vivre ici sans contredire ADR-0009.
+    // et chaque **worktree** pris séparément (ADR-0012, spec §4.1).
+    //
+    // Seul le premier vit ici. Les deux autres **survivent au redémarrage** (spec §5.2), donc
+    // ils vivent en Rust avec les épingles, et la colonne les reçoit comme elle reçoit ses
+    // onglets ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). `⌘B`, lui, ne
+    // se replie pas par ligne et ne survit à rien : il n'a pas de raison de traverser la
+    // frontière.
     let columnCollapsed = false;
-    const collapsedWorktrees = new Set<string>();
-    const collapsedGroups = new Set<string>();
 
     let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
+    let workspaces: Workspaces = { pinned: [], collapsed: [] };
     const now = ports.now ?? ((): number => Date.now());
 
     // Le battement qui fait avancer les durées des lignes filles, **et seulement quand il y
@@ -77,24 +106,44 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         selectTab: (tabId) => {
             ports.selectTab(tabId);
         },
-        toggleWorktree: (key) => {
-            if (!collapsedWorktrees.delete(key)) collapsedWorktrees.add(key);
-            draw();
-        },
-        toggleGroup: (key) => {
-            if (!collapsedGroups.delete(key)) collapsedGroups.add(key);
-            draw();
+        // Les deux replis de ligne partent au backend et reviennent par son annonce : rien
+        // n'est posé ici, sans quoi la colonne et le fichier pourraient se contredire.
+        toggleCollapsed: (key) => {
+            ports.setCollapsed(key, !collapsed().has(key));
         },
         newTab: () => {
             ports.newTab();
+        },
+        openTabIn: (worktreeRoot) => {
+            ports.openTabIn(worktreeRoot);
+        },
+        setPinned: (worktreeRoot, pinned) => {
+            ports.setPinned(worktreeRoot, pinned);
         },
         instrument: (command, adapter) => {
             ports.instrument(command, adapter);
         },
     });
 
+    /**
+     * Les lignes repliées, telles que le backend les a annoncées.
+     *
+     * Un seul ensemble pour les deux niveaux : les clés d'un groupe sont préfixées (`repo:`,
+     * `flat:`) et celles d'un worktree sont des chemins absolus, donc elles ne peuvent pas se
+     * confondre — et `state.json` n'a qu'une liste à garder.
+     */
+    function collapsed(): ReadonlySet<string> {
+        return new Set(workspaces.collapsed);
+    }
+
     function draw(): void {
-        const tree = buildSidebar(tabs, { activeTabId, collapsedWorktrees, collapsedGroups });
+        const rows = collapsed();
+        const tree = buildSidebar(tabs, {
+            activeTabId,
+            collapsedWorktrees: rows,
+            collapsedGroups: rows,
+            pinned: workspaces.pinned,
+        });
         view.render(tree, columnCollapsed, now());
         beat(showsSubagents(tree, columnCollapsed));
     }
@@ -125,9 +174,10 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         get isCollapsed() {
             return columnCollapsed;
         },
-        render(nextTabs, nextActive) {
+        render(nextTabs, nextActive, nextWorkspaces) {
             tabs = nextTabs;
             activeTabId = nextActive;
+            workspaces = nextWorkspaces;
             draw();
         },
         toggleCollapsed() {

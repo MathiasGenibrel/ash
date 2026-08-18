@@ -63,6 +63,7 @@ function foldedTree(tabs: readonly TabInfo[], folding: Folding): SidebarTree {
         activeTabId: null,
         collapsedWorktrees: new Set(folding.worktrees),
         collapsedGroups: new Set(folding.groups),
+        pinned: [],
     });
 }
 

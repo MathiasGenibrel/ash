@@ -67,7 +67,7 @@ use features::agents::{
     Adapter, ClaudeCodeAdapter, EventFrame, EventSink, GenericAdapter, Notice, Notifier, Presence,
     Supervisor, TabAgents, SUBAGENT_LINGER,
 };
-use features::git::{resolve_worktree, SystemFileSystem};
+use features::git::{resolve_worktree, Entry, FileSystem, SystemFileSystem};
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
 use features::probe::SystemProbe;
 use features::pty::{
@@ -78,6 +78,10 @@ use features::settings::{
     ToolRecognition, ToolRegistry, Verifier,
 };
 use features::theme::{FileThemeStore, ThemeState, ThemeStore};
+use features::workspaces::{
+    FileWorkspacesStore, PinnedRepo, PinnedWorktree, WorkspacesState, WorkspacesStore,
+    WorktreePlaces,
+};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
 ///
@@ -99,6 +103,38 @@ impl WorktreeLocator for GitWorktrees {
             worktree_root: located.worktree.root.display().to_string(),
             worktree_name: located.worktree.name,
             repo: located.repo.map(|repo| RepoRef {
+                id: repo.git_dir.display().to_string(),
+                name: repo.name,
+            }),
+        })
+    }
+}
+
+/// Relie le port des épingles à la même résolution, et au système de fichiers.
+///
+/// C'est la seconde rencontre entre `git` et une feature qui ne le connaît pas, et elle se
+/// fait ici pour la raison qui vaut pour [`GitWorktrees`] : `workspaces` ne sait pas ce qu'est
+/// un dépôt, `git` ne sait pas ce qu'est une épingle.
+///
+/// **L'existence du dossier est vérifiée avant la résolution, et ce n'est pas une
+/// précaution** : `resolve_worktree` remonte les dossiers parents à la recherche d'un `.git`.
+/// Un worktree supprimé sous `/dev/ash/worktrees/` se résoudrait donc en `/dev/ash` — et la
+/// ligne épinglée d'un worktree disparu se mettrait à désigner le dépôt principal, en
+/// silence. La conduite décidée pour un dossier disparu est dans
+/// `features::workspaces::state` : la ligne s'efface, l'épingle reste.
+struct GitPins;
+
+impl WorktreePlaces for GitPins {
+    fn place(&self, root: &Path) -> Option<PinnedWorktree> {
+        if SystemFileSystem.entry(root) != Some(Entry::Directory) {
+            return None;
+        }
+        let located = resolve_worktree(&SystemFileSystem, root).ok()?;
+
+        Some(PinnedWorktree {
+            worktree_root: located.worktree.root.display().to_string(),
+            worktree_name: located.worktree.name,
+            repo: located.repo.map(|repo| PinnedRepo {
                 id: repo.git_dir.display().to_string(),
                 name: repo.name,
             }),
@@ -414,6 +450,15 @@ pub fn run() -> tauri::Result<()> {
         }),
     ));
 
+    // Ce que la colonne garde d'une session à l'autre : les worktrees épinglés et les lignes
+    // repliées (spec §3.1, §5.2). Relu **avant** la fenêtre, comme l'apparence : la sidebar le
+    // demande en s'affichant, et une épingle qui apparaîtrait une seconde après l'ouverture se
+    // lirait comme un sursaut.
+    let workspaces = Arc::new(WorkspacesState::restore(
+        Arc::new(FileWorkspacesStore::in_home()) as Arc<dyn WorkspacesStore>,
+        Arc::new(GitPins),
+    ));
+
     let ptys = Arc::new(PtyRegistry::new(
         Box::new(SystemPtySpawner),
         Arc::new(SystemProbe),
@@ -432,6 +477,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&tools))
+        .manage(Arc::clone(&workspaces))
         // Ce que la sidebar demande à la fenêtre de réglages de montrer, tant qu'elle ne
         // l'a pas lu (ADR-0006, ADR-0010).
         .manage(Arc::new(
@@ -450,6 +496,9 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_tabs,
             features::pty::commands::pty_has_foreground_process,
             features::git::commands::git_metadata,
+            features::workspaces::commands::workspaces,
+            features::workspaces::commands::workspaces_pin,
+            features::workspaces::commands::workspaces_collapse,
             features::theme::commands::theme_mode,
             features::theme::commands::terminal_font_size,
             features::theme::commands::step_terminal_font_size,

@@ -222,6 +222,22 @@ describe("l'origine d'un nouvel onglet", () => {
         expect(app.backend.opened[0]?.cwd).toBe("/tmp");
     });
 
+    it("Given a pinned worktree with no tab, when its sidebar row is clicked, then the new shell starts in that worktree and not where the active tab is", async () => {
+        // Given — un onglet ouvert ailleurs : c'est lui que `⌘T` reprendrait
+        const app = bench();
+        await app.workbench.openTab("home");
+        const active = app.backend.opened[0]?.tabId ?? "";
+        app.backend.moveTo(active, "/tmp");
+        app.backend.opened.length = 0;
+
+        // When — le clic sur la ligne épinglée (spec §5.2)
+        await app.workbench.openTab({ directory: "/wt/ash-sidebar" });
+
+        // Then — la ligne dit elle-même d'où part le shell : elle n'a pas d'onglet dont
+        // reprendre un répertoire, et l'onglet actif est dans un autre projet
+        expect(app.backend.opened[0]?.cwd).toBe("/wt/ash-sidebar");
+    });
+
     it("Given any active tab, when Cmd+Shift+T opens a tab, then the new shell starts at home", async () => {
         // Given
         const app = bench();

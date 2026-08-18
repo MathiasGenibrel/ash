@@ -11,3 +11,4 @@ pub mod probe;
 pub mod pty;
 pub mod settings;
 pub mod theme;
+pub mod workspaces;

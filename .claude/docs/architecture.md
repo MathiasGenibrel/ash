@@ -24,6 +24,8 @@ src-tauri/src/
     hooks/               les entrées marquées d'Ash dans les settings.json
     theme/               l'apparence de la fenêtre — mode clair / sombre /
                          système, taille de police du terminal — et sa persistance
+    workspaces/          ce qui survit à la fermeture : worktrees épinglés et
+                         lignes repliées (`~/.ash/state.json`)      — spec §3.1/5.2
   shared/                réellement transverse, et justifié
 src/
   app/                   composition root du frontend
@@ -63,6 +65,7 @@ pour un agent : la question « où vit la résolution du workspace ? » se répo
 | `agents` | [0006](../../docs/adr/0006-decouverte-automatique-des-agents.md), [0007](../../docs/adr/0007-etats-par-hooks.md), [0008](../../docs/adr/0008-abstraction-adapter.md) | le vocabulaire commun `idle/working/waiting/done/error`, le trait `Adapter`, le socket d'events, et **la décision** — une machine à états par onglet, que `pty` consulte par son port `AgentStates` |
 | `git` | [0011](../../docs/adr/0011-git-domaine-de-premier-plan.md), [0012](../../docs/adr/0012-worktree-unite-de-travail.md) | refs, worktrees, dépôt commun, état de rebase, couloirs du graphe |
 | `journal` | [0014](../../docs/adr/0014-attribution-locale-des-commits.md) | l'écriture et la relecture de l'attribution |
+| `workspaces` | [0009](../../docs/adr/0009-cycle-de-vie-des-agents.md), [0012](../../docs/adr/0012-worktree-unite-de-travail.md) | les deux seuls faits de la colonne qui survivent à la fermeture — épingles et lignes repliées — et **rien d'autre** (spec §3.1) |
 | `hooks` | [0007](../../docs/adr/0007-etats-par-hooks.md), [0013](../../docs/adr/0013-fiche-de-branche-dans-le-depot.md) | le marqueur par entrée, le `.bak`, le diff montré avant toute écriture |
 
 Le fait que `hooks` porte à la fois les `settings.json` et le bloc `<!-- ash:log -->`

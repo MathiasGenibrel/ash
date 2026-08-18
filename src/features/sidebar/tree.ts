@@ -1,4 +1,4 @@
-import type { AgentState, TabId, TabInfo } from "@/shared/ipc";
+import type { AgentState, PinnedWorktree, TabId, TabInfo } from "@/shared/ipc";
 import { instrumentationMark, type InstrumentationMark } from "./instrumentation";
 import { basename, shortSuffix, truncate } from "./labels";
 import { bubbleState } from "./states";
@@ -70,6 +70,15 @@ export interface WorktreeNode {
     readonly suffix: string | null;
     /** Replié : la ligne reste, ses onglets disparaissent. Propriété du **worktree**. */
     readonly collapsed: boolean;
+    /**
+     * Épinglé : la ligne reste dans la colonne même sans onglet, et survit à la fermeture
+     * (spec §5.2).
+     *
+     * Le fait vient du backend, comme tout le reste de cet arbre : la colonne ne décide pas
+     * ce qui est épinglé, elle le rend
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    readonly pinned: boolean;
     readonly tabs: readonly SidebarTabNode[];
     /** L'état le plus urgent de ses onglets — ce que la ligne montre quand elle est repliée. */
     readonly state: AgentState;
@@ -115,6 +124,14 @@ export interface SidebarTree {
 
 export interface SidebarOptions {
     readonly activeTabId: TabId | null;
+    /**
+     * Les worktrees épinglés, déjà situés par le backend.
+     *
+     * Ceux qui n'ont aucun onglet gagnent une ligne à eux — c'est tout ce qui les distingue
+     * d'un worktree ordinaire. Ceux qui en ont une déjà la marquent seulement, pour que le
+     * geste de désépinglage soit là où l'épingle a été posée.
+     */
+    readonly pinned: readonly PinnedWorktree[];
     /** Les worktrees repliés, par racine. */
     readonly collapsedWorktrees: ReadonlySet<string>;
     /** Les groupes de dépôt repliés, par clé de groupe. */
@@ -150,6 +167,15 @@ export function buildSidebar(
             mark: instrumentationMark(tab.agent),
             subagents: subagentNodes(tab.subagents),
         });
+    }
+
+    // Les épingles **après** les onglets, et jamais avant : l'ordre de la colonne est celui
+    // de première apparition des onglets, et une ligne épinglée sans onglet n'a pas d'onglet
+    // dont elle tiendrait le rang. Un worktree déjà habité ne bouge donc pas de place le jour
+    // où on l'épingle — il gagne seulement sa marque.
+    for (const pinned of options.pinned) {
+        const place = placeOfPin(pinned);
+        worktreeFor(groupFor(groups, place), place);
     }
 
     return {
@@ -189,6 +215,22 @@ function placeOf(tab: TabInfo): Place {
         repo,
         worktreeKey: location.worktreeRoot,
         worktreeName: location.worktreeName,
+    };
+}
+
+/**
+ * La même règle de rangement qu'un onglet, pour une ligne qui n'en a pas.
+ *
+ * Un worktree épinglé se range **exactement** comme s'il portait un onglet : même clé de
+ * groupe, même clé de worktree. C'est ce qui fait qu'épingler un worktree déjà ouvert ne
+ * duplique pas sa ligne, et qu'une épingle rejoint le dépôt de ses frères.
+ */
+function placeOfPin(pinned: PinnedWorktree): Place {
+    return {
+        groupKey: pinned.repo === null ? `flat:${pinned.worktreeRoot}` : `repo:${pinned.repo.id}`,
+        repo: pinned.repo,
+        worktreeKey: pinned.worktreeRoot,
+        worktreeName: pinned.worktreeName,
     };
 }
 
@@ -237,8 +279,9 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
         group.repo !== null,
     );
 
+    const pinned = new Set(options.pinned.map((entry) => entry.worktreeRoot));
     const nodes = worktrees.map((worktree, index) =>
-        node(worktree, suffixes[index] ?? null, options.collapsedWorktrees),
+        node(worktree, suffixes[index] ?? null, options.collapsedWorktrees, pinned),
     );
     const state = bubbleState(nodes.map((worktree) => worktree.state));
 
@@ -266,6 +309,7 @@ function node(
     worktree: MutableWorktree,
     suffix: string | null,
     collapsed: ReadonlySet<string>,
+    pinned: ReadonlySet<string>,
 ): WorktreeNode {
     return {
         key: worktree.key,
@@ -273,6 +317,7 @@ function node(
         title: worktree.name,
         suffix,
         collapsed: collapsed.has(worktree.key),
+        pinned: pinned.has(worktree.key),
         tabs: worktree.tabs,
         state: bubbleState(worktree.tabs.flatMap(tabStates)),
     };
