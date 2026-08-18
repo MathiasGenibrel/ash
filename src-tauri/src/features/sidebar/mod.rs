@@ -47,8 +47,11 @@ mod places;
 mod state;
 mod store;
 
+// `Persisted` — la forme du fichier — **n'est pas** réexportée, comme `Appearance` ne l'est
+// pas par `features::theme` : rien hors de cette feature n'a à fabriquer ce qui sera écrit
+// dans `~/.ash/state.json`. C'est la même garantie que le test de non-écriture de `store`,
+// dite dans le langage des modules.
 pub use error::SidebarError;
-pub use persisted::Persisted;
 pub use places::{PinnedRepo, PinnedWorktree, WorktreePlaces};
 pub use state::{SidebarRows, SidebarState};
 pub use store::{FileSidebarStore, SidebarStore};
