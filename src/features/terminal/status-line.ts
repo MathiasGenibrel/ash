@@ -70,7 +70,7 @@ export interface StatusLineModel {
     readonly cwd: StatusChip;
     readonly git: readonly StatusChip[];
     readonly agent: StatusAgent;
-    /** `⌘K commands`, ou le rappel de la sidebar repliée. `null` à vide. */
+    /** Le rappel de la sidebar repliée. `null` quand il n'y a rien à rappeler. */
     readonly hint: StatusChip | null;
 }
 
@@ -244,18 +244,19 @@ function counts(status: GitStatus | null): StatusChip[] {
  * Le rappel poussé à droite par le `flex: 1`.
  *
  * Replié, le rail de 46 px ne nomme plus les agents : la ligne de statut reprend celui qui
- * attend, avec son raccourci — c'est ce qui rend `⌘B` supportable (bloc `1b`). Sans agent
- * en attente, la maquette y remet le rappel de la palette de commandes.
+ * attend, avec son raccourci — c'est ce qui rend `⌘B` supportable (bloc `1b`).
+ *
+ * **Le reste du temps, il n'y a rien à rappeler.** La maquette y mettait `⌘K commands`, mais
+ * la palette de commandes n'existe pas, et `⌘K` appartient désormais au shell : Ash ne le
+ * pose sur aucune entrée de menu, précisément pour que le terminal le reçoive (#132). Une
+ * ligne de statut qui annonce une touche ne faisant rien coûte plus qu'un coin vide.
  */
-function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip {
+function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip | null {
     const waiting = state.tabs.filter((tab) => tab.state === "waiting");
     const first = waiting[0];
 
     if (!sidebarCollapsed || first === undefined) {
-        // `⌘K` est déjà « effacer le scrollback » (spec §4.4) : le rappel est celui de la
-        // maquette, la palette de commandes n'existe pas encore, et la collision se
-        // tranchera avec elle.
-        return { text: "⌘K commands", tone: "faint", title: null };
+        return null;
     }
 
     const position = state.tabs.indexOf(first) + 1;

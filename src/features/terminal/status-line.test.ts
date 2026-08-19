@@ -216,13 +216,13 @@ describe("la durée de l'état courant", () => {
 });
 
 describe("le rappel de droite", () => {
-    it("Given an expanded sidebar, when the status line is composed, then it only carries the command hint", () => {
+    it("Given an expanded sidebar, when the status line is composed, then it carries no hint at all", () => {
         // Given / When — dépliée, la sidebar porte déjà les agents : les répéter serait du
         // bruit
         const line = showing();
 
         // Then
-        expect(line.hint?.text).toBe("⌘K commands");
+        expect(line.hint).toBeNull();
     });
 
     it("Given a collapsed sidebar and an agent that is waiting, when the status line is composed, then it names the waiting agent and its shortcut", () => {
@@ -244,12 +244,13 @@ describe("le rappel de droite", () => {
         expect(line.hint?.tone).toBe("accent");
     });
 
-    it("Given a collapsed sidebar and nobody waiting, when the status line is composed, then it falls back to the command hint", () => {
+    it("Given a collapsed sidebar and nobody waiting, when the status line is composed, then it promises no shortcut", () => {
         // Given / When
         const line = showing(undefined, undefined, true);
 
-        // Then
-        expect(line.hint?.text).toBe("⌘K commands");
+        // Then — `⌘K` appartient au shell depuis #132, et aucune palette n'existe : annoncer
+        // une touche qui ne fait rien est pire qu'un coin vide.
+        expect(line.hint).toBeNull();
     });
 });
 
