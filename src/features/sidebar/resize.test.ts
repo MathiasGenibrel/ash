@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
     appliedWidth,
     dragOutcome,
+    grabOffset,
     handleOffset,
     KEYBOARD_STEP,
     resizeByKey,
@@ -14,6 +15,56 @@ import {
 function column(overrides: Partial<SidebarColumnState> = {}): SidebarColumnState {
     return { width: 240, collapsed: false, ...overrides };
 }
+
+describe("la saisie du bord", () => {
+    it("Given the grab zone caught 7 px away from the border, when the pointer moves by 40 px, then the border moves by exactly 40 px", () => {
+        // Given — une colonne de 300 px, donc une zone d'interaction qui commence à 293 px, et
+        // un pointeur posé à 307 : sept pixels **à droite** du trait, ce que la zone élargie
+        // sert précisément à permettre
+        const windowWidth = 1000;
+        const zoneLeft = 300 - 7;
+        const grab = grabOffset(307, zoneLeft);
+
+        // When
+        const caught = dragOutcome(307, windowWidth, grab);
+        const moved = dragOutcome(347, windowWidth, grab);
+
+        // Then — le trait suit le pointeur au lieu de le rejoindre : rien ne saute à la
+        // saisie, et 40 px de glissement font 40 px de colonne, pas 47
+        expect(caught.width).toBe(300);
+        expect(moved.width).toBe(340);
+    });
+
+    it("Given the border grabbed and released without moving, when the gesture is resolved, then the width has not changed", () => {
+        // Given — le geste le plus facile à faire sans le vouloir : un clic sur un bord qu'on
+        // visait, dans une zone faite pour être facile à atteindre
+        const windowWidth = 1000;
+        const zoneLeft = 300 - 7;
+        const grab = grabOffset(295, zoneLeft);
+
+        // When — le pointeur n'a pas bougé d'un pixel entre l'appui et le relâchement
+        const outcome = dragOutcome(295, windowWidth, grab);
+
+        // Then — un clic sans intention de glisser ne change aucune largeur
+        expect(outcome).toEqual({ width: 300, willCollapse: false });
+    });
+
+    it("Given a column grabbed on the left of its border, when it is dragged below the floor, then only the border decides the collapse", () => {
+        // Given — l'écart de saisie ne doit pas décaler le plancher : sinon on refermerait
+        // sept pixels trop tôt, ou sept pixels trop tard, selon l'endroit du clic
+        const windowWidth = 1000;
+        const grab = grabOffset(295, 300 - 7);
+
+        // When — le pointeur passe à 99 px, donc le trait à 104 : au-dessus du plancher
+        const justAbove = dragOutcome(99, windowWidth, grab);
+        // et à 90 px, donc le trait à 95 : en dessous
+        const justBelow = dragOutcome(90, windowWidth, grab);
+
+        // Then
+        expect(justAbove.willCollapse).toBe(false);
+        expect(justBelow.willCollapse).toBe(true);
+    });
+});
 
 describe("les bornes du glissement", () => {
     it("Given a drag pushed past 80% of the window, when the width is resolved, then it stops at 80%", () => {

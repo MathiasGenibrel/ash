@@ -47,6 +47,15 @@ export const MAX_WIDTH_FRACTION = 0.8;
  */
 export const KEYBOARD_STEP = 16;
 
+/**
+ * Ce dont la zone d'interaction déborde de chaque côté du trait — 7 px, donc 15 px
+ * attrapables (`sidebar.css` pose la même valeur).
+ *
+ * C'est aussi ce qui rend [`grabOffset`] nécessaire : on attrape le bord **à côté** du trait,
+ * et c'est tout l'intérêt de la zone élargie.
+ */
+export const GRAB_OVERHANG = 7;
+
 /** Ce que la poignée garde comme marge aux deux extrémités du bord (maquette validée). */
 export const HANDLE_MARGIN = 18;
 
@@ -83,18 +92,35 @@ export interface DragOutcome {
 }
 
 /**
- * Le résultat d'un pointeur posé à `pointerX` dans une fenêtre de `windowWidth`.
+ * L'écart entre le pointeur et le trait, mesuré à l'instant où l'on attrape.
+ *
+ * `zoneLeft` est le bord gauche de la zone d'interaction ; le trait est [`GRAB_OVERHANG`]
+ * pixels plus loin. L'écart va donc de −7 à +8, et il est **retenu pour tout le geste**.
+ */
+export function grabOffset(pointerX: number, zoneLeft: number): number {
+    return pointerX - (zoneLeft + GRAB_OVERHANG);
+}
+
+/**
+ * Le résultat d'un pointeur posé à `pointerX` dans une fenêtre de `windowWidth`, sachant
+ * l'écart `grab` retenu à la saisie.
+ *
+ * **Le trait suit le pointeur, il ne le rejoint pas.** Sans cet écart, attraper la zone à 7 px
+ * du bord ferait sauter la colonne de 7 px au moment même du clic : la zone élargie rendrait
+ * la cible facile à atteindre et punirait celui qui l'atteint. Avec lui, glisser de N pixels
+ * déplace le bord de N pixels, d'où qu'on soit parti dans les 15 px.
  *
  * La colonne **s'arrête** au plancher au lieu de suivre le pointeur : continuer à rétrécir
  * jusqu'à zéro donnerait une colonne illisible avant de la refermer, et on ne saurait plus à
  * quel moment le relâchement referme. Ici, la colonne s'immobilise, et c'est le fait de
  * relâcher plus à gauche qui décide.
  */
-export function dragOutcome(pointerX: number, windowWidth: number): DragOutcome {
+export function dragOutcome(pointerX: number, windowWidth: number, grab = 0): DragOutcome {
     const { min } = bounds(windowWidth);
+    const edge = pointerX - grab;
     return {
-        width: appliedWidth(pointerX, windowWidth),
-        willCollapse: pointerX < min,
+        width: appliedWidth(edge, windowWidth),
+        willCollapse: edge < min,
     };
 }
 
