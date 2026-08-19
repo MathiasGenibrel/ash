@@ -532,6 +532,10 @@ body {
     display: grid;
     grid-template-columns: auto 1fr;
     min-height: 0;
+    /* Le séparateur de la colonne se pose ici, hors flux, à cheval sur la bordure : il déborde
+     * de 7 px de chaque côté, et l'`overflow: hidden` de la colonne en couperait la moitié s'il
+     * y vivait. Hors flux, il ne crée pas de troisième colonne. */
+    position: relative;
 }
 
 /* La zone terminal occupe la seconde colonne, sous la bande de titre. Elle ne réserve

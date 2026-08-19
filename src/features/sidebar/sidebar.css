@@ -7,7 +7,11 @@
  * Les mesures suivent les écrans de design : colonne de 240 px, rail replié de 46 px. */
 
 .ash-sidebar {
-    width: 240px;
+    /* La largeur vient de la racine du document, posée par `index.ts` à partir de ce que le
+     * backend annonce et des bornes de la fenêtre. Le repli n'a plus de largeur à lui : le
+     * rail est cette même variable, à 46 px — un seul nombre à poser, et un séparateur qui se
+     * place dessus sans jamais avoir à deviner lequel des deux s'applique. */
+    width: var(--ash-sidebar-width, 240px);
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -19,8 +23,90 @@
     transition: width 90ms;
 }
 
-.ash-sidebar.is-collapsed {
-    width: 46px;
+/* --- le bord qu'on attrape -------------------------------------------------
+ *
+ * La bordure fait un pixel, et l'épaissir alourdirait une interface qui tient sur des traits
+ * fins. La zone d'interaction est donc **plus large que le trait, et jamais dessinée** : 7 px
+ * de débord de chaque côté, soit 15 px attrapables. Ce qui se voit, c'est la poignée — et elle
+ * se déploie **avant** que le curseur n'ait atteint le trait, ce qui est tout l'intérêt.
+ *
+ * Le séparateur est posé dans la grille des deux colonnes, hors flux, et se place sur le bord
+ * par la même variable que la colonne : les deux ne peuvent donc pas se désaccorder. */
+.ash-sidebar-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--ash-sidebar-width, 240px) - 7px);
+    width: 15px;
+    z-index: 3;
+    cursor: col-resize;
+    /* Rien : la zone ne se dessine pas, elle s'attrape. */
+    background: none;
+    outline: none;
+}
+
+/* 5 × 30 px, rayon 3 px — les valeurs de la maquette validée.
+ *
+ * `margin-top: -15px` et pas de `translateY` : `transform` est pris par le déploiement, et
+ * `top` est posé par `resizer.ts` à la hauteur exacte du curseur. */
+.ash-sidebar-handle {
+    position: absolute;
+    left: 5px;
+    width: 5px;
+    height: 30px;
+    margin-top: -15px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--ash-fg) 38%, transparent);
+    opacity: 0;
+    transform: scaleX(0.4);
+    transform-origin: center;
+    transition:
+        opacity 130ms,
+        transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+        background 130ms;
+    /* La poignée est un signal, pas une cible : les événements vont au séparateur. */
+    pointer-events: none;
+}
+
+.ash-sidebar-resizer:hover .ash-sidebar-handle,
+.ash-sidebar-resizer:focus-visible .ash-sidebar-handle,
+.ash-sidebar-resizer.is-dragging .ash-sidebar-handle {
+    opacity: 1;
+    transform: scaleX(1);
+}
+
+/* Pendant le glissement — et sous le focus clavier, qui est le même engagement — la poignée
+ * prend la teinte active et reste visible même si le pointeur sort de la zone : c'est la
+ * capture du pointeur qui le permet, posée par `resizer.ts`. */
+.ash-sidebar-resizer:focus-visible .ash-sidebar-handle,
+.ash-sidebar-resizer.is-dragging .ash-sidebar-handle {
+    background: var(--ash-accent);
+}
+
+/* Le temps d'un glissement, tout le document garde le curseur de redimensionnement et cesse
+ * de sélectionner du texte — sans quoi passer au-dessus du terminal rendrait un curseur de
+ * saisie, et le glissement sélectionnerait ce qu'il survole. `!important` parce qu'il s'agit
+ * précisément de couvrir les curseurs que chaque élément pose pour lui-même. */
+.ash-resizing,
+.ash-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* La colonne suit le pointeur image par image : l'adoucissement de `⌘B` ferait traîner la
+ * largeur derrière le curseur. */
+.ash-resizing .ash-sidebar {
+    transition: none;
+}
+
+/* `prefers-reduced-motion` : la poignée apparaît immédiatement, et **les états restent** —
+ * seule l'animation part. */
+@media (prefers-reduced-motion: reduce) {
+    .ash-sidebar,
+    .ash-sidebar-handle {
+        transition: none;
+    }
 }
 
 .ash-sidebar-head {

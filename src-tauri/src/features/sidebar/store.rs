@@ -89,6 +89,11 @@ mod tests {
         // persiste ce que les agents ont fait, jamais ce qu'ils étaient en train de faire*.
         // Ce test est une garantie de **non-écriture** : il tombe le jour où quelqu'un ajoute
         // au fichier la liste des onglets, le worktree courant, ou un état d'agent.
+        //
+        // Il a déjà servi une fois : la largeur de la colonne et son repli (#129) survivent
+        // eux aussi au redémarrage, et leur place évidente semblait être ici. Ils sont partis
+        // dans `~/.ash/theme.json` avec le thème et la taille de police — ce sont des
+        // préférences d'**apparence** (spec §9) —, et ce fichier-ci n'a pas grossi.
         let kept = state(&["/wt/ash-sidebar"], &["repo:/dev/ash/.git"]);
 
         // When
