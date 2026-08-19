@@ -6,8 +6,9 @@ use super::ports::{HookBlocks, Launch};
 use super::tool::{NewTool, ToolDeclaration};
 use super::values::{optional, Command, ConfigTarget};
 use super::verification::{FirstPass, Verification, Verifier};
+use super::withdrawal::{self, Outcome, PlannedRemoval, RemovalPlan, RemovalReport, RemovedFile};
 use crate::features::agents::Instrumented;
-use crate::features::hooks::Presence;
+use crate::features::hooks::{Presence, Removal};
 
 /// Les commandes déclarées, ce qu'elles ont prouvé, et les adaptateurs qu'on peut leur
 /// donner.
@@ -49,6 +50,17 @@ pub struct SecondPass {
     /// L'entrée est-elle au registre ? Une saisie du formulaire d'ajout n'y est pas encore,
     /// et son résultat ne doit se poser sur aucune entrée existante.
     pub stored: bool,
+}
+
+/// Un fichier que le retrait global vise : où il est, et ce qu'on y a vu.
+///
+/// Il ne traverse aucune frontière — seul son [`PlannedRemoval`] va à l'écran. Ce qu'il
+/// porte en plus est ce dont le second temps a besoin pour écrire au même endroit que
+/// celui qu'il a annoncé.
+struct Aimed {
+    adapter: String,
+    folder: ConfigTarget,
+    planned: PlannedRemoval,
 }
 
 /// Ce qu'une modification du registre rend : la liste entière, et ce qui reste à lancer.
@@ -244,6 +256,11 @@ impl ToolRegistry {
     /// fichier qui porte déjà d'autres hooks ont tous éteint le bouton — et le backend
     /// refuse pour la même raison qu'il l'a éteint. Recopier la condition en ferait deux,
     /// dont une seule protège vraiment le fichier de l'utilisateur.
+    ///
+    /// **Elle garde l'écriture d'entrées nouvelles, pas leur reprise** :
+    /// [`Self::remove_everything`] ne passe pas par ici, et c'est délibéré — l'y faire
+    /// passer abandonnerait sur le disque les entrées d'une déclaration devenue invalide
+    /// depuis. La raison est écrite là-bas, avec le geste qu'elle autorise.
     pub fn install_hooks(&self, command: &Command) -> Result<Vec<ToolDeclaration>, SettingsError> {
         self.write_hooks(command, HookAction::Install)
     }
@@ -251,6 +268,89 @@ impl ToolRegistry {
     /// Retire le bloc et ses marqueurs — le `remove` de l'état `installed`.
     pub fn remove_hooks(&self, command: &Command) -> Result<Vec<ToolDeclaration>, SettingsError> {
         self.write_hooks(command, HookAction::Remove)
+    }
+
+    /// Tous les fichiers où Ash a écrit, et ce qu'un retrait y emporterait. **Lit, n'écrit
+    /// pas.**
+    ///
+    /// C'est la première moitié de « retirer Ash de tous les fichiers » (spec §10) : le
+    /// geste dit ce qu'il va faire avant de le faire, et l'écran ne peut le dire que si le
+    /// backend le sait. Un fichier où il n'y a rien à retirer n'y figure pas.
+    pub fn removal_plan(&self) -> Result<RemovalPlan, SettingsError> {
+        Ok(withdrawal::plan(
+            self.foresee()?
+                .into_iter()
+                .map(|aimed| aimed.planned)
+                .collect(),
+        ))
+    }
+
+    /// Retire les entrées d'Ash de tous ces fichiers, et rapporte ce qui a eu lieu.
+    ///
+    /// **Elle relit tout au moment d'écrire**, et ne croit pas l'annonce qui l'a précédée :
+    /// un fichier que l'utilisateur a édité entre les deux ne se retrouve pas amputé de
+    /// lignes qui ne sont plus là où on les avait vues. Le compte rendu dit alors ce qui a
+    /// eu lieu, c'est-à-dire rien pour ce fichier-là.
+    ///
+    /// **Aucune vérification n'y donne droit, et c'est délibéré.** La séquence des quatre
+    /// tests garde l'*écriture d'entrées nouvelles* : elle empêche Ash de poser des hooks
+    /// dans un dossier qu'il n'a pas reconnu. Le retrait, lui, ne touche que ce qui porte
+    /// déjà son marqueur — le refuser à une entrée devenue invalide entre-temps
+    /// abandonnerait sur le disque exactement ce que ce geste existe pour reprendre.
+    pub fn remove_everything(
+        &self,
+    ) -> Result<(RemovalReport, Vec<ToolDeclaration>), SettingsError> {
+        let removed: Vec<RemovedFile> = self
+            .foresee()?
+            .into_iter()
+            .map(|aimed| RemovedFile {
+                entries: aimed.planned.entries,
+                file: aimed.planned.file,
+                outcome: match self.blocks.remove(&aimed.adapter, &aimed.folder) {
+                    Ok(Removal::Removed {
+                        deleted_the_file: true,
+                        ..
+                    }) => Outcome::RemovedTheFile,
+                    Ok(Removal::Removed { .. }) => Outcome::Removed,
+                    Ok(Removal::NothingToRemove { .. }) => Outcome::NothingLeft,
+                    Err(why) => Outcome::Refused { why },
+                },
+            })
+            .collect();
+
+        Ok((withdrawal::report(removed), self.tools()?))
+    }
+
+    /// Ce que le retrait viserait, dans l'ordre des entrées déclarées.
+    ///
+    /// Elle lit les déclarations **brutes** ([`Self::declarations`]) et non [`Self::tools`] :
+    /// la ligne `hooks` d'une entrée relit déjà chaque fichier pour l'écran, et le retrait
+    /// n'a besoin ni de son verdict ni de son diff d'installation.
+    fn foresee(&self) -> Result<Vec<Aimed>, SettingsError> {
+        let mut aimed: Vec<Aimed> = Vec::new();
+        for tool in self.declarations()? {
+            let Some(folder) = self.verifier.target(&tool.adapter, tool.config.as_deref()) else {
+                continue;
+            };
+            // Deux entrées sur le même dossier et le même adaptateur visent le même
+            // fichier : un seul retrait, et les deux noms sur la même ligne.
+            if let Some(seen) = aimed
+                .iter_mut()
+                .find(|seen| seen.adapter == tool.adapter && seen.folder == folder)
+            {
+                seen.planned.also_aimed_by(&tool.command);
+                continue;
+            }
+            let Some(found) = self.blocks.foresee_removal(&tool.adapter, &folder) else {
+                continue;
+            };
+            aimed.push(Aimed {
+                adapter: tool.adapter.clone(),
+                folder,
+                planned: PlannedRemoval::foreseen(found, &tool.command),
+            });
+        }
+        Ok(aimed)
     }
 
     fn write_hooks(
@@ -282,7 +382,7 @@ impl ToolRegistry {
         };
 
         match asked {
-            HookAction::Remove => self.blocks.remove(&tool.adapter, &folder),
+            HookAction::Remove => self.blocks.remove(&tool.adapter, &folder).map(|_| ()),
             _ => self.blocks.install(&tool.adapter, &folder),
         }
         .map_err(SettingsError::HooksRefused)?;
@@ -491,7 +591,11 @@ fn verify_at(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+    use crate::features::agents::{hook_mark, HookEntry, Instrumentation};
+    use crate::features::hooks::fakes::FakeConfigFiles;
     use crate::features::hooks::Presence;
     use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders};
     use crate::features::settings::hooks::HookState;
@@ -556,17 +660,125 @@ mod tests {
         /// Le registre **et** ce qu'il écrit : les tests qui comptent ici sont ceux qui
         /// affirment qu'aucun fichier n'a été touché.
         fn assemble(self) -> (ToolRegistry, Arc<FakeBlocks>) {
-            let blocks = Arc::new(self.blocks);
-            let registry = ToolRegistry::new(
+            let Self {
+                files,
+                commands,
+                blocks,
+            } = self;
+            let blocks = Arc::new(blocks);
+            let registry = Self {
+                files,
+                commands,
+                blocks: FakeBlocks::new(),
+            }
+            .over(Arc::clone(&blocks) as Arc<dyn HookBlocks>);
+            (registry, blocks)
+        }
+
+        /// Le même registre, branché sur la **vraie** écriture de `features::hooks`.
+        ///
+        /// C'est le seul montage qui puisse répondre à la question de la spec §10 — « le
+        /// fichier est-il rendu à l'octet près ? » — parce que c'est le seul où il y a des
+        /// octets. Le double ordinaire raconte ce qu'on lui a dit ; celui-ci passe par la
+        /// fusion, le marqueur et le `.bak`, comme la composition root.
+        fn on_real_files(self, files: Arc<FakeConfigFiles>) -> ToolRegistry {
+            self.over(Arc::new(RealBlocks { files }))
+        }
+
+        fn over(self, blocks: Arc<dyn HookBlocks>) -> ToolRegistry {
+            ToolRegistry::new(
                 Arc::new(Verifier::new(
                     Arc::new(self.files),
                     Arc::new(self.commands),
                     profiles(),
                 )),
-                Arc::clone(&blocks) as Arc<dyn HookBlocks>,
-            );
-            (registry, blocks)
+                blocks,
+            )
         }
+    }
+
+    /// Le port branché sur `features::hooks`, exactement comme `AdapterHooks` le fait dans
+    /// `lib.rs` — un identifiant d'adaptateur traduit en instrumentation, et rien d'autre.
+    struct RealBlocks {
+        files: Arc<FakeConfigFiles>,
+    }
+
+    impl RealBlocks {
+        /// Ce qu'un adaptateur voudrait voir écrit. **Composée ici et non empruntée à
+        /// `ClaudeCodeAdapter`** : `settings` ne connaît aucun adaptateur concret
+        /// (ADR-0008), et cette règle ne s'assouplit pas parce qu'on est dans un test.
+        fn describing(&self, adapter: &str, config_dir: &Path) -> Option<Instrumentation> {
+            if adapter != "claude-code" {
+                return None;
+            }
+            Some(Instrumentation {
+                file: config_dir.join("settings.json"),
+                entries: ["Stop", "Notification"]
+                    .iter()
+                    .map(|hook| HookEntry {
+                        path: vec!["hooks".to_owned(), (*hook).to_owned()],
+                        item: format!(
+                            "{{\"hooks\": [{{\"command\": \"ash-event waiting {}\", \"type\": \"command\"}}]}}",
+                            hook_mark(1)
+                        ),
+                    })
+                    .collect(),
+                version: 1,
+            })
+        }
+    }
+
+    impl HookBlocks for RealBlocks {
+        fn inspect(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<BlockAt> {
+            let instrumentation = self.describing(adapter, config_dir.resolved())?;
+            Some(BlockAt {
+                file: instrumentation.file.clone(),
+                presence: crate::features::hooks::inspect(&*self.files, &instrumentation),
+            })
+        }
+
+        fn install(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
+            let instrumentation = self
+                .describing(adapter, config_dir.resolved())
+                .ok_or_else(|| "rien à installer".to_owned())?;
+            crate::features::hooks::install(&*self.files, &instrumentation)
+                .map(|_| ())
+                .map_err(|why| why.to_string())
+        }
+
+        fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<Removal, String> {
+            let instrumentation = self
+                .describing(adapter, config_dir.resolved())
+                .ok_or_else(|| "rien à retirer".to_owned())?;
+            crate::features::hooks::uninstall(&*self.files, &instrumentation)
+                .map_err(|why| why.to_string())
+        }
+
+        fn foresee_removal(
+            &self,
+            adapter: &str,
+            config_dir: &ConfigTarget,
+        ) -> Option<crate::features::hooks::Withdrawal> {
+            let instrumentation = self.describing(adapter, config_dir.resolved())?;
+            crate::features::hooks::foresee(&*self.files, &instrumentation)
+        }
+    }
+
+    /// Les deux comptes de la spec §9, chacun avec son `settings.json` bien à lui.
+    fn two_instrumented_accounts(files: &Arc<FakeConfigFiles>) -> ToolRegistry {
+        let registry = two_claude_accounts().on_real_files(Arc::clone(files));
+        for (command, folder) in [
+            ("claude", "/home/.claude"),
+            ("claude-perso", "/home/.claude-perso"),
+        ] {
+            registry
+                .declare(draft(command, "claude-code", Some(folder)))
+                .expect("la saisie est valide");
+            registry
+                .install_hooks(&named(command))
+                .expect("les deux entrées sont vérifiées");
+        }
+        registry
     }
 
     /// Un nom de commande valide, tel que `NewTool::declare` en produit.
@@ -1084,5 +1296,237 @@ mod tests {
             forgotten.unwrap_err(),
             SettingsError::UnknownTool(named("codex"))
         );
+    }
+
+    /// Le `settings.json` que l'utilisateur avait avant Ash — son ordre, son indentation.
+    const THEIRS: &str = "{\n  \"model\": \"opus\",\n  \"hooks\": { \"PreToolUse\": [ { \"matcher\": \"Bash\",\n    \"hooks\": [ { \"type\": \"command\", \"command\": \"rtk hook claude\" } ] } ] }\n}\n";
+
+    #[test]
+    fn given_two_instrumented_config_folders_when_ash_is_removed_from_every_file_then_each_one_is_back_to_the_byte(
+    ) {
+        // Given — la promesse la plus lourde du produit (spec §10), portée cette fois par le
+        // geste global : « retirer ash de tous les fichiers » traverse plusieurs fichiers de
+        // l'utilisateur, et le seul moyen de le vérifier est de les comparer à eux-mêmes
+        let files = Arc::new(
+            FakeConfigFiles::new()
+                .carrying("/home/.claude/settings.json", THEIRS)
+                .carrying("/home/.claude-perso/settings.json", THEIRS),
+        );
+        let registry = two_instrumented_accounts(&files);
+        assert!(files
+            .content_of(Path::new("/home/.claude/settings.json"))
+            .unwrap_or_default()
+            .contains("ash-event"));
+
+        // When
+        let (report, _) = registry.remove_everything().expect("le registre répond");
+
+        // Then
+        assert_eq!(report.summary, "removed 4 entries from 2 files");
+        for folder in ["/home/.claude", "/home/.claude-perso"] {
+            assert_eq!(
+                files
+                    .content_of(&Path::new(folder).join("settings.json"))
+                    .as_deref(),
+                Some(THEIRS),
+                "{folder} n'a pas été rendu tel quel"
+            );
+        }
+    }
+
+    #[test]
+    fn given_a_removal_that_took_place_when_the_disk_is_looked_at_then_the_backups_are_still_there()
+    {
+        // Given — « les .bak sont conservés » : ils sont la copie d'avant Ash, et les effacer
+        // au moment où l'on désinstalle retirerait le filet juste avant de sauter
+        let files = Arc::new(
+            FakeConfigFiles::new()
+                .carrying("/home/.claude/settings.json", THEIRS)
+                .carrying("/home/.claude-perso/settings.json", THEIRS),
+        );
+        let registry = two_instrumented_accounts(&files);
+
+        // When
+        registry.remove_everything().expect("le registre répond");
+
+        // Then
+        for folder in ["/home/.claude", "/home/.claude-perso"] {
+            assert_eq!(
+                files
+                    .content_of(&Path::new(folder).join("settings.json.bak"))
+                    .as_deref(),
+                Some(THEIRS),
+                "le .bak de {folder} a disparu"
+            );
+        }
+    }
+
+    #[test]
+    fn given_the_whole_removal_when_every_file_gesture_is_replayed_then_none_of_them_left_the_config_folders(
+    ) {
+        // Given — spec §10 : « rien d'autre — pas de .zshrc, pas de PATH, pas de shim, pas de
+        // hook git ». C'est une propriété de non-écriture, donc elle ne se lit pas dans le
+        // code : elle se lit dans la liste de ce qu'Ash a touché, du premier geste au dernier
+        let files =
+            Arc::new(FakeConfigFiles::new().carrying("/home/.claude/settings.json", THEIRS));
+        let registry = two_claude_accounts().on_real_files(Arc::clone(&files));
+        registry
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        registry
+            .install_hooks(&named("claude"))
+            .expect("l'entrée est vérifiée");
+
+        // When
+        registry.removal_plan().expect("le registre répond");
+        registry.remove_everything().expect("le registre répond");
+
+        // Then
+        let touched: Vec<String> = files
+            .journal()
+            .into_iter()
+            .filter(|step| !step.starts_with("read "))
+            .collect();
+        assert!(
+            touched.iter().all(|step| {
+                step.split_whitespace().skip(1).all(|word| {
+                    word == "->"
+                        || word == "/home/.claude/settings.json"
+                        || word == "/home/.claude/settings.json.bak"
+                })
+            }),
+            "ash n'écrit que dans le settings.json visé et sa sauvegarde : {touched:?}"
+        );
+    }
+
+    #[test]
+    fn given_an_entry_whose_folder_no_longer_verifies_when_ash_is_removed_from_every_file_then_its_entries_go_too(
+    ) {
+        // Given — la séquence garde l'**écriture d'entrées nouvelles**, pas leur reprise. Une
+        // entrée dont le dossier a été renommé depuis l'installation ne passe plus les tests ;
+        // lui refuser le retrait abandonnerait sur le disque ce que ce geste existe pour
+        // reprendre
+        let files =
+            Arc::new(FakeConfigFiles::new().carrying("/home/.claude/settings.json", THEIRS));
+        let registry = two_claude_accounts().on_real_files(Arc::clone(&files));
+        registry
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        registry
+            .install_hooks(&named("claude"))
+            .expect("l'entrée est vérifiée");
+        // Le dossier n'est plus celui que la séquence avait reconnu : elle refuse désormais
+        let unverified = two_claude_accounts()
+            .folder("/home/notes", &["a.md"])
+            .on_real_files(Arc::clone(&files));
+        unverified
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        assert!(unverified
+            .install_hooks(&named("claude"))
+            .is_err_and(|why| matches!(why, SettingsError::HooksRefused(_))));
+
+        // When
+        let (report, _) = unverified.remove_everything().expect("le registre répond");
+
+        // Then
+        assert_eq!(report.summary, "removed 2 entries from 1 file");
+        assert_eq!(
+            files
+                .content_of(Path::new("/home/.claude/settings.json"))
+                .as_deref(),
+            Some(THEIRS)
+        );
+    }
+
+    #[test]
+    fn given_two_entries_sharing_one_config_folder_when_the_removal_is_announced_then_the_file_is_named_once(
+    ) {
+        // Given — deux comptes déclarés sur le même dossier : c'est un seul fichier, et
+        // l'annoncer deux fois promettrait deux fois les mêmes entrées, puis rapporterait un
+        // second passage qui n'a rien trouvé
+        let files =
+            Arc::new(FakeConfigFiles::new().carrying("/home/.claude/settings.json", THEIRS));
+        let registry = two_claude_accounts().on_real_files(Arc::clone(&files));
+        registry
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        registry
+            .install_hooks(&named("claude"))
+            .expect("l'entrée est vérifiée");
+        registry
+            .declare(draft("claude-perso", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+
+        // When
+        let announced = registry.removal_plan().expect("le registre répond");
+
+        // Then
+        assert_eq!(announced.files.len(), 1);
+        assert_eq!(
+            announced.files[0].commands,
+            vec!["claude".to_owned(), "claude-perso".to_owned()]
+        );
+        assert_eq!(
+            announced.summary,
+            "2 entries in /home/.claude/settings.json"
+        );
+    }
+
+    #[test]
+    fn given_a_settings_file_that_stopped_being_json_after_the_announcement_when_the_removal_runs_then_it_is_left_alone(
+    ) {
+        // Given — le fichier de l'utilisateur peut changer entre l'annonce et le geste. Le
+        // retrait **relit** au moment d'écrire plutôt que de croire l'annonce : on ne devine
+        // pas où sont nos entrées dans un fichier qu'on ne sait plus lire, donc rien n'est
+        // écrit, rien n'est prétendu, et le fichier reste tel quel plutôt que d'être perdu
+        let files =
+            Arc::new(FakeConfigFiles::new().carrying("/home/.claude/settings.json", THEIRS));
+        let registry = two_claude_accounts().on_real_files(Arc::clone(&files));
+        registry
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        registry
+            .install_hooks(&named("claude"))
+            .expect("l'entrée est vérifiée");
+        let announced = registry.removal_plan().expect("le registre répond");
+        files.replace(Path::new("/home/.claude/settings.json"), "à moitié écrit {");
+
+        // When
+        let (report, _) = registry.remove_everything().expect("le registre répond");
+
+        // Then
+        assert_eq!(announced.files.len(), 1);
+        assert_eq!(report.summary, "nothing was removed");
+        assert_eq!(report.files, Vec::new());
+        assert_eq!(
+            files
+                .content_of(Path::new("/home/.claude/settings.json"))
+                .as_deref(),
+            Some("à moitié écrit {")
+        );
+    }
+
+    #[test]
+    fn given_a_config_file_ash_created_for_itself_when_the_removal_is_announced_then_it_says_the_file_goes_too(
+    ) {
+        // Given — l'annonce est ce sur quoi l'utilisateur tranche (spec §10), et « ce fichier
+        // disparaît » n'est pas la même promesse que « ces lignes disparaissent »
+        let files = Arc::new(FakeConfigFiles::new());
+        let registry = two_claude_accounts().on_real_files(Arc::clone(&files));
+        registry
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        registry
+            .install_hooks(&named("claude"))
+            .expect("l'entrée est vérifiée");
+        files.forget_the_journal();
+
+        // When
+        let announced = registry.removal_plan().expect("le registre répond");
+
+        // Then — et l'annonce n'écrit rien : elle lit
+        assert!(announced.files[0].deletes_the_file);
+        assert_eq!(files.journal(), ["read /home/.claude/settings.json"]);
     }
 }

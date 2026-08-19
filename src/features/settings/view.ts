@@ -29,6 +29,9 @@ import {
     shortcutsSection,
     tag,
     toolCard,
+    uninstallRow,
+    uninstallScreen,
+    type RemovalStage,
 } from "./components";
 
 /**
@@ -88,6 +91,17 @@ export interface SettingsViewActions {
     /** `← back to the list`. */
     closeConflict(): void;
     /**
+     * `remove ash from every file` — **n'écrit rien** : elle demande l'annonce (spec §10).
+     *
+     * Le pendant exact de `see the diff` pour le geste inverse, et la même règle : ce qui
+     * touche un fichier de l'utilisateur se lit avant d'être posé.
+     */
+    planRemoval(): void;
+    /** Le clic pris devant l'annonce — celui qui écrit. */
+    removeEverything(): void;
+    /** `← cancel`, et `← back to the list` du compte rendu. */
+    closeRemoval(): void;
+    /**
      * Un thème choisi dans la section `appearance` — la **seconde surface** du choix.
      *
      * Elle ne pose aucune palette : `features::theme` retient le mode et l'annonce, et la
@@ -144,6 +158,15 @@ export interface SettingsScene {
      * panneau. Rien ne s'y écrit tant que l'utilisateur n'a pas tranché.
      */
     conflict: string | null;
+    /**
+     * L'écran de désinstallation, ou `null` quand on ne désinstalle pas.
+     *
+     * Il **remplace la liste** comme celui du diff, et pour la même raison : ce qui va
+     * toucher plusieurs fichiers de l'utilisateur se lit en entier. Ce qu'il porte vient du
+     * backend — l'annonce, puis le compte rendu — et n'est jamais recomposé ici
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    removal: RemovalStage | null;
     /**
      * La section `notifications` telle que le backend la compose, ou `null` tant qu'il n'a
      * pas répondu (spec §8).
@@ -235,6 +258,7 @@ function toolsPanel(scene: SettingsScene, actions: SettingsRendering): readonly 
             actions,
         );
     }
+    if (scene.removal !== null) return uninstallScreen(scene.removal, actions);
     const conflicting = scene.snapshot.tools.find((tool) => tool.command === scene.conflict);
     if (conflicting !== undefined) {
         return conflictScreen(conflicting, actions, () => {
@@ -289,6 +313,9 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
         scaleNote(scene.snapshot.tests),
         ...duplicateBanner(tools, actions),
         body,
+        // Sans entrée déclarée, il n'y a aucun fichier à énumérer : le geste n'aurait rien
+        // à annoncer, et un bouton qui ne peut rien dire ne se propose pas.
+        ...(empty ? [] : [uninstallRow(actions)]),
         foot(
             empty
                 ? "ash writes to no file until you declare a tool and install its hooks."

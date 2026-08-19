@@ -317,6 +317,60 @@ export interface WindowPorts {
     shortcuts(): Promise<readonly Shortcut[]>;
 }
 
+/**
+ * Ce qu'un retrait emporterait dans un fichier — **avant** que rien ne soit écrit.
+ *
+ * Le pendant du diff d'installation, pour le geste inverse : l'écran ne décide pas ce qui
+ * part, il rend ce que le backend a vu dans le fichier
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface PlannedRemoval {
+    file: string;
+    /** Les entrées déclarées qui visent ce fichier — deux comptes peuvent le partager. */
+    commands: string[];
+    entries: number;
+    /** Le fichier ne portait que ça : il s'en va avec elles (spec §10). */
+    deletesTheFile: boolean;
+    handEdited: boolean;
+    diff: string;
+}
+
+/** Ce que « retirer ash de tous les fichiers » ferait, dit avant de le faire (spec §10). */
+export interface RemovalPlan {
+    files: PlannedRemoval[];
+    summary: string;
+    /** Une main est passée quelque part : l'écran montre le diff et demande. */
+    handEdited: boolean;
+    /** Ce que le geste ne touchera pas — les `.bak`, et `~/.ash`. */
+    kept: string[];
+}
+
+/** Ce qu'un fichier est devenu. Les quatre issues viennent du backend, jamais d'un test. */
+export type Outcome =
+    | { kind: "removed" }
+    | { kind: "removedTheFile" }
+    | { kind: "nothingLeft" }
+    | { kind: "refused"; why: string };
+
+export interface RemovedFile {
+    file: string;
+    entries: number;
+    outcome: Outcome;
+}
+
+/** Ce que le retrait a réellement fait — et ce qu'il a laissé derrière lui. */
+export interface RemovalReport {
+    files: RemovedFile[];
+    summary: string;
+    kept: string[];
+}
+
+/** Le compte rendu, et la liste telle qu'elle est après le retrait. */
+export interface RemovalOutcome {
+    report: RemovalReport;
+    snapshot: SettingsSnapshot;
+}
+
 /** Ce que le formulaire d'ajout envoie : du texte, pas encore une déclaration. */
 export interface ToolDraft {
     command: string;
@@ -374,6 +428,16 @@ export interface SettingsPorts {
     installHooks(command: string): Promise<SettingsSnapshot>;
     /** Retire le bloc et ses marqueurs. */
     removeHooks(command: string): Promise<SettingsSnapshot>;
+    /**
+     * Ce que « retirer ash de tous les fichiers » ferait — **elle n'écrit rien**.
+     *
+     * Deux appels et non un seul, et c'est la règle du produit : Ash dit ce qu'il va faire
+     * avant de le faire, et rien ne s'écrit sans un second geste pris devant l'annonce
+     * (spec §10).
+     */
+    removalPlan(): Promise<RemovalPlan>;
+    /** Le retrait lui-même — le seul autre geste de cette fenêtre qui écrive. */
+    removeAllHooks(): Promise<RemovalOutcome>;
     /**
      * S'abonne au **second temps** : le test 4 a répondu.
      *

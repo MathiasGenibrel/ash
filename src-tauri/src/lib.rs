@@ -331,13 +331,24 @@ impl HookBlocks for AdapterHooks {
             .map_err(|why| why.to_string())
     }
 
-    fn remove(&self, adapter: &str, config_dir: &ConfigTarget) -> Result<(), String> {
+    fn remove(
+        &self,
+        adapter: &str,
+        config_dir: &ConfigTarget,
+    ) -> Result<features::hooks::Removal, String> {
         let instrumentation = self
             .describing(adapter, config_dir.resolved())
             .ok_or_else(|| format!("the {adapter} adapter wrote nothing to remove"))?;
-        features::hooks::uninstall(&*self.files, &instrumentation)
-            .map(|_| ())
-            .map_err(|why| why.to_string())
+        features::hooks::uninstall(&*self.files, &instrumentation).map_err(|why| why.to_string())
+    }
+
+    fn foresee_removal(
+        &self,
+        adapter: &str,
+        config_dir: &ConfigTarget,
+    ) -> Option<features::hooks::Withdrawal> {
+        let instrumentation = self.describing(adapter, config_dir.resolved())?;
+        features::hooks::foresee(&*self.files, &instrumentation)
     }
 }
 
@@ -537,6 +548,8 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::settings_undo_reset,
             features::settings::commands::settings_install_hooks,
             features::settings::commands::settings_remove_hooks,
+            features::settings::commands::settings_removal_plan,
+            features::settings::commands::settings_remove_all_hooks,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report

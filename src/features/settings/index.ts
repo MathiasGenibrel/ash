@@ -19,6 +19,7 @@ import type {
     FixAction,
     FocusedTool,
     NotificationsReport,
+    RemovalPlan,
     SettingsPorts,
     SettingsSnapshot,
     Shortcut,
@@ -26,6 +27,7 @@ import type {
     Verification,
     WindowPorts,
 } from "./contract";
+import type { RemovalStage } from "./components";
 import { focusedDraft, GENERIC_ADAPTER } from "./model";
 import { createRelaunch, type Timer, windowTimer } from "./relaunch";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
@@ -102,6 +104,15 @@ export function mountSettings(
     let failure: string | null = null;
     /** L'entrée dont on regarde le conflit — un écran, pas un état d'outil. */
     let conflict: string | null = null;
+    /**
+     * L'annonce de la désinstallation, puis son compte rendu — ou `null`.
+     *
+     * Ce n'est **pas** un état de ce qui est écrit sur le disque : c'est ce que le backend
+     * vient de dire, retenu le temps qu'on le lise. Chaque ouverture le redemande, parce que
+     * le fichier de l'utilisateur a pu changer entre-temps
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    let removal: RemovalStage | null = null;
     /** Ce que le backend dit des notifications macOS, ou `null` tant qu'il n'a rien dit. */
     let notifications: NotificationsReport | null = null;
     /**
@@ -243,6 +254,19 @@ export function mountSettings(
             conflict = null;
             draw();
         },
+        // Les trois gestes de la désinstallation. Le premier **lit**, le deuxième écrit, et
+        // ils sont séparés parce que la règle du produit l'exige : Ash dit ce qu'il va faire
+        // avant de le faire (spec §10).
+        planRemoval: () => {
+            void askRemovalPlan();
+        },
+        removeEverything: () => {
+            void removeEverything();
+        },
+        closeRemoval: () => {
+            removal = null;
+            draw();
+        },
         // Les deux gestes de la section `appearance` **ne changent rien ici** : ils demandent,
         // et c'est l'annonce du backend qui repose la scène. Poser le nouveau mode au passage
         // ferait de cette fenêtre un second détenteur de l'apparence, et une bascule refusée
@@ -282,6 +306,42 @@ export function mountSettings(
         }
         edits.set(command, fix.path);
         return ports.retargetTool(command, tool?.adapter ?? GENERIC_ADAPTER, fix.path);
+    }
+
+    /**
+     * Demande l'annonce du retrait, et ouvre l'écran dessus. **Rien n'est écrit.**
+     *
+     * Un refus n'ouvre pas d'écran vide : il s'affiche là où les autres refus s'affichent,
+     * et la liste reste sous les yeux.
+     */
+    async function askRemovalPlan(): Promise<void> {
+        let plan: RemovalPlan;
+        try {
+            plan = await ports.removalPlan();
+        } catch (error: unknown) {
+            failure = error instanceof Error ? error.message : String(error);
+            draw();
+            return;
+        }
+        removal = { step: "asked", plan };
+        failure = null;
+        draw();
+    }
+
+    /** Le geste qui écrit — et qui ne part que du clic pris devant l'annonce. */
+    async function removeEverything(): Promise<void> {
+        try {
+            const outcome = await ports.removeAllHooks();
+            snapshot = outcome.snapshot;
+            for (const tool of snapshot.tools) edits.delete(tool.command);
+            removal = { step: "done", report: outcome.report };
+            failure = null;
+        } catch (error: unknown) {
+            // Le refus laisse l'annonce à l'écran : c'est elle qui décrit ce qui n'a pas eu
+            // lieu, et la refermer ferait disparaître la question avec la réponse.
+            failure = error instanceof Error ? error.message : String(error);
+        }
+        draw();
     }
 
     /** Relit la section `notifications`. Un refus la laisse à ce qu'elle montrait. */
@@ -404,6 +464,7 @@ export function mountSettings(
             failure,
             edits,
             conflict,
+            removal,
             notifications,
             appearance,
             shortcuts,
