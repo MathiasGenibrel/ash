@@ -516,7 +516,6 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&fonts))
-
         .manage(Arc::clone(&shortcuts))
         .manage(Arc::clone(&tools))
         .manage(Arc::clone(&sidebar_rows))
@@ -567,6 +566,8 @@ pub fn run() -> tauri::Result<()> {
             // ont toutes à **refaire le menu** : une feature n'a pas à connaître la forme
             // d'un menu, exactement comme pour `theme_set_mode` au-dessus.
             menu::menu_shortcuts,
+            menu::shortcut_owner,
+            menu::shortcut_keys,
             menu::shortcut_listening,
             menu::shortcut_preview,
             menu::shortcut_bind,

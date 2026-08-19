@@ -274,6 +274,39 @@ impl Bindings {
             .map(|combination| combination.accelerator())
     }
 
+    /// L'action à qui cette frappe appartient, s'il y en a une.
+    ///
+    /// C'est la question que pose la webview pour les frappes que le menu natif ne peut
+    /// **pas** consommer — `⌃⇥` et `⌃⇧⇥`, dont `muda` rend un équivalent clavier qu'AppKit ne
+    /// reconnaît jamais (voir l'en-tête de `src-tauri/src/menu.rs`). Elle rend un
+    /// identifiant d'action, jamais une combinaison : la webview n'a ainsi ni table de
+    /// touches, ni règle de comparaison, et rien à tenir à jour quand une liaison change
+    /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+    ///
+    /// Une frappe que personne ne tient rend `None`, et c'est ce qui fait qu'un raccourci
+    /// **déplacé cesse de répondre à son ancienne touche** — la seule chose qui rendait le
+    /// rebinding à moitié vrai.
+    pub fn owner(&self, stroke: &KeyStroke) -> Option<String> {
+        let sought = Combination::from_stroke(stroke).ok()?;
+        let overrides = &self.locked().overrides;
+        self.actions
+            .iter()
+            .find(|declared| effective(declared, overrides).as_ref() == Some(&sought))
+            .map(|declared| declared.action.clone())
+    }
+
+    /// La combinaison en vigueur d'une action, écrite comme macOS l'écrit — vide s'il n'y en
+    /// a aucune.
+    ///
+    /// C'est l'autre sens de la même question : ce qu'une surface affiche d'un raccourci.
+    /// Le pied de la sidebar montre `⌘T` parce qu'il le demande ici, et non parce qu'il le
+    /// sait — sans quoi il continuerait de l'annoncer après un rebinding.
+    pub fn keys(&self, action: &str) -> String {
+        self.effective(action)
+            .map(|combination| combination.glyphs())
+            .unwrap_or_default()
+    }
+
     /// Tout ce que la section `shortcuts` affiche.
     pub fn report(&self) -> ShortcutsReport {
         let chosen = self.locked().clone();
@@ -615,6 +648,76 @@ mod tests {
             .iter()
             .find(|row| row.action == action)
             .expect("la ligne demandée")
+    }
+
+    #[test]
+    fn given_a_chord_the_menu_cannot_catch_when_the_webview_asks_who_holds_it_then_it_gets_an_action_and_no_combination(
+    ) {
+        // Given — `⌃⇥` : `muda` lui donne un équivalent clavier qu'AppKit ne reconnaît
+        // jamais, donc c'est la webview qui la capte et qui vient demander
+        let bindings = BindingsBuilder::new()
+            .action("tab:next", "Select Next Tab", Some("Ctrl+Tab"))
+            .build();
+
+        // When
+        let held = bindings.owner(&stroke("Tab", false, true));
+
+        // Then — un identifiant d'action, celui que `ash://menu-action` porte déjà : la
+        // webview n'a ni table de touches ni règle de comparaison à tenir
+        assert_eq!(held.as_deref(), Some("tab:next"));
+    }
+
+    #[test]
+    fn given_select_next_tab_moved_to_another_combination_when_the_old_chord_is_pressed_then_nobody_holds_it(
+    ) {
+        // Given — c'est la moitié manquante du rebinding : l'écran disait le raccourci
+        // déplacé, et l'ancienne touche continuait de changer d'onglet
+        let bindings = BindingsBuilder::new()
+            .action("tab:next", "Select Next Tab", Some("Ctrl+Tab"))
+            .build();
+
+        // When
+        bindings
+            .bind("tab:next", &stroke("KeyJ", true, false))
+            .unwrap();
+
+        // Then — l'ancienne ne mène plus nulle part, la nouvelle mène à l'action
+        assert_eq!(bindings.owner(&stroke("Tab", false, true)), None);
+        assert_eq!(
+            bindings.owner(&stroke("KeyJ", true, false)).as_deref(),
+            Some("tab:next")
+        );
+    }
+
+    #[test]
+    fn given_an_action_a_surface_announces_when_its_binding_moves_then_the_surface_is_told_the_new_one(
+    ) {
+        // Given — le pied de la sidebar annonce `⌘T`. Écrit en dur, il ment au premier
+        // rebinding ; demandé ici, il suit
+        let bindings = two_tabs().build();
+        assert_eq!(bindings.keys("tab:new"), "⌘T");
+
+        // When
+        bindings
+            .bind("tab:new", &stroke("KeyJ", true, false))
+            .unwrap();
+
+        // Then
+        assert_eq!(bindings.keys("tab:new"), "⌘J");
+    }
+
+    #[test]
+    fn given_an_action_left_without_any_shortcut_when_a_surface_asks_what_to_show_then_it_gets_nothing_to_show(
+    ) {
+        // Given — `⌫` retire le raccourci, et l'action reste. Une surface qui recevrait un
+        // libellé de repli (`none`, `—`) l'afficherait comme si c'était une touche
+        let bindings = two_tabs().build();
+
+        // When
+        bindings.clear("tab:new").unwrap();
+
+        // Then
+        assert_eq!(bindings.keys("tab:new"), "");
     }
 
     #[test]

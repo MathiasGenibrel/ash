@@ -1,3 +1,5 @@
+import { readStroke, type KeyStroke } from "@/features/settings";
+
 import type { MenuAction } from "./menu";
 
 /**
@@ -25,21 +27,26 @@ import type { MenuAction } from "./menu";
  * — sans quoi la complétion de `zsh` s'arrêterait de fonctionner, ce qui coûterait
  * infiniment plus cher que le raccourci ne rapporte.
  *
- * **Ce que le rebinding (#22) laisse ouvert ici, et qu'il faut savoir.** Les liaisons sont
- * désormais réglables et détenues en Rust (`features::shortcuts`) ; cette porte-ci, elle,
- * reste écrite en dur sur `⌃⇥`. Donner une autre combinaison à `Select Next Tab` dans les
- * réglages change donc le menu — et la nouvelle touche fonctionne —, mais `⌃⇥` continue
- * d'atteindre la même action par ce chemin. Ces deux entrées sont les seules dans ce cas,
- * précisément parce qu'elles sont les seules qu'AppKit n'allume pas. La sortie n'est pas de
- * recopier une liaison ici — ce serait la seconde liste que #110 interdit — mais de faire
- * lire à `main.ts` la combinaison en vigueur, ou de voir disparaître ce module le jour où
- * `muda` corrigera son équivalent clavier (voir l'en-tête de `src-tauri/src/menu.rs`).
+ * **Ce module ne sait plus quelle action une touche joue, et c'est le point (#22).** Les
+ * liaisons sont réglables et détenues en Rust (`features::shortcuts`) ; ici, on ne décide que
+ * d'une chose — **cette frappe est-elle de celles que le menu natif ne peut pas consommer** —
+ * puis on demande au backend à qui elle appartient. Une combinaison recopiée ici serait la
+ * seconde liste que tout ce travail évite, et `⌃⇥` continuerait de changer d'onglet après
+ * qu'on l'a déplacé ailleurs.
+ *
+ * La porte reste donc étroite pour la même raison qu'avant, et elle laisse passer exactement
+ * ce qu'elle laissait passer : `Ctrl+Tab`, avec ou sans `Shift`. Ce qui a changé est ce qui
+ * s'ensuit — plus rien n'est joué sans que le backend l'ait nommé. Le jour où `muda`
+ * corrigera son équivalent clavier (voir l'en-tête de `src-tauri/src/menu.rs`), ce fichier
+ * s'efface en entier : la porte se ferme, et le menu natif reprend les deux entrées.
  */
 
 /** Ce qu'un `keydown` a d'utile ici. Un objet nu, pour que la règle se teste sans DOM. */
-export interface KeyStroke {
+export interface KeyPress {
     /** `KeyboardEvent.key` : « Tab », quel que soit l'état de `Shift`. */
     readonly key: string;
+    /** `KeyboardEvent.code` : ce que le backend lit, indépendamment de la disposition. */
+    readonly code: string;
     readonly ctrlKey: boolean;
     readonly shiftKey: boolean;
     readonly metaKey: boolean;
@@ -47,16 +54,18 @@ export interface KeyStroke {
 }
 
 /**
- * Traduit une frappe en action, ou rend `null` — et `null` veut dire « laisse passer ».
+ * Cette frappe est-elle de celles que le menu natif ne peut pas consommer ?
  *
- * Tout ce qui n'est pas exactement `Ctrl+Tab` ou `Ctrl+Shift+Tab` part au terminal
- * inchangé : `Tab`, `Cmd+Tab` (le commutateur d'applications de macOS), `Ctrl+Alt+Tab`,
- * et le reste du clavier.
+ * C'est la **seule** règle de ce module, et elle ne parle pas de raccourcis : elle décrit une
+ * limite d'AppKit. Tout ce qui n'est pas `Ctrl+Tab` — avec ou sans `Shift` — part au terminal
+ * inchangé : `Tab` seul (la complétion de `zsh`), `Cmd+Tab` (le commutateur d'applications de
+ * macOS), `Ctrl+Alt+Tab`, et le reste du clavier.
+ *
+ * Ce que la frappe **joue**, en revanche, ne se décide pas ici : voir [`installShortcuts`].
  */
-export function matchShortcut(stroke: KeyStroke): MenuAction | null {
-    if (stroke.key !== "Tab") return null;
-    if (!stroke.ctrlKey || stroke.metaKey || stroke.altKey) return null;
-    return stroke.shiftKey ? { kind: "previous-tab" } : { kind: "next-tab" };
+export function withheldFromTheMenu(press: KeyPress): boolean {
+    if (press.key !== "Tab") return false;
+    return press.ctrlKey && !press.metaKey && !press.altKey;
 }
 
 /**
@@ -72,14 +81,22 @@ export function matchShortcut(stroke: KeyStroke): MenuAction | null {
  */
 export function installShortcuts(
     target: Document,
+    owner: (stroke: KeyStroke) => Promise<MenuAction | null>,
     handle: (action: MenuAction) => void,
 ): () => void {
     const onKeyDown = (event: KeyboardEvent): void => {
-        const action = matchShortcut(event);
-        if (action === null) return;
+        if (!withheldFromTheMenu(event)) return;
+        // La frappe est arrêtée **avant** de savoir ce qu'elle joue, et il n'y a pas d'autre
+        // choix : un `keydown` se décide sur-le-champ, la réponse du backend arrive après. Ce
+        // n'est pas une perte — `⌃⇥` était déjà retenu sans condition, c'est ce que la porte a
+        // toujours fait, et `Tab` seul reste intact.
         event.preventDefault();
         event.stopPropagation();
-        handle(action);
+        void owner(readStroke(event)).then((action) => {
+            // Personne ne tient cette touche : le raccourci a été déplacé ailleurs, et il n'y
+            // a rien à jouer. C'est ici que le rebinding devient vrai.
+            if (action !== null) handle(action);
+        });
     };
 
     target.addEventListener("keydown", onKeyDown, { capture: true });

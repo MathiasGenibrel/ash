@@ -84,6 +84,15 @@ use crate::features::theme::{commands as theme, FontStep, ThemeMode};
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
 const MENU_ACTION_EVENT: &str = "ash://menu-action";
 
+/// Nom de l'event qui dit qu'une liaison a changé. Contrat avec `src/app/menu.ts`.
+///
+/// Il ne porte **rien** : ce n'est pas une valeur, c'est un signal. Chaque surface redemande
+/// ce dont elle a besoin — le pied de la sidebar les glyphes d'une action, la fenêtre de
+/// réglages l'instantané entier. Faire voyager la liste ferait de chaque abonné le détenteur
+/// d'une copie ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et le pied de la
+/// colonne n'a que faire des douze autres lignes.
+const SHORTCUTS_CHANGED_EVENT: &str = "ash://shortcuts-changed";
+
 /// Label de la **seule** fenêtre qui porte des onglets.
 ///
 /// `tauri.conf.json` déclare la fenêtre principale sans la nommer : Tauri lui donne alors
@@ -546,6 +555,35 @@ pub fn menu_shortcuts(bindings: tauri::State<'_, Arc<Bindings>>) -> ShortcutsRep
     bindings.report()
 }
 
+/// L'action à qui appartient une frappe que le menu natif n'a **pas** consommée.
+///
+/// Deux entrées sont dans ce cas, et deux seulement — `⌃⇥` et `⌃⇧⇥` : `muda` leur donne un
+/// équivalent clavier qu'AppKit ne reconnaît jamais (voir l'en-tête de ce module). La webview
+/// les capte donc elle-même, et vient demander ici **à qui elles appartiennent** plutôt que
+/// de le savoir : sans ça, une liaison déplacée laissait l'ancienne touche répondre encore,
+/// et la webview aurait eu à tenir la seconde liste que tout ce travail évite.
+///
+/// Elle rend un identifiant d'action — celui-là même que `ash://menu-action` porte, et que
+/// `src/app/menu.ts` sait déjà traduire.
+#[tauri::command]
+pub fn shortcut_owner(
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    stroke: KeyStroke,
+) -> Option<String> {
+    bindings.owner(&stroke)
+}
+
+/// La combinaison en vigueur d'une action, écrite comme macOS l'écrit — vide s'il n'y en a
+/// aucune.
+///
+/// L'autre sens de la même question : ce qu'une surface **affiche** d'un raccourci. Le pied
+/// de la sidebar annonce `⌘T` parce qu'il le demande ici ; l'écrire dans le TypeScript en
+/// ferait un mensonge au premier rebinding, et une seconde liste au second.
+#[tauri::command]
+pub fn shortcut_keys(bindings: tauri::State<'_, Arc<Bindings>>, action: String) -> String {
+    bindings.keys(&action)
+}
+
 /// Ce que le bloc de capture montre pendant qu'on tape — sans rien retenir.
 ///
 /// Elle ne touche à rien : c'est `⏎`, donc [`shortcut_bind`], qui pose. Ash ne valide rien à
@@ -627,6 +665,10 @@ pub fn shortcut_resolve<R: Runtime>(
 fn replay<R: Runtime>(app: &AppHandle<R>, bindings: &Bindings, rebound: bool) -> ShortcutsReport {
     if rebound {
         rebuild(app);
+        // Les surfaces qui **affichent** un raccourci en dérivent aussi : le pied de la
+        // sidebar vit dans l'autre fenêtre, et rien ne l'aurait prévenu. L'échec d'émission
+        // signifie qu'il n'y a plus de webview à prévenir — rien à rattraper.
+        let _ = app.emit(SHORTCUTS_CHANGED_EVENT, ());
     }
     bindings.report()
 }
