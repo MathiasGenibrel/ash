@@ -45,6 +45,15 @@ impl SidebarWidth {
 
     /// Plus étroit que le rail replié (46 px) ne veut plus rien dire : à ce compte-là, la
     /// colonne est repliée, et c'est `collapsed` qui le dit.
+    ///
+    /// **Ce nombre ne tient hors du chemin du clamp relatif que parce que la fenêtre a une
+    /// largeur minimale** : `app.windows[0].minWidth` vaut 640 px dans
+    /// `src-tauri/tauri.conf.json`, donc le plancher de mise en page — 10 % de la fenêtre —
+    /// ne descend jamais sous 64 px. Abaisser cette largeur minimale sous 460 px ferait
+    /// mordre la borne d'ici sur le clamp de la webview, et la largeur montrée cesserait
+    /// d'être la largeur gardée. Le test
+    /// `given_the_narrowest_window_ash_allows_when_the_layout_hits_its_floor_then_this_type_leaves_it_alone`
+    /// tient ce lien.
     const MIN: u16 = 46;
 
     /// Plus large que 80 % d'un écran de 10 000 px : hors d'atteinte du clamp relatif, donc
@@ -100,6 +109,36 @@ impl From<i64> for SidebarWidth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le plancher de mise en page, tel que `src/features/sidebar/resize.ts` le pose
+    /// (`MIN_WIDTH_FRACTION`). Recopié ici parce qu'aucun des deux côtés ne peut lire l'autre
+    /// — et c'est justement ce que le test ci-dessous surveille : le commentaire de
+    /// `MIN_WIDTH_FRACTION` renvoie ici pour qu'on n'en change pas un sans l'autre.
+    const LAYOUT_FLOOR_FRACTION: f64 = 0.10;
+
+    /// La configuration de la fenêtre, lue à la compilation : le test parle de la vraie
+    /// largeur minimale, pas d'un nombre recopié qui aurait vieilli.
+    const TAURI_CONF: &str = include_str!("../../../tauri.conf.json");
+
+    #[test]
+    fn given_the_narrowest_window_ash_allows_when_the_layout_hits_its_floor_then_this_type_leaves_it_alone(
+    ) {
+        // Given — les deux clamps ne se contredisent que si celui d'ici mord sur celui de la
+        // webview, et le seul chemin par lequel ça arriverait est une fenêtre autorisée à
+        // devenir très étroite
+        let conf: serde_json::Value =
+            serde_json::from_str(TAURI_CONF).expect("tauri.conf.json est du JSON");
+        let min_window = conf["app"]["windows"][0]["minWidth"]
+            .as_f64()
+            .expect("la fenêtre a une largeur minimale");
+
+        // When — la colonne poussée à son plancher de mise en page dans cette fenêtre-là
+        let floor = min_window * LAYOUT_FLOOR_FRACTION;
+
+        // Then — la largeur montrée est celle qui est gardée, sans quoi elles se
+        // contrediraient jusqu'au redémarrage suivant
+        assert_eq!(SidebarWidth::from(floor as i64).pixels(), floor as u16);
+    }
 
     #[test]
     fn given_a_preference_file_edited_by_hand_to_an_absurd_width_when_it_is_read_then_it_is_brought_back_into_range(

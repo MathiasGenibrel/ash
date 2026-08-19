@@ -29,6 +29,12 @@ export interface SidebarColumnState {
  * On n'y **descend** pas en glissant — la colonne s'y arrête —, mais relâcher en dessous
  * referme : c'est le seul geste de la maquette qui distingue ce qu'on montre pendant le
  * glissement de ce qu'on décide en le finissant.
+ *
+ * **Baisser cette fraction se vérifie côté Rust.** `SidebarWidth` borne aussi la largeur, à
+ * 46 px, pour qu'un `theme.json` édité à la main n'ouvre rien d'absurde ; ces bornes-là ne
+ * doivent jamais mordre sur celles-ci, sinon la largeur montrée cesse d'être la largeur
+ * gardée. Le test qui tient ce lien est dans
+ * `src-tauri/src/features/theme/sidebar_column.rs`, et il recopie cette fraction.
  */
 export const MIN_WIDTH_FRACTION = 0.1;
 
