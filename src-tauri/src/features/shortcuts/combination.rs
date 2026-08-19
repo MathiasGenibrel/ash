@@ -12,11 +12,32 @@
 //! permet de ne stocker qu'une liaison et d'en tirer aussi bien l'entrée de menu que la
 //! ligne de l'écran.
 //!
-//! **Le nom de touche canonique est celui du W3C** — `KeyT`, `Digit1`, `Comma` —, et ce
-//! choix n'est pas cosmétique : c'est exactement ce que `KeyboardEvent.code` rend dans la
-//! webview **et** ce que `parse_code` de `muda` accepte. Une capture faite au clavier
-//! traverse donc la frontière sans table de traduction intermédiaire, et la disposition du
-//! clavier ne change rien à ce qui est retenu.
+//! **Une combinaison retient le caractère produit, jamais la position physique de la
+//! touche** (issue #133). C'est ce que macOS apparie : `-[NSMenuItem setKeyEquivalent:]`
+//! prend un **caractère**, et `performKeyEquivalent:` le compare à celui que la frappe
+//! produit. Le nom canonique reste celui du W3C — `KeyT`, `Digit1`, `Comma` —, parce que
+//! c'est ce que `parse_code` de `muda` lit, mais il n'est plus qu'une **écriture** : il
+//! nomme le caractère `t`, pas la troisième touche de la rangée du haut. `code_to_key` de
+//! `muda` 0.19.3 le confirme — `Code::KeyT` devient `Key::Character("t")`, et c'est ce
+//! caractère qui part dans le `NSMenuItem`.
+//!
+//! La conduite qui en découle, et qu'il faut savoir plutôt que découvrir :
+//!
+//! > **Un raccourci suit le caractère, donc changer de disposition clavier peut le déplacer
+//! > de touche.** `⌘W` reste `⌘W` : sur un clavier US il se frappe à la troisième position
+//! > de la rangée du haut, sur un AZERTY à la première. C'est la convention de macOS —
+//! > toutes ses applications se comportent ainsi — et non une bizarrerie d'Ash.
+//!
+//! Le choix précédent — retenir `KeyboardEvent.code`, la position — tenait parce qu'une
+//! capture traversait la frontière sans table intermédiaire. Il était faux sur macOS : sur
+//! un AZERTY, `⌘` + la touche marquée `W` posait `Cmd+KeyZ`, le menu perdait son
+//! accélérateur, et la touche pressée continuait de jouer l'action d'à côté.
+//!
+//! **Ce que `parse_code` accepte réellement**, et qui borne donc ce qu'une capture peut
+//! poser : les 26 lettres, les 10 chiffres, ``` ` \\ [ ] , = - . ' ; / ``` et les touches
+//! nommées (`Tab`, `Escape`, les flèches, `F1`…`F12`). Un caractère hors de cette liste —
+//! `é`, `&`, `ç`, `µ`, que la rangée du haut d'un AZERTY produit sans `⇧` — n'a **aucune**
+//! écriture d'accélérateur : voir [`Combination::from_stroke`] pour ce qu'Ash en fait.
 
 use std::fmt;
 
@@ -47,15 +68,24 @@ impl Modifiers {
 
 /// Ce que la webview a vu passer sous les doigts, avant qu'Ash n'en fasse une combinaison.
 ///
-/// C'est un **fait**, pas une décision : la webview rapporte le code physique de la touche
-/// et l'état des quatre modificateurs, et c'est le backend qui dit si ça fait un raccourci
-/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Sans ce partage, la
-/// table des noms de touches existerait des deux côtés de la frontière.
+/// Ce sont deux **faits**, et aucune décision : le caractère que la frappe a produit, la
+/// position physique de la touche, et l'état des quatre modificateurs. C'est le backend qui
+/// dit lequel des deux fait le raccourci
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — la webview n'a ni
+/// table de touches, ni combinaison, ni règle de comparaison.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct KeyStroke {
-    /// `KeyboardEvent.code` — le code **physique**, indépendant de la disposition.
+    /// `KeyboardEvent.key` — le **caractère produit** (`w`, `W`, `&`, `,`), ou le nom de la
+    /// touche quand elle n'en produit aucun (`Tab`, `ArrowUp`, `F5`).
+    ///
+    /// C'est **la** source du raccourci : macOS apparie par caractère.
+    pub key: String,
+    /// `KeyboardEvent.code` — la position physique, nommée d'après un clavier US.
+    ///
+    /// Un **repli**, et rien d'autre : il ne sert que lorsque le caractère n'a pas
+    /// d'écriture d'accélérateur. Voir [`Combination::from_stroke`].
     pub code: String,
     pub command: bool,
     pub control: bool,
@@ -83,6 +113,13 @@ impl KeyStroke {
 pub struct Key(&'static str);
 
 /// Les touches qu'une combinaison peut porter, et le glyphe sous lequel macOS les écrit.
+///
+/// **La seconde colonne est aussi le caractère produit**, pour tout ce qui en produit un :
+/// `KeyT` s'écrit `T` et se frappe sur la touche qui donne `t`. C'est ce qui permet à
+/// [`Key::produced`] de lire la table dans l'autre sens sans qu'une seconde table ait à
+/// exister — et, quand deux tables existent, c'est toujours celle qu'on ne regarde pas qui
+/// se trompe. Les touches nommées (`⇥`, `⎋`, `↑`, `F1`) ne produisent aucun caractère : leur
+/// glyphe n'est qu'un glyphe.
 ///
 /// La table est **fermée**, et c'est le point : un nom qui n'y est pas ne peut pas devenir
 /// un accélérateur, donc pas devenir une entrée de menu muette. Les modificateurs seuls
@@ -188,6 +225,35 @@ impl Key {
             .map(|(canonical, _)| Key(canonical))
     }
 
+    /// La touche qu'un **caractère produit** désigne — `w`, `W`, `,`, `1`, `+`, l'espace.
+    ///
+    /// C'est l'entrée d'une capture, et c'est la comparaison que macOS fait lui-même. La
+    /// casse est ignorée : `⇧` plus la touche `W` produit `W`, et ce doit être la même
+    /// liaison que `w`, sans quoi une même combinaison en ferait deux.
+    ///
+    /// Le glyphe de la table **est** le caractère pour tout ce qui en produit un — c'est ce
+    /// qui rend la comparaison directe, sans seconde table à tenir en face de la première.
+    /// Les touches nommées (`⇥`, `⎋`, `F1`) n'en produisent aucun, et ne se trouvent donc
+    /// pas par ici : leur nom passe par [`Key::parse`].
+    fn produced(character: &str) -> Option<Self> {
+        let mut letters = character.chars();
+        let single = letters.next().filter(|_| letters.next().is_none())?;
+        // L'espace est le seul caractère dont le glyphe de menu (`␣`) n'est pas lui-même.
+        if single == ' ' {
+            return Key::parse("Space");
+        }
+        let sought = single.to_ascii_uppercase();
+        KEYS.iter()
+            .find(|(_, glyph)| {
+                let mut written = glyph.chars();
+                matches!(
+                    (written.next(), written.next()),
+                    (Some(only), None) if only.to_ascii_uppercase() == sought
+                )
+            })
+            .map(|(canonical, _)| Key(canonical))
+    }
+
     /// Le nom canonique — celui que `muda` lit, et celui qui est écrit sur le disque.
     pub fn name(&self) -> &'static str {
         self.0
@@ -234,16 +300,49 @@ impl Combination {
     /// **sans modificateur fort** — `T` seul comme raccourci rendrait impossible d'écrire un
     /// `t` dans un terminal.
     pub fn from_stroke(stroke: &KeyStroke) -> Result<Self, ShortcutError> {
-        let key = Key::parse(&stroke.code)
+        let key = Self::key_of(stroke)
             .filter(|key| !CAPTURE_ISSUES.contains(&key.name()))
             .ok_or_else(|| ShortcutError::UnusableKey {
-                code: stroke.code.clone(),
+                key: stroke.key.clone(),
             })?;
         let modifiers = stroke.modifiers();
         if modifiers.bare() {
             return Err(ShortcutError::BareKey);
         }
         Ok(Self { modifiers, key })
+    }
+
+    /// La touche d'une frappe : **son caractère**, et sa position seulement en dernier
+    /// recours.
+    ///
+    /// L'ordre est la décision de l'issue #133, et il se lit comme une règle de préséance :
+    ///
+    /// 1. le **caractère produit** — `w` sur la touche marquée `W`, quelle que soit sa
+    ///    position. C'est ce que macOS apparie, donc c'est la vérité ;
+    /// 2. le **nom** de la touche, pour celles qui ne produisent aucun caractère — `Tab`,
+    ///    `ArrowUp`, `F5`, `Delete`. `⌃⇥` passe par là, exactement comme avant ;
+    /// 3. la **position physique**, et seulement si les deux premiers ne donnent rien.
+    ///
+    /// Le troisième point n'est pas un reste de l'ancien choix : c'est le seul chemin qui
+    /// reste ouvert quand le caractère n'a **aucune** écriture d'accélérateur. Deux familles
+    /// sont dans ce cas, et elles ne sont pas rares sur un clavier français :
+    ///
+    /// - la rangée du haut d'un AZERTY, qui produit `&`, `é`, `"` sans `⇧`. Le repli y rend
+    ///   `Digit1`…`Digit9`, ce qui est **exactement** ce que macOS fait de son côté : le
+    ///   menu affiche `⌘&` et répond à cette touche-là (c'est ce qui fait marcher `⌘1`…`⌘9`
+    ///   sur cette machine) ;
+    /// - `⌥` combiné à une lettre, qui compose un caractère (`⌥t` → `†`) là où AppKit, lui,
+    ///   compare le caractère **sans** l'option. Sans le repli, `⌥` deviendrait un
+    ///   modificateur qu'aucune capture ne pourrait plus poser.
+    ///
+    /// Son prix est écrit : sur une touche que les deux dispositions ne placent pas au même
+    /// endroit, une combinaison à `⌥` posée par ce repli peut désigner une autre touche que
+    /// celle qu'on a pressée. C'est moins bon qu'un refus franc si l'on ne regarde que ce
+    /// cas, et bien meilleur que refuser les deux familles entières.
+    fn key_of(stroke: &KeyStroke) -> Option<Key> {
+        Key::produced(&stroke.key)
+            .or_else(|| Key::parse(&stroke.key))
+            .or_else(|| Key::parse(&stroke.code))
     }
 
     /// La combinaison qu'un accélérateur écrit — `Cmd+Shift+T`, `Ctrl+Tab`.
@@ -259,7 +358,7 @@ impl Combination {
         // qu'un `+` littéral en fin d'accélérateur n'aurait aucun nom.
         let Some(key_name) = tokens.pop() else {
             return Err(ShortcutError::UnusableKey {
-                code: accelerator.to_owned(),
+                key: accelerator.to_owned(),
             });
         };
         for token in tokens {
@@ -270,14 +369,14 @@ impl Combination {
                 "Shift" => modifiers.shift = true,
                 other => {
                     return Err(ShortcutError::UnusableKey {
-                        code: other.to_owned(),
+                        key: other.to_owned(),
                     })
                 }
             }
         }
 
         let key = Key::parse(key_name).ok_or_else(|| ShortcutError::UnusableKey {
-            code: key_name.to_owned(),
+            key: key_name.to_owned(),
         })?;
         if modifiers.bare() {
             return Err(ShortcutError::BareKey);
@@ -357,18 +456,30 @@ impl<'de> serde::Deserialize<'de> for Combination {
 mod tests {
     use super::*;
 
-    /// Une frappe, telle que la webview la rapporte. Par défaut : `⌘T`.
+    /// Une frappe, telle que la webview la rapporte. Par défaut : `⌘T` sur un clavier US.
     pub struct StrokeBuilder(KeyStroke);
 
     impl StrokeBuilder {
         pub fn new() -> Self {
             Self(KeyStroke {
+                key: "t".to_owned(),
                 code: "KeyT".to_owned(),
                 command: true,
                 control: false,
                 option: false,
                 shift: false,
             })
+        }
+
+        /// Le caractère produit **et** la position, quand les deux coïncident — le cas d'un
+        /// clavier US, et de la plupart des touches partout ailleurs.
+        pub fn typing(self, character: &str, code: &str) -> Self {
+            self.key(character).code(code)
+        }
+
+        pub fn key(mut self, key: &str) -> Self {
+            self.0.key = key.to_owned();
+            self
         }
 
         pub fn code(mut self, code: &str) -> Self {
@@ -388,6 +499,11 @@ mod tests {
             self
         }
 
+        pub fn control(mut self) -> Self {
+            self.0.control = true;
+            self
+        }
+
         pub fn build(self) -> KeyStroke {
             self.0
         }
@@ -396,8 +512,9 @@ mod tests {
     #[test]
     fn given_a_combination_captured_at_the_keyboard_when_it_is_handed_to_the_menu_then_it_is_the_accelerator_muda_parses(
     ) {
-        // Given — la webview rapporte le code physique du W3C, celui que `muda` accepte
-        let stroke = StrokeBuilder::new().code("KeyT").shift().build();
+        // Given — `⇧` plus la touche `T` : la webview rapporte le caractère produit, ici
+        // en majuscule, et c'est `muda` qui relira le nom canonique
+        let stroke = StrokeBuilder::new().typing("T", "KeyT").shift().build();
 
         // When
         let combination = Combination::from_stroke(&stroke).unwrap();
@@ -437,7 +554,10 @@ mod tests {
         // When
         let refused: Vec<bool> = issues
             .iter()
-            .map(|code| Combination::from_stroke(&StrokeBuilder::new().code(code).build()).is_err())
+            .map(|named| {
+                Combination::from_stroke(&StrokeBuilder::new().typing(named, named).build())
+                    .is_err()
+            })
             .collect();
 
         // Then
@@ -481,7 +601,7 @@ mod tests {
 
         // When
         let captured =
-            Combination::from_stroke(&StrokeBuilder::new().code("KeyT").build()).unwrap();
+            Combination::from_stroke(&StrokeBuilder::new().typing("t", "KeyT").build()).unwrap();
 
         // Then
         assert_eq!(declared, captured);
@@ -500,6 +620,104 @@ mod tests {
         // Then — et l'accélérateur reste lisible à l'œil nu dans `~/.ash/shortcuts.json`
         assert_eq!(written, "\"Ctrl+Cmd+KeyG\"");
         assert_eq!(read, chosen);
+    }
+
+    #[test]
+    fn given_an_azerty_keyboard_when_the_key_marked_w_is_pressed_then_the_binding_is_the_one_that_key_plays(
+    ) {
+        // Given — la touche marquée `W` d'un AZERTY est à la **position** `KeyZ` d'un
+        // clavier US. C'est le cas qui a tout révélé (issue #133) : retenir la position
+        // posait `⌘Z`, le menu n'apparaissait plus avec aucun accélérateur, et la touche
+        // pressée continuait de fermer l'onglet — l'action devenait injoignable
+        let azerty = StrokeBuilder::new().typing("w", "KeyZ").build();
+
+        // When
+        let captured = Combination::from_stroke(&azerty).unwrap();
+
+        // Then — macOS apparie un équivalent clavier par **caractère** : c'est `⌘W` qu'il
+        // faut poser pour que cette touche-là joue l'action, et c'est `⌘W` que l'écran doit
+        // montrer
+        assert_eq!(captured.accelerator(), "Cmd+KeyW");
+        assert_eq!(captured.glyphs(), "⌘W");
+        assert_eq!(captured, Combination::parse("Cmd+W").unwrap());
+    }
+
+    #[test]
+    fn given_the_same_letter_with_and_without_shift_when_both_are_captured_then_they_are_two_bindings_not_four(
+    ) {
+        // Given — `⇧` plus une lettre produit une **majuscule**, et la webview la rapporte
+        // telle quelle. Sans repli sur la casse, `⌘G` et `⌘g` seraient deux liaisons
+        // différentes, et un conflit ne se verrait pas d'une écriture à l'autre
+        let lower = StrokeBuilder::new().typing("g", "KeyG").build();
+        let upper = StrokeBuilder::new().typing("G", "KeyG").shift().build();
+
+        // When
+        let read = [
+            Combination::from_stroke(&lower).unwrap(),
+            Combination::from_stroke(&upper).unwrap(),
+        ];
+
+        // Then — la seule différence entre les deux est le `⇧` que l'utilisateur a tenu
+        assert_eq!(read[0].accelerator(), "Cmd+KeyG");
+        assert_eq!(read[1].accelerator(), "Shift+Cmd+KeyG");
+    }
+
+    #[test]
+    fn given_a_character_no_accelerator_can_write_when_it_is_captured_then_the_physical_key_answers_for_it(
+    ) {
+        // Given — la rangée du haut d'un AZERTY produit `&` sans `⇧`, et `parse_code` de
+        // `muda` n'a aucune écriture pour `&`. Le refuser fermerait toute la rangée des
+        // chiffres à un clavier français, alors que macOS, lui, répond à cette touche pour
+        // un équivalent `1` — c'est ce qui fait marcher `⌘1`…`⌘9` sur cette machine
+        let azerty = StrokeBuilder::new().typing("&", "Digit1").build();
+
+        // When
+        let captured = Combination::from_stroke(&azerty).unwrap();
+
+        // Then — et le menu l'écrit `⌘1`, là où macOS affichera `⌘&`
+        assert_eq!(captured.accelerator(), "Cmd+Digit1");
+        assert_eq!(captured, Combination::parse("Cmd+1").unwrap());
+    }
+
+    #[test]
+    fn given_a_key_that_produces_no_character_when_it_is_captured_then_it_is_still_named() {
+        // Given — `⌃⇥` n'a pas de caractère à apparier, et c'est le seul raccourci que la
+        // webview joue elle-même (en-tête de `src-tauri/src/menu.rs`) : le casser aurait
+        // décroché la circulation entre onglets
+        let named = StrokeBuilder::new()
+            .typing("Tab", "Tab")
+            .bare()
+            .control()
+            .build();
+
+        // When
+        let captured = Combination::from_stroke(&named).unwrap();
+
+        // Then
+        assert_eq!(captured.accelerator(), "Ctrl+Tab");
+        assert_eq!(captured.glyphs(), "⌃⇥");
+    }
+
+    #[test]
+    fn given_the_keys_table_when_it_is_read_backwards_then_no_character_designates_two_keys() {
+        // Given — [`Key::produced`] lit la colonne des glyphes **à l'envers**, comme un index
+        // de caractères. C'est ce qui évite une seconde table, et ça tient à une propriété
+        // que rien n'écrit dans la première : un caractère n'y figure qu'une fois. Une ligne
+        // ajoutée demain qui reprendrait un glyphe déjà pris ferait rendre la première
+        // trouvée, en silence — une capture poserait alors une touche pour une autre
+
+        // When — les glyphes d'un seul caractère, ceux par lesquels une capture peut entrer
+        let mut characters: Vec<String> = KEYS
+            .iter()
+            .map(|(_, glyph)| glyph.to_uppercase())
+            .filter(|glyph| glyph.chars().count() == 1)
+            .collect();
+        let read = characters.len();
+        characters.sort();
+        characters.dedup();
+
+        // Then
+        assert_eq!(characters.len(), read);
     }
 
     #[test]

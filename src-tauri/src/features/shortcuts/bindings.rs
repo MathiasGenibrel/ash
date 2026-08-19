@@ -229,34 +229,34 @@ impl Bindings {
             })
             .collect();
 
-        // 2. Une combinaison n'est tenue que par une action. Le parcours est dans l'ordre du
-        //    **menu** et non celui du fichier : c'est ce qui rend l'arbitrage déterministe
-        //    d'une relecture à l'autre. Sans lui, un fichier bricolé poserait deux fois la
-        //    même touche dans le menu natif, où c'est la dernière posée qui gagne, en
-        //    silence — exactement ce que le bloc de conflit existe pour éviter.
-        let mut claimed: Vec<Combination> = Vec::new();
-        for declared in self.actions.iter().filter(|one| one.rebindable()) {
+        // 2. Une combinaison n'est tenue que par une action — le **même** invariant qu'une
+        //    capture ou qu'un retour au défaut, posé à la même question ([`holder`]). Le
+        //    parcours est dans l'ordre du **menu** et non celui du fichier : c'est ce qui
+        //    rend l'arbitrage déterministe d'une relecture à l'autre, et c'est ce qui fait
+        //    que « déjà tenue » veut dire « tenue par une ligne déjà tranchée ». Sans lui,
+        //    un fichier bricolé poserait deux fois la même touche dans le menu natif, où
+        //    c'est la dernière posée qui gagne, en silence — exactement ce que le bloc de
+        //    conflit existe pour éviter.
+        let ordered: Vec<&ActionBinding> =
+            self.actions.iter().filter(|one| one.rebindable()).collect();
+        for (rank, declared) in ordered.iter().enumerate() {
+            let settled = &ordered[..rank];
             // Une ligne sans raccourci ne dispute rien à personne.
             let Some(in_use) = effective(declared, &kept) else {
                 continue;
             };
-            if !claimed.contains(&in_use) {
-                claimed.push(in_use);
+            if holder(settled.iter().copied(), &declared.action, &in_use, &kept).is_none() {
                 continue;
             }
-            match &declared.default {
-                // Son défaut est libre : elle y repart, comme si le fichier n'avait rien dit
-                // d'elle.
-                Some(free) if !claimed.contains(free) => {
-                    kept.remove(&declared.action);
-                    claimed.push(free.clone());
-                }
-                // Son défaut est pris lui aussi — ou elle n'en a pas : elle reste **sans**
-                // raccourci plutôt que d'en porter un que le menu donnerait à une autre.
-                _ => {
-                    kept.insert(declared.action.clone(), None);
-                }
-            }
+            // Son défaut s'il est libre — elle y repart, comme si le fichier n'avait rien
+            // dit d'elle. Sinon rien : elle reste **sans** raccourci plutôt que d'en porter
+            // un que le menu donnerait à une autre.
+            let fallback = declared.default.clone().filter(|free| {
+                holder(settled.iter().copied(), &declared.action, free, &kept).is_none()
+            });
+            // Et c'est [`record`] qui l'inscrit, comme partout ailleurs : l'assainissement
+            // n'a pas plus le droit qu'une capture d'écrire une valeur qui répète le défaut.
+            record(declared, fallback, &mut kept);
         }
         kept
     }
@@ -419,38 +419,52 @@ impl Bindings {
                 action: action.to_owned(),
             });
         }
+        Ok(self.claim(declared, Some(combination)))
+    }
 
+    /// Pose ce qu'une action doit porter — **le seul chemin par lequel une liaison change**.
+    ///
+    /// Il n'y a qu'un endroit où l'on écrit, donc qu'un endroit où l'invariant « une
+    /// combinaison, une action » s'applique : la capture, le `⌫`, le retour au défaut et les
+    /// deux issues d'un conflit passent tous par ici. Avoir eu deux règles à deux endroits
+    /// est ce qui a laissé un `back to default` reposer une combinaison déjà tenue, en
+    /// silence (issue #134) — et le menu natif laisse alors gagner la dernière entrée posée,
+    /// sans rien dire à personne.
+    ///
+    /// **Rien n'est appliqué tant qu'un conflit vit** : si une autre ligne tient déjà ce
+    /// qu'on veut poser, la demande est mise en attente et le bloc sort. C'est l'utilisateur
+    /// qui tranche, par l'une des deux issues nommées de [`resolve`](Self::resolve).
+    fn claim(&self, declared: &ActionBinding, wanted: Option<Combination>) -> Rebound {
         let mut chosen = self.locked();
-        // Une capture qui redonne à une ligne ce qu'elle a déjà n'est pas un changement, et
-        // surtout pas un conflit avec elle-même.
-        if effective(declared, &chosen.overrides).as_ref() == Some(&combination) {
-            chosen.pending = None;
-            return Ok(Rebound(false));
-        }
-
-        let holder = self.actions.iter().find(|other| {
-            other.action != declared.action
-                && other.rebindable()
-                && effective(other, &chosen.overrides).as_ref() == Some(&combination)
-        });
-        match holder {
-            Some(held) => {
+        if let Some(sought) = &wanted {
+            if let Some(held) = holder(
+                self.actions.iter(),
+                &declared.action,
+                sought,
+                &chosen.overrides,
+            ) {
                 chosen.pending = Some(Pending {
                     action: declared.action.clone(),
-                    combination,
+                    combination: sought.clone(),
                     holder: held.action.clone(),
                 });
-                Ok(Rebound(false))
-            }
-            None => {
-                chosen.pending = None;
-                chosen
-                    .overrides
-                    .insert(declared.action.clone(), Some(combination));
-                self.keep(chosen);
-                Ok(Rebound(true))
+                return Rebound(false);
             }
         }
+
+        // Rien ne dispute plus rien : le bloc de conflit resté ouvert n'a plus d'objet, et
+        // le refermer sans rien appliquer, c'est ce que `keep` fait déjà.
+        chosen.pending = None;
+        let mut next = chosen.overrides.clone();
+        record(declared, wanted, &mut next);
+        // Une capture qui redonne à une ligne ce qu'elle a déjà n'est pas un changement :
+        // refaire le menu pour ça le reposerait à chaque frappe confirmée.
+        if next == chosen.overrides {
+            return Rebound(false);
+        }
+        chosen.overrides = next;
+        self.keep(chosen);
+        Rebound(true)
     }
 
     /// Retire le raccourci d'une ligne — le `⌫` du bloc de capture.
@@ -465,37 +479,39 @@ impl Bindings {
                 action: action.to_owned(),
             });
         }
-        let mut chosen = self.locked();
-        if effective(declared, &chosen.overrides).is_none() {
-            return Ok(Rebound(false));
-        }
-        chosen.pending = None;
-        chosen.overrides.insert(declared.action.clone(), None);
-        self.keep(chosen);
-        Ok(Rebound(true))
+        Ok(self.claim(declared, None))
     }
 
     /// Rend son défaut à une ligne — l'icône de retour, qui n'existe que sur les lignes
     /// changées.
+    ///
+    /// **C'est une pose comme une autre**, et c'est tout le propos de l'issue #134 : le
+    /// défaut d'une ligne peut très bien être la combinaison qu'une autre porte depuis
+    /// qu'on la lui a donnée. Le geste ouvre alors le **même** bloc de conflit qu'une
+    /// capture, avec ses deux issues nommées, et rien n'est écrit tant que l'utilisateur n'a
+    /// pas choisi.
     pub fn reset(&self, action: &str) -> Result<Rebound, ShortcutError> {
         let declared = self.declared(action)?;
-        let mut chosen = self.locked();
-        if chosen.overrides.remove(&declared.action).is_none() {
-            return Ok(Rebound(false));
-        }
-        chosen.pending = None;
-        self.keep(chosen);
-        Ok(Rebound(true))
+        Ok(self.claim(declared, declared.default.clone()))
     }
 
     /// `reset all` — toutes les lignes reprennent leur défaut.
+    ///
+    /// Le seul geste qui repose **toute** la table d'un coup, donc le seul qui ne se traite
+    /// pas ligne à ligne : douze conflits ne se tranchent pas un par un, et il n'y a de
+    /// toute façon rien à arbitrer. Les défauts d'Ash ne se disputent aucune combinaison —
+    /// `menu.rs` en tient le test —, et repartir d'eux est exactement ce que la relecture
+    /// d'un fichier vide donnerait. C'est donc l'assainissement qui répond, plutôt qu'un
+    /// `clear()` qui ferait *confiance* à cette propriété sans jamais la vérifier : le jour
+    /// où deux défauts se marcheraient dessus, le menu n'en porterait quand même qu'un.
     pub fn reset_all(&self) -> Rebound {
+        let restored = self.sanitized(BTreeMap::new());
         let mut chosen = self.locked();
-        if chosen.overrides.is_empty() && chosen.pending.is_none() {
+        if chosen.overrides == restored && chosen.pending.is_none() {
             return Rebound(false);
         }
-        let rebound = !chosen.overrides.is_empty();
-        chosen.overrides.clear();
+        let rebound = chosen.overrides != restored;
+        chosen.overrides = restored;
         chosen.pending = None;
         self.keep(chosen);
         Rebound(rebound)
@@ -514,10 +530,20 @@ impl Bindings {
         match choice {
             ConflictChoice::Keep => Rebound(false),
             ConflictChoice::Give => {
-                chosen.overrides.insert(pending.holder, None);
-                chosen
-                    .overrides
-                    .insert(pending.action, Some(pending.combination));
+                // L'ancienne détentrice **d'abord** : la combinaison doit être libre avant
+                // d'être reposée, sans quoi les deux lignes la porteraient le temps d'une
+                // instruction — et c'est cet état-là que le bloc existe pour ne jamais
+                // atteindre.
+                let mut next = chosen.overrides.clone();
+                for (action, wanted) in [
+                    (&pending.holder, None),
+                    (&pending.action, Some(pending.combination.clone())),
+                ] {
+                    if let Some(declared) = self.actions.iter().find(|one| &one.action == action) {
+                        record(declared, wanted, &mut next);
+                    }
+                }
+                chosen.overrides = next;
                 self.keep(chosen);
                 Rebound(true)
             }
@@ -553,6 +579,55 @@ impl Bindings {
         self.current
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// L'action qui tient déjà cette combinaison, si ce n'est pas `except`.
+///
+/// **C'est l'unique lecture de l'invariant « une combinaison, une action »**, et c'est ce qui
+/// permet aux quatre chemins d'y répondre pareil : la capture, le retour au défaut, `reset
+/// all` et la relecture d'un fichier édité à la main posent tous cette question-ci. En avoir
+/// eu deux, avec deux règles, est ce qui a produit l'issue #134 — et, juste avant elle, une
+/// relecture qui défaisait ce qu'un `give` avait décidé.
+///
+/// `among` n'est pas toujours toute la table : l'assainissement d'un fichier ne compare
+/// qu'aux lignes qu'il a **déjà tranchées**, pour que l'arbitrage suive l'ordre du menu.
+///
+/// Les lignes qui ne se règlent pas (la famille des positions d'onglet) sont hors du compte :
+/// une combinaison ne leur est ni prise ni donnée, et le bloc de conflit n'aurait pas d'issue
+/// à offrir de leur côté.
+fn holder<'a>(
+    among: impl IntoIterator<Item = &'a ActionBinding>,
+    except: &str,
+    combination: &Combination,
+    overrides: &BTreeMap<String, Option<Combination>>,
+) -> Option<&'a ActionBinding> {
+    among.into_iter().find(|other| {
+        other.action != except
+            && other.rebindable()
+            && effective(other, overrides).as_ref() == Some(combination)
+    })
+}
+
+/// Inscrit dans la table des écarts ce qu'une action doit porter.
+///
+/// **C'est l'unique écriture**, comme [`holder`] est l'unique lecture : la capture, le `⌫`,
+/// le retour au défaut, les deux issues d'un conflit et l'assainissement d'un fichier relu y
+/// passent tous. Une seconde façon d'écrire serait une seconde façon de se tromper.
+///
+/// Le fichier ne garde que les **écarts** : une liaison qui retombe sur son défaut n'y est
+/// pas écrite, elle en **sort**. C'est ce qui fait qu'un retour au défaut et une capture qui
+/// redonne à une ligne sa combinaison d'origine sont le même geste, et qu'un défaut d'Ash qui
+/// changera demain sera suivi plutôt que figé par une entrée devenue muette.
+fn record(
+    declared: &ActionBinding,
+    wanted: Option<Combination>,
+    overrides: &mut BTreeMap<String, Option<Combination>>,
+) {
+    if wanted == declared.default {
+        overrides.remove(&declared.action);
+    } else {
+        overrides.insert(declared.action.clone(), wanted);
     }
 }
 
@@ -632,14 +707,37 @@ mod tests {
             .action("tab:close", "Close Tab", Some("Cmd+W"))
     }
 
-    fn stroke(code: &str, command: bool, control: bool) -> KeyStroke {
+    /// Une frappe telle que la webview la rapporte : le caractère produit **et** la
+    /// position physique. Les deux coïncident sur un clavier US ; ce qui se passe quand ils
+    /// diffèrent est éprouvé dans `combination.rs`.
+    fn stroke(character: &str, code: &str, command: bool, control: bool) -> KeyStroke {
         KeyStroke {
+            key: character.to_owned(),
             code: code.to_owned(),
             command,
             control,
             option: false,
             shift: false,
         }
+    }
+
+    /// Les combinaisons que deux actions porteraient à la fois — toujours vide, quel que
+    /// soit le chemin qui a mené là. Dans un menu natif, c'est la dernière entrée posée qui
+    /// gagne, sans rien dire à personne.
+    fn doubled(bindings: &Bindings, actions: &[&str]) -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        let mut twice: Vec<String> = Vec::new();
+        for action in actions {
+            let Some(carried) = bindings.accelerator(action) else {
+                continue;
+            };
+            if seen.contains(&carried) {
+                twice.push(carried);
+            } else {
+                seen.push(carried);
+            }
+        }
+        twice
     }
 
     fn row<'a>(report: &'a ShortcutsReport, action: &str) -> &'a ShortcutRow {
@@ -660,7 +758,7 @@ mod tests {
             .build();
 
         // When
-        let held = bindings.owner(&stroke("Tab", false, true));
+        let held = bindings.owner(&stroke("Tab", "Tab", false, true));
 
         // Then — un identifiant d'action, celui que `ash://menu-action` porte déjà : la
         // webview n'a ni table de touches ni règle de comparaison à tenir
@@ -678,13 +776,13 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:next", &stroke("KeyJ", true, false))
+            .bind("tab:next", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then — l'ancienne ne mène plus nulle part, la nouvelle mène à l'action
-        assert_eq!(bindings.owner(&stroke("Tab", false, true)), None);
+        assert_eq!(bindings.owner(&stroke("Tab", "Tab", false, true)), None);
         assert_eq!(
-            bindings.owner(&stroke("KeyJ", true, false)).as_deref(),
+            bindings.owner(&stroke("j", "KeyJ", true, false)).as_deref(),
             Some("tab:next")
         );
     }
@@ -699,7 +797,7 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then
@@ -727,7 +825,7 @@ mod tests {
 
         // When
         let rebound = bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then — et le menu doit être refait : c'est lui qui porte la touche
@@ -745,7 +843,7 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then — au format que l'analyseur de `muda` lit, celui de l'entrée de menu
@@ -760,7 +858,7 @@ mod tests {
 
         // When — on la capture sur `New Tab`
         bindings
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
 
         // Then — les deux lignes n'ont pas bougé, et le conflit nomme ses deux côtés et ses
@@ -785,7 +883,7 @@ mod tests {
         // Given
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
 
         // When
@@ -806,7 +904,7 @@ mod tests {
         // Given
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
 
         // When
@@ -840,7 +938,7 @@ mod tests {
         // `n changed` est sa seule contrepartie en en-tête
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
         assert_eq!(bindings.report().changed, 1);
 
@@ -855,11 +953,176 @@ mod tests {
     }
 
     #[test]
+    fn given_a_combination_another_action_was_given_when_its_first_owner_asks_for_its_default_back_then_the_same_conflict_block_opens(
+    ) {
+        // Given — `⌘T` a été donné à `Close Tab`, et `New Tab` n'a plus rien. Son défaut est
+        // pourtant toujours `⌘T` : cliquer l'icône de retour posait les **deux** actions sur
+        // `⌘T` sans un mot, le menu natif laissait gagner la dernière, et `Close Tab`
+        // devenait injoignable au clavier (issue #134)
+        let bindings = two_tabs().build();
+        bindings
+            .bind("tab:close", &stroke("t", "KeyT", true, false))
+            .unwrap();
+        bindings.resolve(ConflictChoice::Give);
+
+        // When
+        let rebound = bindings.reset("tab:new").unwrap();
+
+        // Then — rien n'est écrit, et le bloc est celui de la capture, avec ses deux issues
+        let report = bindings.report();
+        assert_eq!(rebound, Rebound(false));
+        assert_eq!(row(&report, "tab:new").keys, "");
+        assert_eq!(row(&report, "tab:close").keys, "⌘T");
+        let conflict = report.conflict.unwrap();
+        assert_eq!(conflict.holder, "tab:close");
+        assert_eq!(conflict.asked, "tab:new");
+        assert_eq!(conflict.give, "give ⌘T to New Tab");
+        assert_eq!(conflict.keep, "keep the old one");
+    }
+
+    #[test]
+    fn given_a_conflict_opened_by_a_return_to_default_when_it_is_settled_then_it_settles_like_any_other(
+    ) {
+        // Given — le bloc n'a pas deux formes selon d'où il vient : ses deux issues font la
+        // même chose, et le choix survit au redémarrage comme celui d'une capture
+        let store = Arc::new(FakeStore::default());
+        let bindings = two_tabs()
+            .store(Arc::clone(&store) as Arc<dyn BindingStore>)
+            .build();
+        bindings
+            .bind("tab:close", &stroke("t", "KeyT", true, false))
+            .unwrap();
+        bindings.resolve(ConflictChoice::Give);
+        bindings.reset("tab:new").unwrap();
+
+        // When
+        let rebound = bindings.resolve(ConflictChoice::Give);
+
+        // Then — `New Tab` retrouve son défaut, `Close Tab` se retrouve sans raccourci, et
+        // la session suivante lit la même chose
+        let report = bindings.report();
+        assert_eq!(rebound, Rebound(true));
+        assert_eq!(row(&report, "tab:new").keys, "⌘T");
+        assert_eq!(row(&report, "tab:close").keys, "");
+        assert_eq!(report.conflict, None);
+        let next = two_tabs().store(store as Arc<dyn BindingStore>).build();
+        assert_eq!(next.accelerator("tab:new").as_deref(), Some("Cmd+KeyT"));
+        assert_eq!(next.accelerator("tab:close"), None);
+    }
+
+    #[test]
+    fn given_a_conflict_opened_by_a_return_to_default_when_the_old_one_is_kept_then_nothing_moves()
+    {
+        // Given
+        let bindings = two_tabs().build();
+        bindings
+            .bind("tab:close", &stroke("t", "KeyT", true, false))
+            .unwrap();
+        bindings.resolve(ConflictChoice::Give);
+        bindings.reset("tab:new").unwrap();
+
+        // When
+        bindings.resolve(ConflictChoice::Keep);
+
+        // Then — la ligne reste sans raccourci plutôt que de reprendre un défaut que sa
+        // voisine porte
+        let report = bindings.report();
+        assert_eq!(row(&report, "tab:new").keys, "");
+        assert_eq!(row(&report, "tab:close").keys, "⌘T");
+        assert_eq!(report.conflict, None);
+    }
+
+    #[test]
+    fn given_two_defaults_that_would_collide_when_everything_is_reset_then_the_menu_still_carries_one_of_them(
+    ) {
+        // Given — les défauts d'Ash ne se disputent rien, et `menu.rs` en tient le test. Mais
+        // `reset all` ne doit pas *croire* cette propriété : le jour où une entrée de menu
+        // naîtrait sur une touche déjà prise, repartir des défauts poserait deux actions sur
+        // la même combinaison — ce que le bloc de conflit interdit partout ailleurs
+        let bindings = BindingsBuilder::new()
+            .action("tab:new", "New Tab", Some("Cmd+T"))
+            .action("tab:close", "Close Tab", Some("Cmd+T"))
+            .build();
+        bindings
+            .bind("tab:close", &stroke("j", "KeyJ", true, false))
+            .unwrap();
+
+        // When
+        bindings.reset_all();
+
+        // Then — la première dans l'ordre du menu garde la combinaison, la seconde reste sans
+        // raccourci : le même arbitrage que pour un fichier bricolé, et déterminé de la même
+        // façon
+        assert_eq!(bindings.accelerator("tab:new").as_deref(), Some("Cmd+KeyT"));
+        assert_eq!(bindings.accelerator("tab:close"), None);
+    }
+
+    #[test]
+    fn given_every_path_that_poses_a_combination_when_one_of_them_would_double_it_then_no_two_actions_carry_it(
+    ) {
+        // Given — quatre chemins mènent à une liaison, et l'invariant n'en a qu'un seul
+        // endroit : avoir eu deux règles à deux endroits est exactement ce qui a laissé le
+        // retour au défaut poser une combinaison déjà tenue (issue #134)
+        let three = || {
+            BindingsBuilder::new()
+                .action("tab:new", "New Tab", Some("Cmd+T"))
+                .action("tab:close", "Close Tab", Some("Cmd+W"))
+                .action("tab:clear", "Clear Scrollback", None)
+        };
+        let rows = ["tab:new", "tab:close", "tab:clear"];
+
+        // When — 1. une capture qui vise une combinaison prise
+        let captured = three().build();
+        captured
+            .bind("tab:clear", &stroke("t", "KeyT", true, false))
+            .unwrap();
+
+        // 2. un retour au défaut, sur une combinaison qu'un `give` a déplacée
+        let restored = three().build();
+        restored
+            .bind("tab:close", &stroke("t", "KeyT", true, false))
+            .unwrap();
+        restored.resolve(ConflictChoice::Give);
+        restored.reset("tab:new").unwrap();
+
+        // 3. `reset all`
+        let all = three().build();
+        all.bind("tab:clear", &stroke("t", "KeyT", true, false))
+            .unwrap();
+        all.resolve(ConflictChoice::Give);
+        all.reset_all();
+
+        // 4. un fichier édité à la main, qui pose la même touche deux fois
+        let store = Arc::new(FakeStore::default());
+        let mut bricolage = BTreeMap::new();
+        for action in ["tab:new", "tab:close"] {
+            bricolage.insert(
+                action.to_owned(),
+                Some(Combination::parse("Cmd+KeyJ").unwrap()),
+            );
+        }
+        store
+            .save(&StoredBindings {
+                bindings: bricolage,
+            })
+            .unwrap();
+        let edited = three().store(store as Arc<dyn BindingStore>).build();
+
+        // Then — aucun chemin ne pose deux fois la même touche, et les deux qui devaient
+        // s'arrêter se sont arrêtés sur le bloc plutôt qu'en silence
+        for settled in [&captured, &restored, &all, &edited] {
+            assert_eq!(doubled(settled, &rows), Vec::<String>::new());
+        }
+        assert!(captured.report().conflict.is_some());
+        assert!(restored.report().conflict.is_some());
+    }
+
+    #[test]
     fn given_several_changed_lines_when_everything_is_reset_then_all_of_them_are_back_to_default() {
         // Given
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
         bindings.clear("tab:close").unwrap();
 
@@ -881,7 +1144,7 @@ mod tests {
         two_tabs()
             .store(Arc::clone(&store) as Arc<dyn BindingStore>)
             .build()
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // When — la session suivante
@@ -922,7 +1185,7 @@ mod tests {
             .store(Arc::clone(&store) as Arc<dyn BindingStore>)
             .build();
         chosen
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
         chosen.resolve(ConflictChoice::Give);
 
@@ -945,11 +1208,11 @@ mod tests {
             .store(Arc::clone(&store) as Arc<dyn BindingStore>)
             .build();
         chosen
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
         chosen.resolve(ConflictChoice::Give);
         chosen
-            .bind("tab:close", &stroke("KeyT", true, false))
+            .bind("tab:close", &stroke("t", "KeyT", true, false))
             .unwrap();
 
         // When
@@ -1004,7 +1267,7 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then
@@ -1023,7 +1286,7 @@ mod tests {
 
         // When
         let report = bindings.report();
-        let refused = bindings.bind("tab:select:1", &stroke("KeyJ", true, false));
+        let refused = bindings.bind("tab:select:1", &stroke("j", "KeyJ", true, false));
 
         // Then
         let family = row(&report, "tab:select:1");
@@ -1062,6 +1325,7 @@ mod tests {
         // le terminal n'est pas interdite — elle est annoncée comme inefficace »
         let bindings = two_tabs().build();
         let taken = KeyStroke {
+            key: "f".to_owned(),
             code: "KeyF".to_owned(),
             command: true,
             control: true,
@@ -1088,7 +1352,7 @@ mod tests {
         let bindings = two_tabs().build();
 
         // When
-        let previewed = bindings.preview(&stroke("KeyJ", false, false));
+        let previewed = bindings.preview(&stroke("j", "KeyJ", false, false));
 
         // Then
         assert!(!previewed.accepted);
@@ -1104,7 +1368,7 @@ mod tests {
 
         // When
         let rebound = bindings
-            .bind("tab:new", &stroke("KeyT", true, false))
+            .bind("tab:new", &stroke("t", "KeyT", true, false))
             .unwrap();
 
         // Then — sans ça, une ligne serait en conflit avec elle-même, et le menu se
