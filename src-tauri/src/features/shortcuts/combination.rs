@@ -699,6 +699,28 @@ mod tests {
     }
 
     #[test]
+    fn given_the_keys_table_when_it_is_read_backwards_then_no_character_designates_two_keys() {
+        // Given — [`Key::produced`] lit la colonne des glyphes **à l'envers**, comme un index
+        // de caractères. C'est ce qui évite une seconde table, et ça tient à une propriété
+        // que rien n'écrit dans la première : un caractère n'y figure qu'une fois. Une ligne
+        // ajoutée demain qui reprendrait un glyphe déjà pris ferait rendre la première
+        // trouvée, en silence — une capture poserait alors une touche pour une autre
+
+        // When — les glyphes d'un seul caractère, ceux par lesquels une capture peut entrer
+        let mut characters: Vec<String> = KEYS
+            .iter()
+            .map(|(_, glyph)| glyph.to_uppercase())
+            .filter(|glyph| glyph.chars().count() == 1)
+            .collect();
+        let read = characters.len();
+        characters.sort();
+        characters.dedup();
+
+        // Then
+        assert_eq!(characters.len(), read);
+    }
+
+    #[test]
     fn given_a_shortcuts_file_edited_by_hand_when_it_names_a_key_ash_cannot_bind_then_it_is_refused(
     ) {
         // Given — un accélérateur que `muda` ne saurait pas jouer : l'entrée de menu
