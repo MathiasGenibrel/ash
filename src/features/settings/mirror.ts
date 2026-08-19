@@ -29,6 +29,7 @@ import type { RemovalReport as RustRemovalReport } from "@/shared/ipc/generated/
 import type { RemovedFile as RustRemovedFile } from "@/shared/ipc/generated/RemovedFile";
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
 import type { Shortcut as RustShortcut } from "@/shared/ipc/generated/Shortcut";
+import type { SidebarDensity as RustSidebarDensity } from "@/shared/ipc/generated/SidebarDensity";
 import type { SuggestedFix as RustSuggestedFix } from "@/shared/ipc/generated/SuggestedFix";
 import type { ThemeMode as RustThemeMode } from "@/shared/ipc/generated/ThemeMode";
 import type { TestDescription as RustTestDescription } from "@/shared/ipc/generated/TestDescription";
@@ -58,6 +59,7 @@ import type {
     RemovedFile,
     SettingsSnapshot,
     Shortcut,
+    SidebarDensity,
     SuggestedFix,
     TestDescription,
     TestOutcome,
@@ -143,6 +145,16 @@ export type VerifiedStillMirrorsRust = Assert<Mirrors<RustVerified, Verified>>;
 export type SettingsThemeModeStillMirrorsRust = Assert<Mirrors<RustThemeMode, ThemeMode>>;
 export type FontStepStillMirrorsRust = Assert<Mirrors<RustFontStep, FontStep>>;
 export type ShortcutStillMirrorsRust = Assert<Mirrors<RustShortcut, Shortcut>>;
+/**
+ * La densité de la sidebar, arrivée avec l'aperçu du thème (#22).
+ *
+ * Elle est vérifiée ici **et** dans `src/app/mirror.ts`, comme `ThemeMode` et pour la même
+ * raison : les deux copies TypeScript existent pour que la feature n'importe pas le
+ * composition root, donc les deux ont besoin du même filet.
+ */
+export type SettingsSidebarDensityStillMirrorsRust = Assert<
+    Mirrors<RustSidebarDensity, SidebarDensity>
+>;
 
 /**
  * La seule forme qui va dans l'autre sens : le formulaire d'ajout **envoie** une saisie.

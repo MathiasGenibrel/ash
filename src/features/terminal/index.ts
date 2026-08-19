@@ -8,7 +8,7 @@
 import "./terminal.css";
 
 import type { WorktreeMetadata } from "@/shared/ipc";
-import type { FontSizeSignal, TabId, TabInfo, ThemeSignal } from "./ports";
+import type { FontFamilySignal, FontSizeSignal, TabId, TabInfo, ThemeSignal } from "./ports";
 import { askToClose } from "./confirm-dialog";
 import { tauriGit } from "./git-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
@@ -18,7 +18,15 @@ import { activeTab, noTabs, type Step, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
 
-export type { FontSizeSignal, PtyFrame, TabId, TabInfo, TerminalSize, ThemeSignal } from "./ports";
+export type {
+    FontFamilySignal,
+    FontSizeSignal,
+    PtyFrame,
+    TabId,
+    TabInfo,
+    TerminalSize,
+    ThemeSignal,
+} from "./ports";
 export type { Origin } from "./workbench";
 export type { Step } from "./tabs";
 /**
@@ -111,17 +119,18 @@ export interface Terminals {
  *
  * Rien n'est ouvert ici : c'est au composition root de décider que l'application démarre
  * sur un onglet. C'est lui, aussi, qui passe `theme` et `fontSize` : la feature ne détecte
- * ni les bascules de palette ni les changements de taille, elle en est prévenue.
+ * ni les bascules de palette ni les changements d'apparence, elle en est prévenue.
  *
  * Un onglet porte au plus un PTY, et un seul terminal est visible à la fois
  * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)). L'apparence, elle, ne se
- * règle pas par onglet : la taille de police vaut pour toute l'application, et c'est une
- * décision de `features::theme` côté Rust — pas un effet de bord du câblage.
+ * règle pas par onglet : la taille **et la famille** valent pour toute l'application, et
+ * c'est une décision de `features::theme` côté Rust — pas un effet de bord du câblage.
  */
 export function mountTerminals(
     host: HTMLElement,
     theme: ThemeSignal,
     fontSize: FontSizeSignal,
+    fontFamily: FontFamilySignal,
 ): Terminals {
     host.classList.add("terminal-workbench");
 
@@ -208,10 +217,10 @@ export function mountTerminals(
 
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
-        // Chaque terminal suit le thème et la taille de police pour son compte, et s'en
-        // désabonne en se libérant : l'atelier n'a à connaître ni la palette ni la taille
+        // Chaque terminal suit le thème, la taille et la police pour son compte, et s'en
+        // désabonne en se libérant : l'atelier n'a à connaître ni la palette ni l'apparence
         // pour savoir qu'un onglet est ouvert.
-        createView: () => new XtermView(stack, theme, fontSize),
+        createView: () => new XtermView(stack, theme, fontSize, fontFamily),
         confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
             shown = state;

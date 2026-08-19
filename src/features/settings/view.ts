@@ -8,6 +8,7 @@ import type {
     NotificationsReport,
     SettingsSnapshot,
     Shortcut,
+    SidebarDensity,
     ThemeMode,
     ToolDraft,
     Verification,
@@ -112,6 +113,16 @@ export interface SettingsViewActions {
     /** Un pas de taille de police, jamais une taille : les bornes sont en Rust. */
     stepFontSize(step: FontStep): void;
     /**
+     * Une famille choisie dans la liste que le backend a rendue.
+     *
+     * Une **valeur** et non un pas, contrairement à la taille : il n'existe pas de « police
+     * suivante », et ce qui est proposé est ce que le système porte. Elle ne pose rien non
+     * plus — `features::theme` retient et annonce.
+     */
+    chooseFont(family: string): void;
+    /** La densité de la sidebar, même chemin exactement. */
+    chooseDensity(density: SidebarDensity): void;
+    /**
      * L'un des trois interrupteurs de la section `notifications` (spec §9).
      *
      * Elle ne coupe rien : `features::agents` retient le choix, et c'est lui qui le consulte
@@ -188,6 +199,14 @@ export interface SettingsScene {
      */
     appearance: Appearance | null;
     /**
+     * Les familles monospace installées, ou `null` tant que le backend ne les a pas lues.
+     *
+     * Séparées de [`appearance`] parce qu'elles ne changent pas au même rythme : l'apparence
+     * revient à chaque annonce, la liste est lue une fois. Ce n'est pas un état de l'écran —
+     * c'est ce que le système porte.
+     */
+    fonts: readonly string[] | null;
+    /**
      * Les raccourcis que le menu natif déclare, ou `null` tant qu'il ne les a pas rendus.
      *
      * Demandés une fois : le menu est construit au démarrage et ne change plus.
@@ -228,12 +247,18 @@ export function settingsPanel(
         case "shortcuts":
             return shortcutsSection(scene.shortcuts);
         case "appearance":
-            return appearanceSection(scene.appearance, {
+            return appearanceSection(scene.appearance, scene.fonts, {
                 chooseTheme: (mode) => {
                     actions.chooseTheme(mode);
                 },
                 stepFontSize: (step) => {
                     actions.stepFontSize(step);
+                },
+                chooseFont: (family) => {
+                    actions.chooseFont(family);
+                },
+                chooseDensity: (density) => {
+                    actions.chooseDensity(density);
                 },
             });
         case "tools":

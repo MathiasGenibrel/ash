@@ -42,6 +42,7 @@ export type {
     SettingsPorts,
     SettingsSnapshot,
     Shortcut,
+    SidebarDensity,
     ThemeMode,
     ToolDeclaration,
     ToolDraft,
@@ -125,6 +126,14 @@ export function mountSettings(
     let appearance: Appearance | null = null;
     /** Les raccourcis que le menu natif déclare. Lus une fois : le menu ne change plus. */
     let shortcuts: readonly Shortcut[] | null = null;
+    /**
+     * Les familles monospace installées, ou `null` tant que le backend ne les a pas lues.
+     *
+     * Lues une fois, comme les raccourcis : installer une police passe par le Livre des
+     * polices, pas par Ash. Ce n'est pas un état de la fenêtre — c'est ce que le système
+     * porte, rendu ici.
+     */
+    let fonts: readonly string[] | null = null;
     /** Ce qui est tapé dans le champ de chemin d'une carte, tant qu'il n'a pas été jugé. */
     const edits = new Map<string, string>();
 
@@ -278,6 +287,15 @@ export function mountSettings(
         stepFontSize: (step) => {
             void windowPorts.stepTerminalFontSize(step).catch(() => undefined);
         },
+        // La police et la densité suivent exactement le même chemin, bien qu'elles n'aient
+        // qu'une surface : c'est le backend qui retient et annonce, et la scène ne bouge
+        // qu'au retour de l'annonce.
+        chooseFont: (family) => {
+            void windowPorts.chooseTerminalFont(family).catch(() => undefined);
+        },
+        chooseDensity: (density) => {
+            void windowPorts.chooseSidebarDensity(density).catch(() => undefined);
+        },
         // L'interrupteur, lui, **rapporte** la section : contrairement au thème, il n'y a pas
         // d'annonce à toutes les fenêtres — le réglage n'a qu'une surface, et c'est celle-ci.
         // La position affichée reste donc celle que le backend a retenue, jamais celle qu'on
@@ -348,6 +366,16 @@ export function mountSettings(
     async function askNotifications(): Promise<void> {
         try {
             notifications = await ports.notifications();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
+    /** Lit les polices installées. Un refus laisse la liste à `null` — la section le dit. */
+    async function askFonts(): Promise<void> {
+        try {
+            fonts = await windowPorts.monospaceFonts();
         } catch {
             return;
         }
@@ -467,6 +495,7 @@ export function mountSettings(
             removal,
             notifications,
             appearance,
+            fonts,
             shortcuts,
         });
     }
@@ -522,6 +551,7 @@ export function mountSettings(
     // pendant qu'Ash tourne, alors que le thème et le menu ne changent que par Ash lui-même —
     // et le thème qui change, on l'apprend par l'annonce ci-dessous.
     void askAppearance();
+    void askFonts();
     void askShortcuts();
 
     // L'apparence change aussi depuis le menu Vue, pendant que cette fenêtre est ouverte.

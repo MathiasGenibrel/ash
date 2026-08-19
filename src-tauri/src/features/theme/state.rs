@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use super::appearance::Appearance;
+use super::density::SidebarDensity;
+use super::font::TerminalFont;
 use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::sidebar_column::{SidebarColumn, SidebarWidth};
@@ -35,6 +37,14 @@ impl ThemeState {
 
     pub fn font_size(&self) -> FontSize {
         self.locked().font_size
+    }
+
+    pub fn font(&self) -> TerminalFont {
+        self.locked().font.clone()
+    }
+
+    pub fn density(&self) -> SidebarDensity {
+        self.locked().density
     }
 
     /// Retient un nouveau thème. Rend `true` si quelque chose a changé.
@@ -98,6 +108,22 @@ impl ThemeState {
             .unwrap_or_else(|| self.sidebar_column())
     }
 
+    /// Retient une police de terminal. Rend `true` si quelque chose a changé.
+    ///
+    /// **Rien ne vérifie ici qu'elle est installée**, et c'est le même raisonnement que pour
+    /// une écriture qui échoue : le catalogue est un effet système qui change entre deux
+    /// démarrages, et une préférence refusée parce qu'une police a été désinstallée laisserait
+    /// le terminal sans police plutôt qu'avec une face de repli.
+    pub fn set_font(&self, font: TerminalFont) -> bool {
+        self.change(|appearance| appearance.font = font).is_some()
+    }
+
+    /// Retient une densité de sidebar. Rend `true` si quelque chose a changé.
+    pub fn set_density(&self, density: SidebarDensity) -> bool {
+        self.change(|appearance| appearance.density = density)
+            .is_some()
+    }
+
     /// Applique un changement, le garde sur le disque, et rend la nouvelle apparence — ou
     /// `None` si le changement n'en était pas un.
     ///
@@ -105,15 +131,15 @@ impl ThemeState {
     /// donc chaque changement doit y emporter l'autre valeur telle qu'elle est.
     fn change(&self, apply: impl FnOnce(&mut Appearance)) -> Option<Appearance> {
         let mut current = self.locked();
-        let before = *current;
+        let before = current.clone();
         apply(&mut current);
-        let after = *current;
+        let after = current.clone();
         drop(current);
 
         if after == before {
             return None;
         }
-        let _ = self.store.save(after);
+        let _ = self.store.save(after.clone());
         Some(after)
     }
 
@@ -142,7 +168,7 @@ mod tests {
 
     impl ThemeStore for FakeStore {
         fn load(&self) -> Option<Appearance> {
-            *self.content.lock().unwrap()
+            self.content.lock().unwrap().clone()
         }
 
         fn save(&self, appearance: Appearance) -> Result<(), ThemeError> {
@@ -320,6 +346,62 @@ mod tests {
         // Then — sans ça, chaque relâchement réécrirait le fichier et referait la grille de
         // tous les terminaux ouverts
         assert_eq!(announced, None);
+    }
+
+    #[test]
+    fn given_a_font_chosen_in_a_previous_session_when_ash_starts_again_then_it_opens_on_that_font()
+    {
+        // Given — la police suit le chemin du thème : même fichier, même relecture. C'est le
+        // critère « le choix survit au redémarrage » (#22)
+        let store = Arc::new(FakeStore::default());
+        let chosen = TerminalFont::new("SF Mono").unwrap();
+        ThemeState::restore(Arc::clone(&store) as Arc<dyn ThemeStore>).set_font(chosen.clone());
+
+        // When — la session suivante
+        let next = ThemeState::restore(store as Arc<dyn ThemeStore>);
+
+        // Then
+        assert_eq!(next.font(), chosen);
+    }
+
+    #[test]
+    fn given_a_font_that_is_not_installed_anymore_when_it_is_chosen_then_it_is_still_retained() {
+        // Given — le catalogue est un effet système : une police désinstallée entre deux
+        // démarrages ne doit pas laisser le terminal sans préférence du tout
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        let gone = TerminalFont::new("Une police désinstallée").unwrap();
+
+        // When
+        let changed = state.set_font(gone.clone());
+
+        // Then — la webview retombera sur sa face de repli, et le choix reste lisible
+        assert!(changed);
+        assert_eq!(state.font(), gone);
+    }
+
+    #[test]
+    fn given_a_density_chosen_in_a_previous_session_when_ash_starts_again_then_the_sidebar_opens_on_it(
+    ) {
+        // Given — quatrième préférence du même fichier, même règle
+        let store = Arc::new(FakeStore::default());
+        ThemeState::restore(Arc::clone(&store) as Arc<dyn ThemeStore>)
+            .set_density(SidebarDensity::Compact);
+
+        // When
+        let next = ThemeState::restore(store as Arc<dyn ThemeStore>);
+
+        // Then
+        assert_eq!(next.density(), SidebarDensity::Compact);
+    }
+
+    #[test]
+    fn given_the_density_already_in_use_when_it_is_chosen_again_then_nothing_is_announced() {
+        // Given — le segment actif reste cliquable, et chaque annonce fait repeindre la
+        // sidebar de toutes les fenêtres
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+
+        // When / Then
+        assert!(!state.set_density(SidebarDensity::Comfortable));
     }
 
     #[test]

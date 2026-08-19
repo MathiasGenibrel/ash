@@ -1,3 +1,5 @@
+use super::density::SidebarDensity;
+use super::font::TerminalFont;
 use super::font_size::FontSize;
 use super::mode::ThemeMode;
 use super::sidebar_column::SidebarColumn;
@@ -22,11 +24,23 @@ use super::sidebar_column::SidebarColumn;
 /// exactement ce qu'un `#[serde(deny_unknown_fields)]` détruirait, en croyant bien faire :
 /// il n'y en a nulle part dans ce dépôt, et les deux sens sont tenus par un test dans
 /// `store.rs`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// `Copy` a disparu de la liste des dérivations le jour où la **police** s'y est ajoutée :
+/// une famille est un nom, donc une `String`. Rien d'autre n'a changé — l'enregistrement
+/// continue de voyager d'un bloc, et `state.rs` le clone là où il le copiait.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Appearance {
     pub mode: ThemeMode,
     #[serde(default)]
     pub font_size: FontSize,
+    /// La famille du terminal (spec §9). `#[serde(default)]` pour la même raison que la
+    /// taille : un fichier écrit avant qu'elle soit réglable se relit sans rien perdre.
+    #[serde(default)]
+    pub font: TerminalFont,
+    /// La densité de la sidebar (spec §9), au même titre — c'est une préférence d'apparence,
+    /// écrite dans le même fichier, relue au même moment.
+    #[serde(default)]
+    pub density: SidebarDensity,
     /// La largeur de la colonne de gauche et son repli (`⌘B`).
     ///
     /// **Ici, et surtout pas dans `~/.ash/state.json`** : ce fichier-là ne garde que les

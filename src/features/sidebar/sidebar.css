@@ -218,7 +218,9 @@
     align-items: center;
     gap: 6px;
     width: 100%;
-    padding: 8px 10px 4px 8px;
+    /* L'aération vient de la densité (spec §9) : voir `--ash-row-lead` dans `app/styles.css`,
+     * et la note de la section `appearance` qui la chiffre. */
+    padding: var(--ash-row-lead) 10px 4px 8px;
     font: inherit;
     font-size: 11.5px;
     text-align: left;
@@ -262,7 +264,11 @@
 }
 
 .ash-worktree {
-    padding: 3px 10px 3px 6px;
+    /* Une hauteur, et non un remplissage : c'est elle que la fenêtre de réglages annonce
+     * (`24 px / row · 18 px when compact`), et un remplissage ne se laisse pas comprimer
+     * sous la hauteur de sa ligne de texte. */
+    height: var(--ash-row-height);
+    padding: 0 10px 0 6px;
     font-size: 10.5px;
     color: var(--ash-fg-muted);
 }
@@ -324,7 +330,8 @@
 /* Le retrait dit à quel niveau la ligne appartient : un cran sous son worktree à plat,
  * deux crans quand ce worktree est lui-même sous un dépôt. */
 .ash-agent {
-    padding: 3px 10px 3px 16px;
+    height: var(--ash-row-height);
+    padding: 0 10px 0 16px;
     font-size: 11.5px;
     color: var(--ash-fg-muted);
 }

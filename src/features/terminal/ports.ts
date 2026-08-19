@@ -90,6 +90,26 @@ export interface FontSizeSignal {
     subscribe(listener: (points: number) => void): Unsubscribe;
 }
 
+/**
+ * Ce que la feature attend de qui détient la **police** — c'est-à-dire de `app/`, encore.
+ *
+ * Le jumeau de [`FontSizeSignal`], et pour les mêmes raisons : la famille est une préférence
+ * de l'application, retenue par le backend
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et la feature n'a pas à
+ * savoir qu'elle vient d'une fenêtre de réglages et d'un event Tauri.
+ *
+ * Ce qui traverse est une **pile** complète (`"SF Mono", ui-monospace, monospace`) et non la
+ * seule famille choisie : la préférence peut nommer une police désinstallée depuis, et un
+ * terminal sans repli monospace n'aligne plus rien. La pile est composée par `app/`, qui est
+ * déjà le seul endroit à savoir ce qu'Ash embarque.
+ */
+export interface FontFamilySignal {
+    /** La pile en cours, prête pour `fontFamily`. */
+    readonly current: string;
+    /** S'abonne aux changements de police. Rend de quoi se désabonner. */
+    subscribe(listener: (stack: string) => void): Unsubscribe;
+}
+
 /** Ce que la feature attend du backend. */
 export interface PtyBridge {
     /** `cwd` à `null` vaut `~` — le `Cmd+Shift+T` de la spec §4.4. */

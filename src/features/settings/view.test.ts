@@ -33,6 +33,7 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         edits: new Map(),
         conflict: null,
         removal: null,
+        fonts: null,
         notifications: aNotificationsReport(),
         appearance: anAppearance(),
         shortcuts: [aShortcut()],
@@ -144,7 +145,7 @@ describe("le panneau de la fenêtre de réglages", () => {
         // Then
         expect(said(composed)).not.toContain("View ▸ Theme");
         expect(said(composed)).toContain("light");
-        expect(said(composed)).toContain("13 pt");
+        expect(said(composed)).toContain("13 px");
     });
 
     it("Given the shortcuts section, when the panel is composed, then it lists what the menu declares rather than pointing at it", () => {

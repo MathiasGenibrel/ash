@@ -2,12 +2,20 @@ import "./styles.css";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { SidebarRows } from "@/shared/ipc";
-import { mountTerminals, type TabId, type TabInfo, type Terminals } from "@/features/terminal";
+import {
+    mountTerminals,
+    type FontFamilySignal,
+    type TabId,
+    type TabInfo,
+    type Terminals,
+} from "@/features/terminal";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
 import { onMenuAction, type MenuAction } from "./menu";
 import { onSelectTab } from "./select-tab";
 import { installShortcuts } from "./shortcuts";
+import { followSidebarDensity } from "./sidebar-density";
+import { fontStack, followTerminalFont } from "./terminal-font";
 import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
 import { windowTitle } from "./window-title";
@@ -29,6 +37,7 @@ function mount(
     root: HTMLElement,
     theme: ThemeChanges,
     fontSize: FontSizeChanges,
+    fontFamily: FontFamilySignal,
     sidebarRows: SidebarRowsBinding,
     sidebarColumn: SidebarColumnBinding,
     appName: string,
@@ -44,12 +53,12 @@ function mount(
     const host = document.createElement("div");
     host.className = "terminal-host";
 
-    // Le thème et la taille de police sont passés, pas cherchés : ce sont deux préférences
+    // Le thème, la taille et la police sont passés, pas cherchés : ce sont trois préférences
     // d'apparence de l'**application**, détenues par le backend
     // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et un terminal ne peint
     // pas en CSS — il lui faut l'avis pour relire la palette, changer de taille et refaire
     // sa grille, onglets déjà ouverts compris.
-    const terminals = mountTerminals(host, theme, fontSize);
+    const terminals = mountTerminals(host, theme, fontSize, fontFamily);
 
     // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
     // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
@@ -265,6 +274,34 @@ sidebarRows.ready.catch(() => undefined);
 const sidebarColumn = followSidebarColumn();
 sidebarColumn.ready.catch(() => undefined);
 
+// La police du terminal et la densité de la sidebar suivent le même chemin que les trois
+// au-dessus : elles sont détenues par le backend, demandées ici, et posées quand il répond.
+// Toutes deux se règlent dans la fenêtre de réglages (spec §9), qui est un **autre document** :
+// c'est l'annonce de Tauri qui les fait arriver jusqu'ici, pas un appel entre fenêtres.
+const terminalFont = followTerminalFont();
+terminalFont.ready.catch(() => undefined);
+
+// La densité, elle, n'a rien à passer à une feature : elle se pose sur la racine, et le CSS
+// fait le reste — comme la palette.
+const density = followSidebarDensity(document.documentElement);
+density.ready.catch(() => undefined);
+
+/**
+ * La police telle que la feature terminal la reçoit : une **pile**, jamais la seule famille.
+ *
+ * Composée ici parce que `app/` est déjà le seul endroit à savoir ce qu'Ash embarque, et
+ * parce qu'une police désinstallée entre deux démarrages doit laisser un terminal aligné
+ * plutôt qu'un rendu proportionnel.
+ */
+const fontFamily: FontFamilySignal = {
+    get current(): string {
+        return fontStack(terminalFont.family.current);
+    },
+    subscribe: (listener) => terminalFont.family.subscribe((family) => {
+        listener(fontStack(family));
+    }),
+};
+
 // Le nom de l'application, lui, est **attendu** au lieu d'être posé par défaut puis
 // corrigé : il est constant pour toute la session, donc il n'y a pas de « valeur d'attente »
 // honnête à écrire dans la bande — un `Ash` remplacé par `Ash-dev` au premier aller-retour
@@ -297,7 +334,7 @@ void document.fonts.ready.finally(() => {
         // `loadAppName` ne rejette jamais — elle se replie sur un nom plutôt que de laisser
         // une fenêtre sans rien —, donc il n'y a pas d'échec à rattraper ici.
         void appName.then((name) => {
-            mount(root, theme.changes, fontSize.changes, sidebarRows, sidebarColumn, name);
+            mount(root, theme.changes, fontSize.changes, fontFamily, sidebarRows, sidebarColumn, name);
         });
     }
 });
