@@ -21,10 +21,13 @@ use crate::shared::time::UnixMillis;
 /// comportement correct.
 ///
 /// La représentation sérialisée est le contrat partagé avec le TypeScript
-/// (`src/shared/ipc`) : cinq mots en minuscules, et `presentAgentState` en face.
+/// (`src/shared/ipc`) : cinq mots en minuscules, et `presentAgentState` en face. Elle se lit
+/// **dans les deux sens** depuis que la fenêtre de réglages nomme l'état dont on bascule
+/// l'interrupteur (spec §9) : un mot qui n'est pas l'un des cinq est refusé par Tauri avant
+/// d'atteindre une règle.
 ///
 /// Un état seul ne dit pas depuis quand il dure : c'est [`AgentStatus`] qui le date.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentState {

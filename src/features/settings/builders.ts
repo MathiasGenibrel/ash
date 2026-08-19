@@ -113,7 +113,11 @@ export function aNotificationsReport(
         summary: "macOS doesn't tell ash whether notifications are allowed",
         note: "if nothing appears while ash is in the background and an agent is waiting, the permission is the first thing to check:",
         path: "System Settings ▸ Notifications ▸ ash",
-        notified: ["waiting", "error"],
+        switches: [
+            { state: "waiting", enabled: true, means: "an agent is waiting for an answer" },
+            { state: "error", enabled: true, means: "an agent failed" },
+            { state: "done", enabled: false, means: "an agent finished" },
+        ],
         ...overrides,
     };
 }

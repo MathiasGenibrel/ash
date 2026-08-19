@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::notify::{Notice, Notifier};
+use super::preferences::{NotificationChoices, NotificationPreferences, NotificationStore};
 use crate::shared::time::{Clock, UnixMillis};
 
 /// L'heure qu'il est au début de chaque scénario — le 1ᵉʳ janvier 2026 à minuit UTC.
@@ -104,5 +105,34 @@ impl Notifier for FakeNotifier {
         if let Ok(mut posted) = self.0.lock() {
             posted.push(notice);
         }
+    }
+}
+
+/// Le fichier de préférences de notification, en mémoire.
+///
+/// Ici plutôt que dans `preferences.rs` parce qu'il sert **deux** modules : celui qui décide
+/// des trois interrupteurs, et le superviseur, qui doit pouvoir décrire un utilisateur ayant
+/// coupé `waiting` sans toucher au `$HOME` de qui lance les tests.
+pub struct FakeNotificationStore(Mutex<Option<NotificationChoices>>);
+
+impl FakeNotificationStore {
+    /// Les préférences telles qu'une session précédente les aurait laissées.
+    pub fn holding(choices: NotificationChoices) -> Arc<NotificationPreferences> {
+        Arc::new(NotificationPreferences::restore(Arc::new(Self(
+            Mutex::new(Some(choices)),
+        ))))
+    }
+}
+
+impl NotificationStore for FakeNotificationStore {
+    fn load(&self) -> Option<NotificationChoices> {
+        self.0.lock().ok().and_then(|held| *held)
+    }
+
+    fn save(&self, choices: NotificationChoices) -> Result<(), std::io::Error> {
+        if let Ok(mut held) = self.0.lock() {
+            *held = Some(choices);
+        }
+        Ok(())
     }
 }

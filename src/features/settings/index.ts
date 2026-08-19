@@ -12,6 +12,8 @@
 
 import "./settings.css";
 
+import type { AgentState } from "@/shared/ipc";
+
 import type {
     Appearance,
     FixAction,
@@ -252,7 +254,24 @@ export function mountSettings(
         stepFontSize: (step) => {
             void windowPorts.stepTerminalFontSize(step).catch(() => undefined);
         },
+        // L'interrupteur, lui, **rapporte** la section : contrairement au thème, il n'y a pas
+        // d'annonce à toutes les fenêtres — le réglage n'a qu'une surface, et c'est celle-ci.
+        // La position affichée reste donc celle que le backend a retenue, jamais celle qu'on
+        // vient de demander ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+        setNotification: (state, enabled) => {
+            void flipNotification(state, enabled);
+        },
     });
+
+    /** Bascule un interrupteur. Un refus laisse la section telle qu'elle était. */
+    async function flipNotification(state: AgentState, enabled: boolean): Promise<void> {
+        try {
+            notifications = await ports.setNotification(state, enabled);
+        } catch {
+            return;
+        }
+        draw();
+    }
 
     /** Ce qu'`apply` fait d'une correction proposée — un seul champ change à la fois. */
     function retarget(command: string, fix: FixAction): Promise<SettingsSnapshot> {
