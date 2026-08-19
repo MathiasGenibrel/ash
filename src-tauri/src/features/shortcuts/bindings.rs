@@ -632,8 +632,12 @@ mod tests {
             .action("tab:close", "Close Tab", Some("Cmd+W"))
     }
 
-    fn stroke(code: &str, command: bool, control: bool) -> KeyStroke {
+    /// Une frappe telle que la webview la rapporte : le caractère produit **et** la
+    /// position physique. Les deux coïncident sur un clavier US ; ce qui se passe quand ils
+    /// diffèrent est éprouvé dans `combination.rs`.
+    fn stroke(character: &str, code: &str, command: bool, control: bool) -> KeyStroke {
         KeyStroke {
+            key: character.to_owned(),
             code: code.to_owned(),
             command,
             control,
@@ -660,7 +664,7 @@ mod tests {
             .build();
 
         // When
-        let held = bindings.owner(&stroke("Tab", false, true));
+        let held = bindings.owner(&stroke("Tab", "Tab", false, true));
 
         // Then — un identifiant d'action, celui que `ash://menu-action` porte déjà : la
         // webview n'a ni table de touches ni règle de comparaison à tenir
@@ -678,13 +682,13 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:next", &stroke("KeyJ", true, false))
+            .bind("tab:next", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then — l'ancienne ne mène plus nulle part, la nouvelle mène à l'action
-        assert_eq!(bindings.owner(&stroke("Tab", false, true)), None);
+        assert_eq!(bindings.owner(&stroke("Tab", "Tab", false, true)), None);
         assert_eq!(
-            bindings.owner(&stroke("KeyJ", true, false)).as_deref(),
+            bindings.owner(&stroke("j", "KeyJ", true, false)).as_deref(),
             Some("tab:next")
         );
     }
@@ -699,7 +703,7 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then
@@ -727,7 +731,7 @@ mod tests {
 
         // When
         let rebound = bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then — et le menu doit être refait : c'est lui qui porte la touche
@@ -745,7 +749,7 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then — au format que l'analyseur de `muda` lit, celui de l'entrée de menu
@@ -760,7 +764,7 @@ mod tests {
 
         // When — on la capture sur `New Tab`
         bindings
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
 
         // Then — les deux lignes n'ont pas bougé, et le conflit nomme ses deux côtés et ses
@@ -785,7 +789,7 @@ mod tests {
         // Given
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
 
         // When
@@ -806,7 +810,7 @@ mod tests {
         // Given
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
 
         // When
@@ -840,7 +844,7 @@ mod tests {
         // `n changed` est sa seule contrepartie en en-tête
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
         assert_eq!(bindings.report().changed, 1);
 
@@ -859,7 +863,7 @@ mod tests {
         // Given
         let bindings = two_tabs().build();
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
         bindings.clear("tab:close").unwrap();
 
@@ -881,7 +885,7 @@ mod tests {
         two_tabs()
             .store(Arc::clone(&store) as Arc<dyn BindingStore>)
             .build()
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // When — la session suivante
@@ -922,7 +926,7 @@ mod tests {
             .store(Arc::clone(&store) as Arc<dyn BindingStore>)
             .build();
         chosen
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
         chosen.resolve(ConflictChoice::Give);
 
@@ -945,11 +949,11 @@ mod tests {
             .store(Arc::clone(&store) as Arc<dyn BindingStore>)
             .build();
         chosen
-            .bind("tab:new", &stroke("KeyW", true, false))
+            .bind("tab:new", &stroke("w", "KeyW", true, false))
             .unwrap();
         chosen.resolve(ConflictChoice::Give);
         chosen
-            .bind("tab:close", &stroke("KeyT", true, false))
+            .bind("tab:close", &stroke("t", "KeyT", true, false))
             .unwrap();
 
         // When
@@ -1004,7 +1008,7 @@ mod tests {
 
         // When
         bindings
-            .bind("tab:new", &stroke("KeyJ", true, false))
+            .bind("tab:new", &stroke("j", "KeyJ", true, false))
             .unwrap();
 
         // Then
@@ -1023,7 +1027,7 @@ mod tests {
 
         // When
         let report = bindings.report();
-        let refused = bindings.bind("tab:select:1", &stroke("KeyJ", true, false));
+        let refused = bindings.bind("tab:select:1", &stroke("j", "KeyJ", true, false));
 
         // Then
         let family = row(&report, "tab:select:1");
@@ -1062,6 +1066,7 @@ mod tests {
         // le terminal n'est pas interdite — elle est annoncée comme inefficace »
         let bindings = two_tabs().build();
         let taken = KeyStroke {
+            key: "f".to_owned(),
             code: "KeyF".to_owned(),
             command: true,
             control: true,
@@ -1088,7 +1093,7 @@ mod tests {
         let bindings = two_tabs().build();
 
         // When
-        let previewed = bindings.preview(&stroke("KeyJ", false, false));
+        let previewed = bindings.preview(&stroke("j", "KeyJ", false, false));
 
         // Then
         assert!(!previewed.accepted);
@@ -1104,7 +1109,7 @@ mod tests {
 
         // When
         let rebound = bindings
-            .bind("tab:new", &stroke("KeyT", true, false))
+            .bind("tab:new", &stroke("t", "KeyT", true, false))
             .unwrap();
 
         // Then — sans ça, une ligne serait en conflit avec elle-même, et le menu se

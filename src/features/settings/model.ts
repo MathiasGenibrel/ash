@@ -424,14 +424,20 @@ export function captureIntent(event: { key: string }): CaptureIntent {
 }
 
 /**
- * La frappe telle que le backend l'attend — le **code physique** et les quatre modificateurs.
+ * La frappe telle que le backend l'attend — le **caractère produit**, la position physique,
+ * et les quatre modificateurs.
  *
- * Le code plutôt que `key` : `KeyboardEvent.code` ne dépend pas de la disposition du clavier,
- * et c'est exactement le nom que l'analyseur d'accélérateurs de `muda` lit. Rien n'est décidé
- * ici — pas même « est-ce une combinaison valable »
- * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ * `key` d'abord, et c'est tout le sens de l'issue #133 : macOS apparie un équivalent clavier
+ * par **caractère**, pas par position. Sur un AZERTY, la touche marquée `W` est à la position
+ * `KeyZ` ; retenir la position posait `⌘Z` sur une touche qui joue `⌘W`, et l'action devenait
+ * injoignable. `code` part avec, en repli — le backend ne s'en sert que pour les caractères
+ * qu'aucun accélérateur ne sait écrire.
+ *
+ * Rien n'est décidé ici, pas même « est-ce une combinaison valable » : ce sont deux faits, et
+ * la règle est en Rust ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 export function readStroke(event: {
+    key: string;
     code: string;
     metaKey: boolean;
     ctrlKey: boolean;
@@ -439,6 +445,7 @@ export function readStroke(event: {
     shiftKey: boolean;
 }): KeyStroke {
     return {
+        key: event.key,
         code: event.code,
         command: event.metaKey,
         control: event.ctrlKey,

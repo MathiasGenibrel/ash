@@ -262,6 +262,14 @@ réclame. Mnémonique : **B**ranches, **G**raph, **W**orktrees, **M**erge, **I**
 Attention en cas de rebinding : `Cmd+Ctrl+F`, `Cmd+Ctrl+D` et `Cmd+Ctrl+Space` sont,
 eux, pris par le système.
 
+**Un raccourci est un caractère, pas une position de touche** — écrit le 2026-08-19, après
+l'issue #133. Ces combinaisons se lisent comme macOS les apparie : `Cmd+W` est la touche qui
+produit `w`, où qu'elle se trouve sur le clavier. Changer de disposition peut donc déplacer un
+raccourci d'une touche à l'autre — sur un AZERTY, `Cmd+W` se frappe à la première position de
+la rangée du haut, et `Cmd+Q` à celle où un QWERTY a le `A`. C'est la convention du système, et
+toutes ses applications s'y tiennent ; retenir la position aurait donné un raccourci que la
+touche pressée ne joue pas.
+
 Toutes ces actions doivent être également atteignables à la souris.
 
 ---
