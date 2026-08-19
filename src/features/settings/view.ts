@@ -1,3 +1,4 @@
+import type { AgentState } from "@/shared/ipc";
 import { button, FOCUS_KEY, paint, toNode, type UiChild } from "@/shared/ui";
 
 import type {
@@ -96,6 +97,14 @@ export interface SettingsViewActions {
     chooseTheme(mode: ThemeMode): void;
     /** Un pas de taille de police, jamais une taille : les bornes sont en Rust. */
     stepFontSize(step: FontStep): void;
+    /**
+     * L'un des trois interrupteurs de la section `notifications` (spec §9).
+     *
+     * Elle ne coupe rien : `features::agents` retient le choix, et c'est lui qui le consulte
+     * au moment de poster une bannière. La fenêtre redessine la section que le backend lui
+     * répond ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    setNotification(state: AgentState, enabled: boolean): void;
 }
 
 /**
@@ -188,7 +197,11 @@ export function settingsPanel(
 ): readonly UiChild[] {
     switch (scene.section) {
         case "notifications":
-            return notificationsSection(scene.notifications);
+            return notificationsSection(scene.notifications, {
+                setNotification: (state, enabled) => {
+                    actions.setNotification(state, enabled);
+                },
+            });
         case "shortcuts":
             return shortcutsSection(scene.shortcuts);
         case "appearance":

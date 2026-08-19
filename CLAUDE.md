@@ -37,6 +37,15 @@ bannière emporte l'identifiant de son onglet, macOS le rend au clic par un dél
 asynchrone, et le backend émet `ash://select-tab` : aucun fil n'attend jamais un geste de
 l'utilisateur, et rien ne sélectionne sans lui.
 
+**Ces trois règles sont désormais trois défauts, et trois interrupteurs** (spec §9,
+`[notifications]`) : `waiting` et `error` allumés, `done` éteint. Ils sont détenus par
+`agents` (`preferences.rs`, persistés dans `~/.ash/notifications.json` comme le thème l'est
+dans `theme.json`) et **consultés par le superviseur au moment de poster**, jamais par
+l'écran — une bannière sort quand la fenêtre n'est pas là, donc un filtre d'interface ne
+cacherait que ce qui est déjà passé sous les yeux de l'utilisateur. La section
+`notifications` de la fenêtre de réglages les montre et les bascule ; elle n'en détient
+aucun, et `done` ne notifie toujours pas tant que personne ne l'a allumé.
+
 **Rien de tout cela ne fonctionne en `bun run tauri dev`**, et c'est irréductible :
 `UNUserNotificationCenter` exige une application empaquetée et *tue* le processus qui le
 demande sans l'être. Un garde le franchit avant tout appel, la fenêtre de réglages dit alors

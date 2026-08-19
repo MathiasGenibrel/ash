@@ -209,9 +209,24 @@ export interface Verified {
 export type NotificationPermission = "granted" | "denied" | "undisclosed";
 
 /**
+ * Un interrupteur de la section `notifications` (spec §9, `[notifications]`).
+ *
+ * Sa position vient du backend, et y retourne : la fenêtre ne bascule rien elle-même — elle
+ * demande, et redessine ce que le backend lui répond
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Sans quoi un interrupteur
+ * resterait allumé à l'écran alors que la bannière ne sortirait plus, ou l'inverse.
+ */
+export interface NotificationSwitch {
+    state: AgentState;
+    enabled: boolean;
+    /** Ce que l'état veut dire, en quelques mots — écrit en Rust, comme le reste. */
+    means: string;
+}
+
+/**
  * La section `notifications` de la fenêtre, telle que le backend la compose (spec §8).
  *
- * Rien n'est décidé ici, pas même les deux états qui interrompent : ils viennent de
+ * Rien n'est décidé ici, pas même quels états peuvent interrompre : ils viennent de
  * `features/agents`, seul propriétaire de ce que « notifier » veut dire
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
@@ -223,8 +238,8 @@ export interface NotificationsReport {
     note: string;
     /** Le chemin où l'autorisation se donne, mot pour mot. */
     path: string;
-    /** Les états qui interrompent l'utilisateur, dans l'ordre de la spec §8. */
-    notified: readonly AgentState[];
+    /** Les trois interrupteurs, dans l'ordre de la spec §8. */
+    switches: readonly NotificationSwitch[];
 }
 
 /**
@@ -326,6 +341,15 @@ export interface SettingsPorts {
      * l'autorisation macOS se change dans les Réglages Système pendant qu'Ash tourne.
      */
     notifications(): Promise<NotificationsReport>;
+    /**
+     * Bascule l'un des trois interrupteurs (spec §9, `[notifications]`).
+     *
+     * Elle rend la section **recomposée par le backend** : c'est lui qui détient la position
+     * des trois, et l'écran ne fait que la rendre. Un refus laisse donc la section telle
+     * qu'elle était — un interrupteur qui bougerait sans que le backend l'ait retenu
+     * promettrait le silence à qui continuerait d'être dérangé.
+     */
+    setNotification(state: AgentState, enabled: boolean): Promise<NotificationsReport>;
     declareTool(draft: ToolDraft): Promise<SettingsSnapshot>;
     forgetTool(command: string): Promise<SettingsSnapshot>;
     /** Change le dossier ou l'adaptateur d'une entrée, et relance la séquence. */

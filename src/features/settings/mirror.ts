@@ -20,6 +20,7 @@ import type { Mismatch as RustMismatch } from "@/shared/ipc/generated/Mismatch";
 import type { NewTool as RustNewTool } from "@/shared/ipc/generated/NewTool";
 import type { NotificationPermission as RustNotificationPermission } from "@/shared/ipc/generated/NotificationPermission";
 import type { NotificationsReport as RustNotificationsReport } from "@/shared/ipc/generated/NotificationsReport";
+import type { NotificationSwitch as RustNotificationSwitch } from "@/shared/ipc/generated/NotificationSwitch";
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
 import type { Shortcut as RustShortcut } from "@/shared/ipc/generated/Shortcut";
 import type { SuggestedFix as RustSuggestedFix } from "@/shared/ipc/generated/SuggestedFix";
@@ -42,6 +43,7 @@ import type {
     Mismatch,
     NotificationPermission,
     NotificationsReport,
+    NotificationSwitch,
     SettingsSnapshot,
     Shortcut,
     SuggestedFix,
@@ -84,15 +86,18 @@ export type SettingsSnapshotStillMirrorsRust = Assert<
 /**
  * La section `notifications` (spec §8), et l'autorisation qu'elle affiche.
  *
- * Elle est vérifiée comme le reste, et pas seulement par prudence : `notified` porte les
- * deux états qui interrompent, et un état ajouté ou retiré côté `agents` doit se voir ici
- * plutôt qu'à l'écran.
+ * Elle est vérifiée comme le reste, et pas seulement par prudence : `switches` porte les
+ * états qui peuvent interrompre **et** leur position, et un interrupteur ajouté ou retiré
+ * côté `agents` doit se voir ici plutôt qu'à l'écran.
  */
 export type NotificationPermissionStillMirrorsRust = Assert<
     Mirrors<RustNotificationPermission, NotificationPermission>
 >;
 export type NotificationsReportStillMirrorsRust = Assert<
     Mirrors<RustNotificationsReport, NotificationsReport>
+>;
+export type NotificationSwitchStillMirrorsRust = Assert<
+    Mirrors<RustNotificationSwitch, NotificationSwitch>
 >;
 
 /** Ce que l'event `ash://settings-verified` porte — la ligne `hooks` comprise (#16). */

@@ -864,10 +864,11 @@
     color: var(--ash-fg-done);
 }
 
-/* ── La section `notifications` (spec §8) ──────────────────────────────────────────────
+/* ── La section `notifications` (spec §8, spec §9 `[notifications]`) ───────────────────
  *
- * Trois lignes de texte et aucun contrôle : Ash n'ouvre pas les Réglages Système à la place
- * de l'utilisateur, il lui dit où aller. Le chemin est donc le seul élément mis en avant. */
+ * Deux lignes de texte, puis les trois interrupteurs. Aucun contrôle ne mène aux Réglages
+ * Système : Ash ne les ouvre pas à la place de l'utilisateur, il lui dit où aller — le chemin
+ * est donc le seul élément mis en avant de la partie haute. */
 .settings-notifications-permission {
     padding: 12px 16px 4px;
     font-size: 12.5px;
@@ -886,6 +887,40 @@
 
 .settings-notified-state {
     color: var(--ash-fg-dim);
+}
+
+/* Une ligne par interrupteur, sur la grille de la section `appearance` : les deux sections
+ * alignent leurs contrôles sur le même bord, et l'œil descend le long d'un seul. */
+.settings-notification-row {
+    flex: none;
+    padding-top: 6px;
+}
+
+.settings-notification-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 4px;
+}
+
+.settings-notification-line .settings-notified-state {
+    width: 78px;
+    flex: none;
+    font-size: 12px;
+}
+
+/* Ce que l'état veut dire — la prose de la ligne, poussée par le bouton vers la droite. */
+.settings-notification-means {
+    flex: 1;
+    font-size: 11px;
+    color: var(--ash-fg-faint);
+}
+
+/* Un interrupteur allumé est teinté comme le thème en vigueur : c'est la même question posée
+ * à l'écran — lequel est en cours ? — et il n'y a aucune raison d'y répondre deux fois. */
+.settings-notification-line .settings-button[aria-pressed="true"] {
+    background: var(--ash-bg-selected);
+    color: var(--ash-fg-strong);
 }
 
 /* ── La section `appearance` (spec §9) ─────────────────────────────────────────────────
