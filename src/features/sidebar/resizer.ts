@@ -1,6 +1,8 @@
 import {
     dragOutcome,
+    grabOffset,
     handleOffset,
+    type DragOutcome,
     resizeByKey,
     widthPercent,
     MAX_WIDTH_FRACTION,
@@ -68,8 +70,15 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
     handle.setAttribute("aria-hidden", "true");
     element.append(handle);
 
-    /** Ce que le dernier `pointermove` a donné — relu au relâchement, et lui seul décide. */
-    let dragging: { width: number; willCollapse: boolean } | null = null;
+    /**
+     * Le geste en cours : l'écart au trait retenu à la saisie, et ce que le dernier
+     * `pointermove` a donné.
+     *
+     * `outcome` reste `null` tant que rien n'a bougé, et c'est ce qui distingue un glissement
+     * d'un **simple clic** : cliquer le bord sans glisser ne change aucune largeur et
+     * n'annonce rien au backend.
+     */
+    let dragging: { grab: number; outcome: DragOutcome | null } | null = null;
 
     // Le séparateur ne porte **pas** de classe de repli : la colonne repliée se dessine par
     // sa propre `is-collapsed` (`view.ts`), et le séparateur, lui, se place sur le bord par la
@@ -90,10 +99,11 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
         followPointer(event);
         if (dragging === null) return;
 
-        // Pendant le glissement, la position du pointeur dans la fenêtre **est** la largeur :
-        // la colonne part du bord gauche, il n'y a pas de décalage à retenir.
-        dragging = dragOutcome(event.clientX, ports.viewportWidth());
-        ports.preview(dragging.width);
+        // L'écart au trait est celui de la saisie, jamais celui de l'image en cours : c'est ce
+        // qui fait que le bord suit le pointeur au lieu de le rejoindre d'un saut.
+        const outcome = dragOutcome(event.clientX, ports.viewportWidth(), dragging.grab);
+        dragging = { grab: dragging.grab, outcome };
+        ports.preview(outcome.width);
     });
 
     element.addEventListener("pointerdown", (event) => {
@@ -102,17 +112,22 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
         // La capture est ce qui garde la poignée visible et le curseur en `col-resize` quand
         // le pointeur sort de la zone — c'est-à-dire pendant tout glissement un peu vif.
         element.setPointerCapture(event.pointerId);
-        dragging = dragOutcome(event.clientX, ports.viewportWidth());
+        // Mesuré une fois, au contact, et sur la boîte réelle de la zone : le trait est à
+        // `GRAB_OVERHANG` de son bord gauche, quelle que soit la largeur du moment — repliée
+        // comprise. Rien n'est montré ni annoncé tant que le pointeur n'a pas bougé.
+        dragging = { grab: grabOffset(event.clientX, element.getBoundingClientRect().left), outcome: null };
         element.classList.add("is-dragging");
         document.documentElement.classList.add(DRAGGING_CLASS);
     });
 
     const finish = (event: PointerEvent): void => {
-        const outcome = dragging;
+        const outcome = dragging?.outcome ?? null;
         dragging = null;
         element.classList.remove("is-dragging");
         document.documentElement.classList.remove(DRAGGING_CLASS);
         if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+        // Un clic sans glissement : rien n'a été montré, rien n'est décidé. Commettre la
+        // largeur d'un pointeur immobile est exactement le saut que l'écart de saisie évite.
         if (outcome === null) return;
 
         // Relâcher sous le plancher referme la colonne, **sans toucher à la largeur** : c'est
