@@ -365,12 +365,15 @@ export interface ShortcutsReport {
 /**
  * Une frappe, telle que la webview la rapporte. Miroir de `KeyStroke` en Rust.
  *
- * C'est un **fait**, pas une décision : le code physique de la touche et l'état des quatre
- * modificateurs. C'est le backend qui dit si ça fait un raccourci
- * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — sans ce partage, la table
- * des noms de touches existerait des deux côtés de la frontière.
+ * Ce sont des **faits**, pas une décision : le caractère produit, la position physique de la
+ * touche, et l'état des quatre modificateurs. C'est le backend qui dit lequel des deux fait
+ * le raccourci ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — sans ce
+ * partage, la table des noms de touches existerait des deux côtés de la frontière.
  */
 export interface KeyStroke {
+    /** `KeyboardEvent.key` — le caractère produit, ou le nom d'une touche qui n'en produit pas. */
+    key: string;
+    /** `KeyboardEvent.code` — la position physique, nommée d'après un clavier US. */
     code: string;
     command: boolean;
     control: boolean;
