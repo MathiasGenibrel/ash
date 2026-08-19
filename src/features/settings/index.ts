@@ -176,6 +176,12 @@ export function mountSettings(
 
     const view = new SettingsView({
         selectSection: (next) => {
+            // Une capture ouverte n'a plus de bloc où s'afficher dès qu'on change de
+            // section, et c'est le même filet que le `blur` de la fenêtre : sans elle, les
+            // entrées du menu resteraient éteintes et chaque frappe serait avalée par un
+            // bloc qu'on ne voit plus — `esc` en sortirait, mais rien ne dirait de le
+            // presser.
+            if (capture !== null) closeCapture();
             section = next;
             // L'autorisation macOS se change dans les Réglages Système pendant qu'Ash
             // tourne : la relire en ouvrant la section est la seule façon de ne pas
