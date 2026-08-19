@@ -53,18 +53,21 @@
 //! des raccourcis côté webview — aurait donné deux chemins différents pour la souris et
 //! pour le clavier.
 //!
-//! **Ce module a donc deux lecteurs, et un seul jeu de valeurs pour les deux.** Le menu
-//! natif se construit à partir de [`descriptor`], et la section `shortcuts` de la fenêtre de
-//! réglages lit la même table par [`menu_shortcuts`] : une combinaison recopiée en
+//! **La liste des raccourcis n'est plus ici — elle est dans `features::shortcuts`, et ce
+//! menu s'en déduit.** C'est le déplacement de l'issue #22, et il ne dédouble rien : la
+//! liste unique de #110 a changé de côté. [`descriptor`] ne porte plus qu'un **défaut** par
+//! action ; la combinaison en vigueur est demandée aux liaisons, par [`item`], et le menu se
+//! **refait** ([`rebuild`]) quand l'une d'elles change. Une combinaison recopiée en
 //! TypeScript aurait fini par annoncer un raccourci que le menu ne déclare plus, et c'est
 //! l'écran des réglages qu'on croit quand les deux ne disent pas la même chose.
 //!
-//! Il porte aussi [`theme_set_mode`], la **seconde surface** du choix de thème. Elle est ici
-//! et non dans `features::theme` parce qu'un choix venu de la fenêtre de réglages doit
-//! corriger la coche du menu, et qu'une feature n'a pas à connaître la forme d'un menu — la
-//! remarque de [`check_only`] vaut mot pour mot pour elle.
+//! Il porte donc les commandes de la section `shortcuts` ([`menu_shortcuts`],
+//! [`shortcut_bind`], et les quatre autres), comme il porte [`theme_set_mode`] : elles ont
+//! toutes à corriger le menu — une coche, un accélérateur —, et une feature n'a pas à
+//! connaître la forme d'un menu. La remarque de [`check_only`] vaut mot pour mot pour elles.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use tauri::menu::{
     AboutMetadata, CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu,
@@ -72,10 +75,23 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::features::settings::commands as settings;
+use crate::features::shortcuts::{
+    ActionBinding, Bindings, CapturePreview, Combination, ConflictChoice, KeyStroke, Listing,
+    ShortcutError, ShortcutsReport,
+};
 use crate::features::theme::{commands as theme, FontStep, ThemeMode};
 
 /// Nom de l'event qui porte l'action choisie. Contrat avec `src/app/menu.ts`.
 const MENU_ACTION_EVENT: &str = "ash://menu-action";
+
+/// Nom de l'event qui dit qu'une liaison a changé. Contrat avec `src/app/menu.ts`.
+///
+/// Il ne porte **rien** : ce n'est pas une valeur, c'est un signal. Chaque surface redemande
+/// ce dont elle a besoin — le pied de la sidebar les glyphes d'une action, la fenêtre de
+/// réglages l'instantané entier. Faire voyager la liste ferait de chaque abonné le détenteur
+/// d'une copie ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et le pied de la
+/// colonne n'a que faire des douze autres lignes.
+const SHORTCUTS_CHANGED_EVENT: &str = "ash://shortcuts-changed";
 
 /// Label de la **seule** fenêtre qui porte des onglets.
 ///
@@ -95,14 +111,23 @@ const DIRECT_TABS: u8 = 9;
 
 /// Construit le menu de l'application.
 ///
-/// `theme` est le mode retenu de la session précédente : le menu est construit avant que
-/// la webview n'existe, et une coche posée après coup serait une seconde source de vérité.
-pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Result<Menu<R>> {
+/// `theme_mode` est le mode retenu de la session précédente : le menu est construit avant
+/// que la webview n'existe, et une coche posée après coup serait une seconde source de
+/// vérité. `bindings` est la même chose pour les touches — les liaisons sont relues avant,
+/// et **c'est d'elles que chaque accélérateur vient**.
+///
+/// Elle est appelée deux fois dans la vie du processus : au démarrage, et à chaque
+/// changement de liaison — voir [`rebuild`].
+pub fn build<R: Runtime>(
+    app: &AppHandle<R>,
+    theme_mode: ThemeMode,
+    bindings: &Bindings,
+) -> tauri::Result<Menu<R>> {
     // `Cmd+,` ouvre les réglages : c'est le raccourci que macOS attend dans le menu
     // applicatif, et le seul endroit où un utilisateur va le chercher. Il est écrit
     // `Cmd+Comma` parce que l'analyseur d'accélérateurs de Tauri lit des **noms** de
     // touches, pas des caractères — voir [`descriptor`], où il est déclaré.
-    let settings_item = item(app, Action::OpenSettings)?;
+    let settings_item = item(app, Action::OpenSettings, bindings)?;
 
     // Le menu applicatif porte le nom du binaire courant, pas un littéral : en debug il dit
     // « Ash-dev », et c'est souvent le seul endroit où l'on voit d'un coup d'œil laquelle
@@ -148,9 +173,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     // n'a pas de seconde fenêtre de terminal à ouvrir, donc `Cmd+N` ne fait plus rien
     // plutôt que de rester un doublon : deux conventions pour le même geste, c'est celle
     // qu'on ne connaît pas qui gagne.
-    let new_tab = item(app, Action::NewTab)?;
-    let new_home_tab = item(app, Action::NewHomeTab)?;
-    let close_tab = item(app, Action::CloseTab)?;
+    let new_tab = item(app, Action::NewTab, bindings)?;
+    let new_home_tab = item(app, Action::NewHomeTab, bindings)?;
+    let close_tab = item(app, Action::CloseTab, bindings)?;
 
     // `Ctrl+Tab` / `Ctrl+Shift+Tab` : la convention des navigateurs et d'iTerm2 pour
     // circuler, là où `Cmd+1`…`Cmd+9` s'arrête à neuf et ne dit rien du « suivant ».
@@ -161,15 +186,15 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     // `src/app/shortcuts.ts`. Les garder déclarés fait aussi que le jour où `muda`
     // corrigera son équivalent clavier, le chemin natif reprendra la main tout seul, sans
     // double déclenchement : un accélérateur capté par AppKit n'atteint jamais la webview.
-    let next_tab = item(app, Action::NextTab)?;
-    let previous_tab = item(app, Action::PreviousTab)?;
-    let clear = item(app, Action::ClearScrollback)?;
+    let next_tab = item(app, Action::NextTab, bindings)?;
+    let previous_tab = item(app, Action::PreviousTab, bindings)?;
+    let clear = item(app, Action::ClearScrollback, bindings)?;
 
     // Les neuf entrées existent en permanence, même quand il y a moins d'onglets : une
     // action qui ne désigne personne est ignorée côté webview. Les activer et les
     // désactiver au fil des ouvertures ferait vivre l'état des onglets à deux endroits.
     let select: Vec<MenuItem<R>> = (1..=DIRECT_TABS)
-        .map(|position| item(app, Action::SelectTab(position)))
+        .map(|position| item(app, Action::SelectTab(position), bindings))
         .collect::<tauri::Result<_>>()?;
 
     let separator = PredefinedMenuItem::separator(app)?;
@@ -195,7 +220,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     // `Cmd+B` est un raccourci de **fenêtre**, pas d'onglet : il vit dans « View », à côté
     // de ce qui touchera à l'affichage. Comme les autres, il passe par le menu natif pour
     // ne pas partir dans le shell.
-    let toggle_sidebar = item(app, Action::ToggleSidebar)?;
+    let toggle_sidebar = item(app, Action::ToggleSidebar, bindings)?;
     // La taille de police du terminal — `Cmd++`, `Cmd+-`, `Cmd+0`.
     //
     // Dans « View » et non dans « Terminal », parce que c'est un réglage de **toute
@@ -222,7 +247,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
     // sous l'arbre que `muda` construit. À rouvrir si la plainte remonte, pas avant.
     let font_sizes: Vec<MenuItem<R>> = FontStep::ALL
         .into_iter()
-        .map(|step| item(app, Action::ResizeFont(step)))
+        .map(|step| item(app, Action::ResizeFont(step), bindings))
         .collect::<tauri::Result<_>>()?;
 
     // Les trois thèmes, en coches exclusives. Ce n'est plus le seul point d'entrée du choix
@@ -241,7 +266,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
                 shown.label.as_ref(),
                 true,
                 mode == theme_mode,
-                shown.accelerator.as_deref(),
+                shown.default.as_deref(),
             )
         })
         .collect::<tauri::Result<_>>()?;
@@ -286,10 +311,12 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, theme_mode: ThemeMode) -> tauri::Re
 
 /// Ce que le menu affiche d'une action, et où il la range.
 ///
-/// C'est la table unique du module, et elle est **exhaustive par construction** : le `match`
-/// de [`descriptor`] couvre tout [`Action`], donc une action de plus ne compile pas tant
-/// qu'elle n'a pas dit son libellé, son groupe et son accélérateur. C'est ce qui laisse la
-/// fenêtre de réglages lire les raccourcis au lieu d'en tenir une seconde liste.
+/// C'est la table des **défauts** du module, et elle est **exhaustive par construction** :
+/// le `match` de [`descriptor`] couvre tout [`Action`], donc une action de plus ne compile
+/// pas tant qu'elle n'a pas dit son libellé, son groupe et son raccourci d'origine.
+///
+/// Ce qu'elle ne dit plus, depuis l'issue #22 : la combinaison **en vigueur**. Celle-là est
+/// aux liaisons (`features::shortcuts`), qui partent d'ici et gardent les écarts.
 struct Descriptor {
     /// Le sous-menu où l'action vit, en un mot — et le groupe sous lequel les réglages la
     /// listent. Les réglages ne le traduisent pas : un titre de groupe écrit là-bas
@@ -297,25 +324,53 @@ struct Descriptor {
     group: &'static str,
     /// Le libellé, dans la capitalisation de macOS pour un menu.
     label: Cow<'static, str>,
-    /// L'accélérateur au format de `muda`, ou `None` pour une entrée sans raccourci.
-    accelerator: Option<Cow<'static, str>>,
+    /// L'accélérateur **d'origine**, ou `None` pour une entrée sans raccourci. C'est lui que
+    /// `back to default` et `reset all` rendent, et à quoi `n changed` compare.
+    default: Option<Cow<'static, str>>,
+    /// Comment la section `shortcuts` montre l'action.
+    listing: Listing,
 }
 
-/// Le libellé, le groupe et l'accélérateur d'une action — **la** table du module.
+/// Le libellé, le groupe et le raccourci d'origine d'une action — **la** table du module.
 ///
 /// Les noms de touches sont ceux de l'analyseur de Tauri, qui lit des **noms** et non des
 /// caractères : d'où `Cmd+Comma`, `Cmd+Minus`, et `Cmd+NumpadAdd` pour le `+` du clavier
 /// principal (voir la note au-dessus des entrées de taille de police dans [`build`]).
-/// [`keys`] est ce qui les rend tels que macOS les écrit.
+/// `Combination::glyphs` est ce qui les rend tels que macOS les écrit.
 fn descriptor(action: Action) -> Descriptor {
-    let (group, label, accelerator) = match action {
+    let listing = match action {
+        // Un thème n'a pas de raccourci, donc pas de ligne : en inventer un prendrait une
+        // touche au shell pour rien.
+        Action::ChooseTheme(_) => Listing::Hidden,
+        // Les neuf positions se lisent en **une** ligne, d'un bout à l'autre — la spec §4.4
+        // les écrit ainsi, et neuf lignes identiques à un rang près feraient perdre les
+        // autres raccourcis dans la liste. Elle ne se capture pas : voir `Listing::Family`.
+        Action::SelectTab(1) => Listing::Family {
+            through: Action::SelectTab(DIRECT_TABS).id(),
+        },
+        Action::SelectTab(_) => Listing::Hidden,
+        _ => Listing::Row,
+    };
+
+    let (group, label, default) = match action {
         Action::OpenSettings => ("application", "Settings…", Some("Cmd+Comma")),
         Action::NewTab => ("terminal", "New Tab", Some("Cmd+T")),
         Action::NewHomeTab => ("terminal", "New Tab at ~", Some("Cmd+Shift+T")),
         Action::CloseTab => ("terminal", "Close Tab", Some("Cmd+W")),
         Action::NextTab => ("terminal", "Select Next Tab", Some("Ctrl+Tab")),
         Action::PreviousTab => ("terminal", "Select Previous Tab", Some("Ctrl+Shift+Tab")),
-        Action::ClearScrollback => ("terminal", "Clear Scrollback", Some("Cmd+K")),
+        // **Aucun raccourci par défaut, et c'est `⌘K` qui est en jeu.** La touche appartient
+        // au shell — `⌃K` coupe la fin de ligne, `⌘K` efface l'écran dans les terminaux de
+        // macOS —, et c'est justement pour ça qu'Ash ne peut pas la déclarer « au cas où » :
+        // le deuxième point de l'en-tête de ce module dit qu'un accélérateur de menu est
+        // consommé par `performKeyEquivalent:` **avant** d'atteindre la webview. La poser
+        // ici, c'est la retirer au shell — il n'y a pas de moyen terme.
+        //
+        // L'entrée de menu, elle, reste : l'action existe, elle est cliquable à la souris
+        // (spec §4.4), et la fenêtre de réglages la propose comme n'importe quelle autre. Qui
+        // veut `⌘K` pour Ash peut la lui donner — et `reserved.rs` l'avertira alors que le
+        // terminal la lui prenait.
+        Action::ClearScrollback => ("terminal", "Clear Scrollback", None),
         Action::ToggleSidebar => ("view", "Toggle Sidebar", Some("Cmd+B")),
         // Les deux seules entrées dont le libellé et l'accélérateur se calculent : la
         // position d'onglet est dans les deux, et `DIRECT_TABS` décide combien il y en a.
@@ -323,7 +378,8 @@ fn descriptor(action: Action) -> Descriptor {
             return Descriptor {
                 group: "terminal",
                 label: Cow::Owned(format!("Tab {position}")),
-                accelerator: Some(Cow::Owned(format!("Cmd+{position}"))),
+                default: Some(Cow::Owned(format!("Cmd+{position}"))),
+                listing,
             }
         }
         Action::ResizeFont(step) => (
@@ -335,130 +391,294 @@ fn descriptor(action: Action) -> Descriptor {
                 FontStep::Default => "Cmd+0",
             }),
         ),
-        // Pas d'accélérateur, donc pas de ligne dans la section `shortcuts` : ce n'en est
-        // pas un, et en inventer un prendrait une touche au shell pour rien.
         Action::ChooseTheme(mode) => ("view", mode.label(), None),
     };
 
     Descriptor {
         group,
         label: Cow::Borrowed(label),
-        accelerator: accelerator.map(Cow::Borrowed),
+        default: default.map(Cow::Borrowed),
+        listing,
     }
 }
 
-/// Une entrée de menu, telle que [`descriptor`] la décrit.
-fn item<R: Runtime>(app: &AppHandle<R>, action: Action) -> tauri::Result<MenuItem<R>> {
-    let shown = descriptor(action);
-    MenuItem::with_id(
-        app,
-        action.id(),
-        shown.label.as_ref(),
-        true,
-        shown.accelerator.as_deref(),
-    )
-}
-
-/// Un raccourci tel que le menu le déclare — une ligne de la section `shortcuts` (spec §4.4).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct Shortcut {
-    /// Le sous-menu où l'action vit : c'est ce qui **groupe** la liste.
-    pub group: String,
-    pub label: String,
-    /// La combinaison, écrite comme macOS l'écrit — `⇧⌘T`, `⌃⇥`, `⌘+`.
-    pub keys: String,
-}
-
-/// Les raccourcis que **cette** application déclare, pour la fenêtre de réglages (spec §4.4).
+/// Toutes les actions du menu, telles que les liaisons les reçoivent.
 ///
-/// La liste est celle du menu, jamais une copie : c'est le sens de la remarque d'en-tête sur
-/// les deux lecteurs de ce module. Elle est donc plus courte que le tableau de la spec — le
-/// groupe git (`Cmd+Ctrl+B`, `G`, `W`, `M`, `I`) n'a pas encore d'entrée de menu, donc pas
-/// encore d'effet, et annoncer un raccourci qui ne fait rien serait exactement le mensonge
-/// que la lecture depuis la source évite.
-///
-/// **Elle se déduit de [`Action::every`], et n'est pas une seconde liste** : une action de plus
-/// dans le menu apparaît donc ici sans qu'on y pense, là où une table à tenir à la main aurait
-/// laissé un raccourci déclaré et pourtant invisible dans l'écran qui prétend les montrer tous.
-/// Ce qui la raccourcit tient en deux règles, pas en une sélection :
-///
-/// - une action sans accélérateur n'a pas de ligne — c'est [`shortcut`] qui le dit, et ça vaut
-///   pour les trois thèmes ;
-/// - la famille des positions d'onglet n'en a qu'**une**, composée de ses deux extrémités
-///   (`Tab 1 … Tab 9`, `⌘1 … ⌘9`) : la spec §4.4 l'écrit ainsi, et neuf lignes identiques à un
-///   rang près feraient perdre les huit autres raccourcis dans la liste. Les trois pas de
-///   taille de police, eux, gardent une ligne chacun — ils n'ont pas le même effet.
-#[tauri::command]
-pub fn menu_shortcuts() -> Vec<Shortcut> {
+/// C'est le **seul** point de contact entre le menu et `features::shortcuts` : la feature
+/// ne sait pas ce qu'une action fait, et le menu ne sait pas comment une liaison est gardée.
+/// Un défaut que `Combination::parse` refuserait est laissé sans raccourci plutôt que de
+/// paniquer au démarrage — la table est en dur au-dessus, donc un tel refus serait un bug de
+/// ce fichier, et un menu amputé d'une touche vaut mieux qu'une application qui n'ouvre pas.
+pub fn action_bindings() -> Vec<ActionBinding> {
     Action::every()
         .into_iter()
-        .filter(|action| !matches!(action, Action::SelectTab(position) if *position != 1))
-        .filter_map(shortcut)
+        .map(|action| {
+            let shown = descriptor(action);
+            ActionBinding {
+                action: action.id(),
+                group: shown.group.to_owned(),
+                label: shown.label.into_owned(),
+                default: shown
+                    .default
+                    .and_then(|written| Combination::parse(&written).ok()),
+                listing: shown.listing,
+            }
+        })
         .collect()
 }
 
-/// Une ligne de la liste, ou `None` quand l'action n'a pas de raccourci.
-fn shortcut(action: Action) -> Option<Shortcut> {
+/// Une entrée de menu : son libellé vient de [`descriptor`], **sa touche des liaisons**.
+fn item<R: Runtime>(
+    app: &AppHandle<R>,
+    action: Action,
+    bindings: &Bindings,
+) -> tauri::Result<MenuItem<R>> {
     let shown = descriptor(action);
-    let written = keys(shown.accelerator.as_deref()?);
-
-    // La famille des positions se lit d'un bout à l'autre : « Tab 1 … Tab 9 », « ⌘1 … ⌘9 ».
-    let family = match action {
-        Action::SelectTab(_) => Some(descriptor(Action::SelectTab(DIRECT_TABS))),
-        _ => None,
-    };
-
-    Some(match family {
-        Some(last) => Shortcut {
-            group: shown.group.to_owned(),
-            label: format!("{} … {}", shown.label, last.label),
-            keys: format!("{written} … {}", keys(last.accelerator.as_deref()?)),
-        },
-        None => Shortcut {
-            group: shown.group.to_owned(),
-            label: shown.label.into_owned(),
-            keys: written,
-        },
-    })
+    let id = action.id();
+    let accelerator = bindings.accelerator(&id);
+    MenuItem::with_id(app, id, shown.label.as_ref(), true, accelerator.as_deref())
 }
 
-/// Un accélérateur de `muda`, écrit comme macOS l'écrit dans un menu.
+/// Refait le menu applicatif à partir des liaisons en vigueur.
 ///
-/// Deux raisons de le faire ici plutôt que dans la fenêtre de réglages. La première est que
-/// l'ordre des modificateurs est **celui de macOS** — `⌃⌥⇧⌘` — et non celui dans lequel
-/// l'accélérateur les déclare : `Cmd+Shift+T` s'écrit `⇧⌘T`. La seconde est `NumpadAdd`, qui
-/// n'est pas le pavé numérique mais le seul nom que l'analyseur de `muda` traduise en `+`
-/// (voir la note de [`build`]) : cette bizarrerie est documentée ici, et une table de
-/// traduction en TypeScript en serait la seconde copie.
-fn keys(accelerator: &str) -> String {
-    // Le dernier segment est la touche ; ce qui précède sont les modificateurs. Un
-    // accélérateur sans modificateur n'a pas de `+`, et vaut alors la touche seule.
-    let (modifiers, key) = match accelerator.rsplit_once('+') {
-        Some((modifiers, key)) => (modifiers, key),
-        None => ("", accelerator),
+/// **C'est le seul chemin qui tienne pour les deux sens d'un changement.**
+/// `MenuItem::set_accelerator` existe dans `muda` 0.19.3, et il aurait suffi pour *poser*
+/// une touche ; mais son implémentation macOS (`MenuChild::set_key_accelerator`) n'écrit
+/// dans le `NSMenuItem` que si le nouvel accélérateur est `Some` — passer `None` met à jour
+/// le champ Rust et **laisse la touche sur l'entrée**. Un `⌫` n'aurait donc rien retiré du
+/// menu : l'écran aurait dit « aucun raccourci » pendant que la touche continuait de jouer
+/// l'action, et c'est exactement le mensonge que la liste unique existe pour éviter.
+/// `AppHandle::set_menu` repose le menu entier, sur le fil principal, et les deux sens
+/// marchent.
+///
+/// Les coches de thème sont reposées avec, parce qu'un menu neuf ne sait rien du mode en
+/// cours — c'est la même raison qui fait passer `theme_mode` à [`build`] au démarrage.
+///
+/// Un échec n'est pas propagé : le raccourci est déjà retenu par les liaisons, et la seule
+/// conséquence d'un menu non refait est qu'il reste sur l'ancienne touche jusqu'au
+/// redémarrage. Éteindre l'application pour ça serait pire.
+fn rebuild<R: Runtime>(app: &AppHandle<R>) {
+    let Some(bindings) = app.try_state::<Arc<Bindings>>() else {
+        return;
     };
+    let mode = app
+        .try_state::<Arc<crate::features::theme::ThemeState>>()
+        .map(|theme| theme.mode())
+        .unwrap_or_default();
+    if let Ok(menu) = build(app, mode, bindings.inner().as_ref()) {
+        let _ = app.set_menu(menu);
+    }
+}
 
-    let mut written = String::new();
-    for (name, glyph) in [("Ctrl", "⌃"), ("Alt", "⌥"), ("Shift", "⇧"), ("Cmd", "⌘")] {
-        if modifiers.split('+').any(|declared| declared == name) {
-            written.push_str(glyph);
+/// Éteint — ou rallume — les entrées d'Ash pendant qu'une combinaison se capture.
+///
+/// **Sans elle, la capture ne peut pas capturer grand-chose.** Sur macOS, un accélérateur de
+/// menu est consommé par `performKeyEquivalent:` avant d'atteindre la webview : c'est
+/// l'argument même du menu natif (voir l'en-tête), et il se retourne contre le bloc de
+/// capture. `⌘W` frappé pendant une capture fermerait la fenêtre de réglages au lieu d'être
+/// lu, `⌘T` ouvrirait un onglet — donc échanger `⌘T` et `⌘W` serait tout simplement
+/// impossible.
+///
+/// Une entrée **désactivée** ne répond pas à son équivalent clavier : la touche traverse
+/// alors jusqu'à la webview, qui la rapporte. C'est le seul geste de ce module qui touche à
+/// l'état d'affichage du menu plutôt qu'à ses touches, et il est transitoire par
+/// construction.
+///
+/// Deux limites, à savoir plutôt qu'à découvrir :
+///
+/// - les entrées **prédéfinies** de macOS (Quitter, Copier, Réduire…) gardent leurs touches.
+///   Les éteindre priverait la fenêtre du copier-coller au moment où l'on tape, et `⌘Q` n'est
+///   pas une combinaison qu'Ash a à reprendre ;
+/// - un filet de sécurité rallume tout si la fenêtre de réglages disparaît pendant une
+///   capture — sans lui, un menu resterait éteint jusqu'au prochain changement de liaison.
+#[tauri::command]
+pub fn shortcut_listening<R: Runtime>(app: AppHandle<R>, active: bool) {
+    enable_actions(&app, !active);
+    if !active {
+        return;
+    }
+    // Le filet : fermer la fenêtre au clic pendant une capture ne laisse pas un menu éteint.
+    // Il est reposé à chaque ouverture de capture — c'est idempotent, et ça vaut mieux que
+    // de faire porter cette précaution à `features::settings`, qui n'a rien à savoir d'un
+    // menu.
+    if let Some(window) = app.get_webview_window(settings::SETTINGS_WINDOW) {
+        let restoring = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }
+            ) {
+                enable_actions(&restoring, true);
+            }
+        });
+    }
+}
+
+/// Allume ou éteint toutes les entrées qu'Ash traite lui-même, et elles seules.
+fn enable_actions<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
+    let Some(menu) = app.menu() else {
+        return;
+    };
+    walk(&menu.items().unwrap_or_default(), &mut |item| {
+        if Action::from_id(item.id().as_ref()).is_some() {
+            let _ = item.set_enabled(enabled);
+        }
+    });
+}
+
+/// Parcourt l'arbre du menu et joue `visit` sur chaque entrée ordinaire.
+///
+/// Un menu natif est un arbre, et `Menu::items` n'en rend que le premier niveau — la même
+/// raison qui fait descendre [`find_check`].
+fn walk<R: Runtime>(items: &[MenuItemKind<R>], visit: &mut impl FnMut(&MenuItem<R>)) {
+    for item in items {
+        match item {
+            MenuItemKind::MenuItem(entry) => visit(entry),
+            MenuItemKind::Submenu(submenu) => walk(&submenu.items().unwrap_or_default(), visit),
+            _ => {}
         }
     }
-    written.push_str(&key_glyph(key));
-    written
 }
 
-/// La touche d'un accélérateur, telle qu'un menu macOS la montre.
-fn key_glyph(key: &str) -> Cow<'_, str> {
-    match key {
-        "Tab" => Cow::Borrowed("⇥"),
-        "Comma" => Cow::Borrowed(","),
-        "Minus" => Cow::Borrowed("-"),
-        "NumpadAdd" => Cow::Borrowed("+"),
-        // Une lettre se montre en capitale, un chiffre reste lui-même.
-        other => Cow::Owned(other.to_uppercase()),
+/// La section `shortcuts` de la fenêtre de réglages, d'un bloc (spec §4.4).
+///
+/// Elle **lit** les liaisons, elle n'en tient pas une copie : c'est le critère de l'issue
+/// #110, et il n'a pas changé quand les raccourcis sont devenus réglables — seule la
+/// personne qui détient la liste a changé.
+///
+/// La liste reste plus courte que le tableau de la spec, et ce n'est pas un oubli : le
+/// groupe git (`Cmd+Ctrl+B`, `G`, `W`, `M`, `I`) n'a pas encore d'entrée de menu, donc pas
+/// encore d'effet, et annoncer un raccourci qui ne fait rien serait exactement le mensonge
+/// que la lecture depuis la source évite (issue #127).
+#[tauri::command]
+pub fn menu_shortcuts(bindings: tauri::State<'_, Arc<Bindings>>) -> ShortcutsReport {
+    bindings.report()
+}
+
+/// L'action à qui appartient une frappe que le menu natif n'a **pas** consommée.
+///
+/// Deux entrées sont dans ce cas, et deux seulement — `⌃⇥` et `⌃⇧⇥` : `muda` leur donne un
+/// équivalent clavier qu'AppKit ne reconnaît jamais (voir l'en-tête de ce module). La webview
+/// les capte donc elle-même, et vient demander ici **à qui elles appartiennent** plutôt que
+/// de le savoir : sans ça, une liaison déplacée laissait l'ancienne touche répondre encore,
+/// et la webview aurait eu à tenir la seconde liste que tout ce travail évite.
+///
+/// Elle rend un identifiant d'action — celui-là même que `ash://menu-action` porte, et que
+/// `src/app/menu.ts` sait déjà traduire.
+#[tauri::command]
+pub fn shortcut_owner(
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    stroke: KeyStroke,
+) -> Option<String> {
+    bindings.owner(&stroke)
+}
+
+/// La combinaison en vigueur d'une action, écrite comme macOS l'écrit — vide s'il n'y en a
+/// aucune.
+///
+/// L'autre sens de la même question : ce qu'une surface **affiche** d'un raccourci. Le pied
+/// de la sidebar annonce `⌘T` parce qu'il le demande ici ; l'écrire dans le TypeScript en
+/// ferait un mensonge au premier rebinding, et une seconde liste au second.
+#[tauri::command]
+pub fn shortcut_keys(bindings: tauri::State<'_, Arc<Bindings>>, action: String) -> String {
+    bindings.keys(&action)
+}
+
+/// Ce que le bloc de capture montre pendant qu'on tape — sans rien retenir.
+///
+/// Elle ne touche à rien : c'est `⏎`, donc [`shortcut_bind`], qui pose. Ash ne valide rien à
+/// la place de l'utilisateur ([ADR-0015](../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)),
+/// et une combinaison posée à la frappe aurait rendu `esc` incapable d'annuler quoi que ce
+/// soit.
+#[tauri::command]
+pub fn shortcut_preview(
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    stroke: KeyStroke,
+) -> CapturePreview {
+    bindings.preview(&stroke)
+}
+
+/// Pose la combinaison confirmée par `⏎` — ou ouvre le bloc de conflit qu'elle produirait.
+///
+/// Les cinq commandes qui suivent partagent la même forme, et c'est voulu : elles rendent
+/// **l'instantané entier**, et refont le menu quand quelque chose a bougé. La fenêtre
+/// redessine à partir de ce qu'elle reçoit, elle ne modifie jamais une liste locale
+/// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+#[tauri::command]
+pub fn shortcut_bind<R: Runtime>(
+    app: AppHandle<R>,
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    action: String,
+    stroke: KeyStroke,
+) -> Result<ShortcutsReport, String> {
+    let rebound = bindings.bind(&action, &stroke).map_err(refusal)?;
+    Ok(replay(&app, &bindings, rebound.0))
+}
+
+/// Retire le raccourci d'une ligne — le `⌫` du bloc de capture.
+#[tauri::command]
+pub fn shortcut_clear<R: Runtime>(
+    app: AppHandle<R>,
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    action: String,
+) -> Result<ShortcutsReport, String> {
+    let rebound = bindings.clear(&action).map_err(refusal)?;
+    Ok(replay(&app, &bindings, rebound.0))
+}
+
+/// Rend son défaut à une ligne — l'icône de retour des lignes changées.
+#[tauri::command]
+pub fn shortcut_reset<R: Runtime>(
+    app: AppHandle<R>,
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    action: String,
+) -> Result<ShortcutsReport, String> {
+    let rebound = bindings.reset(&action).map_err(refusal)?;
+    Ok(replay(&app, &bindings, rebound.0))
+}
+
+/// `reset all` — toutes les lignes reprennent leur défaut.
+#[tauri::command]
+pub fn shortcut_reset_all<R: Runtime>(
+    app: AppHandle<R>,
+    bindings: tauri::State<'_, Arc<Bindings>>,
+) -> ShortcutsReport {
+    let rebound = bindings.reset_all();
+    replay(&app, &bindings, rebound.0)
+}
+
+/// Referme un conflit par l'une de ses deux issues nommées.
+#[tauri::command]
+pub fn shortcut_resolve<R: Runtime>(
+    app: AppHandle<R>,
+    bindings: tauri::State<'_, Arc<Bindings>>,
+    choice: ConflictChoice,
+) -> ShortcutsReport {
+    let rebound = bindings.resolve(choice);
+    replay(&app, &bindings, rebound.0)
+}
+
+/// Refait le menu si besoin, puis rend l'instantané.
+///
+/// Le menu **d'abord** : la fenêtre de réglages redessinera de toute façon, alors qu'un
+/// menu laissé en arrière garderait la touche jusqu'au prochain changement.
+fn replay<R: Runtime>(app: &AppHandle<R>, bindings: &Bindings, rebound: bool) -> ShortcutsReport {
+    if rebound {
+        rebuild(app);
+        // Les surfaces qui **affichent** un raccourci en dérivent aussi : le pied de la
+        // sidebar vit dans l'autre fenêtre, et rien ne l'aurait prévenu. L'échec d'émission
+        // signifie qu'il n'y a plus de webview à prévenir — rien à rattraper.
+        let _ = app.emit(SHORTCUTS_CHANGED_EVENT, ());
     }
+    bindings.report()
+}
+
+/// Un refus, tel que la fenêtre de réglages le reçoit.
+///
+/// Une commande Tauri rend son erreur en chaîne ; celle-ci est déjà écrite pour être lue —
+/// voir `ShortcutError`.
+fn refusal(why: ShortcutError) -> String {
+    why.to_string()
 }
 
 /// Le choix de thème venu de la fenêtre de réglages — la **seconde surface** du même état.
@@ -983,47 +1203,36 @@ mod tests {
         );
     }
 
-    #[test]
-    fn given_the_accelerators_the_menu_declares_when_they_are_written_for_the_screen_then_they_read_as_macos_writes_them(
-    ) {
-        // Given — les noms que l'analyseur de Tauri exige, et les deux pièges : l'ordre des
-        // modificateurs est celui de macOS et non celui de la déclaration, et `NumpadAdd`
-        // n'est pas le pavé numérique mais le seul nom que `muda` traduise en `+`
-        let declared = [
-            "Cmd+T",
-            "Cmd+Shift+T",
-            "Ctrl+Tab",
-            "Ctrl+Shift+Tab",
-            "Cmd+Comma",
-            "Cmd+NumpadAdd",
-            "Cmd+Minus",
-            "Cmd+0",
-        ];
-
-        // When
-        let written: Vec<String> = declared.iter().map(|a| keys(a)).collect();
-
-        // Then
-        assert_eq!(written, ["⌘T", "⇧⌘T", "⌃⇥", "⌃⇧⇥", "⌘,", "⌘+", "⌘-", "⌘0"]);
+    /// Les liaisons du menu réel, sur un fichier en mémoire.
+    fn menu_bindings() -> Bindings {
+        Bindings::restore(
+            Arc::new(crate::features::shortcuts::FakeBindingStore::default()),
+            action_bindings(),
+        )
     }
 
     #[test]
     fn given_the_menu_table_when_the_settings_window_asks_for_the_shortcuts_then_each_one_carries_the_combination_the_menu_declares(
     ) {
-        // Given / When — c'est le critère de l'issue #110 : la liste est **lue** depuis la
-        // table du menu. Une combinaison recopiée en TypeScript aurait fini par annoncer un
-        // raccourci que le menu ne déclare plus, et c'est l'écran qu'on croit
-        let listed = menu_shortcuts();
+        // Given / When — c'est le critère de l'issue #110, et il tient toujours après #22 :
+        // la liste est **lue** depuis les liaisons, qui partent des défauts de ce module.
+        // Une combinaison recopiée en TypeScript aurait fini par annoncer un raccourci que
+        // le menu ne déclare plus, et c'est l'écran qu'on croit
+        let listed = menu_bindings().report();
 
-        // Then — chaque ligne a un groupe et une combinaison, et une entrée sans
-        // accélérateur (les trois thèmes) n'y figure pas
+        // Then — chaque ligne est rangée sous un groupe, et une action sans raccourci **du
+        // tout** (les trois thèmes) n'y figure pas. Une ligne sans combinaison, elle, en est
+        // une : `Clear Scrollback` n'a pas de défaut, et se règle comme les autres
+        assert!(listed.rows.iter().all(|row| !row.group.is_empty()));
         assert!(listed
-            .iter()
-            .all(|row| !row.group.is_empty() && !row.keys.is_empty()));
-        assert!(listed
+            .rows
             .iter()
             .any(|row| row.label == "New Tab" && row.keys == "⌘T"));
-        assert!(!listed.iter().any(|row| row.label == "Light"));
+        assert!(listed
+            .rows
+            .iter()
+            .any(|row| row.label == "Clear Scrollback" && row.keys.is_empty()));
+        assert!(!listed.rows.iter().any(|row| row.label == "Light"));
     }
 
     #[test]
@@ -1031,11 +1240,11 @@ mod tests {
         // Given / When — la fenêtre de réglages ne trie pas : elle groupe dans l'ordre reçu,
         // pour qu'on retrouve un raccourci là où on l'a vu dans le menu. C'est donc ici que
         // l'ordre est décidé, et il est celui que `build` assemble — Application, View, Terminal
-        let listed = menu_shortcuts();
+        let listed = menu_bindings().report();
 
         // Then
         let mut groups: Vec<&str> = Vec::new();
-        for row in &listed {
+        for row in &listed.rows {
             if groups.last() != Some(&row.group.as_str()) {
                 groups.push(&row.group);
             }
@@ -1048,8 +1257,9 @@ mod tests {
     ) {
         // Given / When — la spec §4.4 les écrit `Cmd+1 … Cmd+9`, et neuf lignes identiques
         // à un rang près feraient perdre les huit autres raccourcis dans la liste
-        let listed = menu_shortcuts();
-        let positions: Vec<&Shortcut> = listed
+        let listed = menu_bindings().report();
+        let positions: Vec<&crate::features::shortcuts::ShortcutRow> = listed
+            .rows
             .iter()
             .filter(|row| row.label.starts_with("Tab "))
             .collect();
@@ -1060,6 +1270,100 @@ mod tests {
             positions.first().map(|row| row.keys.as_str()),
             Some("⌘1 … ⌘9")
         );
+    }
+
+    #[test]
+    fn given_every_action_the_menu_declares_when_its_default_is_read_then_none_of_them_is_lost_on_the_way(
+    ) {
+        // Given — les défauts sont écrits en chaînes, et `Combination::parse` peut les
+        // refuser. Une faute de frappe dans `Cmd+Shift+T` ne casserait rien à la
+        // compilation : l'entrée s'afficherait simplement sans touche, et personne ne le
+        // verrait avant d'essayer le raccourci
+        let declared = action_bindings();
+
+        // When
+        let lost: Vec<String> = declared
+            .iter()
+            .filter(|binding| {
+                binding.default.is_none()
+                    && !binding.action.starts_with("view:theme:")
+                    && binding.action != Action::ClearScrollback.id()
+            })
+            .map(|binding| binding.action.clone())
+            .collect();
+
+        // Then — les trois thèmes et `Clear Scrollback` sont les seules actions sans
+        // raccourci d'origine, et les quatre le sont **exprès** : un thème se change une fois
+        // par saison, et `⌘K` appartient au shell
+        assert_eq!(lost, Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_a_fresh_install_when_the_menu_is_built_then_no_entry_carries_cmd_k() {
+        // Given — `⌘K` appartient au shell. Et ce n'est pas une question de goût : un
+        // accélérateur de menu est consommé par `performKeyEquivalent:` **avant** d'atteindre
+        // la webview (en-tête de ce module), donc toute entrée qui le porterait le retirerait
+        // au terminal. C'est ce test qui garantit que le shell le reçoit
+        let bindings = menu_bindings();
+        let taken = Combination::parse("Cmd+K").unwrap().accelerator();
+
+        // When
+        let carried: Vec<String> = action_bindings()
+            .iter()
+            .filter(|declared| bindings.accelerator(&declared.action) == Some(taken.clone()))
+            .map(|declared| declared.action.clone())
+            .collect();
+
+        // Then
+        assert_eq!(carried, Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_the_combinations_ash_will_never_receive_when_the_defaults_are_read_then_none_of_them_starts_on_one(
+    ) {
+        // Given — la table embarquée de `reserved.rs` dit ce qu'Ash ne recevra pas : ce que
+        // macOS prend, et ce que le terminal avale. Un **défaut** posé là-dessus serait un
+        // raccourci annoncé par l'écran, affiché par le menu, et sans effet — la sorte de
+        // mensonge que cette tranche entière existe pour empêcher. Un utilisateur, lui, reste
+        // libre d'en poser un : il l'aura lu au moment de le capturer
+        let declared = action_bindings();
+
+        // When
+        let ineffective: Vec<String> = declared
+            .iter()
+            .filter(|binding| {
+                binding
+                    .default
+                    .as_ref()
+                    .and_then(crate::features::shortcuts::reservation)
+                    .is_some()
+            })
+            .map(|binding| binding.action.clone())
+            .collect();
+
+        // Then
+        assert_eq!(ineffective, Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_the_defaults_of_the_whole_menu_when_they_are_compared_then_no_two_actions_start_on_the_same_combination(
+    ) {
+        // Given — une entrée de menu ajoutée sur une touche déjà prise ne casserait rien
+        // non plus : macOS laisse gagner la dernière entrée posée, en silence. C'est ce que
+        // le bloc de conflit interdit à l'utilisateur ; les défauts n'y ont pas droit non plus
+        let declared = action_bindings();
+
+        // When
+        let mut taken: Vec<String> = declared
+            .iter()
+            .filter_map(|binding| binding.default.as_ref().map(|one| one.accelerator()))
+            .collect();
+        let count = taken.len();
+        taken.sort();
+        taken.dedup();
+
+        // Then
+        assert_eq!(taken.len(), count);
     }
 
     #[test]

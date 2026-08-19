@@ -118,6 +118,15 @@ export interface Sidebar {
      * elle seule, qui remplace la largeur montrée pendant un glissement.
      */
     setColumn(column: SidebarColumnState): void;
+    /**
+     * Le raccourci **en vigueur** de « nouvel onglet », tel que le backend le rend.
+     *
+     * La colonne l'affiche, elle ne le connaît pas : les liaisons sont réglables et détenues
+     * en Rust (spec §4.4, issue #22), et une combinaison écrite dans le TypeScript
+     * deviendrait fausse au premier rebinding. Vide veut dire « aucun raccourci », et se
+     * montre en n'affichant rien.
+     */
+    showNewTabShortcut(keys: string): void;
 }
 
 export function mountSidebar(ports: SidebarPorts): Sidebar {
@@ -282,6 +291,9 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
             // largeur gardée.
             dragged = null;
             draw();
+        },
+        showNewTabShortcut(keys) {
+            view.showNewTabShortcut(keys);
         },
     };
 }
