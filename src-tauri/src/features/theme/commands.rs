@@ -1,7 +1,8 @@
-//! La surface de la feature vers le frontend : six commandes, trois events.
+//! La surface de la feature vers le frontend : douze commandes, cinq events.
 //!
-//! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode et les
-//! trois pas de taille. Il **rend** la palette ; les choix, eux, sont ici
+//! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode, les
+//! trois pas de taille et les deux paliers de densité. Il **rend** la palette ; les quatre
+//! choix, eux, sont ici
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 //!
 //! Ce que ce module ne contient **pas**, et c'est délibéré : le menu natif. Ses
@@ -31,6 +32,13 @@ pub const TERMINAL_FONT_SIZE_EVENT: &str = "ash://terminal-font-size";
 /// Nom de l'event qui porte la largeur et le repli de la colonne. Contrat avec
 /// `src/app/sidebar-column.ts`.
 pub const SIDEBAR_COLUMN_EVENT: &str = "ash://sidebar-column";
+
+/// Nom de l'event qui porte la police du terminal. Contrat avec `src/app/terminal-font.ts`.
+pub const TERMINAL_FONT_EVENT: &str = "ash://terminal-font";
+
+/// Nom de l'event qui porte la densité de la sidebar. Contrat avec
+/// `src/app/sidebar-density.ts`.
+pub const SIDEBAR_DENSITY_EVENT: &str = "ash://sidebar-density";
 
 /// Le mode courant, lu par la webview en s'affichant.
 ///
@@ -166,14 +174,6 @@ fn announce<R: Runtime>(app: &AppHandle<R>, changed: Option<SidebarColumn>) {
     // et surtout pas de panique dans une commande.
     let _ = app.emit(SIDEBAR_COLUMN_EVENT, column);
 }
-
-/// Nom de l'event qui porte la police du terminal. Contrat avec `src/app/terminal-font.ts`.
-pub const TERMINAL_FONT_EVENT: &str = "ash://terminal-font";
-
-/// Nom de l'event qui porte la densité de la sidebar. Contrat avec
-/// `src/app/sidebar-density.ts`.
-pub const SIDEBAR_DENSITY_EVENT: &str = "ash://sidebar-density";
-
 /// La police du terminal, lue par la webview en s'affichant. Même contrat que
 /// [`terminal_font_size`] : ensuite, c'est l'event qui la tient à jour.
 #[tauri::command]
