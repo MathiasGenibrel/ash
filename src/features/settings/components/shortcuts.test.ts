@@ -186,6 +186,48 @@ describe("la section shortcuts de la fenêtre de réglages", () => {
         expect(inside).toContain("keep the old one");
     });
 
+    it("Given the combination is held by a row that cannot be rebound, when the section is composed, then the block offers one way out and says why", () => {
+        // Given — la famille `⌘1 … ⌘9` ne cède rien : lui reprendre `⌘1` ne tiendrait pas une
+        // session, puisque la relecture du fichier le lui rendrait (issue #137). Le backend
+        // n'offre donc pas de `give`, et l'écran ne doit pas en inventer un
+        const declared = aShortcutsReport([
+            aShortcut({ action: "tab:new", label: "New Tab", keys: "⌘T" }),
+            aShortcut({
+                action: "tab:select:1",
+                label: "Tab 1 … Tab 9",
+                keys: "⌘1 … ⌘9",
+                rebindable: false,
+            }),
+        ]);
+        const refused = {
+            ...declared,
+            conflict: {
+                keys: "⌘&",
+                holder: "tab:select:1",
+                holderLabel: "Tab 1 … Tab 9",
+                asked: "tab:new",
+                askedLabel: "New Tab",
+                diagnosis:
+                    "⌘& belongs to Tab 1 … Tab 9 — that row is not rebindable, and ash will not take it away",
+                give: null,
+                keep: "keep the old one",
+            },
+        };
+
+        // When
+        const composed = shortcutsSection(refused, null, INERT);
+        const blocks = composed.flatMap((child) => findAll(child, "settings-conflict-block"));
+
+        // Then — une seule issue, et la raison du refus nomme ce qui tient la touche pressée
+        expect(blocks).toHaveLength(1);
+        const inside = plainText(blocks[0] as UiChild);
+        expect(inside).toContain("⌘& belongs to Tab 1 … Tab 9");
+        expect(inside).toContain("keep the old one");
+        expect(
+            composed.flatMap((child) => findAll(child, "settings-conflict-give")),
+        ).toHaveLength(0);
+    });
+
     it("Given the two conflicting actions sit in two different submenus, when the section is composed, then they still meet in one block, once", () => {
         // Given — rien n'oblige les deux fautives à être voisines : `⌘B` est dans « View »,
         // et une capture peut la viser depuis « Terminal ». Un bloc posé par groupe l'aurait
