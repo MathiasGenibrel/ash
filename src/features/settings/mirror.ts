@@ -21,6 +21,12 @@ import type { NewTool as RustNewTool } from "@/shared/ipc/generated/NewTool";
 import type { NotificationPermission as RustNotificationPermission } from "@/shared/ipc/generated/NotificationPermission";
 import type { NotificationsReport as RustNotificationsReport } from "@/shared/ipc/generated/NotificationsReport";
 import type { NotificationSwitch as RustNotificationSwitch } from "@/shared/ipc/generated/NotificationSwitch";
+import type { Outcome as RustOutcome } from "@/shared/ipc/generated/Outcome";
+import type { PlannedRemoval as RustPlannedRemoval } from "@/shared/ipc/generated/PlannedRemoval";
+import type { RemovalOutcome as RustRemovalOutcome } from "@/shared/ipc/generated/RemovalOutcome";
+import type { RemovalPlan as RustRemovalPlan } from "@/shared/ipc/generated/RemovalPlan";
+import type { RemovalReport as RustRemovalReport } from "@/shared/ipc/generated/RemovalReport";
+import type { RemovedFile as RustRemovedFile } from "@/shared/ipc/generated/RemovedFile";
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
 import type { Shortcut as RustShortcut } from "@/shared/ipc/generated/Shortcut";
 import type { SuggestedFix as RustSuggestedFix } from "@/shared/ipc/generated/SuggestedFix";
@@ -44,6 +50,12 @@ import type {
     NotificationPermission,
     NotificationsReport,
     NotificationSwitch,
+    Outcome,
+    PlannedRemoval,
+    RemovalOutcome,
+    RemovalPlan,
+    RemovalReport,
+    RemovedFile,
     SettingsSnapshot,
     Shortcut,
     SuggestedFix,
@@ -99,6 +111,20 @@ export type NotificationsReportStillMirrorsRust = Assert<
 export type NotificationSwitchStillMirrorsRust = Assert<
     Mirrors<RustNotificationSwitch, NotificationSwitch>
 >;
+
+/**
+ * « Retirer ash de tous les fichiers » (spec §10), dans ses deux temps.
+ *
+ * Les deux formes sont vérifiées pour la raison qui a coûté #16 : ce sont les seules du
+ * contrat qu'aucune autre commande ne renvoie, donc un champ perdu en route ne se verrait
+ * qu'au moment où quelqu'un désinstalle — c'est-à-dire trop tard pour l'apprendre.
+ */
+export type PlannedRemovalStillMirrorsRust = Assert<Mirrors<RustPlannedRemoval, PlannedRemoval>>;
+export type RemovalPlanStillMirrorsRust = Assert<Mirrors<RustRemovalPlan, RemovalPlan>>;
+export type OutcomeStillMirrorsRust = Assert<Mirrors<RustOutcome, Outcome>>;
+export type RemovedFileStillMirrorsRust = Assert<Mirrors<RustRemovedFile, RemovedFile>>;
+export type RemovalReportStillMirrorsRust = Assert<Mirrors<RustRemovalReport, RemovalReport>>;
+export type RemovalOutcomeStillMirrorsRust = Assert<Mirrors<RustRemovalOutcome, RemovalOutcome>>;
 
 /** Ce que l'event `ash://settings-verified` porte — la ligne `hooks` comprise (#16). */
 export type VerifiedStillMirrorsRust = Assert<Mirrors<RustVerified, Verified>>;

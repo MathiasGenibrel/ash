@@ -28,4 +28,10 @@ export { navColumn } from "./nav";
 export { notificationsSection } from "./notifications";
 export { shortcutsSection } from "./shortcuts";
 export { testDetail, testRow, type TestDetailActions } from "./test-row";
+export {
+    uninstallRow,
+    uninstallScreen,
+    type RemovalStage,
+    type UninstallActions,
+} from "./uninstall";
 export { cell, label, para, spacer, tag } from "./atoms";

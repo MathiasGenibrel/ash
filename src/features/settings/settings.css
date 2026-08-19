@@ -995,3 +995,67 @@
     color: var(--ash-fg-done);
     white-space: nowrap;
 }
+
+/* --- retirer ash de tous les fichiers (spec §10) ----------------------------- */
+
+/* Le geste est **sous** la liste et non dans l'en-tête : `add` et `re-verify all` se
+ * prennent tous les jours, celui-ci une fois. À côté d'eux, il se cliquerait par habitude. */
+.settings-uninstall {
+    padding: 0 16px 12px;
+}
+
+.settings-uninstall-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-uninstall-note {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ash-fg-subtle);
+}
+
+/* Un bouton destructeur se teinte, il ne se cache pas : c'est la même discipline que le
+ * bouton éteint qui garde sa raison. */
+.settings-button.is-danger {
+    border-color: var(--ash-error-border);
+    color: var(--ash-error);
+}
+
+.settings-uninstall-file {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 12px 10px;
+}
+
+.settings-uninstall-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-uninstall-count {
+    color: var(--ash-fg-subtle);
+}
+
+/* « ce fichier disparaît » n'est pas « ces lignes disparaissent » : la phrase se distingue. */
+.settings-uninstall-fate {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ash-error);
+}
+
+/* Ce que le geste ne touche pas — les `.bak`, et `~/.ash`. */
+.settings-uninstall-kept,
+.settings-uninstall-empty {
+    margin: 0;
+    padding: 0 12px;
+    font-size: 11px;
+    line-height: 1.65;
+    color: var(--ash-fg-subtle);
+}

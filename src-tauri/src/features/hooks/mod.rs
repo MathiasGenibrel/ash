@@ -12,6 +12,7 @@
 //! | `.bak` **avant** l'écriture, et jamais écrasé | [`install`] |
 //! | le diff de ce qu'Ash écrirait, montré avant toute écriture | [`presence`], [`diff`] |
 //! | désinstallation qui ne laisse rien, à l'octet près | [`merge`], [`install`] |
+//! | ce qu'un retrait emporterait, dit **avant** de le poser | [`removal`] |
 //!
 //! **Le bloc délimité `ash:begin` / `ash:end` a disparu le 2026-08-12**
 //! ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), amendement). Il savait poser
@@ -53,15 +54,22 @@ mod json;
 mod merge;
 mod ports;
 mod presence;
+mod removal;
 mod system_files;
 
-/// Le double du port `ConfigFiles`, réservé aux tests de la feature.
+/// Le double du port `ConfigFiles`, réservé aux tests — **de tout le crate**.
+///
+/// `pub(crate)` et non privé : la désinstallation globale est décidée par
+/// `features::settings`, et le seul moyen d'y prouver « le fichier est rendu à l'octet
+/// près » est de brancher son port sur la vraie écriture d'ici, au-dessus d'un disque en
+/// mémoire. Un second double, écrit là-bas, ne doublerait pas la même chose.
 #[cfg(test)]
-mod fakes;
+pub(crate) mod fakes;
 
 pub use document::Document;
 pub use error::HookError;
 pub use install::{install, uninstall, Installation, Removal};
 pub use ports::ConfigFiles;
 pub use presence::{inspect, Presence};
+pub use removal::{foresee, Withdrawal};
 pub use system_files::SystemConfigFiles;
