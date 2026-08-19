@@ -6,8 +6,9 @@ import type {
     FixAction,
     FontStep,
     NotificationsReport,
+    ConflictChoice,
     SettingsSnapshot,
-    Shortcut,
+    ShortcutsReport,
     SidebarDensity,
     ThemeMode,
     ToolDraft,
@@ -33,6 +34,7 @@ import {
     uninstallRow,
     uninstallScreen,
     type RemovalStage,
+    type ShortcutCapture,
 } from "./components";
 
 /**
@@ -130,6 +132,24 @@ export interface SettingsViewActions {
      * répond ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
      */
     setNotification(state: AgentState, enabled: boolean): void;
+    /**
+     * Les six gestes de la section `shortcuts` (spec §4.4, issue #22).
+     *
+     * Aucun ne pose de combinaison : ils demandent, et le backend rend l'instantané entier.
+     * `openCapture` et `cancelCapture` sont les deux seuls à ne rien demander du tout — ils
+     * ouvrent et referment un bloc, ce qui est un fait d'affichage.
+     */
+    openCapture(action: string): void;
+    cancelCapture(): void;
+    /** `⏎` — pose ce qui a été frappé, ou ouvre le conflit que ça produirait. */
+    confirmCapture(): void;
+    /** `⌫` — la ligne n'a plus de raccourci, et garde son entrée de menu. */
+    clearShortcut(action: string): void;
+    /** L'icône de retour d'une ligne changée, et le `reset all` de l'en-tête. */
+    resetShortcut(action: string): void;
+    resetAllShortcuts(): void;
+    /** L'une des deux issues nommées du bloc de conflit. */
+    resolveConflict(choice: ConflictChoice): void;
 }
 
 /**
@@ -207,11 +227,21 @@ export interface SettingsScene {
      */
     fonts: readonly string[] | null;
     /**
-     * Les raccourcis que le menu natif déclare, ou `null` tant qu'il ne les a pas rendus.
+     * Les raccourcis en vigueur, ou `null` tant que le backend ne les a pas rendus.
      *
-     * Demandés une fois : le menu est construit au démarrage et ne change plus.
+     * Ce n'est **pas** l'état de l'écran : c'est celui de `features::shortcuts`, dont le menu
+     * natif dérive aussi. Une capture ne le modifie pas ici — elle part au backend, qui refait
+     * le menu et renvoie l'instantané
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
      */
-    shortcuts: readonly Shortcut[] | null;
+    shortcuts: ShortcutsReport | null;
+    /**
+     * La ligne ouverte en capture, ou `null`.
+     *
+     * Le seul état de la section qui vive ici, et ce n'est pas une liaison : c'est « quelle
+     * ligne est ouverte, et ce que le backend a dit de la dernière frappe ».
+     */
+    capture: ShortcutCapture | null;
 }
 
 /** La colonne de gauche. */
@@ -245,7 +275,20 @@ export function settingsPanel(
                 },
             });
         case "shortcuts":
-            return shortcutsSection(scene.shortcuts);
+            return shortcutsSection(scene.shortcuts, scene.capture, {
+                openCapture: (action) => {
+                    actions.openCapture(action);
+                },
+                resetShortcut: (action) => {
+                    actions.resetShortcut(action);
+                },
+                resetAll: () => {
+                    actions.resetAllShortcuts();
+                },
+                resolveConflict: (choice) => {
+                    actions.resolveConflict(choice);
+                },
+            });
         case "appearance":
             return appearanceSection(scene.appearance, scene.fonts, {
                 chooseTheme: (mode) => {
@@ -390,6 +433,11 @@ export class SettingsView {
         this.nav.replaceChildren(...settingsNav(scene, rendering).map(painted));
         this.panel.replaceChildren(...settingsPanel(scene, rendering).map(painted));
         this.restoreFocus(focused);
+        // Le bloc de capture consomme les frappes : sans focus dedans, `esc`, `⌫` et `⏎`
+        // n'arriveraient jamais jusqu'à la fenêtre. Il est refait à chaque frappe — le panneau
+        // entier est reposé —, donc le focus se redonne à chaque rendu, et pas seulement à
+        // l'ouverture.
+        this.panel.querySelector<HTMLElement>(".settings-capture")?.focus();
     }
 
     /** Donne le focus à la section active — le pendant clavier d'un clic sur sa ligne. */

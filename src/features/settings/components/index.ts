@@ -26,7 +26,11 @@ export { duplicateBanner, type DuplicateBannerActions } from "./duplicate-banner
 export { hooksNote, hooksRow, type HooksRowActions } from "./hooks-row";
 export { navColumn } from "./nav";
 export { notificationsSection } from "./notifications";
-export { shortcutsSection } from "./shortcuts";
+export {
+    shortcutsSection,
+    type ShortcutCapture,
+    type ShortcutsActions,
+} from "./shortcuts";
 export { testDetail, testRow, type TestDetailActions } from "./test-row";
 export {
     uninstallRow,
