@@ -269,11 +269,32 @@ export const FONT_STEPS: readonly FontStep[] = ["smaller", "bigger", "default"];
 /** Les trois thèmes, dans l'ordre du menu natif — du plus explicite au moins. */
 export const THEME_MODES: readonly ThemeMode[] = ["light", "dark", "system"];
 
-/** L'apparence courante, telle que le backend la détient. */
+/**
+ * La densité de la sidebar (spec §9). Miroir de `SidebarDensity` en Rust.
+ *
+ * Deux paliers et pas une hauteur : ce qui se règle est un confort de lecture, et les deux
+ * jeux de mesures vivent dans `src/app/styles.css`, sous `[data-density]`.
+ */
+export type SidebarDensity = "comfortable" | "compact";
+
+/** Les deux paliers, dans l'ordre du segmenté — du plus aéré au plus dense. */
+export const SIDEBAR_DENSITIES: readonly SidebarDensity[] = ["comfortable", "compact"];
+
+/**
+ * L'apparence courante, telle que le backend la détient.
+ *
+ * Les quatre préférences voyagent ensemble parce qu'elles s'affichent ensemble, mais elles
+ * n'ont ni la même surface ni le même chemin : le mode et la taille en ont deux (le menu
+ * Vue et cet écran), la police et la densité n'en ont qu'une. Toutes les quatre sont à
+ * `features::theme` ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
 export interface Appearance {
     mode: ThemeMode;
     /** La taille de police du terminal, en points. */
     fontSize: number;
+    /** La **famille** du terminal — jamais une pile, jamais un fichier. */
+    font: string;
+    density: SidebarDensity;
 }
 
 /**
@@ -311,6 +332,19 @@ export interface WindowPorts {
     appearance(): Promise<Appearance>;
     chooseThemeMode(mode: ThemeMode): Promise<void>;
     stepTerminalFontSize(step: FontStep): Promise<void>;
+    /**
+     * Les familles monospace que le système porte, telles que le backend les a lues.
+     *
+     * Demandées une fois, comme les raccourcis : installer une police passe par le Livre des
+     * polices, pas par Ash, et la liste ne bouge donc pas pendant qu'une session dure.
+     */
+    monospaceFonts(): Promise<readonly string[]>;
+    /**
+     * Une **valeur**, là où la taille demande un pas : il n'existe pas de « police
+     * suivante », et la liste est celle que le backend vient de rendre.
+     */
+    chooseTerminalFont(family: string): Promise<void>;
+    chooseSidebarDensity(density: SidebarDensity): Promise<void>;
     /** Prévient à chaque changement, **d'où qu'il vienne** — le menu Vue compris. */
     onAppearanceChanged(listener: (appearance: Appearance) => void): void;
     /** Les raccourcis que le menu déclare. Demandés une fois : le menu ne change pas. */

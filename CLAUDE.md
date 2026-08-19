@@ -80,6 +80,19 @@ Ce qui reste à faire du côté des agents : brancher cette reconnaissance sur l
 états — c'est elle qui donnera enfin son producteur à `AgentEvent::AgentStarted`, que
 `supervisor.rs` n'émet toujours pas (il le dit lui-même en tête de fichier).
 
+**La fenêtre de réglages choisit le thème sur un aperçu, pas sur trois boutons** (spec §9) :
+trois tuiles de 150 px, chacune une miniature redessinée de la sidebar avec ses **cinq**
+états — glyphes, teinte de `waiting`, rail et nom barré d'`error` viennent de
+`shared/agent-state`, la même source que la colonne et la ligne de statut. La tuile `system`
+superpose les deux palettes et découpe la claire en triangle ; les deux blocs de tokens de
+`app/styles.css` portent pour cela deux classes (`.ash-palette-light` / `.ash-palette-dark`),
+une seule définition par token, deux portées. La section règle aussi la **police** du terminal
+— choisie parmi les monospace réellement installées, que `features::theme::FontCatalog` lit
+dans les tables `post` et `name` des fichiers de polices de macOS, sans dépendance et sans
+`unsafe` — et la **densité** de la sidebar, dont les deux hauteurs de ligne (24 px / 18 px)
+sont dans `styles.css` sous `[data-density]`. Les quatre préférences sont détenues par
+`features::theme` et persistées dans `~/.ash/theme.json` : l'écran demande, le backend annonce.
+
 **L'entrée dans un état est datée, et la ligne de statut affiche sa durée** (`working ·
 15m22s`). Ce qui traverse la frontière est une **date absolue** — `TabInfo.stateSince`, en
 millisecondes depuis l'époque Unix — envoyée une seule fois, au changement d'état : le
@@ -236,7 +249,8 @@ src-tauri/src/
                          (UNUserNotificationCenter)                 — spec §8
     git/               ✓ résolution worktree/dépôt, surveillance de
                          `.git`, métadonnées                        — ADR-0011/12
-    theme/             ✓ clair / sombre / système, persisté
+    theme/             ✓ clair / sombre / système, taille et police du
+                         terminal, densité de la sidebar — persistés
     sidebar/           ✓ ce que la colonne garde d'une session à
                          l'autre : worktrees épinglés et lignes
                          repliées, `~/.ash/state.json`              — spec §3.1/5.2

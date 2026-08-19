@@ -199,6 +199,27 @@ export function agentGlyph(state: AgentState): HTMLElement {
 }
 
 /**
+ * Le trait d'un état dessiné — **une seule définition, deux façons de la poser**.
+ *
+ * La sidebar peint son glyphe en DOM impératif ([`drawing`]), l'aperçu de thème de la
+ * fenêtre de réglages le peint comme une valeur de `shared/ui` : deux mécaniques, un seul
+ * dessin. Recopiées de part et d'autre, ces cinq lignes divergeraient au premier ajustement
+ * — et c'est précisément l'aperçu, dont toute la valeur est de dire la vérité de la colonne,
+ * qui montrerait un `working` que la sidebar n'a plus.
+ *
+ * `stroke-width` est plus épais que celui des glyphes de vérification (1,75) : ceux-là sont
+ * lus de près, celui-ci doit se voir au coin de l'œil dans une ligne de 12 px. **Aucune
+ * taille en pixels** : le dessin remplit sa boîte, et la boîte est décidée par le CSS.
+ */
+export const AGENT_GLYPH_STROKE: Readonly<Record<string, string>> = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "2.75",
+    "stroke-linecap": "round",
+};
+
+/**
  * Le dessin d'un état, dans l'espace de noms qui le rend visible.
  *
  * Un tracé et pas un caractère, pour la raison qui vaut déjà dans la fenêtre de réglages : à
@@ -207,23 +228,14 @@ export function agentGlyph(state: AgentState): HTMLElement {
  * décidée — `.ash-glyph.is-working` dans `app/styles.css`, donc le thème.
  *
  * `aria-hidden` : le mot est déjà porté par la boîte, et un lecteur d'écran dirait
- * « working » deux fois.
- *
- * **Aucune taille en pixels ici** : celle de la boîte est décidée une seule fois, par
- * `.ash-glyph` dans `app/styles.css`, comme celle des quatre caractères — que leur
- * `font-size` fait suivre. Écrite aussi ici, elle devrait s'accorder à la main avec le CSS,
- * et une sidebar plus dense laisserait le seul état dessiné à son ancienne taille. Le
- * dessin remplit sa boîte ; la `viewBox` seule décide de sa hauteur.
+ * « working » deux fois. C'est la seule chose que ce dessin-ci ajoute au trait commun
+ * ([`AGENT_GLYPH_STROKE`]) : la boîte de l'aperçu, elle, est masquée en entier.
  */
 function drawing(shape: string): SVGElement {
     const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    // Plus épais que les glyphes des réglages (1,75) : ceux-là sont lus de près, celui-ci
-    // doit se voir à un mètre, au coin de l'œil, dans une ligne de 12 px.
-    svg.setAttribute("stroke-width", "2.75");
-    svg.setAttribute("stroke-linecap", "round");
+    for (const [name, value] of Object.entries(AGENT_GLYPH_STROKE)) {
+        svg.setAttribute(name, value);
+    }
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
 

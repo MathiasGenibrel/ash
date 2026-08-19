@@ -19,10 +19,18 @@
  * query — aurait divergé au premier token ajouté.
  *
  * La palette claire porte aussi le sélecteur nu : c'est ce qui est peint pendant les
- * quelques millisecondes qui précèdent le premier passage de `theme.ts`. */
+ * quelques millisecondes qui précèdent le premier passage de `theme.ts`.
+ *
+ * **Les deux classes `.ash-palette-…` sont les mêmes blocs, atteignables ailleurs qu'à la
+ * racine.** Un seul écran en a besoin, et il ne pouvait pas s'en passer : l'aperçu de thème
+ * de la fenêtre de réglages montre les deux palettes **en même temps**, dans un document qui
+ * n'en porte qu'une. Une redéclaration à côté aurait divergé au premier token ajouté — c'est
+ * exactement ce que le paragraphe ci-dessus refuse pour la media query. Ici, il n'y a
+ * toujours qu'une définition par token, et deux portées. */
 
 :root,
-:root[data-theme="light"] {
+:root[data-theme="light"],
+.ash-palette-light {
     color-scheme: light;
 
     --ash-bg: #fcfcfb;
@@ -148,7 +156,30 @@
     --ash-term-bright-white: #d9d7d2;
 }
 
-:root[data-theme="dark"] {
+/* Les mesures de la sidebar, par densité (spec §9, `[ui]`).
+ *
+ * Elles ne sont pas dans les blocs de palette parce qu'elles n'ont rien à voir avec le
+ * thème : `data-density` est posé par `app/sidebar-density.ts`, qui reçoit le choix du
+ * backend, exactement comme `data-theme`. Ce sont les **seules** hauteurs nommées du dépôt,
+ * et la section `appearance` les chiffre dans sa note — un test rattache le nombre affiché à
+ * ces deux valeurs, faute de quoi la note dirait ce que la colonne ne fait pas.
+ *
+ * `--ash-row-lead` est l'aération d'une ligne de dépôt, qui n'est pas une ligne d'agent :
+ * une densité qui ne comprimerait que les agents laisserait les groupes aussi hauts, et la
+ * colonne ne gagnerait presque rien. */
+:root,
+:root[data-density="comfortable"] {
+    --ash-row-height: 24px;
+    --ash-row-lead: 8px;
+}
+
+:root[data-density="compact"] {
+    --ash-row-height: 18px;
+    --ash-row-lead: 4px;
+}
+
+:root[data-theme="dark"],
+.ash-palette-dark {
     color-scheme: dark;
 
     --ash-bg: #0c0d0f;
