@@ -228,6 +228,44 @@ describe("la section shortcuts de la fenêtre de réglages", () => {
         ).toHaveLength(0);
     });
 
+    it("Given the holder has no row of its own, when the block is composed, then it is named as the contract names it", () => {
+        // Given — les huit positions d'onglet derrière « Tab 1 … Tab 9 » n'ont pas de ligne :
+        // la famille se lit sous une seule. Chercher le détenteur dans la liste affichée
+        // rendait alors son identifiant interne dans une fenêtre de réglages (issue #137).
+        const declared = aShortcutsReport([
+            aShortcut({ action: "tab:new", label: "New Tab", keys: "⌘T" }),
+            aShortcut({
+                action: "tab:select:1",
+                label: "Tab 1 … Tab 9",
+                keys: "⌘1 … ⌘9",
+                rebindable: false,
+            }),
+        ]);
+        const refused = {
+            ...declared,
+            conflict: {
+                keys: "⌘É",
+                holder: "tab:select:2",
+                holderLabel: "Tab 1 … Tab 9",
+                asked: "tab:new",
+                askedLabel: "New Tab",
+                diagnosis:
+                    "⌘É belongs to Tab 1 … Tab 9 — that row is not rebindable, and ash will not take it away",
+                give: null,
+                keep: "keep the old one",
+            },
+        };
+
+        // When
+        const composed = shortcutsSection(refused, null, INERT);
+        const blocks = composed.flatMap((child) => findAll(child, "settings-conflict-block"));
+
+        // Then — le nom vient du contrat, et aucun identifiant ne fuit à l'écran
+        const inside = plainText(blocks[0] as UiChild);
+        expect(inside).toContain("Tab 1 … Tab 9");
+        expect(inside).not.toContain("tab:select:2");
+    });
+
     it("Given the two conflicting actions sit in two different submenus, when the section is composed, then they still meet in one block, once", () => {
         // Given — rien n'oblige les deux fautives à être voisines : `⌘B` est dans « View »,
         // et une capture peut la viser depuis « Terminal ». Un bloc posé par groupe l'aurait
