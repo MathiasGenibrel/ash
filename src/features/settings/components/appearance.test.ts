@@ -29,7 +29,7 @@ function tiles(children: readonly UiChild[]): UiElementNode[] {
  * sienne superpose les deux rendus, et c'est précisément ce que le test de la diagonale
  * vérifie ailleurs.
  */
-function previewRows(children: readonly UiChild[], palette: string): UiElementNode[] {
+function previewRows(children: readonly UiChild[], palette: string): readonly UiElementNode[] {
     const preview = children.flatMap((child) => findAll(child, `ash-palette-${palette}`)).at(0);
     return preview === undefined ? [] : findAll(preview, "settings-preview-row");
 }
