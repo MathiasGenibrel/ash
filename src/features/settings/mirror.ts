@@ -28,7 +28,14 @@ import type { RemovalPlan as RustRemovalPlan } from "@/shared/ipc/generated/Remo
 import type { RemovalReport as RustRemovalReport } from "@/shared/ipc/generated/RemovalReport";
 import type { RemovedFile as RustRemovedFile } from "@/shared/ipc/generated/RemovedFile";
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
-import type { Shortcut as RustShortcut } from "@/shared/ipc/generated/Shortcut";
+import type { CapturePreview as RustCapturePreview } from "@/shared/ipc/generated/CapturePreview";
+import type { ConflictChoice as RustConflictChoice } from "@/shared/ipc/generated/ConflictChoice";
+import type { KeyStroke as RustKeyStroke } from "@/shared/ipc/generated/KeyStroke";
+import type { Reservation as RustReservation } from "@/shared/ipc/generated/Reservation";
+import type { ReservedBy as RustReservedBy } from "@/shared/ipc/generated/ReservedBy";
+import type { ShortcutConflict as RustShortcutConflict } from "@/shared/ipc/generated/ShortcutConflict";
+import type { ShortcutRow as RustShortcutRow } from "@/shared/ipc/generated/ShortcutRow";
+import type { ShortcutsReport as RustShortcutsReport } from "@/shared/ipc/generated/ShortcutsReport";
 import type { SidebarDensity as RustSidebarDensity } from "@/shared/ipc/generated/SidebarDensity";
 import type { SuggestedFix as RustSuggestedFix } from "@/shared/ipc/generated/SuggestedFix";
 import type { ThemeMode as RustThemeMode } from "@/shared/ipc/generated/ThemeMode";
@@ -57,8 +64,15 @@ import type {
     RemovalPlan,
     RemovalReport,
     RemovedFile,
+    CapturePreview,
+    ConflictChoice,
+    KeyStroke,
+    Reservation,
+    ReservedBy,
     SettingsSnapshot,
-    Shortcut,
+    ShortcutConflict,
+    ShortcutRow,
+    ShortcutsReport,
     SidebarDensity,
     SuggestedFix,
     TestDescription,
@@ -144,7 +158,26 @@ export type VerifiedStillMirrorsRust = Assert<Mirrors<RustVerified, Verified>>;
  */
 export type SettingsThemeModeStillMirrorsRust = Assert<Mirrors<RustThemeMode, ThemeMode>>;
 export type FontStepStillMirrorsRust = Assert<Mirrors<RustFontStep, FontStep>>;
-export type ShortcutStillMirrorsRust = Assert<Mirrors<RustShortcut, Shortcut>>;
+export type ShortcutRowStillMirrorsRust = Assert<Mirrors<RustShortcutRow, ShortcutRow>>;
+export type ShortcutsReportStillMirrorsRust = Assert<
+    Mirrors<RustShortcutsReport, ShortcutsReport>
+>;
+export type ShortcutConflictStillMirrorsRust = Assert<
+    Mirrors<RustShortcutConflict, ShortcutConflict>
+>;
+export type ReservationStillMirrorsRust = Assert<Mirrors<RustReservation, Reservation>>;
+export type ReservedByStillMirrorsRust = Assert<Mirrors<RustReservedBy, ReservedBy>>;
+export type CapturePreviewStillMirrorsRust = Assert<Mirrors<RustCapturePreview, CapturePreview>>;
+
+/**
+ * Les deux formes que la fenêtre **envoie** au sujet des raccourcis.
+ *
+ * Elles vont dans l'autre sens, donc `Accepts` : une frappe et une issue de conflit sont ce
+ * que le backend doit savoir lire. Un code de touche renommé d'un côté seulement ferait
+ * refuser toutes les captures, à l'exécution et sans message clair.
+ */
+export type RustAcceptsKeyStroke = Assert<Accepts<RustKeyStroke, KeyStroke>>;
+export type RustAcceptsConflictChoice = Assert<Accepts<RustConflictChoice, ConflictChoice>>;
 /**
  * La densité de la sidebar, arrivée avec l'aperçu du thème (#22).
  *

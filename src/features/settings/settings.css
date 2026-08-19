@@ -1265,9 +1265,224 @@
  * parcourable. La chasse fixe est celle de tout le document (`app/styles.css`). */
 .settings-shortcut-keys {
     flex: none;
+    padding: 2px 8px;
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
     font-size: 11.5px;
     color: var(--ash-fg-done);
     white-space: nowrap;
+}
+
+/* Une combinaison qu'Ash ne recevra pas est **éteinte**, du même gris que la phrase qui
+ * l'explique : la pastille et son motif se lisent ensemble. Elle reste une pastille — la
+ * ligne garde son raccourci, et le geste de retour au défaut. */
+.settings-shortcut-keys.is-swallowed,
+.settings-shortcut-keys.is-none {
+    color: var(--ash-fg-faint);
+    border-color: var(--ash-border-soft);
+}
+
+.settings-shortcut-swallowed {
+    font-size: 10.5px;
+    color: var(--ash-fg-faint);
+}
+
+/* La ligne rebindable est un vrai bouton : `tab` la traverse, `⏎` ouvre sa capture. Il faut
+ * donc lui retirer tout ce qu'un bouton porte par défaut, et lui rendre la mise en page de la
+ * ligne qu'elle était. */
+.settings-shortcut-open {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex: 1;
+    padding: 3px 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--ash-fg-subtle);
+    text-align: left;
+    cursor: pointer;
+}
+
+.settings-shortcut-fixed {
+    flex: 1;
+    padding: 3px 6px;
+}
+
+.settings-shortcut-open:hover,
+.settings-shortcut-open:focus-visible {
+    background: var(--ash-bg-card);
+}
+
+/* Elle n'apparaît que sur les lignes changées — le pied de la fenêtre le dit en toutes
+ * lettres, et c'est la vue qui ne la pose pas ailleurs. */
+.settings-shortcut-reset {
+    flex: none;
+    padding: 3px 5px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    font-size: 11px;
+    color: var(--ash-fg-faint);
+    cursor: pointer;
+}
+
+.settings-shortcut-reset:hover,
+.settings-shortcut-reset:focus-visible {
+    background: var(--ash-bg-card);
+    color: var(--ash-fg-done);
+}
+
+.settings-reset-all {
+    font-size: 10.5px;
+}
+
+/* --- la capture d'une combinaison (planche `3j`) ----------------------------- */
+
+/* Elle **s'agrandit sur place**, elle n'ouvre pas de modale : « le contexte reste lisible
+ * pendant qu'on appuie ». La famille froide de la planche n'a pas de token dans le dépôt ;
+ * on emprunte `--ash-working`, qui est exactement sa teinte, et les fonds structurels. */
+.settings-capture {
+    display: block;
+    padding: 8px;
+    border: 1px solid var(--ash-working);
+    border-radius: 4px;
+    background: var(--ash-bg-card);
+    outline: none;
+}
+
+.settings-capture > .ui-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.settings-capture-prompt,
+.settings-capture-keys {
+    flex: none;
+    padding: 2px 9px;
+    border: 1px solid var(--ash-working);
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--ash-working);
+}
+
+/* Le caret qui clignote : le seul signe que le bloc attend une frappe. `step-end` plutôt
+ * qu'un fondu — un curseur de terminal ne s'estompe pas. */
+.settings-capture-caret {
+    display: inline-block;
+    width: 6px;
+    height: 12px;
+    background: var(--ash-working);
+    animation: ash-caret 1.1s step-end infinite;
+}
+
+@keyframes ash-caret {
+    0%,
+    50% {
+        opacity: 1;
+    }
+
+    50.1%,
+    100% {
+        opacity: 0;
+    }
+}
+
+.settings-capture-help {
+    padding-top: 7px;
+    font-size: 10.5px;
+    color: var(--ash-fg-faint);
+}
+
+.settings-capture-key,
+.settings-capture-was {
+    color: var(--ash-fg-subtle);
+}
+
+.settings-capture-dot {
+    padding: 0 3px;
+}
+
+/* L'avertissement est **dans** le bloc, sous un filet : il informe la frappe en cours, et il
+ * n'interdit rien — la combinaison reste posable. */
+.settings-capture-notice {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid var(--ash-border-soft);
+    font-size: 10.5px;
+}
+
+.settings-capture-warn-glyph {
+    color: var(--ash-warning);
+}
+
+.settings-capture-warn {
+    color: var(--ash-fg-subtle);
+}
+
+/* --- deux actions sur une combinaison ---------------------------------------- */
+
+/* Les deux lignes fautives dans **un** bloc : séparées, elles se contrediraient à l'écran
+ * sans dire qu'elles se répondent. */
+.settings-conflict-block {
+    margin: 4px 0;
+    padding: 8px;
+    border: 1px solid var(--ash-warning-border);
+    border-radius: 4px;
+    background: var(--ash-warning-bg);
+}
+
+.settings-conflict-mention {
+    font-size: 10.5px;
+    color: var(--ash-warning);
+}
+
+.settings-shortcut-keys.is-conflicting {
+    border-color: var(--ash-warning-border-strong);
+}
+
+.settings-conflict-verdict {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid var(--ash-warning-header-rule);
+    font-size: 10.5px;
+}
+
+.settings-conflict-diagnosis {
+    color: var(--ash-fg-subtle);
+}
+
+/* Le conséquent porte le texte fort, le secondaire reste en retrait — mais les deux sont
+ * visibles et cliquables : aucun des deux n'est un défaut, rien n'est appliqué tant que le
+ * bloc est là. */
+.settings-conflict-give,
+.settings-conflict-keep {
+    flex: none;
+    padding: 3px 8px;
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    background: transparent;
+    font: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+}
+
+.settings-conflict-give {
+    color: var(--ash-fg-strong);
+    border-color: var(--ash-border-strong, var(--ash-border));
+}
+
+.settings-conflict-keep {
+    color: var(--ash-fg-subtle);
 }
 
 /* --- retirer ash de tous les fichiers (spec §10) ----------------------------- */

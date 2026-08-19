@@ -24,6 +24,16 @@ import type { MenuAction } from "./menu";
  * [`matchShortcut`] : elle exige `Control`, et refuse tout ce qui porte `Cmd` ou `Option`
  * — sans quoi la complétion de `zsh` s'arrêterait de fonctionner, ce qui coûterait
  * infiniment plus cher que le raccourci ne rapporte.
+ *
+ * **Ce que le rebinding (#22) laisse ouvert ici, et qu'il faut savoir.** Les liaisons sont
+ * désormais réglables et détenues en Rust (`features::shortcuts`) ; cette porte-ci, elle,
+ * reste écrite en dur sur `⌃⇥`. Donner une autre combinaison à `Select Next Tab` dans les
+ * réglages change donc le menu — et la nouvelle touche fonctionne —, mais `⌃⇥` continue
+ * d'atteindre la même action par ce chemin. Ces deux entrées sont les seules dans ce cas,
+ * précisément parce qu'elles sont les seules qu'AppKit n'allume pas. La sortie n'est pas de
+ * recopier une liaison ici — ce serait la seconde liste que #110 interdit — mais de faire
+ * lire à `main.ts` la combinaison en vigueur, ou de voir disparaître ce module le jour où
+ * `muda` corrigera son équivalent clavier (voir l'en-tête de `src-tauri/src/menu.rs`).
  */
 
 /** Ce qu'un `keydown` a d'utile ici. Un objet nu, pour que la règle se teste sans DOM. */

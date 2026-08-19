@@ -4,7 +4,8 @@ import type {
     NotificationPermission,
     NotificationsReport,
     SettingsSnapshot,
-    Shortcut,
+    ShortcutRow,
+    ShortcutsReport,
     TestDescription,
     ToolDeclaration,
     ToolDraft,
@@ -133,9 +134,34 @@ export function anAppearance(overrides: Partial<Appearance> = {}): Appearance {
     return { mode: "system", fontSize: 13, font: "JetBrains Mono", density: "comfortable", ...overrides };
 }
 
-/** Un raccourci tel que `menu_shortcuts` le rend — combinaison déjà en glyphes. */
-export function aShortcut(overrides: Partial<Shortcut> = {}): Shortcut {
-    return { group: "terminal", label: "New Tab", keys: "⌘T", ...overrides };
+/** Une ligne de raccourci telle que `menu_shortcuts` la rend — glyphes déjà écrits. */
+export function aShortcut(overrides: Partial<ShortcutRow> = {}): ShortcutRow {
+    return {
+        action: "tab:new",
+        group: "terminal",
+        label: "New Tab",
+        keys: "⌘T",
+        defaultKeys: "⌘T",
+        changed: false,
+        rebindable: true,
+        reservation: null,
+        ...overrides,
+    };
+}
+
+/**
+ * L'instantané des raccourcis : les lignes qu'on lui donne, sans conflit et rien de changé.
+ *
+ * Le compteur `changed` est **calculé** depuis les lignes plutôt que réglable : il vient du
+ * backend, où il compte les lignes changées, et un scénario qui les ferait mentir l'un à
+ * l'autre décrirait un backend qui n'existe pas.
+ */
+export function aShortcutsReport(rows: readonly ShortcutRow[] = [aShortcut()]): ShortcutsReport {
+    return {
+        rows: [...rows],
+        changed: rows.filter((row) => row.changed).length,
+        conflict: null,
+    };
 }
 
 export function aSnapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {

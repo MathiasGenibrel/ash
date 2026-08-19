@@ -2,7 +2,8 @@ import type {
     FocusedTool,
     HookAction,
     SettingsSnapshot,
-    Shortcut,
+    KeyStroke,
+    ShortcutRow,
     ToolDeclaration,
     ToolDraft,
     Verification,
@@ -342,7 +343,7 @@ export function degradedModeSubject(draft: ToolDraft): string | null {
 /** Un groupe de la section `shortcuts` : le nom du sous-menu, et ses lignes. */
 export interface ShortcutGroup {
     readonly group: string;
-    readonly shortcuts: readonly Shortcut[];
+    readonly shortcuts: readonly ShortcutRow[];
 }
 
 /**
@@ -356,8 +357,8 @@ export interface ShortcutGroup {
  * Un même groupe qui reviendrait après un autre est **replié dans le premier** plutôt que
  * dupliqué : deux titres identiques dans une liste se lisent comme un bug d'affichage.
  */
-export function groupShortcuts(shortcuts: readonly Shortcut[]): readonly ShortcutGroup[] {
-    const grouped: { group: string; shortcuts: Shortcut[] }[] = [];
+export function groupShortcuts(shortcuts: readonly ShortcutRow[]): readonly ShortcutGroup[] {
+    const grouped: { group: string; shortcuts: ShortcutRow[] }[] = [];
     for (const shortcut of shortcuts) {
         const opened = grouped.find((candidate) => candidate.group === shortcut.group);
         if (opened === undefined) grouped.push({ group: shortcut.group, shortcuts: [shortcut] });
@@ -396,4 +397,52 @@ export function focusedDraft(focused: FocusedTool, snapshot: SettingsSnapshot): 
         ? focused.adapter
         : (snapshot.adapters[0] ?? GENERIC_ADAPTER);
     return { command: focused.command, label: "", adapter, config: "" };
+}
+
+/**
+ * Ce qu'une frappe demande au bloc de capture — les trois issues de la planche, et le reste.
+ *
+ * Elle est pure et testée pour la même raison que [`sectionStep`](./sections.ts) : le bloc de
+ * capture consomme **toutes** les frappes tant qu'il est ouvert, donc se tromper d'issue
+ * signifie ne plus pouvoir en sortir. Un test vaut mieux qu'un essai.
+ *
+ * `ignore` est le cas des modificateurs pressés seuls : on tient `⌘` avant de frapper la
+ * lettre, et chacun de ces `keydown` arrive ici. Les traiter comme une frappe ferait clignoter
+ * un refus (« add ⌘, ⌃ or ⌥ ») entre le moment où l'on presse le modificateur et celui où
+ * l'on presse la touche.
+ */
+export type CaptureIntent = "cancel" | "clear" | "confirm" | "ignore" | "stroke";
+
+/** Les modificateurs, dont un `keydown` arrive seul avant la vraie touche. */
+const MODIFIER_KEYS: readonly string[] = ["Shift", "Meta", "Alt", "Control", "CapsLock"];
+
+export function captureIntent(event: { key: string }): CaptureIntent {
+    if (event.key === "Escape") return "cancel";
+    if (event.key === "Backspace") return "clear";
+    if (event.key === "Enter") return "confirm";
+    return MODIFIER_KEYS.includes(event.key) ? "ignore" : "stroke";
+}
+
+/**
+ * La frappe telle que le backend l'attend — le **code physique** et les quatre modificateurs.
+ *
+ * Le code plutôt que `key` : `KeyboardEvent.code` ne dépend pas de la disposition du clavier,
+ * et c'est exactement le nom que l'analyseur d'accélérateurs de `muda` lit. Rien n'est décidé
+ * ici — pas même « est-ce une combinaison valable »
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export function readStroke(event: {
+    code: string;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    altKey: boolean;
+    shiftKey: boolean;
+}): KeyStroke {
+    return {
+        code: event.code,
+        command: event.metaKey,
+        control: event.ctrlKey,
+        option: event.altKey,
+        shift: event.shiftKey,
+    };
 }

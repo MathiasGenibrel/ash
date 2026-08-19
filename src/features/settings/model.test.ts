@@ -12,10 +12,12 @@ import {
     describeStop,
     describeTool,
     describeToolCount,
+    captureIntent,
     focusedDraft,
     groupShortcuts,
     NOTHING_VERIFIED_YET,
     parseDiff,
+    readStroke,
 } from "./model";
 
 describe("ce qu'une carte d'outil dit", () => {
@@ -488,7 +490,60 @@ describe("les raccourcis groupés", () => {
         expect(grouped.map((one) => one.group)).toEqual(["terminal", "view"]);
         expect(grouped[0]?.shortcuts.map((one) => one.label)).toEqual(["New Tab", "Close Tab"]);
     });
+});
 
+describe("le bloc de capture d'une combinaison", () => {
+    it("Given the three keys the plate gives the capture, when each is pressed, then each one is its own way out", () => {
+        // Given — `esc` annule, `⌫` retire le raccourci, `⏎` confirme. Le bloc consomme
+        // **toutes** les frappes tant qu'il est ouvert, donc se tromper d'issue signifie ne
+        // plus pouvoir en sortir : c'est exactement ce qui ne s'essaie pas à la main
+        const issues = [{ key: "Escape" }, { key: "Backspace" }, { key: "Enter" }];
+
+        // When
+        const intents = issues.map(captureIntent);
+
+        // Then
+        expect(intents).toEqual(["cancel", "clear", "confirm"]);
+    });
+
+    it("Given a modifier held down before the real key, when its own keydown arrives, then nothing is read from it", () => {
+        // Given — on tient `⌘` avant de frapper la lettre, et chacun de ces `keydown` arrive
+        // au bloc. Les traiter comme une frappe ferait clignoter un refus entre le moment où
+        // l'on presse le modificateur et celui où l'on presse la touche
+        const held = [{ key: "Meta" }, { key: "Shift" }, { key: "Alt" }, { key: "Control" }];
+
+        // When
+        const intents = held.map(captureIntent);
+
+        // Then
+        expect(intents).toEqual(["ignore", "ignore", "ignore", "ignore"]);
+    });
+
+    it("Given a real combination pressed, when the stroke is read, then it carries the physical code and the four modifiers", () => {
+        // Given — le **code** et non `key` : `KeyboardEvent.code` ne dépend pas de la
+        // disposition du clavier, et c'est le nom que l'analyseur d'accélérateurs lit. Rien
+        // n'est jugé ici : c'est le backend qui dit si ça fait un raccourci
+        const pressed = {
+            code: "KeyJ",
+            metaKey: true,
+            ctrlKey: false,
+            altKey: false,
+            shiftKey: true,
+        };
+
+        // When
+        const stroke = readStroke(pressed);
+
+        // Then
+        expect(captureIntent({ key: "j" })).toBe("stroke");
+        expect(stroke).toEqual({
+            code: "KeyJ",
+            command: true,
+            control: false,
+            option: false,
+            shift: true,
+        });
+    });
 });
 
 describe("l'outil que la sidebar désigne", () => {

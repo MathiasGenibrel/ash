@@ -78,6 +78,7 @@ use features::settings::{
     AdapterProfile, BlockAt, ConfigTarget, HookBlocks, SystemCommands, SystemConfigFiles,
     ToolRecognition, ToolRegistry, Verifier,
 };
+use features::shortcuts::{BindingStore, Bindings, FileBindingStore};
 use features::sidebar::{
     FileSidebarStore, PinnedRepo, PinnedWorktree, SidebarState, SidebarStore, WorktreePlaces,
 };
@@ -466,6 +467,16 @@ pub fn run() -> tauri::Result<()> {
     // n'a rien à faire sur le chemin d'ouverture de la fenêtre principale.
     let fonts = Arc::new(SystemFontCatalog::on_this_mac()) as Arc<dyn FontCatalog>;
 
+    // Les liaisons de raccourcis, relues **avant** le menu et pour la même raison que
+    // l'apparence : c'est d'elles que chaque accélérateur du menu vient, et le menu est bâti
+    // une seule fois au démarrage (`menu::build`). Une touche posée après coup serait une
+    // seconde source de vérité. Les défauts, eux, viennent du menu — `menu::action_bindings`
+    // est le seul point de contact entre les deux, et il ne va que dans ce sens.
+    let shortcuts = Arc::new(Bindings::restore(
+        Arc::new(FileBindingStore::in_home()) as Arc<dyn BindingStore>,
+        menu::action_bindings(),
+    ));
+
     let tools = Arc::new(ToolRegistry::new(
         Arc::new(Verifier::new(
             Arc::new(SystemConfigFiles),
@@ -505,6 +516,8 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&fonts))
+
+        .manage(Arc::clone(&shortcuts))
         .manage(Arc::clone(&tools))
         .manage(Arc::clone(&sidebar_rows))
         .manage(Arc::clone(&notification_preferences))
@@ -514,7 +527,10 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::PendingFocus::default(),
         ))
         .manage(spike::Flow::default())
-        .menu(move |app| menu::build(app, theme_mode))
+        .menu({
+            let shortcuts = Arc::clone(&shortcuts);
+            move |app| menu::build(app, theme_mode, &shortcuts)
+        })
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
             app_name,
@@ -546,7 +562,18 @@ pub fn run() -> tauri::Result<()> {
             // qu'il doit corriger ses coches, la taille de police non — voir les deux
             // fonctions.
             menu::theme_set_mode,
+            // La section `shortcuts` de la fenêtre de réglages (spec §4.4, issue #22). Ses
+            // commandes sont dans `menu.rs` et non dans `features::shortcuts` parce qu'elles
+            // ont toutes à **refaire le menu** : une feature n'a pas à connaître la forme
+            // d'un menu, exactement comme pour `theme_set_mode` au-dessus.
             menu::menu_shortcuts,
+            menu::shortcut_listening,
+            menu::shortcut_preview,
+            menu::shortcut_bind,
+            menu::shortcut_clear,
+            menu::shortcut_reset,
+            menu::shortcut_reset_all,
+            menu::shortcut_resolve,
             features::settings::commands::settings_notifications,
             features::settings::commands::settings_set_notification,
             features::settings::commands::settings_tools,

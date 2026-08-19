@@ -10,5 +10,6 @@ pub mod notifications;
 pub mod probe;
 pub mod pty;
 pub mod settings;
+pub mod shortcuts;
 pub mod sidebar;
 pub mod theme;

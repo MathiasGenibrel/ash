@@ -18,17 +18,18 @@ import type {
     Appearance,
     FixAction,
     FocusedTool,
+    KeyStroke,
     NotificationsReport,
     RemovalPlan,
     SettingsPorts,
     SettingsSnapshot,
-    Shortcut,
+    ShortcutsReport,
     ToolDraft,
     Verification,
     WindowPorts,
 } from "./contract";
-import type { RemovalStage } from "./components";
-import { focusedDraft, GENERIC_ADAPTER } from "./model";
+import type { RemovalStage, ShortcutCapture } from "./components";
+import { captureIntent, focusedDraft, GENERIC_ADAPTER, readStroke } from "./model";
 import { createRelaunch, type Timer, windowTimer } from "./relaunch";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
@@ -39,9 +40,13 @@ export type {
     FontStep,
     NotificationPermission,
     NotificationsReport,
+    CapturePreview,
+    ConflictChoice,
+    KeyStroke,
     SettingsPorts,
     SettingsSnapshot,
-    Shortcut,
+    ShortcutRow,
+    ShortcutsReport,
     SidebarDensity,
     ThemeMode,
     ToolDeclaration,
@@ -124,8 +129,23 @@ export function mountSettings(
      * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
      */
     let appearance: Appearance | null = null;
-    /** Les raccourcis que le menu natif déclare. Lus une fois : le menu ne change plus. */
-    let shortcuts: readonly Shortcut[] | null = null;
+    /**
+     * Les raccourcis en vigueur, tels que `features::shortcuts` les détient.
+     *
+     * Relus à chaque geste, et jamais modifiés ici : chaque appel en rapporte une version
+     * neuve, celle dont le menu natif vient d'être refait
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    let shortcuts: ShortcutsReport | null = null;
+    /** La ligne ouverte en capture, ou `null`. Un fait d'affichage, pas une liaison. */
+    let capture: ShortcutCapture | null = null;
+    /**
+     * La dernière frappe que le backend a acceptée, celle que `⏎` posera.
+     *
+     * Elle est gardée telle qu'elle a été lue, et non re-fabriquée depuis les glyphes
+     * affichés : ce sont les glyphes qui dérivent de la frappe, jamais l'inverse.
+     */
+    let captured: KeyStroke | null = null;
     /**
      * Les familles monospace installées, ou `null` tant que le backend ne les a pas lues.
      *
@@ -303,7 +323,53 @@ export function mountSettings(
         setNotification: (state, enabled) => {
             void flipNotification(state, enabled);
         },
+        // Les six gestes de la section `shortcuts`. Les deux premiers ouvrent et referment un
+        // bloc — c'est de l'affichage ; les quatre autres demandent, et le backend rend
+        // l'instantané dont le menu natif vient d'être refait.
+        openCapture: (action) => {
+            capture = { action, keys: "", why: null, note: null };
+            captured = null;
+            // Les entrées du menu s'éteignent le temps de la capture : sinon `⌘W` frappé ici
+            // fermerait la fenêtre au lieu d'être lu — un accélérateur de menu est consommé
+            // avant la webview sur macOS.
+            void windowPorts.listenForShortcut(true).catch(() => undefined);
+            draw();
+        },
+        cancelCapture: () => {
+            closeCapture();
+            draw();
+        },
+        confirmCapture: () => {
+            const asked = capture;
+            const stroke = captured;
+            // `⏎` sur un bloc où rien n'a encore été frappé, ou sur une frappe que le backend
+            // a refusée : il n'y a rien à poser, et refermer le bloc ferait croire à un choix.
+            if (asked === null || stroke === null) return;
+            void askShortcuts(windowPorts.bindShortcut(asked.action, stroke), () => {
+                closeCapture();
+            });
+        },
+        clearShortcut: (action) => {
+            void askShortcuts(windowPorts.clearShortcut(action), () => {
+                closeCapture();
+            });
+        },
+        resetShortcut: (action) => {
+            void askShortcuts(windowPorts.resetShortcut(action));
+        },
+        resetAllShortcuts: () => {
+            void askShortcuts(windowPorts.resetAllShortcuts());
+        },
+        resolveConflict: (choice) => {
+            void askShortcuts(windowPorts.resolveShortcutConflict(choice));
+        },
     });
+
+    function closeCapture(): void {
+        capture = null;
+        captured = null;
+        void windowPorts.listenForShortcut(false).catch(() => undefined);
+    }
 
     /** Bascule un interrupteur. Un refus laisse la section telle qu'elle était. */
     async function flipNotification(state: AgentState, enabled: boolean): Promise<void> {
@@ -439,13 +505,48 @@ export function mountSettings(
         }
     }
 
-    /** Lit les raccourcis du menu, une seule fois. */
-    async function askShortcuts(): Promise<void> {
+    /**
+     * Rejoue un appel aux liaisons : l'instantané rendu devient l'écran.
+     *
+     * Un refus ne fait rien disparaître et n'invente rien : la scène reste celle du dernier
+     * instantané connu. Le backend a déjà refait le menu quand il répond, donc l'écran et le
+     * menu disent la même chose à la même seconde
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    async function askShortcuts(
+        call: Promise<ShortcutsReport>,
+        onSuccess?: () => void,
+    ): Promise<void> {
         try {
-            shortcuts = await windowPorts.shortcuts();
+            shortcuts = await call;
+            onSuccess?.();
+        } catch {
+            // Le refus est déjà écrit par le backend, et le bloc de capture l'affiche au
+            // moment de la frappe : le rejouer ici ne dirait rien de plus.
+        }
+        draw();
+    }
+
+    /** Ce que le backend dit de la frappe en cours — il ne pose rien, `⏎` seul pose. */
+    async function previewStroke(stroke: KeyStroke): Promise<void> {
+        const asked = capture;
+        let previewed;
+        try {
+            previewed = await windowPorts.previewShortcut(stroke);
         } catch {
             return;
         }
+        // La capture a pu se refermer, ou changer de ligne, pendant l'aller-retour : une
+        // réponse à une question qu'on ne pose plus n'a rien à afficher.
+        if (capture === null || asked === null || capture.action !== asked.action) return;
+        capture = {
+            action: capture.action,
+            keys: previewed.keys,
+            why: previewed.why,
+            note: previewed.reservation?.note ?? null,
+        };
+        // Une combinaison refusée n'est pas gardée : `⏎` n'aurait rien à poser.
+        captured = previewed.accepted ? stroke : null;
         draw();
     }
 
@@ -497,6 +598,7 @@ export function mountSettings(
             appearance,
             fonts,
             shortcuts,
+            capture,
         });
     }
 
@@ -525,6 +627,31 @@ export function mountSettings(
     // ajout. `tab` n'est pas ici — c'est le parcours du navigateur, et la colonne est faite
     // de vrais boutons.
     root.addEventListener("keydown", (event) => {
+        // Le bloc de capture consomme **tout** tant qu'il est ouvert : c'est le sens de la
+        // capture, et c'est aussi pourquoi ses trois issues sont testées ailleurs
+        // (`captureIntent`) — se tromper d'issue signifierait ne plus pouvoir en sortir.
+        if (capture !== null) {
+            const intent = captureIntent(event);
+            if (intent === "ignore") return;
+            event.preventDefault();
+            if (intent === "cancel") {
+                closeCapture();
+                draw();
+            } else if (intent === "clear") {
+                void askShortcuts(windowPorts.clearShortcut(capture.action), closeCapture);
+            } else if (intent === "confirm") {
+                if (captured !== null) {
+                    void askShortcuts(
+                        windowPorts.bindShortcut(capture.action, captured),
+                        closeCapture,
+                    );
+                }
+            } else {
+                void previewStroke(readStroke(event));
+            }
+            return;
+        }
+
         if (event.key === "Escape" && draft !== null) {
             closeDraft();
             draw();
@@ -542,6 +669,15 @@ export function mountSettings(
         view.focusActiveSection();
     });
 
+    // Une capture ouverte pendant qu'on va cliquer ailleurs n'attend plus rien : elle se
+    // referme, et le menu retrouve ses touches. C'est aussi le filet de la fenêtre — un bloc
+    // laissé ouvert garderait les entrées du menu éteintes.
+    root.ownerDocument.defaultView?.addEventListener("blur", () => {
+        if (capture === null) return;
+        closeCapture();
+        draw();
+    });
+
     draw();
     // La demande de la sidebar se lit **après** la liste : voir [`focusTool`].
     void apply(ports.tools()).then(askFocus);
@@ -552,7 +688,7 @@ export function mountSettings(
     // et le thème qui change, on l'apprend par l'annonce ci-dessous.
     void askAppearance();
     void askFonts();
-    void askShortcuts();
+    void askShortcuts(windowPorts.shortcuts());
 
     // L'apparence change aussi depuis le menu Vue, pendant que cette fenêtre est ouverte.
     // C'est le **même** chemin qu'un choix fait ici : les deux surfaces ne peuvent donc pas
