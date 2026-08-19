@@ -7,6 +7,7 @@ import { DeadKeyRepair } from "./dead-keys";
 import { applyKeyAction, resolveKeyAction, type ActionSurface } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
 import type {
+    FontFamilySignal,
     FontSizeSignal,
     TerminalSize,
     TerminalView,
@@ -65,6 +66,7 @@ export class XtermView implements TerminalView {
         },
     };
     private readonly unfollowFontSize: Unsubscribe;
+    private readonly unfollowFontFamily: Unsubscribe;
     /**
      * Le rattrapage des touches mortes, une instance par onglet.
      *
@@ -81,13 +83,21 @@ export class XtermView implements TerminalView {
      * C'est la vue qui possède son élément, et pas l'appelant : plusieurs onglets
      * partagent le même parent, et il faut bien que chacun sache retirer le sien.
      */
-    constructor(parent: HTMLElement, theme: ThemeSignal, fontSize: FontSizeSignal) {
+    constructor(
+        parent: HTMLElement,
+        theme: ThemeSignal,
+        fontSize: FontSizeSignal,
+        fontFamily: FontFamilySignal,
+    ) {
         this.pane = document.createElement("div");
         this.pane.className = "terminal-pane";
         parent.append(this.pane);
 
         this.term = new Terminal({
-            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+            // La pile en cours, et non une constante : la famille est détenue par le
+            // backend, comme la taille — voir `src-tauri/src/features/theme/font.rs` —, et
+            // un onglet ouvert après un changement naît déjà avec la bonne police.
+            fontFamily: fontFamily.current,
             // La taille en cours, et non une constante : un onglet ouvert après un `⌘+`
             // naît déjà à la bonne taille, sans attendre le changement suivant. Elle est
             // détenue par le backend — voir `src-tauri/src/features/theme/font_size.rs`.
@@ -210,6 +220,12 @@ export class XtermView implements TerminalView {
             this.setFontSize(points);
         });
 
+        // Même forme, même raison, et **la même conséquence sur la grille** : changer de
+        // famille change la largeur d'une cellule, donc le nombre de colonnes.
+        this.unfollowFontFamily = fontFamily.subscribe((stack) => {
+            this.setFontFamily(stack);
+        });
+
         // **Le moment de la mesure, et le seul.** xterm.js prend ici la largeur d'un
         // caractère, de façon synchrone, et la fige dans la grille comme dans l'atlas de
         // textures du renderer WebGL. Or `assets/fonts/fonts.css` déclare JetBrains Mono
@@ -301,6 +317,7 @@ export class XtermView implements TerminalView {
         this.disposed = true;
         this.unfollowTheme();
         this.unfollowFontSize();
+        this.unfollowFontFamily();
         this.observer.disconnect();
         // Avant `term.dispose()` : l'addon se détache d'un terminal encore vivant.
         this.search.dispose();
@@ -362,6 +379,24 @@ export class XtermView implements TerminalView {
     private setFontSize(points: number): void {
         if (this.disposed || this.term.options.fontSize === points) return;
         this.term.options.fontSize = points;
+        this.refit();
+    }
+
+    /**
+     * Change la police **et refait la grille**, exactement comme un changement de taille.
+     *
+     * Les deux lignes ne se séparent pas plus ici que là : `SF Mono` et `Menlo` n'ont pas la
+     * même chasse, donc la même largeur de fenêtre ne tient pas le même nombre de colonnes.
+     * Sans le `refit`, le texte changerait de dessin et le PTY resterait sur l'ancienne
+     * grille — une TUI s'y dessinerait de travers jusqu'au prochain redimensionnement.
+     *
+     * Le paragraphe de [`setFontSize`] sur l'hypothèse de version vaut mot pour mot pour
+     * celle-ci : `@xterm/xterm` 6.0.0 branche `onMultipleOptionChange(["fontFamily",
+     * "fontSize"])` sur sa mesure — les deux options y sont nommées ensemble.
+     */
+    private setFontFamily(stack: string): void {
+        if (this.disposed || this.term.options.fontFamily === stack) return;
+        this.term.options.fontFamily = stack;
         this.refit();
     }
 

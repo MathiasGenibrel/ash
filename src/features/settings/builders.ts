@@ -125,11 +125,12 @@ export function aNotificationsReport(
 /**
  * L'apparence par défaut, celle d'une session qui n'a rien choisi : macOS décide, 13 points.
  *
- * Les deux valeurs sont celles de `features::theme` (`ThemeMode::System`, `FontSize::DEFAULT`)
+ * Les quatre valeurs sont celles de `features::theme` (`ThemeMode::System`,
+ * `FontSize::DEFAULT`, `TerminalFont::DEFAULT_FAMILY`, `SidebarDensity::Comfortable`)
  * — un scénario qui les réécrirait décrirait un backend qui n'existe pas.
  */
 export function anAppearance(overrides: Partial<Appearance> = {}): Appearance {
-    return { mode: "system", fontSize: 13, ...overrides };
+    return { mode: "system", fontSize: 13, font: "JetBrains Mono", density: "comfortable", ...overrides };
 }
 
 /** Un raccourci tel que `menu_shortcuts` le rend — combinaison déjà en glyphes. */

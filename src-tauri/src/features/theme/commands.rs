@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use super::density::SidebarDensity;
+use super::font::{FontCatalog, TerminalFont};
 use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::sidebar_column::{SidebarColumn, SidebarWidth};
@@ -163,4 +165,77 @@ fn announce<R: Runtime>(app: &AppHandle<R>, changed: Option<SidebarColumn>) {
     // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à rattraper,
     // et surtout pas de panique dans une commande.
     let _ = app.emit(SIDEBAR_COLUMN_EVENT, column);
+}
+
+/// Nom de l'event qui porte la police du terminal. Contrat avec `src/app/terminal-font.ts`.
+pub const TERMINAL_FONT_EVENT: &str = "ash://terminal-font";
+
+/// Nom de l'event qui porte la densité de la sidebar. Contrat avec
+/// `src/app/sidebar-density.ts`.
+pub const SIDEBAR_DENSITY_EVENT: &str = "ash://sidebar-density";
+
+/// La police du terminal, lue par la webview en s'affichant. Même contrat que
+/// [`terminal_font_size`] : ensuite, c'est l'event qui la tient à jour.
+#[tauri::command]
+pub fn terminal_font(state: tauri::State<'_, Arc<ThemeState>>) -> TerminalFont {
+    state.font()
+}
+
+/// Les familles monospace dans lesquelles la fenêtre de réglages fait choisir.
+///
+/// **Une lecture, et seulement une lecture** : rien n'est écrit, aucune autorisation macOS
+/// n'est demandée, et le catalogue ne sort pas des trois dossiers de polices du système. La
+/// liste est calculée une fois par session — installer une police demande de passer par le
+/// Livre des polices, pas par Ash.
+#[tauri::command]
+pub fn monospace_fonts(catalog: tauri::State<'_, Arc<dyn FontCatalog>>) -> Vec<String> {
+    catalog.monospace_families()
+}
+
+/// La police que la fenêtre de réglages choisit — la **seconde** préférence d'apparence qui
+/// n'a qu'une surface, avec la densité.
+///
+/// Contrairement à la taille, ce qui traverse est une **valeur** et non un pas : le choix se
+/// fait dans une liste que le backend a lui-même rendue, et il n'existe pas de « police
+/// suivante ». Le nom est repris par [`TerminalFont`], qui est la seule porte d'entrée du
+/// type — un nom vide ou démesuré ne devient jamais une préférence.
+///
+/// Rien n'est rendu à l'appelante : la nouvelle police revient par [`TERMINAL_FONT_EVENT`],
+/// que Tauri diffuse à **toutes** les fenêtres. C'est ce qui fait relire sa grille à chaque
+/// terminal ouvert, exactement comme un pas de taille.
+#[tauri::command]
+pub fn choose_terminal_font<R: Runtime>(app: AppHandle<R>, font: String) {
+    let Some(chosen) = TerminalFont::new(&font) else {
+        return;
+    };
+    let Some(state) = app.try_state::<Arc<ThemeState>>() else {
+        return;
+    };
+    if !state.set_font(chosen.clone()) {
+        return;
+    }
+    let _ = app.emit(TERMINAL_FONT_EVENT, chosen);
+}
+
+/// La densité de la sidebar, lue par la webview en s'affichant.
+#[tauri::command]
+pub fn sidebar_density(state: tauri::State<'_, Arc<ThemeState>>) -> SidebarDensity {
+    state.density()
+}
+
+/// La densité que la fenêtre de réglages choisit.
+///
+/// Même chemin que la police, et pour la même raison : la sidebar de la fenêtre principale
+/// l'apprend par l'annonce, pas par cette fenêtre-ci — les deux documents sont distincts, et
+/// c'est le backend qui détient le choix
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+#[tauri::command]
+pub fn choose_sidebar_density<R: Runtime>(app: AppHandle<R>, density: SidebarDensity) {
+    let Some(state) = app.try_state::<Arc<ThemeState>>() else {
+        return;
+    };
+    if !state.set_density(density) {
+        return;
+    }
+    let _ = app.emit(SIDEBAR_DENSITY_EVENT, density);
 }
