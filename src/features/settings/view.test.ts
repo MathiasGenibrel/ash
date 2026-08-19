@@ -7,7 +7,7 @@ import {
     aDraft,
     aHooksReport,
     aNotificationsReport,
-    aShortcut,
+    aShortcutsReport,
     aSnapshot,
     aTool,
     aVerification,
@@ -36,7 +36,8 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         fonts: null,
         notifications: aNotificationsReport(),
         appearance: anAppearance(),
-        shortcuts: [aShortcut()],
+        shortcuts: aShortcutsReport(),
+        capture: null,
         ...overrides,
     };
 }

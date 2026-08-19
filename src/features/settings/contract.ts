@@ -298,20 +298,98 @@ export interface Appearance {
 }
 
 /**
- * Un raccourci, tel que le menu natif le déclare (spec §4.4). Miroir de `Shortcut` en Rust.
+ * Une ligne de la section `shortcuts` (spec §4.4). Miroir de `ShortcutRow` en Rust.
  *
- * Les trois champs viennent de `src-tauri/src/menu.rs`, et c'est le point : les accélérateurs
- * y sont déclarés, donc c'est là qu'ils se lisent. Une table écrite en TypeScript aurait fini
- * par annoncer un raccourci que le menu ne déclare plus, et c'est l'écran des réglages qu'on
- * croit quand les deux ne disent pas la même chose.
+ * Les sept champs viennent de `features::shortcuts`, et c'est le point : les liaisons y sont
+ * détenues, le menu natif s'en déduit, donc c'est là qu'elles se lisent. Une table écrite en
+ * TypeScript aurait fini par annoncer un raccourci que le menu ne joue plus, et c'est l'écran
+ * des réglages qu'on croit quand les deux ne disent pas la même chose (issue #110).
  */
-export interface Shortcut {
+export interface ShortcutRow {
+    /** L'identifiant d'action — ce que la capture renvoie au backend. */
+    action: string;
     /** Le sous-menu où l'action vit — `terminal`, `view`, `application`. */
     group: string;
     label: string;
-    /** La combinaison, déjà écrite comme macOS l'écrit — `⇧⌘T`. */
+    /** La combinaison, déjà écrite comme macOS l'écrit — `⇧⌘T`. Vide : aucun raccourci. */
     keys: string;
+    /** Ce que `back to default` rendrait. */
+    defaultKeys: string;
+    /** La ligne porte l'icône de retour, et elle seule (`only appears on changed rows.`). */
+    changed: boolean;
+    /** La ligne s'ouvre en capture. Faux pour la famille `⌘1 … ⌘9`. */
+    rebindable: boolean;
+    /** Ce qui prend la combinaison avant Ash — un avertissement, jamais un refus. */
+    reservation: Reservation | null;
 }
+
+/** Qui prend une combinaison avant Ash. Miroir de `ReservedBy` en Rust. */
+export type ReservedBy = "macos" | "terminal";
+
+/**
+ * Ce qu'Ash annonce d'une combinaison réservée. Miroir de `Reservation` en Rust.
+ *
+ * La phrase vient du backend parce qu'elle est propre à **cette** combinaison : « force
+ * quit » n'est pas « emoji picker ». La fenêtre ne fait que la poser.
+ */
+export interface Reservation {
+    by: ReservedBy;
+    note: string;
+}
+
+/**
+ * Les deux lignes d'un conflit et ses deux issues. Miroir de `ShortcutConflict` en Rust.
+ *
+ * Il naît d'une capture qui viserait une combinaison déjà prise, et **rien n'est appliqué
+ * tant qu'il vit** : ash ne réattribue jamais en silence.
+ */
+export interface ShortcutConflict {
+    keys: string;
+    holder: string;
+    holderLabel: string;
+    asked: string;
+    askedLabel: string;
+    diagnosis: string;
+    give: string;
+    keep: string;
+}
+
+/** Tout ce que la section `shortcuts` affiche. Miroir de `ShortcutsReport` en Rust. */
+export interface ShortcutsReport {
+    rows: ShortcutRow[];
+    /** Le compteur d'en-tête — `n changed`. */
+    changed: number;
+    conflict: ShortcutConflict | null;
+}
+
+/**
+ * Une frappe, telle que la webview la rapporte. Miroir de `KeyStroke` en Rust.
+ *
+ * C'est un **fait**, pas une décision : le code physique de la touche et l'état des quatre
+ * modificateurs. C'est le backend qui dit si ça fait un raccourci
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — sans ce partage, la table
+ * des noms de touches existerait des deux côtés de la frontière.
+ */
+export interface KeyStroke {
+    code: string;
+    command: boolean;
+    control: boolean;
+    option: boolean;
+    shift: boolean;
+}
+
+/** Ce que le bloc de capture montre pendant qu'on tape. Miroir de `CapturePreview`. */
+export interface CapturePreview {
+    keys: string;
+    /** Elle peut être confirmée par `⏎`. */
+    accepted: boolean;
+    /** Pourquoi elle ne peut pas l'être, le cas échéant — écrit par le backend. */
+    why: string | null;
+    reservation: Reservation | null;
+}
+
+/** L'issue choisie devant un conflit. Miroir de `ConflictChoice` en Rust. */
+export type ConflictChoice = "give" | "keep";
 
 /**
  * Ce que la fenêtre demande aux **objets de fenêtre** : le thème, la taille de police, le
@@ -347,8 +425,37 @@ export interface WindowPorts {
     chooseSidebarDensity(density: SidebarDensity): Promise<void>;
     /** Prévient à chaque changement, **d'où qu'il vienne** — le menu Vue compris. */
     onAppearanceChanged(listener: (appearance: Appearance) => void): void;
-    /** Les raccourcis que le menu déclare. Demandés une fois : le menu ne change pas. */
-    shortcuts(): Promise<readonly Shortcut[]>;
+    /**
+     * Les raccourcis en vigueur, et ce qu'il faut pour les montrer.
+     *
+     * Les six verbes qui suivent rendent le **même instantané**, comme les commandes de
+     * `settings` : la fenêtre redessine à partir de ce que le backend renvoie, elle ne
+     * modifie jamais une liste locale
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). C'est ce qui garantit
+     * que l'écran et le menu natif ne peuvent pas diverger — les deux dérivent des mêmes
+     * liaisons, refaites du même côté.
+     */
+    shortcuts(): Promise<ShortcutsReport>;
+    /**
+     * Éteint les entrées du menu le temps d'une capture, et les rallume après.
+     *
+     * Sur macOS, un accélérateur de menu est consommé **avant** la webview : sans ce geste,
+     * `⌘W` frappé pendant une capture fermerait la fenêtre au lieu d'être lu, et échanger
+     * deux raccourcis serait impossible.
+     */
+    listenForShortcut(active: boolean): Promise<void>;
+    /** Ce que la frappe donnerait, **sans rien poser** : `⏎` seul pose. */
+    previewShortcut(stroke: KeyStroke): Promise<CapturePreview>;
+    /** `⏎` — pose la combinaison, ou ouvre le conflit qu'elle produirait. */
+    bindShortcut(action: string, stroke: KeyStroke): Promise<ShortcutsReport>;
+    /** `⌫` — la ligne n'a plus de raccourci, et garde son entrée de menu. */
+    clearShortcut(action: string): Promise<ShortcutsReport>;
+    /** L'icône de retour d'une ligne changée. */
+    resetShortcut(action: string): Promise<ShortcutsReport>;
+    /** `reset all` de l'en-tête. */
+    resetAllShortcuts(): Promise<ShortcutsReport>;
+    /** L'une des deux issues nommées du bloc de conflit. */
+    resolveShortcutConflict(choice: ConflictChoice): Promise<ShortcutsReport>;
 }
 
 /**

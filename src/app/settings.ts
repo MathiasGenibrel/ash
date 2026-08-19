@@ -2,7 +2,16 @@ import "./styles.css";
 import { mountSettings, tauriSettings, type Appearance, type WindowPorts } from "@/features/settings";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize } from "./font-size";
-import { menuShortcuts } from "./menu";
+import {
+    bindShortcut,
+    clearShortcut,
+    listenForShortcut,
+    menuShortcuts,
+    previewShortcut,
+    resetAllShortcuts,
+    resetShortcut,
+    resolveShortcutConflict,
+} from "./menu";
 import { followSidebarDensity } from "./sidebar-density";
 import { followTerminalFont, installedMonospaceFonts } from "./terminal-font";
 import { followThemeMode } from "./theme";
@@ -122,7 +131,16 @@ const windowPorts: WindowPorts = {
             listener(shown());
         });
     },
+    // Les sept verbes des raccourcis passent tels quels : le composition root les connaît
+    // parce que c'est lui qui connaît `menu.ts`, et la fenêtre ne connaît que ces noms.
     shortcuts: menuShortcuts,
+    listenForShortcut,
+    previewShortcut,
+    bindShortcut,
+    clearShortcut,
+    resetShortcut,
+    resetAllShortcuts,
+    resolveShortcutConflict,
 };
 
 // Le nom vient du backend, et la page attend sa réponse : comme dans la fenêtre principale,

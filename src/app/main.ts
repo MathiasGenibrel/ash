@@ -11,7 +11,14 @@ import {
 } from "@/features/terminal";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize, type FontSizeChanges } from "./font-size";
-import { onMenuAction, type MenuAction } from "./menu";
+import {
+    NEW_TAB_ACTION,
+    onMenuAction,
+    onShortcutsChanged,
+    shortcutKeys,
+    shortcutOwner,
+    type MenuAction,
+} from "./menu";
 import { onSelectTab } from "./select-tab";
 import { installShortcuts } from "./shortcuts";
 import { followSidebarDensity } from "./sidebar-density";
@@ -177,9 +184,25 @@ function mount(
         void terminals.selectTab(tabId);
     }).catch(fail);
     // `⌃⇥` et `⌃⇧⇥` arrivent par le clavier de la webview, faute d'être captées par le
-    // menu natif — voir `shortcuts.ts`. Elles produisent les mêmes actions, et sont donc
-    // jouées par la même table : il n'y a qu'un seul chemin d'effet.
-    installShortcuts(document, play);
+    // menu natif — voir `shortcuts.ts`. Ce qu'elles jouent est **demandé au backend** : la
+    // webview arrête la frappe, le backend nomme l'action, et la table de `dispatch` la joue.
+    // Il n'y a donc toujours qu'un seul chemin d'effet, et plus aucune combinaison écrite ici
+    // — une liaison déplacée cesse aussitôt de répondre à son ancienne touche.
+    installShortcuts(document, shortcutOwner, play);
+
+    // Le pied de la colonne annonce le raccourci de « nouvel onglet ». Il le **demande**,
+    // et le redemande à chaque changement de liaison : écrit en dur, il mentait dès le
+    // premier rebinding — et il vit dans cette fenêtre-ci, que la fenêtre de réglages ne
+    // connaît pas ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+    const showNewTabShortcut = (): void => {
+        shortcutKeys(NEW_TAB_ACTION)
+            .then((keys) => {
+                sidebar.showNewTabShortcut(keys);
+            })
+            .catch(() => undefined);
+    };
+    showNewTabShortcut();
+    onShortcutsChanged(showNewTabShortcut).catch(fail);
 }
 
 function dispatch(
