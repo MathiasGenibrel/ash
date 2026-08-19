@@ -53,5 +53,5 @@ pub use combination::{Combination, KeyStroke};
 pub use error::ShortcutError;
 #[cfg(test)]
 pub use fakes::FakeBindingStore;
-pub use reserved::{Reservation, ReservedBy};
+pub use reserved::{reservation, Reservation, ReservedBy};
 pub use store::{BindingStore, FileBindingStore, StoredBindings};

@@ -350,7 +350,18 @@ fn descriptor(action: Action) -> Descriptor {
         Action::CloseTab => ("terminal", "Close Tab", Some("Cmd+W")),
         Action::NextTab => ("terminal", "Select Next Tab", Some("Ctrl+Tab")),
         Action::PreviousTab => ("terminal", "Select Previous Tab", Some("Ctrl+Shift+Tab")),
-        Action::ClearScrollback => ("terminal", "Clear Scrollback", Some("Cmd+K")),
+        // **Aucun raccourci par défaut, et c'est `⌘K` qui est en jeu.** La touche appartient
+        // au shell — `⌃K` coupe la fin de ligne, `⌘K` efface l'écran dans les terminaux de
+        // macOS —, et c'est justement pour ça qu'Ash ne peut pas la déclarer « au cas où » :
+        // le deuxième point de l'en-tête de ce module dit qu'un accélérateur de menu est
+        // consommé par `performKeyEquivalent:` **avant** d'atteindre la webview. La poser
+        // ici, c'est la retirer au shell — il n'y a pas de moyen terme.
+        //
+        // L'entrée de menu, elle, reste : l'action existe, elle est cliquable à la souris
+        // (spec §4.4), et la fenêtre de réglages la propose comme n'importe quelle autre. Qui
+        // veut `⌘K` pour Ash peut la lui donner — et `reserved.rs` l'avertira alors que le
+        // terminal la lui prenait.
+        Action::ClearScrollback => ("terminal", "Clear Scrollback", None),
         Action::ToggleSidebar => ("view", "Toggle Sidebar", Some("Cmd+B")),
         // Les deux seules entrées dont le libellé et l'accélérateur se calculent : la
         // position d'onglet est dans les deux, et `DIRECT_TABS` décide combien il y en a.
@@ -1167,16 +1178,18 @@ mod tests {
         // le menu ne déclare plus, et c'est l'écran qu'on croit
         let listed = menu_bindings().report();
 
-        // Then — chaque ligne a un groupe et une combinaison, et une entrée sans
-        // accélérateur (les trois thèmes) n'y figure pas
-        assert!(listed
-            .rows
-            .iter()
-            .all(|row| !row.group.is_empty() && !row.keys.is_empty()));
+        // Then — chaque ligne est rangée sous un groupe, et une action sans raccourci **du
+        // tout** (les trois thèmes) n'y figure pas. Une ligne sans combinaison, elle, en est
+        // une : `Clear Scrollback` n'a pas de défaut, et se règle comme les autres
+        assert!(listed.rows.iter().all(|row| !row.group.is_empty()));
         assert!(listed
             .rows
             .iter()
             .any(|row| row.label == "New Tab" && row.keys == "⌘T"));
+        assert!(listed
+            .rows
+            .iter()
+            .any(|row| row.label == "Clear Scrollback" && row.keys.is_empty()));
         assert!(!listed.rows.iter().any(|row| row.label == "Light"));
     }
 
@@ -1230,13 +1243,64 @@ mod tests {
         let lost: Vec<String> = declared
             .iter()
             .filter(|binding| {
-                binding.default.is_none() && !binding.action.starts_with("view:theme:")
+                binding.default.is_none()
+                    && !binding.action.starts_with("view:theme:")
+                    && binding.action != Action::ClearScrollback.id()
             })
             .map(|binding| binding.action.clone())
             .collect();
 
-        // Then — les trois thèmes sont les seules actions sans raccourci d'origine
+        // Then — les trois thèmes et `Clear Scrollback` sont les seules actions sans
+        // raccourci d'origine, et les quatre le sont **exprès** : un thème se change une fois
+        // par saison, et `⌘K` appartient au shell
         assert_eq!(lost, Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_a_fresh_install_when_the_menu_is_built_then_no_entry_carries_cmd_k() {
+        // Given — `⌘K` appartient au shell. Et ce n'est pas une question de goût : un
+        // accélérateur de menu est consommé par `performKeyEquivalent:` **avant** d'atteindre
+        // la webview (en-tête de ce module), donc toute entrée qui le porterait le retirerait
+        // au terminal. C'est ce test qui garantit que le shell le reçoit
+        let bindings = menu_bindings();
+        let taken = Combination::parse("Cmd+K").unwrap().accelerator();
+
+        // When
+        let carried: Vec<String> = action_bindings()
+            .iter()
+            .filter(|declared| bindings.accelerator(&declared.action) == Some(taken.clone()))
+            .map(|declared| declared.action.clone())
+            .collect();
+
+        // Then
+        assert_eq!(carried, Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_the_combinations_ash_will_never_receive_when_the_defaults_are_read_then_none_of_them_starts_on_one(
+    ) {
+        // Given — la table embarquée de `reserved.rs` dit ce qu'Ash ne recevra pas : ce que
+        // macOS prend, et ce que le terminal avale. Un **défaut** posé là-dessus serait un
+        // raccourci annoncé par l'écran, affiché par le menu, et sans effet — la sorte de
+        // mensonge que cette tranche entière existe pour empêcher. Un utilisateur, lui, reste
+        // libre d'en poser un : il l'aura lu au moment de le capturer
+        let declared = action_bindings();
+
+        // When
+        let ineffective: Vec<String> = declared
+            .iter()
+            .filter(|binding| {
+                binding
+                    .default
+                    .as_ref()
+                    .and_then(crate::features::shortcuts::reservation)
+                    .is_some()
+            })
+            .map(|binding| binding.action.clone())
+            .collect();
+
+        // Then
+        assert_eq!(ineffective, Vec::<String>::new());
     }
 
     #[test]
