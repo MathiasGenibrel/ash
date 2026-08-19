@@ -55,6 +55,14 @@ export type {
     WindowPorts,
 } from "./contract";
 export { revealTool, tauriSettings } from "./bridge";
+/**
+ * `readStroke` sort de la feature parce que la **fenêtre principale** en a besoin aussi : la
+ * porte de `src/app/shortcuts.ts` envoie au backend exactement la même valeur qu'une capture,
+ * et deux lectures d'un `KeyboardEvent` finiraient par ne plus décrire la même frappe. Elle ne
+ * décide rien — pas même « est-ce une combinaison » : c'est le backend qui le dit
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export { readStroke } from "./model";
 export { RELAUNCH_DELAY, type Timer } from "./relaunch";
 export { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 export {

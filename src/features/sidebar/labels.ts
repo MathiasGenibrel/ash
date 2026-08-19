@@ -44,3 +44,16 @@ export function basename(path: string): string {
     const segments = path.split("/").filter((segment) => segment.length > 0);
     return segments[segments.length - 1] ?? "/";
 }
+
+/**
+ * Ce que le pied de la colonne écrit du raccourci de « nouvel onglet ».
+ *
+ * La combinaison vient du backend et **change** (spec §4.4, issue #22) : la seule règle qui
+ * reste ici est ce qu'on fait de son absence. Une action sans raccourci n'affiche rien — ni
+ * tiret, ni « aucun » —, parce que le bouton est là et qu'il fait l'action ; et l'infobulle
+ * ne porte alors pas une parenthèse vide.
+ */
+export function newTabHint(keys: string): { readonly hint: string; readonly title: string } {
+    const title = "Nouvel onglet dans le worktree courant";
+    return keys === "" ? { hint: "", title } : { hint: keys, title: `${title} (${keys})` };
+}

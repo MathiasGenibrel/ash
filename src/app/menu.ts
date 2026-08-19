@@ -39,6 +39,25 @@ import type {
 
 const MENU_ACTION_EVENT = "ash://menu-action";
 
+/**
+ * L'annonce d'une liaison qui a changé. Elle ne porte **rien** : c'est un signal.
+ *
+ * Chaque surface redemande ce dont elle a besoin — le pied de la colonne les glyphes d'une
+ * action, la fenêtre de réglages son instantané. Faire voyager la liste ferait de chaque
+ * abonné le détenteur d'une copie
+ * ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+const SHORTCUTS_CHANGED_EVENT = "ash://shortcuts-changed";
+
+/**
+ * L'identifiant de « nouvel onglet », pour les surfaces qui **annoncent** son raccourci.
+ *
+ * Un identifiant d'action, pas une combinaison : c'est celui que le menu émet déjà, et il
+ * ne bouge pas quand la touche bouge. Le nommer ici évite qu'une chaîne le désigne au fond
+ * du composition root.
+ */
+export const NEW_TAB_ACTION = "tab:new";
+
 export type MenuAction =
     | { kind: "new-tab" }
     | { kind: "new-home-tab" }
@@ -76,6 +95,40 @@ export function menuShortcuts(): Promise<ShortcutsReport> {
  */
 export function listenForShortcut(active: boolean): Promise<void> {
     return invoke<void>("shortcut_listening", { active });
+}
+
+/**
+ * L'action à qui appartient une frappe **que le menu natif n'a pas consommée**.
+ *
+ * Deux chords sont dans ce cas, et deux seulement — `⌃⇥` et `⌃⇧⇥` (voir `shortcuts.ts`). La
+ * webview les capte, puis vient demander à qui elles appartiennent : elle ne connaît ni
+ * combinaison, ni table de touches, ni règle de comparaison. Une liaison déplacée cesse donc
+ * de répondre à son ancienne touche sans qu'une ligne de TypeScript ne l'apprenne.
+ *
+ * La réponse est un identifiant d'action — le même que porte `ash://menu-action` —, donc
+ * elle se relit par le traducteur qui existe déjà.
+ */
+export async function shortcutOwner(stroke: KeyStroke): Promise<MenuAction | null> {
+    const held = await invoke<string | null>("shortcut_owner", { stroke });
+    return held === null ? null : parseMenuAction(held);
+}
+
+/**
+ * La combinaison en vigueur d'une action, telle que macOS l'écrit — vide s'il n'y en a
+ * aucune.
+ *
+ * L'autre sens de la même question : ce qu'une surface **affiche**. Le pied de la colonne
+ * annonce `⌘T` parce qu'il le demande, et non parce qu'il le sait.
+ */
+export function shortcutKeys(action: string): Promise<string> {
+    return invoke<string>("shortcut_keys", { action });
+}
+
+/** S'abonne aux changements de liaison. Rend de quoi se désabonner. */
+export function onShortcutsChanged(handle: () => void): Promise<UnlistenFn> {
+    return listen<null>(SHORTCUTS_CHANGED_EVENT, () => {
+        handle();
+    });
 }
 
 export function previewShortcut(stroke: KeyStroke): Promise<CapturePreview> {

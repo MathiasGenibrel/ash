@@ -1,141 +1,205 @@
 import { describe, expect, it } from "bun:test";
 
-import { matchShortcut, type KeyStroke } from "./shortcuts";
+import type { KeyStroke } from "@/features/settings";
+
+import type { MenuAction } from "./menu";
+import { installShortcuts, withheldFromTheMenu, type KeyPress } from "./shortcuts";
 
 /**
  * Test Data Builder : une frappe part sans aucun modificateur, et n'en porte que ceux
  * qu'on lui ajoute. C'est la seule façon de lire d'un coup d'œil ce qui distingue `⇥` de
  * `⌃⇥` — la différence tient à un booléen, et c'est tout le sujet.
  */
-class KeyStrokeBuilder {
-    private stroke: KeyStroke = {
+class KeyPressBuilder {
+    private press: KeyPress = {
         key: "Tab",
+        code: "Tab",
         ctrlKey: false,
         shiftKey: false,
         metaKey: false,
         altKey: false,
     };
 
-    static press(key: string): KeyStrokeBuilder {
-        const builder = new KeyStrokeBuilder();
-        builder.stroke = { ...builder.stroke, key };
+    static press(key: string, code = key): KeyPressBuilder {
+        const builder = new KeyPressBuilder();
+        builder.press = { ...builder.press, key, code };
         return builder;
     }
 
     withCtrl(): this {
-        this.stroke = { ...this.stroke, ctrlKey: true };
+        this.press = { ...this.press, ctrlKey: true };
         return this;
     }
 
     withShift(): this {
-        this.stroke = { ...this.stroke, shiftKey: true };
+        this.press = { ...this.press, shiftKey: true };
         return this;
     }
 
     withCmd(): this {
-        this.stroke = { ...this.stroke, metaKey: true };
+        this.press = { ...this.press, metaKey: true };
         return this;
     }
 
     withOption(): this {
-        this.stroke = { ...this.stroke, altKey: true };
+        this.press = { ...this.press, altKey: true };
         return this;
     }
 
-    build(): KeyStroke {
-        return this.stroke;
+    build(): KeyPress {
+        return this.press;
     }
 }
 
-describe("les raccourcis de cyclage", () => {
-    it("Given Ctrl and Tab are pressed together, when the stroke is read, then it asks for the next tab", () => {
-        // Given
-        const stroke = KeyStrokeBuilder.press("Tab").withCtrl().build();
+/**
+ * Un document réduit à ce que l'écoute lui demande, et la frappe qu'on lui donne.
+ *
+ * Pas de DOM à installer pour autant : ce module ne touche au document que pour poser et
+ * retirer un écouteur, et à l'event que pour l'arrêter. Le reste — ce que la frappe **joue**
+ * — est une réponse du backend, donc un port qu'on fournit.
+ */
+function aDocument(): { document: Document; press: (press: KeyPress) => void } {
+    let listener: ((event: KeyboardEvent) => void) | null = null;
+    const document = {
+        addEventListener: (_name: string, handler: (event: KeyboardEvent) => void) => {
+            listener = handler;
+        },
+        removeEventListener: () => {
+            listener = null;
+        },
+    } as unknown as Document;
 
-        // When
-        const action = matchShortcut(stroke);
+    return {
+        document,
+        press: (press) => {
+            const event = {
+                ...press,
+                preventDefault: () => undefined,
+                stopPropagation: () => undefined,
+            } as unknown as KeyboardEvent;
+            listener?.(event);
+        },
+    };
+}
 
-        // Then
-        expect(action).toEqual({ kind: "next-tab" });
-    });
+describe("la porte que le menu natif ne peut pas fermer", () => {
+    it("Given Ctrl and Tab are pressed together, when the press is judged, then it is one the menu cannot catch", () => {
+        // Given — `muda` donne à `Key::Tab` un équivalent clavier qu'AppKit ne reconnaît
+        // jamais : ces deux accords-là n'arrivent que par la webview
+        const press = KeyPressBuilder.press("Tab").withCtrl().build();
 
-    it("Given Shift is held too, when the stroke is read, then it asks for the previous tab", () => {
-        // Given
-        const stroke = KeyStrokeBuilder.press("Tab").withCtrl().withShift().build();
-
-        // When
-        const action = matchShortcut(stroke);
-
-        // Then
-        expect(action).toEqual({ kind: "previous-tab" });
+        // When / Then
+        expect(withheldFromTheMenu(press)).toBe(true);
+        expect(withheldFromTheMenu(KeyPressBuilder.press("Tab").withCtrl().withShift().build())).toBe(
+            true,
+        );
     });
 });
 
 describe("ce que le terminal doit continuer de recevoir", () => {
-    it("Given Tab is pressed on its own, when the stroke is read, then it is no shortcut and reaches the shell", () => {
+    it("Given Tab is pressed on its own, when the press is judged, then it is not for ash and reaches the shell", () => {
         // Given — la complétion de `zsh`. Elle coûterait bien plus cher que le raccourci
         // ne rapporte, et c'est elle qui a dicté la forme de la règle.
-        const stroke = KeyStrokeBuilder.press("Tab").build();
+        const press = KeyPressBuilder.press("Tab").build();
 
-        // When
-        const action = matchShortcut(stroke);
-
-        // Then — `null` veut dire « laisse passer » : rien n'est ni arrêté ni annulé
-        expect(action).toBeNull();
+        // When / Then — « faux » veut dire « laisse passer » : rien n'est ni arrêté ni annulé
+        expect(withheldFromTheMenu(press)).toBe(false);
     });
 
-    it("Given Tab is pressed with Cmd or with Option, when the stroke is read, then it is no shortcut either", () => {
+    it("Given Tab is pressed with Cmd or with Option, when the press is judged, then it is not for ash either", () => {
         // Given — `⌘⇥` appartient au commutateur d'applications de macOS, et `⌥⇥` à la
         // saisie ; les revendiquer volerait une touche à quelqu'un d'autre
-        const strokes = [
-            KeyStrokeBuilder.press("Tab").withCmd().build(),
-            KeyStrokeBuilder.press("Tab").withCtrl().withCmd().build(),
-            KeyStrokeBuilder.press("Tab").withCtrl().withOption().build(),
+        const presses = [
+            KeyPressBuilder.press("Tab").withCmd().build(),
+            KeyPressBuilder.press("Tab").withCtrl().withCmd().build(),
+            KeyPressBuilder.press("Tab").withCtrl().withOption().build(),
         ];
 
         // When
-        const actions = strokes.map(matchShortcut);
+        const judged = presses.map(withheldFromTheMenu);
 
         // Then
-        expect(actions).toEqual([null, null, null]);
+        expect(judged).toEqual([false, false, false]);
     });
 
-    it("Given Ctrl and a letter, when the stroke is read, then it is no shortcut and the line editing keys keep working", () => {
-        // Given — `Ctrl+A`, `Ctrl+E`, `Ctrl+C` : le shell en a un usage quotidien
-        const stroke = KeyStrokeBuilder.press("c").withCtrl().build();
-
-        // When
-        const action = matchShortcut(stroke);
-
-        // Then
-        expect(action).toBeNull();
-    });
-
-    it("Given the chords a text field owns, when they are read, then none of them is a shortcut", () => {
-        // Given — cette écoute est posée **en capture sur le document**, donc elle voit
-        // le clavier avant tout champ de saisie, et aucun `stopPropagation` posé sur un
-        // champ ne peut l'arrêter. La boîte de recherche du terminal (`⌘F`) en est un.
+    it("Given the chords the menu does catch, when they are judged, then this door stays shut on all of them", () => {
+        // Given — `⌃C` et les touches d'édition de ligne, que le shell utilise tous les
+        // jours ; `⌘F`, `⌘C`, `⌘V`, que la recherche du terminal et macOS possèdent ; et
+        // toutes celles que le menu natif porte déjà, qu'AppKit consomme de toute façon.
         //
-        // Aujourd'hui rien ne se recouvre : la règle n'accepte que `⌃⇥`, qui n'a aucun
-        // sens d'édition de texte. Ce test existe pour le jour où quelqu'un ajoutera un
-        // accord ici — coller un terme qu'on vient de copier est le geste le plus
-        // fréquent d'une recherche, et le lui voler la rendrait inutilisable.
+        // Cette écoute est posée **en capture sur le document**, donc elle voit le clavier
+        // avant tout champ de saisie : ce qu'elle laisse passer est ce qui continue de
+        // fonctionner partout ailleurs.
         const owned = [
-            KeyStrokeBuilder.press("f").withCmd().build(),
-            KeyStrokeBuilder.press("a").withCmd().build(),
-            KeyStrokeBuilder.press("c").withCmd().build(),
-            KeyStrokeBuilder.press("v").withCmd().build(),
-            KeyStrokeBuilder.press("x").withCmd().build(),
-            KeyStrokeBuilder.press("z").withCmd().build(),
-            KeyStrokeBuilder.press("z").withCmd().withShift().build(),
-            KeyStrokeBuilder.press("Escape").build(),
+            KeyPressBuilder.press("c", "KeyC").withCtrl().build(),
+            KeyPressBuilder.press("f", "KeyF").withCmd().build(),
+            KeyPressBuilder.press("v", "KeyV").withCmd().build(),
+            KeyPressBuilder.press("z", "KeyZ").withCmd().withShift().build(),
+            KeyPressBuilder.press("Escape").build(),
         ];
 
         // When
-        const actions = owned.map(matchShortcut);
+        const judged = owned.map(withheldFromTheMenu);
 
-        // Then — si l'un d'eux cesse d'être `null`, il faudra d'abord décider ce qui
-        // arrive quand un champ a le focus, et l'écrire ici.
-        expect(actions).toEqual(owned.map(() => null));
+        // Then
+        expect(judged).toEqual(owned.map(() => false));
+    });
+});
+
+describe("ce qu'une frappe retenue joue", () => {
+    it("Given the chord still belongs to an action, when it is pressed, then the action the backend names is played", () => {
+        // Given — la webview ne sait pas ce que `⌃⇥` fait : elle envoie la frappe et obéit à
+        // la réponse. La valeur envoyée est celle de la capture — le code physique et les
+        // quatre modificateurs —, pas une combinaison
+        const asked: KeyStroke[] = [];
+        const played: MenuAction[] = [];
+        const { document, press } = aDocument();
+        installShortcuts(
+            document,
+            (stroke) => {
+                asked.push(stroke);
+                return Promise.resolve<MenuAction | null>({ kind: "next-tab" });
+            },
+            (action) => played.push(action),
+        );
+
+        // When
+        press(KeyPressBuilder.press("Tab").withCtrl().build());
+
+        // Then
+        return Promise.resolve().then(() => {
+            expect(asked).toEqual([
+                { code: "Tab", command: false, control: true, option: false, shift: false },
+            ]);
+            expect(played).toEqual([{ kind: "next-tab" }]);
+        });
+    });
+
+    it("Given select next tab has been rebound elsewhere, when the old chord is pressed, then nothing changes tab", () => {
+        // Given — c'est la moitié manquante du rebinding : l'écran disait le raccourci
+        // déplacé, et `⌃⇥` continuait pourtant de changer d'onglet. Le backend ne nomme plus
+        // personne, donc il n'y a plus rien à jouer — et aucune ligne de TypeScript n'a eu à
+        // l'apprendre
+        const asked: KeyStroke[] = [];
+        const played: MenuAction[] = [];
+        const { document, press } = aDocument();
+        installShortcuts(
+            document,
+            (stroke) => {
+                asked.push(stroke);
+                return Promise.resolve<MenuAction | null>(null);
+            },
+            (action) => played.push(action),
+        );
+
+        // When
+        press(KeyPressBuilder.press("Tab").withCtrl().build());
+
+        // Then — la question a bien été posée, et c'est la **réponse** qui décide : sans le
+        // premier `expect`, ce test passerait aussi le jour où la porte cesserait de s'ouvrir
+        return Promise.resolve().then(() => {
+            expect(asked).toHaveLength(1);
+            expect(played).toEqual([]);
+        });
     });
 });

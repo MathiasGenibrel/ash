@@ -1,7 +1,7 @@
 import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import type { InstrumentationMark } from "./instrumentation";
-import { abbreviate } from "./labels";
+import { abbreviate, newTabHint } from "./labels";
 import { pinMark, worktreeGesture } from "./pinning";
 import { composeSubagentRow, type SubagentNode } from "./subagents";
 import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
@@ -62,6 +62,14 @@ export class SidebarView {
 
     private readonly body = document.createElement("div");
     private readonly head = document.createElement("div");
+    /**
+     * Les deux endroits du pied qui **annoncent** le raccourci de « nouvel onglet ».
+     *
+     * Gardés parce que le pied est bâti une fois : la colonne se redessine à chaque onglet,
+     * lui n'a aucune raison de le faire, et une liaison ne change pas au rythme des onglets.
+     */
+    private readonly add = document.createElement("button");
+    private readonly hint = text("span", "", "ash-sidebar-hint");
     /** L'instant du rendu en cours — voir [`SidebarView.render`]. */
     private now = 0;
 
@@ -378,17 +386,31 @@ export class SidebarView {
         const foot = document.createElement("div");
         foot.className = "ash-sidebar-foot";
 
-        const add = document.createElement("button");
-        add.type = "button";
-        add.className = "ash-sidebar-add";
-        add.textContent = "+ tab";
-        add.title = "Nouvel onglet dans le worktree courant (⌘T)";
-        add.addEventListener("click", () => {
+        this.add.type = "button";
+        this.add.className = "ash-sidebar-add";
+        this.add.textContent = "+ tab";
+        this.add.title = newTabHint("").title;
+        this.add.addEventListener("click", () => {
             this.actions.newTab();
         });
 
-        foot.append(add, text("span", "⌘T", "ash-sidebar-hint"));
+        foot.append(this.add, this.hint);
         return foot;
+    }
+
+    /**
+     * Annonce le raccourci **en vigueur** de « nouvel onglet », ou rien du tout.
+     *
+     * La colonne ne le sait pas et n'a pas à le savoir : les liaisons sont détenues en Rust
+     * et réglables (spec §4.4), donc `⌘T` écrit ici deviendrait faux au premier rebinding
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Une action sans
+     * raccourci n'affiche **rien** — pas un tiret, pas un « aucun » : le bouton reste, et
+     * c'est lui qui fait l'action.
+     */
+    showNewTabShortcut(keys: string): void {
+        const shown = newTabHint(keys);
+        this.hint.textContent = shown.hint;
+        this.add.title = shown.title;
     }
 }
 
