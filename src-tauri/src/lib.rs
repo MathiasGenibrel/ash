@@ -526,6 +526,10 @@ pub fn run() -> tauri::Result<()> {
             features::theme::commands::theme_mode,
             features::theme::commands::terminal_font_size,
             features::theme::commands::step_terminal_font_size,
+            features::theme::commands::sidebar_column,
+            features::theme::commands::set_sidebar_column_width,
+            features::theme::commands::set_sidebar_column_collapsed,
+            features::theme::commands::toggle_sidebar_column,
             // Les deux surfaces de l'apparence et la liste des raccourcis sont servies par
             // `menu.rs` et par `features::theme` : le choix de thème passe par le menu parce
             // qu'il doit corriger ses coches, la taille de police non — voir les deux

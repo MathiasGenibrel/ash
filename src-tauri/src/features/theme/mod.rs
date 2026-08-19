@@ -23,6 +23,14 @@
 //! coche du menu doit suivre un choix fait ailleurs et qu'une feature n'a pas à connaître la
 //! forme d'un menu.
 //!
+//! **La colonne de gauche est ici aussi**, largeur et repli (`⌘B`), et pour la même raison
+//! que la taille de police : c'est une préférence d'apparence (spec §9), elle s'écrit dans le
+//! même fichier, elle se relit au même moment. Elle n'est **pas** dans `~/.ash/state.json`,
+//! qui ne garde que les épingles et les lignes repliées — voir [`SidebarColumn`]. Ce qui n'est
+//! pas ici, en revanche, ce sont ses **bornes** : de 10 % à 80 % de la fenêtre, elles
+//! dépendent d'un viewport que seule la webview connaît, et vivent dans
+//! `src/features/sidebar/resize.ts`.
+//!
 //! Ce qui reste à l'issue #22 : la police au choix, la densité, et l'aperçu du thème montrant
 //! les cinq états d'agent — ce qui demande des planches de design, pas un état de plus.
 //!
@@ -40,11 +48,13 @@ mod appearance;
 mod error;
 mod font_size;
 mod mode;
+mod sidebar_column;
 mod state;
 mod store;
 
 pub use error::ThemeError;
 pub use font_size::{FontSize, FontStep};
 pub use mode::ThemeMode;
+pub use sidebar_column::{SidebarColumn, SidebarWidth};
 pub use state::ThemeState;
 pub use store::{FileThemeStore, ThemeStore};

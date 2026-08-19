@@ -1,5 +1,6 @@
 use super::font_size::FontSize;
 use super::mode::ThemeMode;
+use super::sidebar_column::SidebarColumn;
 
 /// Les préférences d'apparence de la fenêtre, ensemble.
 ///
@@ -26,4 +27,15 @@ pub struct Appearance {
     pub mode: ThemeMode,
     #[serde(default)]
     pub font_size: FontSize,
+    /// La largeur de la colonne de gauche et son repli (`⌘B`).
+    ///
+    /// **Ici, et surtout pas dans `~/.ash/state.json`** : ce fichier-là ne garde que les
+    /// worktrees épinglés et les lignes repliées, et c'est ce qui porte la règle « rien
+    /// d'autre ne survit à la fermeture » de la spec §3.1 — voir le test de
+    /// `features::sidebar::store`. Une colonne large est une préférence d'**apparence**
+    /// (spec §9), de la même nature que le thème et la taille de police : elle a donc la
+    /// même adresse, et le même `#[serde(default)]` pour que les fichiers écrits avant
+    /// qu'elle existe se relisent sans rien perdre.
+    #[serde(default)]
+    pub sidebar: SidebarColumn,
 }
