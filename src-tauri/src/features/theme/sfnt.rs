@@ -390,6 +390,56 @@ pub mod tests {
         assert_eq!(read(file), Some("Menlo".to_owned()));
     }
 
+    /// Un générateur déterministe — `xorshift64`, six lignes, aucune dépendance.
+    ///
+    /// Déterministe parce qu'un test qui échoue une fois sur mille sans qu'on puisse le
+    /// rejouer ne protège rien : la graine est fixe, donc les 50 000 fichiers abîmés sont
+    /// les mêmes à chaque exécution, sur chaque machine.
+    fn noise(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    #[test]
+    fn given_font_files_corrupted_every_which_way_when_they_are_read_then_ash_never_panics() {
+        // Given — les fichiers viennent de dossiers qu'Ash n'a pas écrits, et le parseur
+        // suit des décalages que le fichier lui donne lui-même : un octet retourné dans un
+        // en-tête peut faire pointer une table n'importe où. Les trois cas nommés du test
+        // voisin disent le comportement ; celui-ci dit qu'il n'existe aucune forme, si
+        // hostile soit-elle, qui fasse tomber l'ouverture des réglages
+        let base = FontFileBuilder::new("Iosevka Term")
+            .name(3, 1, 16, "Iosevka Term")
+            .name(1, 0, 1, "Iosevka")
+            .collection()
+            .build();
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+
+        // When — des octets retournés au hasard, et une queue coupée une fois sur trois
+        let read_back: Vec<Option<String>> = (0..50_000)
+            .map(|_| {
+                let mut bytes = base.clone();
+                for _ in 0..=(noise(&mut seed) % 6) {
+                    let at = noise(&mut seed) as usize % bytes.len();
+                    bytes[at] = (noise(&mut seed) % 256) as u8;
+                }
+                if noise(&mut seed) % 3 == 0 {
+                    let keep = noise(&mut seed) as usize % bytes.len();
+                    bytes.truncate(keep);
+                }
+                read(bytes)
+            })
+            .collect();
+
+        // Then — rien n'a paniqué, et aucun nom n'est sorti d'un fichier qui ne le dit plus
+        assert_eq!(read_back.len(), 50_000);
+        assert!(read_back
+            .iter()
+            .flatten()
+            .all(|family| !family.trim().is_empty()));
+    }
+
     #[test]
     fn given_a_file_that_is_not_a_font_or_that_stops_short_when_it_is_read_then_nothing_is_guessed()
     {
