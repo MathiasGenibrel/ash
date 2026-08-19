@@ -1,5 +1,10 @@
-//! L'apparence de la fenêtre : son thème — clair, sombre, ou celui du système — et la
-//! taille de police du terminal.
+//! L'apparence de la fenêtre : son thème — clair, sombre, ou celui du système —, la taille
+//! de police du terminal, et la colonne de gauche (sa largeur, son repli).
+//!
+//! Le module s'appelle `theme` et détient une `Appearance` : le nom est celui de sa
+//! première préférence, pas celui de ce qu'il garde. Il ne se renomme pas au fil d'une
+//! tâche — le fichier s'appelle `~/.ash/theme.json` et le contrat avec le frontend porte le
+//! mot aussi.
 //!
 //! La feature ne peint rien — c'est le CSS qui peint, et xterm.js qui compose ses
 //! cellules. Ce qu'elle détient, ce sont les **choix**, et elle les détient en Rust parce

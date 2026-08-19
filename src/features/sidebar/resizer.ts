@@ -71,10 +71,13 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
     /** Ce que le dernier `pointermove` a donné — relu au relâchement, et lui seul décide. */
     let dragging: { width: number; willCollapse: boolean } | null = null;
 
+    // Le séparateur ne porte **pas** de classe de repli : la colonne repliée se dessine par
+    // sa propre `is-collapsed` (`view.ts`), et le séparateur, lui, se place sur le bord par la
+    // seule variable de largeur — il n'a rien à savoir de plus, et une classe qu'aucune règle
+    // ne lit ferait croire à un point d'accroche qui n'existe pas.
     const update = (): void => {
         const column = ports.column();
         element.setAttribute("aria-valuenow", String(widthPercent(column.width, ports.viewportWidth())));
-        element.classList.toggle("is-collapsed", column.collapsed);
     };
 
     /** La poignée suit la hauteur du curseur tant qu'il longe le bord. */
