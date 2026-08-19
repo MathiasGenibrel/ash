@@ -76,6 +76,7 @@ mod tests {
 
     use super::super::font_size::{FontSize, FontStep};
     use super::super::mode::ThemeMode;
+    use super::super::sidebar_column::{SidebarColumn, SidebarWidth};
 
     #[test]
     fn given_a_stored_choice_when_it_is_read_back_then_it_is_the_same_choice() {
@@ -84,6 +85,10 @@ mod tests {
         let written = encode(Appearance {
             mode: ThemeMode::Dark,
             font_size: FontSize::DEFAULT.stepped(FontStep::Bigger),
+            sidebar: SidebarColumn {
+                width: SidebarWidth::from(300),
+                collapsed: false,
+            },
         });
 
         // When
@@ -95,8 +100,43 @@ mod tests {
             Some(Appearance {
                 mode: ThemeMode::Dark,
                 font_size: FontSize::DEFAULT.stepped(FontStep::Bigger),
+                sidebar: SidebarColumn {
+                    width: SidebarWidth::from(300),
+                    collapsed: false,
+                },
             })
         );
+    }
+
+    #[test]
+    fn given_the_appearance_preferences_when_they_are_written_then_the_file_holds_exactly_them() {
+        // Given — l'autre moitié de la garantie que porte
+        // `features::sidebar::store::given_a_pinned_and_collapsed_state_when_it_is_written_then_the_file_holds_nothing_else`
+        // : ce qui survit à la fermeture est réparti entre **deux** fichiers, et chacun doit
+        // dire ce qu'il contient. La largeur de la colonne est une préférence d'apparence,
+        // donc elle est ici — et pas dans `~/.ash/state.json`, qui ne garde que les épingles
+        // et les lignes repliées.
+        let chosen = Appearance {
+            mode: ThemeMode::Dark,
+            font_size: FontSize::DEFAULT,
+            sidebar: SidebarColumn {
+                width: SidebarWidth::from(320),
+                collapsed: true,
+            },
+        };
+
+        // When
+        let written = encode(chosen);
+
+        // Then
+        let parsed: serde_json::Value =
+            serde_json::from_str(&written).expect("le fichier écrit est du JSON");
+        let object = parsed.as_object().expect("le fichier écrit est un objet");
+        let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["font_size", "mode", "sidebar"]);
+        assert_eq!(object["sidebar"]["width"], serde_json::json!(320));
+        assert_eq!(object["sidebar"]["collapsed"], serde_json::json!(true));
     }
 
     #[test]
@@ -114,6 +154,7 @@ mod tests {
             Some(Appearance {
                 mode: ThemeMode::Dark,
                 font_size: FontSize::DEFAULT,
+                sidebar: SidebarColumn::default(),
             })
         );
     }
@@ -140,6 +181,7 @@ mod tests {
                 font_size: FontSize::DEFAULT
                     .stepped(FontStep::Bigger)
                     .stepped(FontStep::Bigger),
+                sidebar: SidebarColumn::default(),
             })
         );
     }
@@ -167,6 +209,10 @@ mod tests {
         let chosen = Appearance {
             mode: ThemeMode::Light,
             font_size: FontSize::DEFAULT.stepped(FontStep::Smaller),
+            sidebar: SidebarColumn {
+                width: SidebarWidth::from(260),
+                collapsed: true,
+            },
         };
 
         // When

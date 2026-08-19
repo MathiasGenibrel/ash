@@ -1,6 +1,6 @@
 import "./styles.css";
 import { revealTool } from "@/features/settings";
-import { mountSidebar, type Sidebar } from "@/features/sidebar";
+import { mountSidebar } from "@/features/sidebar";
 import type { SidebarRows } from "@/shared/ipc";
 import { mountTerminals, type TabId, type TabInfo, type Terminals } from "@/features/terminal";
 import { loadAppName } from "./app-name";
@@ -12,6 +12,7 @@ import { followThemeMode, type ThemeChanges } from "./theme";
 import { createTitleBar } from "./titlebar";
 import { windowTitle } from "./window-title";
 import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
+import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
 
 /**
  * Composition root du frontend.
@@ -29,6 +30,7 @@ function mount(
     theme: ThemeChanges,
     fontSize: FontSizeChanges,
     sidebarRows: SidebarRowsBinding,
+    sidebarColumn: SidebarColumnBinding,
     appName: string,
 ): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
@@ -78,6 +80,18 @@ function mount(
         // l'outil, la fenêtre de réglages agit. C'est ici que les deux features se
         // rencontrent, et nulle part ailleurs — la sidebar ne connaît pas `settings`.
         instrument: revealTool,
+        // La largeur et le repli suivent le chemin des épingles : le geste part, le backend
+        // retient, et la colonne se redessine sur son annonce. `⌘B` et la poignée passent par
+        // le même état, donc il n'y a qu'un détenteur et pas deux notions de « repliée ».
+        setColumnWidth: (width) => {
+            sidebarColumn.setWidth(width);
+        },
+        setColumnCollapsed: (collapsed) => {
+            sidebarColumn.setCollapsed(collapsed);
+        },
+        toggleColumn: () => {
+            sidebarColumn.toggle();
+        },
     });
     // La colonne se dessine sur deux sources — les onglets que la sonde pousse, et l'état
     // gardé d'une session à l'autre —, donc les deux dernières valeurs se retiennent ici : un
@@ -99,6 +113,15 @@ function mount(
         kept = next;
         drawSidebar();
     });
+    // La colonne s'apprend par la même sorte d'annonce, et c'est elle — jamais le geste qui
+    // l'a demandée — qui met la ligne de statut d'accord avec la colonne : repliée, la sidebar
+    // ne nomme plus les agents, et la ligne reprend celui qui attend.
+    sidebarColumn.subscribe((column) => {
+        sidebar.setColumn(column);
+        terminals.setSidebarCollapsed(column.collapsed);
+    });
+    sidebar.setColumn(sidebarColumn.current);
+    terminals.setSidebarCollapsed(sidebarColumn.current.collapsed);
     drawSidebar();
 
     // La bande de titre dit qui l'on est et où l'on est : `<nom> — <dépôt> / <branche>` de
@@ -115,7 +138,7 @@ function mount(
         titleBar.setTitle(windowTitle(active, appName));
     });
 
-    layout.append(sidebar.element, host);
+    layout.append(sidebar.element, sidebar.separator, host);
     root.append(titleBar.element, layout);
 
     const fail = (error: unknown): void => {
@@ -133,7 +156,7 @@ function mount(
     terminals.openTab("home").catch(fail);
 
     const play = (action: MenuAction): void => {
-        dispatch(terminals, sidebar, action).catch(fail);
+        dispatch(terminals, sidebarColumn, action).catch(fail);
     };
 
     onMenuAction(play).catch(fail);
@@ -150,7 +173,11 @@ function mount(
     installShortcuts(document, play);
 }
 
-function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): Promise<void> {
+function dispatch(
+    terminals: Terminals,
+    sidebarColumn: SidebarColumnBinding,
+    action: MenuAction,
+): Promise<void> {
     switch (action.kind) {
         case "new-tab":
             return terminals.openTab("current-worktree");
@@ -167,10 +194,12 @@ function dispatch(terminals: Terminals, sidebar: Sidebar, action: MenuAction): P
         case "previous-tab":
             return terminals.cycleTab(-1);
         case "toggle-sidebar":
-            // Repliée, la sidebar ne nomme plus les agents : la ligne de statut reprend
-            // celui qui attend. Le contexte — dépôt et branche — n'a rien à reprendre, il
-            // est dans la bande de titre, que `⌘B` ne touche pas.
-            terminals.setSidebarCollapsed(sidebar.toggleColumnCollapsed());
+            // Le repli **part au backend** et revient par son annonce : c'est là qu'il vit
+            // depuis qu'il survit au redémarrage, et c'est ce qui fait que `⌘B` et la poignée
+            // du bord ne peuvent pas se contredire. Ce que l'annonce entraîne — la colonne
+            // redessinée, la ligne de statut qui reprend l'agent qui attend — est branché une
+            // fois pour toutes dans `mount`.
+            sidebarColumn.toggle();
             return Promise.resolve();
     }
 }
@@ -230,6 +259,12 @@ fontSize.ready.catch(() => undefined);
 const sidebarRows = followSidebarRows();
 sidebarRows.ready.catch(() => undefined);
 
+// Et une quatrième fois, pour la largeur de la colonne et son repli (spec §9). Un échec du
+// raccordement donne une colonne de 240 px ouverte — exactement ce qu'un premier démarrage
+// montre, donc il n'y a rien à rattraper là non plus.
+const sidebarColumn = followSidebarColumn();
+sidebarColumn.ready.catch(() => undefined);
+
 // Le nom de l'application, lui, est **attendu** au lieu d'être posé par défaut puis
 // corrigé : il est constant pour toute la session, donc il n'y a pas de « valeur d'attente »
 // honnête à écrire dans la bande — un `Ash` remplacé par `Ash-dev` au premier aller-retour
@@ -262,7 +297,7 @@ void document.fonts.ready.finally(() => {
         // `loadAppName` ne rejette jamais — elle se replie sur un nom plutôt que de laisser
         // une fenêtre sans rien —, donc il n'y a pas d'échec à rattraper ici.
         void appName.then((name) => {
-            mount(root, theme.changes, fontSize.changes, sidebarRows, name);
+            mount(root, theme.changes, fontSize.changes, sidebarRows, sidebarColumn, name);
         });
     }
 });
