@@ -248,20 +248,15 @@ impl Bindings {
             if holder(settled.iter().copied(), &declared.action, &in_use, &kept).is_none() {
                 continue;
             }
-            match &declared.default {
-                // Son défaut est libre : elle y repart, comme si le fichier n'avait rien dit
-                // d'elle.
-                Some(free)
-                    if holder(settled.iter().copied(), &declared.action, free, &kept).is_none() =>
-                {
-                    kept.remove(&declared.action);
-                }
-                // Son défaut est pris lui aussi — ou elle n'en a pas : elle reste **sans**
-                // raccourci plutôt que d'en porter un que le menu donnerait à une autre.
-                _ => {
-                    kept.insert(declared.action.clone(), None);
-                }
-            }
+            // Son défaut s'il est libre — elle y repart, comme si le fichier n'avait rien
+            // dit d'elle. Sinon rien : elle reste **sans** raccourci plutôt que d'en porter
+            // un que le menu donnerait à une autre.
+            let fallback = declared.default.clone().filter(|free| {
+                holder(settled.iter().copied(), &declared.action, free, &kept).is_none()
+            });
+            // Et c'est [`record`] qui l'inscrit, comme partout ailleurs : l'assainissement
+            // n'a pas plus le droit qu'une capture d'écrire une valeur qui répète le défaut.
+            record(declared, fallback, &mut kept);
         }
         kept
     }
@@ -615,6 +610,10 @@ fn holder<'a>(
 }
 
 /// Inscrit dans la table des écarts ce qu'une action doit porter.
+///
+/// **C'est l'unique écriture**, comme [`holder`] est l'unique lecture : la capture, le `⌫`,
+/// le retour au défaut, les deux issues d'un conflit et l'assainissement d'un fichier relu y
+/// passent tous. Une seconde façon d'écrire serait une seconde façon de se tromper.
 ///
 /// Le fichier ne garde que les **écarts** : une liaison qui retombe sur son défaut n'y est
 /// pas écrite, elle en **sort**. C'est ce qui fait qu'un retour au défaut et une capture qui
