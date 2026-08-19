@@ -204,28 +204,57 @@ impl Bindings {
     }
 
     /// Les liaisons relues, débarrassées de ce qui ne se tient pas.
+    ///
+    /// **En deux temps, et l'ordre des deux est ce qui fait toute la différence.** Le fichier
+    /// est d'abord relu **en entier**, puis les collisions sont tranchées sur le monde qu'il
+    /// décrit. Juger une entrée sur un monde à demi construit — où les actions pas encore
+    /// lues portent encore leur défaut — faisait perdre au redémarrage tout ce qui *déplace*
+    /// une combinaison plutôt que d'en poser une neuve : un `give` du bloc de conflit
+    /// (`⌘W` à New Tab, plus rien à Close Tab) et, a fortiori, un échange de deux touches se
+    /// voyaient refusés au motif que l'ancienne détentrice tenait *encore*, dans ce monde
+    /// partiel, la combinaison qu'elle venait de céder.
     fn sanitized(
         &self,
         stored: BTreeMap<String, Option<Combination>>,
     ) -> BTreeMap<String, Option<Combination>> {
-        let mut kept: BTreeMap<String, Option<Combination>> = BTreeMap::new();
-        // L'ordre du parcours est celui du menu, pas celui du fichier : c'est ce qui rend
-        // l'assainissement déterministe d'une relecture à l'autre.
+        // 1. Ce que le fichier propose, moins ce qui ne nomme rien de rebindable : une
+        //    action que le menu n'a plus, ou dont le raccourci n'est pas à donner.
+        let mut kept: BTreeMap<String, Option<Combination>> = self
+            .actions
+            .iter()
+            .filter(|one| one.rebindable())
+            .filter_map(|declared| {
+                let candidate = stored.get(&declared.action)?;
+                Some((declared.action.clone(), candidate.clone()))
+            })
+            .collect();
+
+        // 2. Une combinaison n'est tenue que par une action. Le parcours est dans l'ordre du
+        //    **menu** et non celui du fichier : c'est ce qui rend l'arbitrage déterministe
+        //    d'une relecture à l'autre. Sans lui, un fichier bricolé poserait deux fois la
+        //    même touche dans le menu natif, où c'est la dernière posée qui gagne, en
+        //    silence — exactement ce que le bloc de conflit existe pour éviter.
+        let mut claimed: Vec<Combination> = Vec::new();
         for declared in self.actions.iter().filter(|one| one.rebindable()) {
-            let Some(candidate) = stored.get(&declared.action) else {
+            // Une ligne sans raccourci ne dispute rien à personne.
+            let Some(in_use) = effective(declared, &kept) else {
                 continue;
             };
-            let taken = |sought: &Combination| {
-                self.actions.iter().any(|other| {
-                    other.action != declared.action
-                        && other.rebindable()
-                        && effective(other, &kept).as_ref() == Some(sought)
-                })
-            };
-            match candidate {
-                Some(combination) if taken(combination) => continue,
+            if !claimed.contains(&in_use) {
+                claimed.push(in_use);
+                continue;
+            }
+            match &declared.default {
+                // Son défaut est libre : elle y repart, comme si le fichier n'avait rien dit
+                // d'elle.
+                Some(free) if !claimed.contains(free) => {
+                    kept.remove(&declared.action);
+                    claimed.push(free.clone());
+                }
+                // Son défaut est pris lui aussi — ou elle n'en a pas : elle reste **sans**
+                // raccourci plutôt que d'en porter un que le menu donnerait à une autre.
                 _ => {
-                    kept.insert(declared.action.clone(), candidate.clone());
+                    kept.insert(declared.action.clone(), None);
                 }
             }
         }
@@ -776,6 +805,56 @@ mod tests {
 
         // Then
         assert_eq!(next.accelerator("tab:new"), None);
+    }
+
+    #[test]
+    fn given_a_conflict_settled_by_giving_the_combination_away_when_ash_starts_again_then_it_is_still_given(
+    ) {
+        // Given — le geste que le bloc de conflit existe pour offrir : `⌘W` passe de
+        // `Close Tab` à `New Tab`, et l'ancienne détentrice se retrouve sans raccourci.
+        // C'est le seul geste qui **déplace** une combinaison, donc le seul que relire le
+        // fichier action par action, sur un monde encore à demi aux défauts, pouvait défaire
+        let store = Arc::new(FakeStore::default());
+        let chosen = two_tabs()
+            .store(Arc::clone(&store) as Arc<dyn BindingStore>)
+            .build();
+        chosen
+            .bind("tab:new", &stroke("KeyW", true, false))
+            .unwrap();
+        chosen.resolve(ConflictChoice::Give);
+
+        // When — la session suivante
+        let next = two_tabs().store(store as Arc<dyn BindingStore>).build();
+
+        // Then — et non `⌘T` revenu tout seul sur `New Tab`, ce qui aurait rendu le bloc de
+        // conflit inutile dès le redémarrage
+        assert_eq!(next.accelerator("tab:new").as_deref(), Some("Cmd+KeyW"));
+        assert_eq!(next.accelerator("tab:close"), None);
+    }
+
+    #[test]
+    fn given_two_shortcuts_traded_for_one_another_when_ash_starts_again_then_they_are_still_traded()
+    {
+        // Given — échanger `⌘T` et `⌘W`, le cas qui a dicté toute la tranche : chacune des
+        // deux lignes porte la combinaison que l'autre avait par défaut
+        let store = Arc::new(FakeStore::default());
+        let chosen = two_tabs()
+            .store(Arc::clone(&store) as Arc<dyn BindingStore>)
+            .build();
+        chosen
+            .bind("tab:new", &stroke("KeyW", true, false))
+            .unwrap();
+        chosen.resolve(ConflictChoice::Give);
+        chosen
+            .bind("tab:close", &stroke("KeyT", true, false))
+            .unwrap();
+
+        // When
+        let next = two_tabs().store(store as Arc<dyn BindingStore>).build();
+
+        // Then
+        assert_eq!(next.accelerator("tab:new").as_deref(), Some("Cmd+KeyW"));
+        assert_eq!(next.accelerator("tab:close").as_deref(), Some("Cmd+KeyT"));
     }
 
     #[test]
