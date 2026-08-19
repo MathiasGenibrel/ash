@@ -1,11 +1,7 @@
-import { presentAgentState } from "@/shared/agent-state";
-import type { AgentState } from "@/shared/ipc";
 import {
     button,
     choice,
-    ElementBuilder,
     row,
-    SVG_NAMESPACE,
     text,
     type UiChild,
     type UiComponent,
@@ -20,8 +16,9 @@ import {
     type SidebarDensity,
     type ThemeMode,
 } from "../contract";
-import { label, para, spacer, tag, type Tag } from "./atoms";
+import { label, para, spacer, tag } from "./atoms";
 import { sectionHeader } from "./chrome";
+import { bothPalettes, sidebarPreview } from "./sidebar-preview";
 
 /** Les quatre gestes de la section — tous partent au backend, et n'y reviennent pas. */
 export interface AppearanceActions {
@@ -30,29 +27,6 @@ export interface AppearanceActions {
     chooseFont(family: string): void;
     chooseDensity(density: SidebarDensity): void;
 }
-
-/**
- * Ce que la sidebar de l'aperçu montre : une ligne par état, dans l'ordre de la planche.
- *
- * Les noms sont **des exemples**, pas des données : l'aperçu ne montre pas la session en
- * cours, il montre ce que le thème fait des cinq états. Les prendre aux vrais onglets
- * donnerait une miniature qui change de contenu d'une ouverture à l'autre, et qui ne
- * montrerait pas `error` tant que rien n'a échoué — c'est-à-dire jamais au moment où on
- * choisit un thème.
- *
- * Ce qui **n'est pas** un exemple : l'état de chaque ligne, et tout ce que
- * `shared/agent-state` en dit. La table ci-dessous ne porte que le nom et la durée.
- */
-const PREVIEW_ROWS: readonly { state: AgentState; name: string; trailing: string }[] = [
-    { state: "working", name: "claude", trailing: "15m" },
-    { state: "waiting", name: "codex", trailing: "2m" },
-    { state: "done", name: "claude-perso", trailing: "8m" },
-    { state: "idle", name: "bash", trailing: "3h" },
-    { state: "error", name: "kimi", trailing: "exit 1" },
-];
-
-/** Le dépôt qui coiffe l'aperçu — un nom, sans glyphe, comme dans la vraie colonne. */
-const PREVIEW_REPO = "omelette-web";
 
 /**
  * Les deux hauteurs de ligne, telles que `src/app/styles.css` les pose sous `[data-density]`.
@@ -84,12 +58,9 @@ export const SIDEBAR_ROW_HEIGHTS: Readonly<Record<SidebarDensity, number>> = {
  * et découpe le clair en triangle — la diagonale est le message, et aucun texte ne
  * l'explique.
  *
- * **L'aperçu dit la vérité de la sidebar, y compris là où la planche s'en écarte** : la
- * planche laisse le nom de la ligne `error` non barré, `presentAgentState` pose `struck` sur
- * cet état, et la vraie colonne le barre. C'est la colonne qui gagne — un aperçu qui ment
- * sur ce qu'il montre est pire qu'une absence d'aperçu. Toutes les formes, tous les mots et
- * tous les traitements viennent de `shared/agent-state`, la **même** source que la sidebar
- * et la ligne de statut ; il n'y a pas une seconde table ici.
+ * **La miniature elle-même n'est pas ici** : elle est dans `sidebar-preview.ts`, avec la
+ * règle qu'elle porte — l'aperçu dit la vérité de la colonne, y compris là où la planche
+ * s'en écarte. Ce module-ci n'arrange que des lignes de réglage.
  */
 export function appearanceSection(
     appearance: Appearance | null,
@@ -166,88 +137,7 @@ function themeTile(mode: ThemeMode, current: ThemeMode, actions: AppearanceActio
  * luminosité.
  */
 function preview(mode: ThemeMode): UiComponent {
-    if (mode !== "system") return sidebarPreview(mode);
-    return tag("div", "settings-preview-stack").add(
-        sidebarPreview("dark"),
-        sidebarPreview("light").class("is-clipped"),
-    );
-}
-
-/**
- * La miniature de la sidebar dans une palette donnée.
- *
- * La palette est posée par une **classe**, et non par `data-theme` : les tokens de
- * `styles.css` sont déclarés sur `:root[data-theme]`, donc un `data-theme` posé sur un `div`
- * ne redéfinirait rien. `.ash-palette-light` et `.ash-palette-dark` sont les mêmes deux blocs
- * de tokens, atteignables ailleurs qu'à la racine — une seule définition, deux portées.
- */
-function sidebarPreview(palette: "light" | "dark"): Tag {
-    return tag("div", "settings-preview", `ash-palette-${palette}`)
-        .attr("aria-hidden", "true")
-        .add(
-            label("settings-preview-repo", PREVIEW_REPO),
-            ...PREVIEW_ROWS.map((line) => previewRow(line.state, line.name, line.trailing)),
-        );
-}
-
-/**
- * Une ligne d'agent de la miniature — **exactement** ce que `sidebar/view.ts` compose.
- *
- * Les classes sont les mêmes (`is-tinted`, `has-accent-rail`, `is-struck`) parce que ce sont
- * les mêmes décisions : la seule chose que cette fonction ajoute est la petite taille.
- */
-function previewRow(state: AgentState, name: string, trailing: string): UiComponent {
-    const shown = presentAgentState(state);
-    const line = tag("div", "settings-preview-row", shown.className);
-    if (shown.tinted) line.class("is-tinted");
-    if (shown.rail !== "none") line.class(`has-${shown.rail}-rail`);
-
-    const agent = label("settings-preview-name", name);
-    if (shown.struck) agent.class("is-struck");
-
-    return line.add(
-        previewGlyph(state),
-        agent,
-        spacer(),
-        label("settings-preview-time", trailing),
-    );
-}
-
-/**
- * Le glyphe d'un état, à la taille de la miniature.
- *
- * Il lit `shared/agent-state` — la forme, la classe qui la peint, le mot que lit un lecteur
- * d'écran — plutôt que de redessiner cinq signes : une seconde table finirait par montrer un
- * `working` que la sidebar n'a plus. Ce que ce module ajoute est la seule chose que la table
- * ne décide pas : `working` n'a pas de caractère, il a un tracé, et un tracé se pose dans
- * l'espace de noms SVG (même geste que `verification-state.ts`).
- */
-function previewGlyph(state: AgentState): UiComponent {
-    const shown = presentAgentState(state);
-    if (shown.shape === null) {
-        return label("settings-preview-glyph", shown.glyph).class(shown.className);
-    }
-    return new PreviewShape(shown.shape).class(shown.className);
-}
-
-class PreviewShape extends ElementBuilder {
-    constructor(shape: string) {
-        super("svg", "settings-preview-glyph");
-        this.inNamespace(SVG_NAMESPACE)
-            .attr("viewBox", "0 0 24 24")
-            .attr("fill", "none")
-            .attr("stroke", "currentColor")
-            .attr("stroke-width", "2.75")
-            .attr("stroke-linecap", "round")
-            .add(new PreviewPath(shape));
-    }
-}
-
-class PreviewPath extends ElementBuilder {
-    constructor(shape: string) {
-        super("path");
-        this.inNamespace(SVG_NAMESPACE).attr("d", shape);
-    }
+    return mode === "system" ? bothPalettes() : sidebarPreview(mode);
 }
 
 /** La ligne sous une tuile : la pastille, le nom du mode, et ce qu'il engage. */
@@ -397,6 +287,3 @@ function settingRow(name: string, controls: readonly UiChild[], note: string): r
         ),
     ];
 }
-
-/** Les cinq états que l'aperçu montre — dérivé de la table, pour les tests. */
-export const PREVIEWED_STATES: readonly AgentState[] = PREVIEW_ROWS.map((line) => line.state);
