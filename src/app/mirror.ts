@@ -1,7 +1,8 @@
 /**
- * Ce qui tient les deux préférences d'apparence de `app/` collées aux types de
- * `src-tauri/src/features/theme/` : le `ThemeMode` de `theme.ts` à celui de `mode.rs`, et
- * la taille de police de `font-size.ts` à celle de `font_size.rs`.
+ * Ce qui tient les trois préférences d'apparence de `app/` collées aux types de
+ * `src-tauri/src/features/theme/` : le `ThemeMode` de `theme.ts` à celui de `mode.rs`, la
+ * taille de police de `font-size.ts` à celle de `font_size.rs`, et la colonne de gauche de
+ * `sidebar-column.ts` à celle de `sidebar_column.rs`.
  *
  * Le thème est déjà le seul endroit du frontend qui se défende à l'exécution :
  * `parseThemeMode` refuse ce qu'il ne reconnaît pas et retombe sur le système. Ce garde-fou
@@ -11,8 +12,10 @@
  */
 
 import type { FontSize as RustFontSize } from "@/shared/ipc/generated/FontSize";
+import type { SidebarColumn as RustSidebarColumn } from "@/shared/ipc/generated/SidebarColumn";
 import type { ThemeMode as RustThemeMode } from "@/shared/ipc/generated/ThemeMode";
 import type { Assert, Mirrors } from "@/shared/ipc/mirroring";
+import type { SidebarColumnState } from "@/features/sidebar";
 
 import type { ThemeMode } from "./theme";
 
@@ -33,3 +36,20 @@ export type ThemeModeStillMirrorsRust = Assert<Mirrors<RustThemeMode, ThemeMode>
  * bougerait plus jamais, en silence. C'est la forme de #16 et #48.
  */
 export type FontSizeStillMirrorsRust = Assert<Mirrors<RustFontSize, number>>;
+
+/**
+ * La colonne de gauche, telle que `sidebar_column` et `ash://sidebar-column` la sérialisent.
+ *
+ * Le type écrit à la main est déclaré dans `features/sidebar/resize.ts`, avec les règles qui
+ * le lisent : c'est la colonne qui le **rend**, `app/` ne fait que le transporter. Il est
+ * confronté ici parce que c'est ici que la valeur traverse la frontière, à côté des deux
+ * autres préférences d'apparence.
+ *
+ * C'est la faute que `parseSidebarColumn` ne peut pas voir : il sait refuser une valeur
+ * inattendue, il ne sait pas dire qu'elle l'est devenue. Un `collapsed` renommé côté Rust —
+ * ou une largeur qui cesserait d'être un nombre nu — lui ferait rendre `null` sur **chaque**
+ * annonce, et la colonne resterait figée à 240 px sans un mot. C'est la forme de #16 et #48.
+ */
+export type SidebarColumnStillMirrorsRust = Assert<
+    Mirrors<RustSidebarColumn, SidebarColumnState>
+>;
