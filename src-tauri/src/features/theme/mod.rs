@@ -1,5 +1,6 @@
 //! L'apparence de la fenêtre : son thème — clair, sombre, ou celui du système —, la taille
-//! de police du terminal, et la colonne de gauche (sa largeur, son repli).
+//! de police du terminal, la densité de la sidebar, et la colonne de gauche (sa largeur,
+//! son repli).
 //!
 //! Le module s'appelle `theme` et détient une `Appearance` : le nom est celui de sa
 //! première préférence, pas celui de ce qu'il garde. Il ne se renomme pas au fil d'une
