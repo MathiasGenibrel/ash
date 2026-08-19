@@ -81,7 +81,7 @@ use features::settings::{
 use features::sidebar::{
     FileSidebarStore, PinnedRepo, PinnedWorktree, SidebarState, SidebarStore, WorktreePlaces,
 };
-use features::theme::{FileThemeStore, ThemeState, ThemeStore};
+use features::theme::{FileThemeStore, FontCatalog, SystemFontCatalog, ThemeState, ThemeStore};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
 ///
@@ -461,6 +461,11 @@ pub fn run() -> tauri::Result<()> {
     ));
     let theme_mode = theme.mode();
 
+    // Les polices installées, lues à la première demande et pas au démarrage : c'est la
+    // fenêtre de réglages qui les fait lire, et parcourir les dossiers de polices de macOS
+    // n'a rien à faire sur le chemin d'ouverture de la fenêtre principale.
+    let fonts = Arc::new(SystemFontCatalog::on_this_mac()) as Arc<dyn FontCatalog>;
+
     let tools = Arc::new(ToolRegistry::new(
         Arc::new(Verifier::new(
             Arc::new(SystemConfigFiles),
@@ -499,6 +504,7 @@ pub fn run() -> tauri::Result<()> {
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&theme))
+        .manage(Arc::clone(&fonts))
         .manage(Arc::clone(&tools))
         .manage(Arc::clone(&sidebar_rows))
         .manage(Arc::clone(&notification_preferences))
@@ -530,6 +536,11 @@ pub fn run() -> tauri::Result<()> {
             features::theme::commands::set_sidebar_column_width,
             features::theme::commands::set_sidebar_column_collapsed,
             features::theme::commands::toggle_sidebar_column,
+            features::theme::commands::terminal_font,
+            features::theme::commands::monospace_fonts,
+            features::theme::commands::choose_terminal_font,
+            features::theme::commands::sidebar_density,
+            features::theme::commands::choose_sidebar_density,
             // Les deux surfaces de l'apparence et la liste des raccourcis sont servies par
             // `menu.rs` et par `features::theme` : le choix de thème passe par le menu parce
             // qu'il doit corriger ses coches, la taille de police non — voir les deux

@@ -925,12 +925,221 @@
 
 /* ── La section `appearance` (spec §9) ─────────────────────────────────────────────────
  *
- * Le contenu commence **sous le titre**, comme celui de `tools` : la version centrée était
- * celle des sections vides, et une section qui a du contenu n'a pas à se lire au milieu du
- * panneau. Deux lignes, chacune son nom, ses contrôles et ce qu'elle engage. */
-.settings-appearance-row {
+ * Le contenu commence **sous le titre**, comme celui de `tools`. Deux blocs : les trois
+ * aperçus de thème, puis la grille des trois autres réglages.
+ *
+ * **Aucune valeur de couleur n'est écrite ici**, y compris dans les aperçus : ce sont les
+ * tokens des deux palettes, atteints par `.ash-palette-light` / `.ash-palette-dark`
+ * (`app/styles.css`). C'est ce qui fait qu'une miniature ne peut pas dériver de la vraie
+ * colonne — elles lisent la même table. */
+.settings-theme-block {
     flex: none;
-    padding-top: 6px;
+    padding-top: 4px;
+}
+
+.settings-block-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding-bottom: 8px;
+}
+
+.settings-block-title {
+    font-size: 13px;
+    color: var(--ash-fg-strong);
+}
+
+.settings-block-hint {
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+}
+
+/* Trois colonnes égales : les trois aperçus se comparent, donc ils ont la même largeur. */
+.settings-theme-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.settings-theme-tile {
+    display: block;
+    padding: 0;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 1px solid var(--ash-border);
+    border-radius: 5px;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+/* Le choix en vigueur : une bordure claire et un halo, comme la carte que l'écran désigne.
+ * La pastille le redit en toutes lettres — le halo seul se perd sur un écran mat. */
+.settings-theme-tile.is-chosen {
+    border-color: var(--ash-select-rail);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ash-select-rail) 18%, transparent);
+}
+
+.settings-theme-choice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    background: var(--ash-bg-card);
+    border-top: 1px solid var(--ash-border-soft);
+}
+
+.settings-theme-dot {
+    width: 11px;
+    height: 11px;
+    flex: none;
+    border: 1px solid var(--ash-control-border);
+    border-radius: 50%;
+}
+
+.settings-theme-dot.is-chosen {
+    background: var(--ash-select-rail);
+    border-color: var(--ash-select-rail);
+}
+
+.settings-theme-name {
+    font-size: 11.5px;
+    color: var(--ash-fg-strong);
+}
+
+.settings-theme-mention {
+    font-size: 10px;
+    color: var(--ash-fg-dim);
+}
+
+/* --- l'aperçu lui-même : une sidebar redessinée, pas une pastille de couleur ---------- */
+
+.settings-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    height: 150px;
+    padding: 6px 0;
+    background: var(--ash-bg-sidebar);
+}
+
+/* La tuile `system` : les deux palettes superposées, la claire découpée en triangle. Aucun
+ * libellé n'explique la diagonale — c'est la forme qui porte le message, et un mot de plus
+ * ferait lire deux fois la même chose. */
+.settings-preview-stack {
+    position: relative;
+    height: 150px;
+}
+
+.settings-preview-stack .settings-preview {
+    position: absolute;
+    inset: 0;
+}
+
+.settings-preview-stack .settings-preview.is-clipped {
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.settings-preview-repo {
+    padding: 1px 8px;
+    font-size: 8.5px;
+    color: var(--ash-fg);
+}
+
+.settings-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 8px 1px 14px;
+    font-size: 8.5px;
+    color: var(--ash-fg-muted);
+    /* Le filet transparent tient la place de celui de `waiting` : sans lui, la ligne teintée
+     * décalerait ses voisines de deux pixels. Même geste que la vraie colonne. */
+    border-left: 2px solid transparent;
+}
+
+/* `waiting` est le seul état teinté de toute l'interface, et il l'est aussi ici : c'est ce
+ * qui le rend identifiable au coin de l'œil, dans les deux thèmes. */
+.settings-preview-row.is-tinted {
+    background: var(--ash-accent-bg);
+    color: var(--ash-accent-fg);
+    padding-left: 12px;
+}
+
+.settings-preview-row.has-accent-rail {
+    border-left-color: var(--ash-accent);
+}
+
+.settings-preview-row.has-error-rail {
+    border-left-color: var(--ash-error);
+}
+
+.settings-preview-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Un agent mort ne se lit pas comme un agent vivant — y compris dans un aperçu de 150 px.
+ * La planche ne le barrait pas ; la colonne, si, et c'est elle que l'aperçu doit dire. */
+.settings-preview-name.is-struck {
+    text-decoration: line-through;
+}
+
+.settings-preview-time {
+    font-size: 8px;
+    color: var(--ash-fg-dim);
+}
+
+.settings-preview-row.is-tinted .settings-preview-time {
+    color: var(--ash-accent-fg);
+}
+
+.settings-preview-row.is-error .settings-preview-time {
+    color: var(--ash-error);
+}
+
+/* La boîte des cinq glyphes est la même — un caractère ou un tracé —, et seule sa couleur
+ * change. C'est `shared/agent-state` qui décide laquelle : ces classes sont les siennes. */
+.settings-preview-glyph {
+    width: 9px;
+    height: 9px;
+    flex: none;
+    font-size: 9px;
+    line-height: 1;
+}
+
+.settings-preview-glyph.is-working {
+    color: var(--ash-working);
+}
+
+.settings-preview-glyph.is-waiting {
+    color: var(--ash-accent);
+}
+
+.settings-preview-glyph.is-done {
+    color: var(--ash-done);
+}
+
+.settings-preview-glyph.is-idle {
+    color: var(--ash-idle);
+}
+
+.settings-preview-glyph.is-error {
+    color: var(--ash-error);
+}
+
+/* --- les trois autres réglages ------------------------------------------------------- */
+
+.settings-appearance-grid {
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    gap: 10px 12px;
+    align-items: start;
+    padding-top: 14px;
+    margin-top: 12px;
+    border-top: 1px solid var(--ash-border-soft);
 }
 
 .settings-appearance-line {
@@ -938,15 +1147,15 @@
     align-items: center;
     gap: 8px;
     padding-bottom: 4px;
+    flex-wrap: wrap;
 }
 
-/* La même colonne de libellés que le formulaire d'ajout : les deux lignes s'alignent, et
- * l'œil descend le long d'un seul bord. */
+/* La même colonne de libellés que le formulaire d'ajout : les lignes s'alignent, et l'œil
+ * descend le long d'un seul bord. */
 .settings-appearance-key {
-    width: 78px;
-    flex: none;
     font-size: 9.5px;
     color: var(--ash-fg-faint);
+    padding-top: 3px;
 }
 
 /* La taille en vigueur, entre le nom et les trois pas — c'est la valeur, pas un libellé. */
@@ -954,13 +1163,78 @@
     min-width: 38px;
     font-size: 12px;
     color: var(--ash-fg-strong);
+    font-variant-numeric: tabular-nums;
 }
 
-/* Le thème en vigueur porte `is-primary`, comme le bouton d'action d'une section : c'est le
- * seul des trois qui soit teinté, donc celui qu'on lit sans chercher. */
-.settings-appearance-line .settings-button[aria-pressed="true"] {
-    background: var(--ash-bg-selected);
+/* Le compte de polices, et la mesure d'une ligne de sidebar : deux constats, pas des
+ * libellés de contrôle. */
+.settings-appearance-count {
+    font-size: 10.5px;
+    color: var(--ash-fg-dim);
+}
+
+/* L'échantillon est rendu **à la taille choisie** : sa `font-size` est posée en ligne par le
+ * composant, parce qu'elle change à chaque pas et qu'une classe ne peut pas la porter. */
+.settings-appearance-sample {
+    color: var(--ash-fg-muted);
+    white-space: nowrap;
+}
+
+.settings-choice {
+    min-width: 200px;
+}
+
+/* Le segmenté de la densité : deux boutons collés, séparés par un seul filet. */
+.settings-segmented {
+    display: flex;
+    border: 1px solid var(--ash-control-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.settings-segment {
+    padding: 4px 11px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--ash-fg-muted);
+    background: none;
+    border: 0;
+    cursor: pointer;
+}
+
+.settings-segment + .settings-segment {
+    border-left: 1px solid var(--ash-control-border);
+}
+
+.settings-segment.is-chosen {
     color: var(--ash-fg-strong);
+    background: var(--ash-bg-selected);
+}
+
+/* Les deux croquis : un rythme, pas une seconde miniature de sidebar. */
+.settings-density-sketch {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+}
+
+.settings-density-sketch.is-comfortable {
+    gap: 3px;
+}
+
+.settings-density-sketch.is-compact {
+    gap: 1px;
+}
+
+.settings-density-bar {
+    width: 60px;
+    height: 5px;
+    background: var(--ash-border);
+}
+
+.settings-density-sketch.is-compact .settings-density-bar {
+    height: 4px;
+    background: var(--ash-border-soft);
 }
 
 /* ── La section `shortcuts` (spec §4.4) ────────────────────────────────────────────────

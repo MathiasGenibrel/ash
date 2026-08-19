@@ -1,8 +1,10 @@
 import "./styles.css";
-import { mountSettings, tauriSettings, type WindowPorts } from "@/features/settings";
+import { mountSettings, tauriSettings, type Appearance, type WindowPorts } from "@/features/settings";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize } from "./font-size";
 import { menuShortcuts } from "./menu";
+import { followSidebarDensity } from "./sidebar-density";
+import { followTerminalFont, installedMonospaceFonts } from "./terminal-font";
 import { followThemeMode } from "./theme";
 import { createTitleBar } from "./titlebar";
 
@@ -58,6 +60,19 @@ theme.ready.catch(() => undefined);
 const fontSize = followTerminalFontSize();
 fontSize.ready.catch(() => undefined);
 
+// La police et la densité n'ont **que** cette surface : c'est ici qu'elles se choisissent.
+// Elles sont suivies de la même façon quand même — la fenêtre les montre parce que le
+// backend les dit, jamais parce qu'on vient de cliquer
+// ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+const terminalFont = followTerminalFont();
+terminalFont.ready.catch(() => undefined);
+
+// Elle ne peint rien ici — il n'y a pas de sidebar dans cette fenêtre —, mais elle est posée
+// sur la racine comme dans la fenêtre principale : les miniatures de densité de la section
+// s'en servent, et poser l'attribut est le seul geste de ce module.
+const density = followSidebarDensity(document.documentElement);
+density.ready.catch(() => undefined);
+
 /**
  * Ce que la fenêtre de réglages demande aux objets de fenêtre — assemblé ici, parce que c'est
  * ici qu'on connaît les deux modules qui savent déjà leur parler.
@@ -69,20 +84,42 @@ fontSize.ready.catch(() => undefined);
  */
 const windowPorts: WindowPorts = {
     appearance: async () => {
-        await Promise.all([theme.ready, fontSize.ready]);
-        return { mode: theme.modes.current, fontSize: fontSize.changes.current };
+        await Promise.all([theme.ready, fontSize.ready, terminalFont.ready, density.ready]);
+        return {
+            mode: theme.modes.current,
+            fontSize: fontSize.changes.current,
+            font: terminalFont.family.current,
+            density: density.current,
+        };
     },
     chooseThemeMode: (mode) => theme.modes.choose(mode),
     stepTerminalFontSize: (step) => fontSize.step(step),
+    monospaceFonts: installedMonospaceFonts,
+    chooseTerminalFont: (family) => terminalFont.choose(family),
+    chooseSidebarDensity: (chosen) => density.choose(chosen),
     onAppearanceChanged: (listener) => {
-        // Deux abonnements pour un seul état affiché : le mode et la taille sont annoncés
-        // séparément par le backend — ce sont deux préférences, et un `⌘+` n'a pas à faire
-        // repasser le thème. La scène, elle, les porte ensemble.
-        theme.modes.subscribe((mode) => {
-            listener({ mode, fontSize: fontSize.changes.current });
+        // Quatre abonnements pour un seul état affiché : les préférences sont annoncées
+        // séparément par le backend — un `⌘+` n'a pas à faire repasser le thème. La scène,
+        // elle, les porte ensemble, et chaque annonce la reforme **entière** : reconstruire
+        // à partir des quatre valeurs en cours évite qu'un abonnement recopie une valeur
+        // périmée d'un autre.
+        const shown = (): Appearance => ({
+            mode: theme.modes.current,
+            fontSize: fontSize.changes.current,
+            font: terminalFont.family.current,
+            density: density.current,
         });
-        fontSize.changes.subscribe((points) => {
-            listener({ mode: theme.modes.current, fontSize: points });
+        theme.modes.subscribe(() => {
+            listener(shown());
+        });
+        fontSize.changes.subscribe(() => {
+            listener(shown());
+        });
+        terminalFont.family.subscribe(() => {
+            listener(shown());
+        });
+        density.subscribe(() => {
+            listener(shown());
         });
     },
     shortcuts: menuShortcuts,
