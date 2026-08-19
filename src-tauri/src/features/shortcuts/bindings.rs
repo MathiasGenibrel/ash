@@ -465,6 +465,12 @@ impl Bindings {
     /// l'écran ne montre nulle part, et un refus qui nomme l'invisible n'explique rien. La
     /// famille se retrouve par l'ordre de déclaration — de sa ligne jusqu'à l'action que son
     /// `through` nomme, incluse.
+    ///
+    /// **Seule une action sans ligne à elle se lit sous une autre.** Une action qui a la
+    /// sienne porte son propre libellé, quel que soit son rang : sans cette condition, une
+    /// ligne ordinaire déclarée entre `Tab 1` et `Tab 9` dans `menu.rs` se ferait renommer
+    /// « Tab 1 … Tab 9 » dans les réglages, et l'ordre de déclaration d'un fichier
+    /// déciderait en silence du nom affiché par un autre.
     fn listed_as(&self, action: &str) -> String {
         let Some((rank, declared)) = self
             .actions
@@ -474,7 +480,10 @@ impl Bindings {
         else {
             return action.to_owned();
         };
-        let heading = self.covering(rank).unwrap_or(declared);
+        let heading = match declared.listing {
+            Listing::Hidden => self.covering(rank).unwrap_or(declared),
+            _ => declared,
+        };
         match &heading.listing {
             Listing::Family { through } => self
                 .actions
@@ -618,8 +627,20 @@ impl Bindings {
     /// qu'on la lui a donnée. Le geste ouvre alors le **même** bloc de conflit qu'une
     /// capture, avec ses deux issues nommées, et rien n'est écrit tant que l'utilisateur n'a
     /// pas choisi.
+    ///
+    /// Elle **refuse** une ligne qui ne se règle pas, comme [`bind`](Self::bind) et
+    /// [`clear`](Self::clear) : les trois gestes qui écrivent posent alors la même condition,
+    /// et le côté `asked` d'un conflit est rebindable **par construction**. Sans ce garde, la
+    /// propriété tenait encore, mais par un raisonnement à distance — « personne ne peut
+    /// détenir `⌘1`, puisque l'assainissement tranche les lignes fixes d'abord » —, et ce
+    /// genre de preuve est exactement ce que l'issue #137 a vu se périmer.
     pub fn reset(&self, action: &str) -> Result<Rebound, ShortcutError> {
         let declared = self.declared(action)?;
+        if !declared.rebindable() {
+            return Err(ShortcutError::FixedBinding {
+                action: action.to_owned(),
+            });
+        }
         Ok(self.claim(declared, declared.default.clone(), None))
     }
 
@@ -1470,12 +1491,14 @@ mod tests {
         // identiques, et une famille à demi rebindée ne veut rien dire (spec §4.4)
         let bindings = BindingsBuilder::new()
             .family("tab:select:1", "Tab 1", "Cmd+1", "tab:select:9")
-            .action("tab:select:9", "Tab 9", Some("Cmd+9"))
+            .hidden("tab:select:9", "Tab 9", "Cmd+9")
             .build();
 
         // When
         let report = bindings.report();
         let refused = bindings.bind("tab:select:1", &stroke("j", "KeyJ", true, false));
+        // et le retour au défaut, qui écrit comme la capture, se voit refuser de même
+        let unreset = bindings.reset("tab:select:1");
 
         // Then
         let family = row(&report, "tab:select:1");
@@ -1483,6 +1506,35 @@ mod tests {
         assert_eq!(family.keys, "⌘1 … ⌘9");
         assert!(!family.rebindable);
         assert!(matches!(refused, Err(ShortcutError::FixedBinding { .. })));
+        assert!(matches!(unreset, Err(ShortcutError::FixedBinding { .. })));
+    }
+
+    #[test]
+    fn given_a_row_of_its_own_declared_inside_the_family_when_it_is_listed_then_it_keeps_its_label()
+    {
+        // Given — la famille se retrouve par l'ordre de déclaration, et rien n'empêche
+        // `menu.rs` d'insérer un jour une action ordinaire entre ses deux extrémités. Elle a
+        // sa ligne, donc elle porte son nom : l'ordre d'un fichier ne renomme pas ce qu'un
+        // autre affiche
+        let bindings = BindingsBuilder::new()
+            .family("tab:select:1", "Tab 1", "Cmd+1", "tab:select:9")
+            .action("tab:new", "New Tab", Some("Cmd+T"))
+            .hidden("tab:select:9", "Tab 9", "Cmd+9")
+            .build();
+
+        // When
+        let report = bindings.report();
+
+        // Then — et le refus qu'une capture de `⌘1` fait sortir nomme les deux de la même
+        // façon que la liste, puisque c'est la même fonction qui les nomme
+        assert_eq!(row(&report, "tab:new").label, "New Tab");
+        assert_eq!(row(&report, "tab:select:1").label, "Tab 1 … Tab 9");
+        bindings
+            .bind("tab:new", &stroke("1", "Digit1", true, false))
+            .unwrap();
+        let refusal = bindings.report().conflict.unwrap();
+        assert_eq!(refusal.asked_label, "New Tab");
+        assert_eq!(refusal.holder_label, "Tab 1 … Tab 9");
     }
 
     #[test]
