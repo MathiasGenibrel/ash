@@ -413,6 +413,30 @@ impl Combination {
     /// de réglages, parce qu'une table de traduction en TypeScript en serait la seconde
     /// copie — et c'est l'écran qu'on croit quand les deux ne disent pas la même chose.
     pub fn glyphs(&self) -> String {
+        self.written(self.key.glyph())
+    }
+
+    /// La même combinaison, mais écrite avec la touche **telle qu'elle a été pressée**.
+    ///
+    /// [`glyphs`](Self::glyphs) écrit la touche canonique, et c'est ce qu'il faut partout où
+    /// l'on montre une **liaison** : `Cmd+Digit1` s'y lit `⌘1`. Mais la touche qui produit
+    /// `Digit1` par le repli de position (voir [`key_of`](Self::key_of)) est marquée `&` sur
+    /// un clavier français : dire `⌘1` à qui vient de presser `⌘&` nomme une touche qu'il n'a
+    /// nulle part. Ici — et seulement là où l'on répond à une **frappe**, dans le bloc de
+    /// conflit — on écrit ce que les doigts ont fait.
+    ///
+    /// `⌥` fait exception, et retombe sur le glyphe canonique : il **compose** (`⌥t` donne
+    /// `†`), donc le caractère produit n'est plus ce qui est marqué sur la touche. AppKit
+    /// compare d'ailleurs le caractère sans l'option, et c'est ce que la liaison retient.
+    pub fn glyphs_pressed(&self, stroke: &KeyStroke) -> String {
+        self.written(&self.pressed_glyph(stroke))
+    }
+
+    /// Les modificateurs dans l'ordre de macOS — `⌃⌥⇧⌘` —, puis la touche.
+    ///
+    /// Il n'est **pas** celui dans lequel l'accélérateur déclare ses modificateurs :
+    /// `Cmd+Shift+T` s'écrit `⇧⌘T`.
+    fn written(&self, key: &str) -> String {
         let mut written = String::new();
         for (present, glyph) in [
             (self.modifiers.control, "⌃"),
@@ -424,8 +448,23 @@ impl Combination {
                 written.push_str(glyph);
             }
         }
-        written.push_str(self.key.glyph());
+        written.push_str(key);
         written
+    }
+
+    fn pressed_glyph(&self, stroke: &KeyStroke) -> String {
+        if stroke.option {
+            return self.key.glyph().to_owned();
+        }
+        let mut letters = stroke.key.chars();
+        match (letters.next(), letters.next()) {
+            // Un caractère, et un seul : c'est ce qui est marqué sur la touche. Les touches
+            // nommées (`Tab`, `ArrowUp`, `F5`) en ont plusieurs, et leur glyphe est le bon.
+            (Some(single), None) if !single.is_whitespace() && !single.is_control() => {
+                single.to_uppercase().to_string()
+            }
+            _ => self.key.glyph().to_owned(),
+        }
     }
 }
 
@@ -504,6 +543,11 @@ mod tests {
             self
         }
 
+        pub fn option(mut self) -> Self {
+            self.0.option = true;
+            self
+        }
+
         pub fn build(self) -> KeyStroke {
             self.0
         }
@@ -521,6 +565,28 @@ mod tests {
 
         // Then — l'ordre est celui de l'analyseur, qui veut les modificateurs d'abord
         assert_eq!(combination.accelerator(), "Shift+Cmd+KeyT");
+    }
+
+    #[test]
+    fn given_a_frappe_answered_by_the_screen_when_it_is_written_back_then_it_names_the_key_that_was_pressed(
+    ) {
+        // Given — deux frappes que le repli de position résout vers la même famille de noms :
+        // la rangée du haut d'un AZERTY, qui produit `&` sur la touche que macOS joue comme
+        // `⌘1`, et `⌥` plus une lettre, qui **compose** (`⌥t` donne `†`)
+        let azerty = StrokeBuilder::new().key("&").code("Digit1").build();
+        let composed = StrokeBuilder::new().typing("†", "KeyT").option().build();
+
+        // When
+        let first = Combination::from_stroke(&azerty).unwrap();
+        let second = Combination::from_stroke(&composed).unwrap();
+
+        // Then — la liaison reste canonique des deux côtés, mais ce qu'on **dit** à qui vient
+        // de taper nomme sa touche. `⌥` fait exception : le caractère composé n'est pas ce qui
+        // est marqué dessus, et AppKit compare de toute façon la lettre sans l'option
+        assert_eq!(first.glyphs(), "⌘1");
+        assert_eq!(first.glyphs_pressed(&azerty), "⌘&");
+        assert_eq!(second.glyphs(), "⌥⌘T");
+        assert_eq!(second.glyphs_pressed(&composed), "⌥⌘T");
     }
 
     #[test]

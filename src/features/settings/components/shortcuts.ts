@@ -244,11 +244,15 @@ function captureBlock(line: ShortcutRow, capture: ShortcutCapture): UiComponent 
 }
 
 /**
- * Le bloc de conflit : les **deux** lignes fautives, le diagnostic, et deux issues nommées.
+ * Le bloc de conflit : les **deux** lignes fautives, le diagnostic, et ses issues nommées.
  *
  * « Un conflit interne se résout par un choix explicite : ash ne réattribue jamais en
  * silence. » Le premier bouton est le conséquent — il donne la combinaison —, le second le
  * secondaire. Aucun des deux n'est un défaut : rien n'est appliqué tant que le bloc est là.
+ *
+ * **Il n'y en a qu'un quand le backend n'offre pas `give`** : la combinaison est alors tenue
+ * par une ligne qui ne se règle pas, et le bloc est un refus (issue #137). L'écran ne fait
+ * pas ce partage, il le lit — le diagnostic dit déjà pourquoi c'est sans appel.
  */
 function conflictBlock(
     conflict: ShortcutConflict | null,
@@ -276,11 +280,15 @@ function conflictBlock(
             label("settings-capture-warn-glyph", "△"),
             label("settings-conflict-diagnosis", conflict.diagnosis),
             spacer(),
-            button(conflict.give)
-                .class("settings-conflict-give")
-                .onClick(() => {
-                    actions.resolveConflict("give");
-                }),
+            ...(conflict.give === null
+                ? []
+                : [
+                      button(conflict.give)
+                          .class("settings-conflict-give")
+                          .onClick(() => {
+                              actions.resolveConflict("give");
+                          }),
+                  ]),
             button(conflict.keep)
                 .class("settings-conflict-keep")
                 .onClick(() => {
