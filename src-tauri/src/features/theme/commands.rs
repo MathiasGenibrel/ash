@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : trois commandes, deux events.
+//! La surface de la feature vers le frontend : six commandes, trois events.
 //!
 //! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode et les
 //! trois pas de taille. Il **rend** la palette ; les choix, eux, sont ici
@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
+use super::sidebar_column::{SidebarColumn, SidebarWidth};
 use super::state::ThemeState;
 
 /// Nom de l'event qui porte le mode choisi. Contrat avec `src/app/theme.ts`.
@@ -24,6 +25,10 @@ pub const THEME_MODE_EVENT: &str = "ash://theme-mode";
 
 /// Nom de l'event qui porte la taille de police. Contrat avec `src/app/font-size.ts`.
 pub const TERMINAL_FONT_SIZE_EVENT: &str = "ash://terminal-font-size";
+
+/// Nom de l'event qui porte la largeur et le repli de la colonne. Contrat avec
+/// `src/app/sidebar-column.ts`.
+pub const SIDEBAR_COLUMN_EVENT: &str = "ash://sidebar-column";
 
 /// Le mode courant, lu par la webview en s'affichant.
 ///
@@ -93,4 +98,69 @@ pub fn resize_terminal_font<R: Runtime>(app: &AppHandle<R>, step: FontStep) {
     };
 
     let _ = app.emit(TERMINAL_FONT_SIZE_EVENT, size);
+}
+
+/// La largeur et le repli de la colonne, lus par la webview en s'affichant.
+///
+/// Ensuite, c'est l'event qui la tient à jour : elle ne redemande jamais. Même contrat que
+/// [`theme_mode`] et [`terminal_font_size`], parce que c'est la même sorte de préférence.
+#[tauri::command]
+pub fn sidebar_column(state: tauri::State<'_, Arc<ThemeState>>) -> SidebarColumn {
+    state.sidebar_column()
+}
+
+/// La largeur que la webview vient de régler en relâchant le bord.
+///
+/// **C'est le seul endroit où un nombre traverse la frontière dans ce sens**, et c'est assumé
+/// : contrairement à la taille de police, les bornes de la colonne sont relatives à la fenêtre
+/// — 10 % à 80 % —, et le backend ne connaît pas la fenêtre. La webview applique donc la règle
+/// de mise en page, et annonce le résultat ; ce qui **survit** à la fermeture reste ici, et
+/// nulle part ailleurs ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// Elle n'est appelée qu'au **relâchement**, jamais pendant le glissement : la largeur qui
+/// suit le pointeur est un fait d'affichage, comme le compteur de durée de la ligne de statut,
+/// et un aller-retour Tauri par image ferait écrire le fichier soixante fois par seconde.
+#[tauri::command]
+pub fn set_sidebar_column_width<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+    width: i64,
+) {
+    announce(&app, state.set_sidebar_width(SidebarWidth::from(width)));
+}
+
+/// Replie ou déplie la colonne — le geste du séparateur, et le relâchement sous le plancher.
+#[tauri::command]
+pub fn set_sidebar_column_collapsed<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+    collapsed: bool,
+) {
+    announce(&app, state.set_sidebar_collapsed(collapsed));
+}
+
+/// `⌘B` : replie la colonne, ou la rouvre à la largeur qu'elle avait.
+///
+/// La bascule est demandée **sans état** : la webview ne dit pas ce que la colonne devient,
+/// elle demande qu'elle change. C'est ce qui laisse un seul détenteur au repli, et ce qui
+/// empêche deux surfaces — le menu, la touche du séparateur — de se contredire.
+#[tauri::command]
+pub fn toggle_sidebar_column<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+) {
+    announce(&app, Some(state.toggle_sidebar_collapsed()));
+}
+
+/// Annonce la colonne, et seulement si elle a bougé.
+///
+/// Comme pour le thème et la taille : chaque annonce fait redessiner la colonne et relire sa
+/// grille au terminal visible, et la faire pour rien serait un `SIGWINCH` gratuit.
+fn announce<R: Runtime>(app: &AppHandle<R>, changed: Option<SidebarColumn>) {
+    let Some(column) = changed else {
+        return;
+    };
+    // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à rattraper,
+    // et surtout pas de panique dans une commande.
+    let _ = app.emit(SIDEBAR_COLUMN_EVENT, column);
 }

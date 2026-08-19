@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use super::appearance::Appearance;
 use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
+use super::sidebar_column::{SidebarColumn, SidebarWidth};
 use super::store::ThemeStore;
 
 /// L'apparence courante de la fenêtre — **la** source de vérité.
@@ -54,6 +55,47 @@ impl ThemeState {
     pub fn step_font(&self, step: FontStep) -> Option<FontSize> {
         self.change(|appearance| appearance.font_size = appearance.font_size.stepped(step))
             .map(|appearance| appearance.font_size)
+    }
+
+    pub fn sidebar_column(&self) -> SidebarColumn {
+        self.locked().sidebar
+    }
+
+    /// Retient la largeur que la webview vient de régler au glissement, et **déplie** la
+    /// colonne.
+    ///
+    /// Les deux d'un coup, parce que c'est un seul geste : on ne redimensionne pas une
+    /// colonne repliée, donc une largeur qui arrive dit aussi que la colonne est ouverte.
+    /// Rend la colonne si quelque chose a bougé — un glissement qui se termine là où il a
+    /// commencé n'a rien à annoncer.
+    pub fn set_sidebar_width(&self, width: SidebarWidth) -> Option<SidebarColumn> {
+        self.change(|appearance| {
+            appearance.sidebar.width = width;
+            appearance.sidebar.collapsed = false;
+        })
+        .map(|appearance| appearance.sidebar)
+    }
+
+    /// Replie ou déplie la colonne — `⌘B`, la touche du séparateur, ou un glissement relâché
+    /// sous le plancher.
+    ///
+    /// La largeur n'est **pas** touchée : c'est ce qui fait qu'une colonne rouverte retrouve
+    /// celle qu'elle avait avant d'être refermée.
+    pub fn set_sidebar_collapsed(&self, collapsed: bool) -> Option<SidebarColumn> {
+        self.change(|appearance| appearance.sidebar.collapsed = collapsed)
+            .map(|appearance| appearance.sidebar)
+    }
+
+    /// `⌘B` : l'inverse de ce que la colonne est **maintenant**.
+    ///
+    /// La bascule est calculée ici, sous le verrou, et non par l'appelante à partir d'un état
+    /// qu'elle aurait lu juste avant : c'est ce qui empêche deux gestes rapprochés de se
+    /// répondre le même état. Rend toujours la colonne — une bascule change toujours quelque
+    /// chose.
+    pub fn toggle_sidebar_collapsed(&self) -> SidebarColumn {
+        let collapsed = !self.locked().sidebar.collapsed;
+        self.set_sidebar_collapsed(collapsed)
+            .unwrap_or_else(|| self.sidebar_column())
     }
 
     /// Applique un changement, le garde sur le disque, et rend la nouvelle apparence — ou
@@ -204,6 +246,80 @@ mod tests {
             next.font_size(),
             FontSize::DEFAULT.stepped(FontStep::Smaller)
         );
+    }
+
+    #[test]
+    fn given_a_column_the_user_has_widened_when_it_is_collapsed_and_reopened_then_it_is_that_wide_again(
+    ) {
+        // Given — une colonne posée au tiers de la fenêtre
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.set_sidebar_width(SidebarWidth::from(420));
+
+        // When — `⌘B`, puis `⌘B` de nouveau
+        state.toggle_sidebar_collapsed();
+        let reopened = state.toggle_sidebar_collapsed();
+
+        // Then — replier ne perd pas la largeur, sans quoi chaque `⌘B` ramènerait 240 px
+        assert!(!reopened.collapsed);
+        assert_eq!(reopened.width, SidebarWidth::from(420));
+    }
+
+    #[test]
+    fn given_a_column_resized_in_a_previous_session_when_ash_starts_again_then_it_opens_that_wide()
+    {
+        // Given — la largeur suit le chemin du thème : même fichier, même relecture
+        let store = Arc::new(FakeStore::default());
+        let state = ThemeState::restore(Arc::clone(&store) as Arc<dyn ThemeStore>);
+        state.set_sidebar_width(SidebarWidth::from(310));
+        state.set_sidebar_collapsed(true);
+
+        // When — la session suivante
+        let next = ThemeState::restore(store as Arc<dyn ThemeStore>);
+
+        // Then — la largeur **et** le repli, parce que `⌘B` et la poignée sont un seul état
+        assert_eq!(
+            next.sidebar_column(),
+            SidebarColumn {
+                width: SidebarWidth::from(310),
+                collapsed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn given_a_collapsed_column_when_a_drag_sets_a_width_then_the_column_is_open_again() {
+        // Given — la colonne repliée par `⌘B`, puis rouverte à la poignée
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.set_sidebar_collapsed(true);
+
+        // When
+        let announced = state.set_sidebar_width(SidebarWidth::from(280));
+
+        // Then — on ne redimensionne pas une colonne refermée : une largeur qui arrive dit
+        // aussi qu'elle est ouverte
+        assert_eq!(
+            announced,
+            Some(SidebarColumn {
+                width: SidebarWidth::from(280),
+                collapsed: false,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_drag_that_ends_where_it_started_when_the_width_is_announced_then_nothing_is_emitted()
+    {
+        // Given — attraper le bord, bouger, revenir : c'est le geste le plus courant après
+        // une hésitation
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.set_sidebar_width(SidebarWidth::from(300));
+
+        // When
+        let announced = state.set_sidebar_width(SidebarWidth::from(300));
+
+        // Then — sans ça, chaque relâchement réécrirait le fichier et referait la grille de
+        // tous les terminaux ouverts
+        assert_eq!(announced, None);
     }
 
     #[test]

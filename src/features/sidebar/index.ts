@@ -14,11 +14,19 @@
 import "./sidebar.css";
 
 import type { TabId, TabInfo, SidebarRows } from "@/shared/ipc";
+import {
+    appliedWidth,
+    DEFAULT_SIDEBAR_WIDTH,
+    RAIL_WIDTH,
+    type SidebarColumnState,
+} from "./resize";
+import { createSidebarResizer } from "./resizer";
 import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
 import { showsSubagents } from "./visible";
 
 export type { SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
+export { DEFAULT_SIDEBAR_WIDTH, type SidebarColumnState } from "./resize";
 
 /** Ce que la sidebar sait demander, et qu'elle ne sait pas faire elle-même. */
 export interface SidebarPorts {
@@ -54,6 +62,27 @@ export interface SidebarPorts {
      */
     instrument(command: string, adapter: string): void;
     /**
+     * La largeur réglée en relâchant le bord — ou en poussant une flèche sur le séparateur.
+     *
+     * Elle **part**, elle ne se pose pas ici : la largeur survit à la fermeture, donc elle
+     * vit en Rust avec le thème et la taille de police
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et la colonne prend
+     * celle que le backend annonce. Ce qui suit le pointeur pendant le glissement est un fait
+     * d'affichage, et le reste.
+     */
+    setColumnWidth(width: number): void;
+    /** Refermer la colonne — un glissement relâché sous le plancher. */
+    setColumnCollapsed(collapsed: boolean): void;
+    /** `⌘B`, et la touche du séparateur : le même geste, et le même détenteur. */
+    toggleColumn(): void;
+    /**
+     * La largeur de la fenêtre, d'où se déduisent les bornes de 10 % et 80 %.
+     *
+     * Injectée comme l'horloge, et pour la même raison : c'est une lecture du monde, et la
+     * colonne n'a pas à savoir qu'elle vit dans une `window`.
+     */
+    viewportWidth?: () => number;
+    /**
      * L'heure qu'il est, pour les durées des lignes de sous-agents.
      *
      * Injectée plutôt que lue, comme partout ailleurs où le temps entre dans le produit :
@@ -64,8 +93,14 @@ export interface SidebarPorts {
 
 export interface Sidebar {
     readonly element: HTMLElement;
-    /** `⌘B` : replié, il ne reste que le rail. */
-    readonly isCollapsed: boolean;
+    /**
+     * Le séparateur du bord droit : la zone qu'on attrape, et la poignée qui l'annonce.
+     *
+     * Il est rendu **à part** de la colonne parce qu'il la déborde de 7 px : posé dedans,
+     * l'`overflow: hidden` qui empêche les lignes de fuir couperait la moitié de la zone
+     * attrapable. Le composition root le pose à côté de la colonne, dans la même grille.
+     */
+    readonly separator: HTMLElement;
     /**
      * Dessine la colonne à partir de ce que le backend détient : les onglets, l'onglet actif,
      * et l'état gardé d'une session à l'autre — les épingles et les lignes repliées.
@@ -76,32 +111,38 @@ export interface Sidebar {
         kept: SidebarRows,
     ): void;
     /**
-     * `⌘B` : replie ou déplie **la colonne entière**, et rend son état pour que l'appelant en
-     * tire la mise en page.
+     * La largeur et le repli que le backend vient d'annoncer.
      *
-     * À ne pas confondre avec le repli d'une **ligne** : celui-là part au backend et survit à
-     * la fermeture, celui-ci ne survit à rien. Les deux gestes ne portent donc pas le même
-     * nom, et ce n'est pas une commodité de lecture — c'est ce qui empêche d'appeler l'un en
-     * croyant appeler l'autre.
+     * Un canal séparé de [`render`], et non un cinquième paramètre : les onglets bougent à
+     * chaque `cd`, la colonne seulement quand on la règle — et c'est **cette** annonce, et
+     * elle seule, qui remplace la largeur montrée pendant un glissement.
      */
-    toggleColumnCollapsed(): boolean;
+    setColumn(column: SidebarColumnState): void;
 }
 
 export function mountSidebar(ports: SidebarPorts): Sidebar {
     // Trois replis, et ils ne se confondent pas : la **colonne** (`⌘B`), chaque **dépôt**,
     // et chaque **worktree** pris séparément (ADR-0012, spec §4.1).
     //
-    // Seul le premier vit ici. Les deux autres **survivent au redémarrage** (spec §5.2), donc
-    // ils vivent en Rust avec les épingles, et la colonne les reçoit comme elle reçoit ses
-    // onglets ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). `⌘B`, lui, ne
-    // se replie pas par ligne et ne survit à rien : il n'a pas de raison de traverser la
-    // frontière.
-    let columnCollapsed = false;
+    // **Aucun des trois ne vit ici.** Les deux replis de ligne survivent au redémarrage
+    // (spec §5.2), et celui de la colonne aussi depuis qu'elle est redimensionnable (#129) :
+    // `⌘B` et la poignée agissent sur le même état, donc il n'y en a qu'un, et il est en Rust
+    // avec le thème ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). La
+    // colonne rend ce qu'on lui annonce.
+    let column: SidebarColumnState = { width: DEFAULT_SIDEBAR_WIDTH, collapsed: false };
+
+    // La largeur qui suit le pointeur pendant un glissement, et rien d'autre. Elle n'est pas
+    // un second détenteur : elle est effacée par la première annonce du backend, et elle est
+    // au repli ce que le compteur de durée de la ligne de statut est à `stateSince` — un fait
+    // d'affichage. Elle survit au relâchement le temps de l'aller-retour, sans quoi la colonne
+    // reviendrait d'une image à sa largeur précédente avant de repartir à la bonne.
+    let dragged: number | null = null;
 
     let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
     let kept: SidebarRows = { pinned: [], collapsed: [] };
     const now = ports.now ?? ((): number => Date.now());
+    const viewportWidth = ports.viewportWidth ?? ((): number => window.innerWidth);
 
     // Le battement qui fait avancer les durées des lignes filles, **et seulement quand il y
     // en a une à l'écran**. La colonne entière se redessine à chaque rendu : la faire battre
@@ -133,6 +174,29 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         },
     });
 
+    // Le séparateur ne détient rien non plus : il lit la colonne annoncée, applique la règle
+    // de `resize.ts`, et passe la main. Seul le relâchement traverse la frontière.
+    const resizer = createSidebarResizer({
+        column: () => column,
+        viewportWidth,
+        preview: (width) => {
+            dragged = width;
+            layOut();
+        },
+        commitWidth: (width) => {
+            dragged = width;
+            layOut();
+            ports.setColumnWidth(width);
+        },
+        collapse: () => {
+            dragged = null;
+            ports.setColumnCollapsed(true);
+        },
+        toggle: () => {
+            ports.toggleColumn();
+        },
+    });
+
     /**
      * Les lignes repliées, telles que le backend les a annoncées.
      *
@@ -150,8 +214,29 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
             collapsed: collapsed(),
             pinned: kept.pinned,
         });
-        view.render(tree, columnCollapsed, now());
-        beat(showsSubagents(tree, columnCollapsed));
+        view.render(tree, column.collapsed, now());
+        beat(showsSubagents(tree, column.collapsed));
+        layOut();
+    }
+
+    /**
+     * Pose la largeur de la colonne, en une seule propriété.
+     *
+     * Elle est portée par la **racine du document** parce que deux éléments de deux sous-arbres
+     * la lisent — la colonne, et le séparateur qui se place sur son bord. C'est le même chemin
+     * que la palette de `app/theme.ts`, et pour la même raison : une valeur de fenêtre, lue par
+     * du CSS.
+     *
+     * `appliedWidth` est rappelée à **chaque** pose, et pas seulement quand la largeur change :
+     * c'est ce qui fait que réduire la fenêtre ramène la colonne dans ses bornes sans jamais
+     * réécrire la largeur qu'on a réglée.
+     */
+    function layOut(): void {
+        const width = dragged ?? column.width;
+        const shown =
+            dragged === null && column.collapsed ? RAIL_WIDTH : appliedWidth(width, viewportWidth());
+        document.documentElement.style.setProperty("--ash-sidebar-width", `${shown}px`);
+        resizer.update();
     }
 
     /**
@@ -173,23 +258,30 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
         ticker = setInterval(draw, 1000);
     }
 
+    // La fenêtre qui rétrécit ne redessine pas la colonne — elle la **replace** dans ses
+    // bornes. `resize` de la fenêtre suffit : la colonne ne change pas de largeur pour une
+    // autre raison que la sienne, et un `ResizeObserver` ici observerait un élément dont c'est
+    // justement nous qui posons la largeur.
+    window.addEventListener("resize", layOut);
+
     draw();
 
     return {
         element: view.element,
-        get isCollapsed() {
-            return columnCollapsed;
-        },
+        separator: resizer.element,
         render(nextTabs, nextActive, nextKept) {
             tabs = nextTabs;
             activeTabId = nextActive;
             kept = nextKept;
             draw();
         },
-        toggleColumnCollapsed() {
-            columnCollapsed = !columnCollapsed;
+        setColumn(next) {
+            column = next;
+            // L'annonce du backend **remplace** ce que le glissement montrait : c'est elle qui
+            // fait autorité, et c'est le seul endroit où la largeur montrée redevient la
+            // largeur gardée.
+            dragged = null;
             draw();
-            return columnCollapsed;
         },
     };
 }
