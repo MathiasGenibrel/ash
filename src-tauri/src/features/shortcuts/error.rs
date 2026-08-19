@@ -9,8 +9,12 @@ use std::path::PathBuf;
 /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShortcutError {
-    /// Une touche qu'Ash ne sait pas lier — `F13`, une touche morte, un modificateur seul.
-    UnusableKey { code: String },
+    /// Une touche qu'Ash ne sait pas lier — `F13`, une touche morte, un caractère que
+    /// l'analyseur de `muda` ne sait pas écrire (`é`, `ç`, `µ`).
+    ///
+    /// Ce qui est nommé est le **caractère produit**, pas la position physique de la touche :
+    /// c'est ce que l'utilisateur a sous les doigts, et c'est ce qui est refusé.
+    UnusableKey { key: String },
     /// Une touche sans `⌘`, `⌃` ni `⌥` : la lier prendrait une touche nue au shell.
     BareKey,
     /// Une action que le menu ne déclare pas. Le frontend envoie un identifiant en clair,
@@ -30,8 +34,8 @@ impl fmt::Display for ShortcutError {
         match self {
             // Les trois premiers messages s'affichent dans le bloc de capture, donc en
             // anglais et en minuscules, comme tout ce que la fenêtre de réglages écrit.
-            ShortcutError::UnusableKey { code } => {
-                write!(f, "ash cannot bind {code}")
+            ShortcutError::UnusableKey { key } => {
+                write!(f, "ash cannot bind {key}")
             }
             ShortcutError::BareKey => {
                 write!(f, "add ⌘, ⌃ or ⌥ — a bare key belongs to the shell")

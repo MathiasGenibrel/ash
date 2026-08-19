@@ -519,29 +519,32 @@ describe("le bloc de capture d'une combinaison", () => {
         expect(intents).toEqual(["ignore", "ignore", "ignore", "ignore"]);
     });
 
-    it("Given a real combination pressed, when the stroke is read, then it carries the physical code and the four modifiers", () => {
-        // Given — le **code** et non `key` : `KeyboardEvent.code` ne dépend pas de la
-        // disposition du clavier, et c'est le nom que l'analyseur d'accélérateurs lit. Rien
-        // n'est jugé ici : c'est le backend qui dit si ça fait un raccourci
+    it("Given a key whose character and position disagree, when the stroke is read, then both are reported and the character comes first", () => {
+        // Given — la touche marquée `W` d'un AZERTY est à la position `KeyZ` d'un clavier
+        // US. macOS apparie un équivalent clavier par **caractère** : envoyer la seule
+        // position posait `⌘Z` sur une touche qui joue `⌘W`, et l'action devenait
+        // injoignable (issue #133). Rien n'est jugé ici — c'est le backend qui tranche
         const pressed = {
-            code: "KeyJ",
+            key: "w",
+            code: "KeyZ",
             metaKey: true,
             ctrlKey: false,
             altKey: false,
-            shiftKey: true,
+            shiftKey: false,
         };
 
         // When
         const stroke = readStroke(pressed);
 
-        // Then
-        expect(captureIntent({ key: "j" })).toBe("stroke");
+        // Then — les deux faits traversent la frontière, et le caractère en tête
+        expect(captureIntent({ key: "w" })).toBe("stroke");
         expect(stroke).toEqual({
-            code: "KeyJ",
+            key: "w",
+            code: "KeyZ",
             command: true,
             control: false,
             option: false,
-            shift: true,
+            shift: false,
         });
     });
 });

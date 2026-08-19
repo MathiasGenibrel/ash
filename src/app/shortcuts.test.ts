@@ -149,8 +149,8 @@ describe("ce que le terminal doit continuer de recevoir", () => {
 describe("ce qu'une frappe retenue joue", () => {
     it("Given the chord still belongs to an action, when it is pressed, then the action the backend names is played", () => {
         // Given — la webview ne sait pas ce que `⌃⇥` fait : elle envoie la frappe et obéit à
-        // la réponse. La valeur envoyée est celle de la capture — le code physique et les
-        // quatre modificateurs —, pas une combinaison
+        // la réponse. La valeur envoyée est celle de la capture — le caractère produit, la
+        // position physique et les quatre modificateurs —, pas une combinaison
         const asked: KeyStroke[] = [];
         const played: MenuAction[] = [];
         const { document, press } = aDocument();
@@ -169,7 +169,14 @@ describe("ce qu'une frappe retenue joue", () => {
         // Then
         return Promise.resolve().then(() => {
             expect(asked).toEqual([
-                { code: "Tab", command: false, control: true, option: false, shift: false },
+                {
+                    key: "Tab",
+                    code: "Tab",
+                    command: false,
+                    control: true,
+                    option: false,
+                    shift: false,
+                },
             ]);
             expect(played).toEqual([{ kind: "next-tab" }]);
         });

@@ -3,13 +3,24 @@
 /**
  * Ce que la webview a vu passer sous les doigts, avant qu'Ash n'en fasse une combinaison.
  *
- * C'est un **fait**, pas une décision : la webview rapporte le code physique de la touche
- * et l'état des quatre modificateurs, et c'est le backend qui dit si ça fait un raccourci
- * ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Sans ce partage, la
- * table des noms de touches existerait des deux côtés de la frontière.
+ * Ce sont deux **faits**, et aucune décision : le caractère que la frappe a produit, la
+ * position physique de la touche, et l'état des quatre modificateurs. C'est le backend qui
+ * dit lequel des deux fait le raccourci
+ * ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — la webview n'a ni
+ * table de touches, ni combinaison, ni règle de comparaison.
  */
 export type KeyStroke = { 
 /**
- * `KeyboardEvent.code` — le code **physique**, indépendant de la disposition.
+ * `KeyboardEvent.key` — le **caractère produit** (`w`, `W`, `&`, `,`), ou le nom de la
+ * touche quand elle n'en produit aucun (`Tab`, `ArrowUp`, `F5`).
+ *
+ * C'est **la** source du raccourci : macOS apparie par caractère.
+ */
+key: string, 
+/**
+ * `KeyboardEvent.code` — la position physique, nommée d'après un clavier US.
+ *
+ * Un **repli**, et rien d'autre : il ne sert que lorsque le caractère n'a pas
+ * d'écriture d'accélérateur. Voir [`Combination::from_stroke`].
  */
 code: string, command: boolean, control: boolean, option: boolean, shift: boolean, };
