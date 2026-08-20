@@ -1,8 +1,9 @@
 import "./styles.css";
+import { mountBranchCard } from "@/features/git";
 import { mountBottomPanel } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
-import type { SidebarRows } from "@/shared/ipc";
+import type { BranchCard, SidebarRows } from "@/shared/ipc";
 import {
     mountTerminals,
     type FontFamilySignal,
@@ -30,6 +31,7 @@ import { windowTitle } from "./window-title";
 import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
 import { followBottomPanel, type BottomPanelBinding } from "./bottom-panel";
+import { followBranchCard, type BranchCardBinding } from "./branch-card";
 
 /**
  * Composition root du frontend.
@@ -50,6 +52,7 @@ function mount(
     sidebarRows: SidebarRowsBinding,
     sidebarColumn: SidebarColumnBinding,
     bottomPanel: BottomPanelBinding,
+    branchCard: BranchCardBinding,
     appName: string,
 ): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
@@ -178,9 +181,52 @@ function mount(
     // Le nom traverse en paramètre plutôt que d'être relu à chaque titre : il est constant
     // pour toute la session, et le relire à chaque changement d'onglet ferait un
     // aller-retour Tauri par `cd`.
+    // La fiche de branche (#31) se pose dans le **corps** du panneau, sur la vue `branch`.
+    // Les deux features ne se connaissent pas : le panneau expose une boîte dont il garantit
+    // la hauteur, la fiche est une vue qui n'en sait rien, et elles se rencontrent ici — comme
+    // la sidebar et la feature terminal.
+    //
+    // Rien ne la pousse : une fiche est un fichier, relu **quand on la regarde**. Les deux
+    // moments sont l'ouverture de la vue et le changement d'onglet actif, parce que la fiche
+    // suit le worktree de l'onglet ([ADR-0012](../../docs/adr/0012-worktree-unite-de-travail.md)).
+    const card = mountBranchCard({
+        writeLog: () => {
+            void showCard(branchCard.writeLog(cardWorktree ?? ""));
+        },
+        place: (local) => {
+            void showCard(branchCard.place(cardWorktree ?? "", local));
+        },
+    });
+    panel.body.append(card.element);
+
+    let cardWorktree: string | null = null;
+    let cardShown = false;
+
+    const showCard = async (asked: Promise<BranchCard | null>): Promise<void> => {
+        const shown = cardWorktree;
+        const answer = await asked;
+        // La réponse d'un worktree qu'on ne regarde plus est **jetée** : deux `cd` rapprochés
+        // rendraient sinon la fiche du premier par-dessus celle du second.
+        if (shown === cardWorktree) card.render(answer);
+    };
+
+    const drawCard = (): void => {
+        card.element.hidden = !cardShown;
+        if (!cardShown) return;
+        if (cardWorktree === null) {
+            card.render(null);
+            return;
+        }
+        void showCard(branchCard.read(cardWorktree));
+    };
+
     const titleBar = createTitleBar(windowTitle(null, appName));
     terminals.onActiveTab((active) => {
         titleBar.setTitle(windowTitle(active, appName));
+        const worktree = active?.tab.location?.worktreeRoot ?? null;
+        if (worktree === cardWorktree) return;
+        cardWorktree = worktree;
+        drawCard();
     });
 
     // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
@@ -188,6 +234,10 @@ function mount(
     // onglet et le raccourci de #32 ne pourront pas se contredire.
     bottomPanel.subscribe((next) => {
         panel.setPanel(next);
+        const showing = next.open && next.view === "branch";
+        const changed = showing !== cardShown;
+        cardShown = showing;
+        if (changed) drawCard();
     });
     panel.setPanel(bottomPanel.current);
 
@@ -350,6 +400,10 @@ sidebarColumn.ready.catch(() => undefined);
 const bottomPanel = followBottomPanel();
 bottomPanel.ready.catch(() => undefined);
 
+// La fiche de branche, elle, n'a rien à raccorder : elle n'a pas d'event, et se lit quand on
+// la regarde. Le binding n'est qu'un nom de commande par geste (ADR-0013).
+const branchCard = followBranchCard();
+
 // La police du terminal et la densité de la sidebar suivent le même chemin que les trois
 // au-dessus : elles sont détenues par le backend, demandées ici, et posées quand il répond.
 // Toutes deux se règlent dans la fenêtre de réglages (spec §9), qui est un **autre document** :
@@ -418,6 +472,7 @@ void document.fonts.ready.finally(() => {
                 sidebarRows,
                 sidebarColumn,
                 bottomPanel,
+                branchCard,
                 name,
             );
         });

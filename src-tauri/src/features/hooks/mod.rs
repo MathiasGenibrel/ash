@@ -10,7 +10,7 @@
 //! | un seul classement de l'état d'un fichier, pour agir **et** pour l'afficher | [`presence`] |
 //! | rien n'est modifié hors de ce qui est à Ash | [`document`] — le fichier est du texte, jamais un arbre relu, et le port n'accepte qu'un [`Document`] |
 //! | `.bak` **avant** l'écriture, et jamais écrasé | [`install`] |
-//! | le diff de ce qu'Ash écrirait, montré avant toute écriture | [`presence`], [`diff`] |
+//! | le diff de ce qu'Ash écrirait, montré avant toute écriture | [`presence`], [`crate::shared::text_diff`] |
 //! | désinstallation qui ne laisse rien, à l'octet près | [`merge`], [`install`] |
 //! | ce qu'un retrait emporterait, dit **avant** de le poser | [`removal`] |
 //!
@@ -46,7 +46,6 @@
 //! `settings` traverse cette frontière par le port `HookBlocks`, que la composition root
 //! relie ici en traduisant un identifiant d'adaptateur en instrumentation.
 
-mod diff;
 mod document;
 mod error;
 mod install;

@@ -15,10 +15,10 @@
 //! Un fichier qui portait déjà des hooks à lui n'est plus un refus : c'est un conflit, qui
 //! se montre et se tranche. Le sens d'ADR-0007 est « jamais silencieux », pas « jamais ».
 
-use super::diff;
 use super::merge::{self, Plan, Standing};
 use super::ports::ConfigFiles;
 use crate::features::agents::Instrumentation;
+use crate::shared::text_diff as diff;
 
 /// Ce que le fichier porte, face à ce qu'Ash y écrirait.
 ///
