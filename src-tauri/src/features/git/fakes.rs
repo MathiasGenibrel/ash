@@ -15,7 +15,7 @@ use super::error::GitError;
 use super::fake_fs::FakeFs;
 use super::git_cli::StatusReader;
 use super::metadata::{Head, WorktreeMetadata};
-use super::metadata_watch::{Announce, Committed, Relocate};
+use super::metadata_watch::{Announce, HeadMoved, Relocate};
 use super::ports::{Entry, FileSystem};
 use super::targets::WatchRoot;
 use super::watcher::{FileWatcher, OnChange, WatchHandle};
@@ -401,15 +401,15 @@ impl RecordedRelocations {
 /// ne dit pas *quel* commit est né — la surveillance ne le sait pas — mais **où** aller le
 /// lire, et sous quelle identité de dépôt le ranger.
 #[derive(Default)]
-pub struct RecordedCommits(Mutex<Vec<(String, String)>>);
+pub struct RecordedHeadMoves(Mutex<Vec<(String, String)>>);
 
-impl RecordedCommits {
+impl RecordedHeadMoves {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
     /// Le rappel à injecter dans la surveillance.
-    pub fn committed(self: &Arc<Self>) -> Committed {
+    pub fn head_moved(self: &Arc<Self>) -> HeadMoved {
         let recorded = Arc::clone(self);
         Arc::new(move |root: &Path, common_dir: &Path| {
             if let Ok(mut moves) = recorded.0.lock() {
