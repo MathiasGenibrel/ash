@@ -12,6 +12,7 @@ import type {
     RecognizedAgent,
     PinnedWorktree,
     RepoRef,
+    SessionUsage,
     ShellTab,
     Subagent,
 
@@ -54,6 +55,11 @@ export class TabBuilder {
     private subagents: Subagent[] = [];
     /** Aucun outil reconnu : un shell à son invite, ou un programme quelconque (ADR-0006). */
     private agent: RecognizedAgent | null = null;
+    /**
+     * Aucune mesure de contexte — le défaut de **tout** onglet dont l'outil ne tient pas de
+     * transcript, et de tout onglet dont l'agent n'a pas encore parlé.
+     */
+    private usage: SessionUsage | null = null;
 
     static create(): TabBuilder {
         return new TabBuilder();
@@ -106,6 +112,18 @@ export class TabBuilder {
         agentId = `agent-${String(this.subagents.length + 1)}`,
     ): this {
         this.subagents.push({ agentId, agentType, state, since });
+        return this;
+    }
+
+    /**
+     * L'outil de cet onglet dit occuper cette place dans sa fenêtre de contexte.
+     *
+     * Deux nombres, comme ce qui traverse : le pourcentage se calcule à l'affichage. Un
+     * onglet dont l'outil est muet n'appelle simplement pas cette méthode — il n'y a pas de
+     * « jauge vide » à décrire.
+     */
+    consuming(usedTokens: number, windowTokens = 200_000): this {
+        this.usage = { usedTokens, windowTokens };
         return this;
     }
 
@@ -163,6 +181,7 @@ export class TabBuilder {
             state: this.state,
             stateSince: this.stateSince,
             subagents: this.subagents,
+            usage: this.usage,
             paused: this.stopped,
             location: this.located
                 ? {
