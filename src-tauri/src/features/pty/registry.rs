@@ -7,7 +7,7 @@ use crate::features::agents::{AgentState, Presence, ProgramIdentity, RecognizedA
 use crate::shared::time::UnixMillis;
 
 use super::agent_states::AgentStates;
-use super::compose::{ComposeDesk, ComposeOutcome};
+use super::compose::{ComposeDesk, ComposeOutcome, Foreground};
 use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
@@ -358,19 +358,15 @@ impl PtyRegistry {
         Ok(changed)
     }
 
-    /// Libère le texte retenu quand le tour est fini.
+    /// Pose dans le prompt le texte que le pupitre retenait, quand le tour est fini.
     ///
-    /// Rien ne part tant que l'onglet est `working` : c'est exactement ce que le corollaire
-    /// de file d'attente d'ADR-0015 demande — attendre la fin du tour pour que la frappe
-    /// atterrisse dans le prompt et non au milieu d'une sortie. **Ce n'est pas un envoi
-    /// différé** : le texte est écrit, jamais validé.
+    /// La règle — rien ne sort tant que le tour dure — est celle de
+    /// [`ComposeDesk::release_after_turn`]. Ici, il n'y a que la traduction de l'état
+    /// d'agent en « un tour est en cours », et l'écriture.
     fn flush_composed(&self, tab_id: &str, desk: &SharedDesk, state: AgentState) {
-        if state == AgentState::Working {
-            return;
-        }
         let released = match desk.lock() {
-            Ok(mut desk) if desk.is_holding() => desk.release(),
-            _ => None,
+            Ok(mut desk) => desk.release_after_turn(state == AgentState::Working),
+            Err(_) => None,
         };
         if let Some(text) = released {
             // Échouer à écrire signifie que l'onglet vient de disparaître : il n'y a plus
@@ -438,10 +434,14 @@ impl PtyRegistry {
     /// Rédige un texte dans un onglet — **sans jamais l'envoyer**
     /// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
     ///
-    /// Les quatre issues et l'ordre dans lequel elles sont tranchées sont documentés dans
-    /// [`super::compose`]. Le `\n` n'est pas filtré ici mais **à la source** : le texte
-    /// vient de `features::git`, dont le compositeur ne rend qu'une seule ligne — dans un
-    /// PTY, un saut de ligne *est* la touche `⏎`.
+    /// La règle elle-même — les quatre issues et leur ordre — appartient au **pupitre**
+    /// ([`ComposeDesk::arbitrate`]), et se lit là-bas d'un seul tenant. Le registre ne fait
+    /// ici que trois choses qu'il est seul à savoir faire : dire ce que l'onglet montre,
+    /// tenir le verrou, et poser les octets quand le pupitre le lui dit.
+    ///
+    /// Le `\n` n'est filtré ni ici ni là-bas mais **à la source** : le texte vient de
+    /// `features::git`, dont le compositeur ne rend qu'une seule ligne — dans un PTY, un
+    /// saut de ligne *est* la touche `⏎`.
     ///
     /// L'état d'agent consulté est le **dernier annoncé**, jamais un état redemandé : la
     /// question d'`AgentStates` fait avancer le temps des états qui expirent, et un clic
@@ -452,31 +452,24 @@ impl PtyRegistry {
         })?;
 
         let announced = announced.lock().ok().and_then(|known| known.clone());
-        // « Passer le travail à l'agent qui tourne déjà là » (ADR-0015) : un shell à son
-        // invite n'est pas ça, et le texte y serait une ligne de commande.
-        if announced.as_ref().is_none_or(|tab| tab.agent.is_none()) {
-            return Ok(ComposeOutcome::NoAgent);
-        }
+        let foreground = Foreground {
+            // `agent` est ce que le port de reconnaissance a rendu : `pty` ne connaît
+            // toujours aucun nom d'outil.
+            agent_is_running: announced.as_ref().is_some_and(|tab| tab.agent.is_some()),
+            turn_in_progress: announced.is_some_and(|tab| tab.state == AgentState::Working),
+        };
 
-        let working = announced.is_some_and(|tab| tab.state == AgentState::Working);
-        {
+        let outcome = {
             let Ok(mut desk) = desk.lock() else {
                 return Err(PtyError::Io("pupitre de composition empoisonné".to_owned()));
             };
-            if !desk.prompt_is_empty() || desk.is_holding() {
-                return Ok(ComposeOutcome::PromptNotEmpty);
-            }
-            if working {
-                // La frappe atterrirait au milieu d'une sortie : on attend la fin du tour.
-                // C'est un problème de placement, pas d'autorisation — l'envoi reste celui
-                // de l'utilisateur, avant comme après.
-                desk.hold(text.to_owned());
-                return Ok(ComposeOutcome::Queued);
-            }
-        }
+            desk.arbitrate(foreground, text)
+        };
 
-        self.write(tab_id, text.as_bytes())?;
-        Ok(ComposeOutcome::Written)
+        if outcome == ComposeOutcome::Written {
+            self.write(tab_id, text.as_bytes())?;
+        }
+        Ok(outcome)
     }
 
     /// Pose une grille sur le PTY d'un onglet — et **seulement si c'en est une autre**.
