@@ -52,6 +52,25 @@
 //! deux questions qu'elle ne sait pas trancher — qui travaille dans ce worktree, et qui y a
 //! travaillé en dernier —, et c'est le composition root qui les branche sur `pty` et
 //! `journal`. Voir [`table`].
+//!
+//! ## Deux ports sur les onglets, et un seul à terme
+//!
+//! `git` demande deux fois aux onglets qui les habite : [`TabPresence`] pour le tableau, et
+//! `WorkingAgents` pour la popup de branches (#25). Ce n'est **pas** la même question posée
+//! deux fois — `WorkingAgents::in_worktree` rend une liste déjà **décidée** (filtrée par
+//! `at_risk`, donc sans `done`, pour un seul worktree), là où `inhabiting` rend une
+//! projection **non décidée** de tout le registre, avec la date d'entrée dans l'état. Le
+//! tableau ne pourrait pas se servir du premier : `done` est exactement ce que sa colonne
+//! `awaiting review` cherche.
+//!
+//! La relation est celle d'un sur-ensemble, et elle va dans un seul sens : `inhabiting()`
+//! porte tout ce que `in_worktree()` porte, à `paused` près. Quand les deux branches se
+//! rejoindront, la consolidation est mécanique — ajouter `paused` à [`InhabitingTab`],
+//! réécrire `in_worktree` comme un filtre de `inhabiting()` (par racine, puis par
+//! `at_risk`) **à l'intérieur de `git`**, et supprimer le port `WorkingAgents` avec son
+//! adaptateur. Ce que ça gagne n'est pas d'avoir un port de moins : c'est que la règle
+//! `at_risk`, qui vit ici et qui a ses tests ici, cesse d'être **appliquée** dans le
+//! composition root, où rien ne la regarde.
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
