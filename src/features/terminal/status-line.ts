@@ -286,7 +286,13 @@ function counts(status: GitStatus | null): StatusChip[] {
  * ligne de statut qui annonce une touche ne faisant rien coûte plus qu'un coin vide.
  */
 function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip | null {
-    const waiting = state.tabs.filter((tab) => isShell(tab) && tab.state === "waiting");
+    // Un prédicat de type, et pas seulement un filtre : `waiting` ne peut contenir que des
+    // shells — un état d'agent n'a pas d'autre porteur (ADR-0007) —, et le dire au
+    // compilateur évite d'avoir à écrire plus bas une branche « et si c'était une surface
+    // d'outil ? » qui ne serait jamais prise, mais qu'on maintiendrait comme si.
+    const waiting = state.tabs.filter(
+        (tab): tab is ShellTab => isShell(tab) && tab.state === "waiting",
+    );
     const first = waiting[0];
 
     if (!sidebarCollapsed || first === undefined) {
@@ -299,7 +305,7 @@ function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip | null {
         // `omelette-web/claude` : le dépôt, puis le programme qui tient l'avant-plan. C'est
         // ce que le libellé d'onglet portait quand la barre existait, et la colonne repliée
         // est justement le moment où le contexte manque.
-        text: `${waiting.length} waiting · ${locationLabel(first)}/${isShell(first) ? first.process : first.title}${shortcut}`,
+        text: `${waiting.length} waiting · ${locationLabel(first)}/${first.process}${shortcut}`,
         tone: "accent",
         title: null,
     };
