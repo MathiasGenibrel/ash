@@ -6,6 +6,7 @@
 //! rend ce que le registre détient.
 
 mod agent_states;
+mod compose;
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte
 // pas. C'est aussi cohérent avec l'architecture — `commands.rs` *est* la surface
@@ -24,6 +25,7 @@ mod sweep;
 mod terminal_env;
 
 pub use agent_states::AgentStates;
+pub use compose::ComposeOutcome;
 pub use error::PtyError;
 pub use locate::{RepoRef, TabLocation, WorktreeLocator};
 pub use recognition::{AgentRecognition, NoRecognition};

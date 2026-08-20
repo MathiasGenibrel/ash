@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import type { ComposeOutcome } from "@/shared/ipc";
 import { TabBuilder } from "@/shared/ipc/builders";
 import { TerminalSession } from "./session";
 import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize, TerminalView } from "./ports";
@@ -86,6 +87,15 @@ class FakeBridge implements PtyBridge {
         // qui rend la barre, et lui seul écoute la boucle de sonde.
         return Promise.resolve(() => {});
     }
+    /**
+     * Une session ne compose jamais d'elle-même : ADR-0015 ne se déclenche que sur un
+     * geste explicite, depuis le panneau des conflits (spec §7.4). Le pont le porte donc
+     * sans que la session ne s'en serve.
+     */
+    compose(): Promise<ComposeOutcome> {
+        return Promise.resolve("written");
+    }
+
     write(_tabId: TabId, data: string): Promise<void> {
         this.writes.push(data);
         return Promise.resolve();

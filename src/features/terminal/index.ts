@@ -30,6 +30,20 @@ export type {
 export type { Origin } from "./workbench";
 export type { Step } from "./tabs";
 /**
+ * Passer un rebase arrêté à l'agent de l'onglet (spec §7.4,
+ * [ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+ *
+ * Publié parce que le geste part d'ailleurs — la vue `conflicts` du panneau bas (#24) —
+ * alors que ce qu'il touche, l'onglet et son PTY, appartient à cette feature-ci. Le
+ * panneau appellera ceci ; il n'appellera jamais `pty-bridge` directement.
+ */
+export {
+    handOverConflictsToAgent,
+    type ComposeNotice,
+    type HandOver,
+    type HandOverDeps,
+} from "./compose-prompt";
+/**
  * Les tokens que le terminal lit dans la table de `app/styles.css`.
  *
  * Publiés parce qu'ils sont le contrat entre l'application, qui détient les palettes, et

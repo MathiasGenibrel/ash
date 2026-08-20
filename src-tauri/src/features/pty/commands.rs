@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Runtime};
 
+use super::compose::ComposeOutcome;
 use super::decode::Utf8Stitcher;
 use super::error::PtyError;
 use super::registry::{Opened, PtyRegistry, TabId, TabInfo};
@@ -80,6 +81,25 @@ pub fn pty_write(
     data: String,
 ) -> Result<(), PtyError> {
     registry.write(&tab_id, data.as_bytes())
+}
+
+/// Rédige un texte dans l'onglet — et ne l'envoie pas.
+///
+/// La commande d'ADR-0015 : Ash compose, l'utilisateur envoie. Le texte apparaît dans le
+/// terminal comme s'il avait été tapé, il s'édite et s'efface, et **aucun `⏎` n'est
+/// envoyé** — le compositeur de `features::git` ne rend qu'une seule ligne, et dans un PTY
+/// un saut de ligne *est* la validation.
+///
+/// L'issue rendue n'est pas un détail d'implémentation : c'est ce que l'écran doit dire à
+/// l'utilisateur — « ash typed this for you — not sent yet », « queued behind the current
+/// turn », ou pourquoi rien n'a été écrit. Les règles sont dans [`super::compose`].
+#[tauri::command]
+pub fn pty_compose(
+    registry: tauri::State<'_, Arc<PtyRegistry>>,
+    tab_id: String,
+    text: String,
+) -> Result<ComposeOutcome, PtyError> {
+    registry.compose(&tab_id, &text)
 }
 
 /// Redimensionne le PTY, ce qui poste un `SIGWINCH` au groupe en avant-plan.
