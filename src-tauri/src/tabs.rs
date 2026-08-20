@@ -111,6 +111,7 @@ fn join(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::agents::AgentState;
     use crate::features::pty::RepoRef;
 
     /// Un localisateur qui situe tout dans le même dépôt — le décor, pas le sujet.
@@ -138,18 +139,61 @@ mod tests {
         }
     }
 
+    fn shell_tab(id: &str) -> TabInfo {
+        TabInfo {
+            tab_id: id.to_owned(),
+            cwd: "/dev/ash".to_owned(),
+            process: "zsh".to_owned(),
+            agent: None,
+            state: AgentState::Idle,
+            state_since: 0,
+            subagents: Vec::new(),
+            location: None,
+            paused: false,
+        }
+    }
+
+    /// Le rang de chaque onglet dans la liste — ce que `⌘1..9` numérote (spec §4.4).
+    fn numbering(listed: &[Tab]) -> Vec<&str> {
+        listed
+            .iter()
+            .map(|tab| match tab {
+                Tab::Shell(shell) => shell.tab_id.as_str(),
+                Tab::Merge(merge) => merge.tab_id.as_str(),
+            })
+            .collect()
+    }
+
     #[test]
     fn given_a_merge_tab_opened_while_shells_are_running_when_the_tabs_are_listed_then_no_shell_is_renumbered(
     ) {
-        // Given — l'ordre est celui que `⌘1..9` numérote : ouvrir une surface d'outil ne
-        // doit pas déplacer le terminal qui était en `⌘2`
-        let shells = Vec::new();
+        // Given — deux terminaux déjà ouverts, en `⌘1` et `⌘2`
+        let shells = vec![shell_tab("01A"), shell_tab("01B")];
+        let alone = join(shells.clone(), Vec::new(), &HereLocator);
+        let before = numbering(&alone);
 
-        // When
+        // When — une surface d'outil s'ouvre
         let listed = join(shells, vec![merge_tab("01M")], &HereLocator);
 
-        // Then — la surface est *après*, et elle est bien située comme un onglet de shell
-        assert!(matches!(listed.as_slice(), [Tab::Merge(_)]));
+        // Then — les shells gardent leur rang, et la surface prend le suivant
+        assert_eq!(before, ["01A", "01B"]);
+        assert_eq!(numbering(&listed), ["01A", "01B", "01M"]);
+        assert!(matches!(
+            listed.as_slice(),
+            [Tab::Shell(_), Tab::Shell(_), Tab::Merge(_)]
+        ));
+    }
+
+    #[test]
+    fn given_a_merge_tab_when_the_tabs_are_listed_then_it_is_located_like_a_shell_tab() {
+        // Given — situer un répertoire est le port de `pty`, et `merge` ne le connaît pas :
+        // c'est ici que les deux se rencontrent, donc ici que ça se vérifie
+        let merges = vec![merge_tab("01M")];
+
+        // When
+        let listed = join(Vec::new(), merges, &HereLocator);
+
+        // Then
         let Some(Tab::Merge(merge)) = listed.first() else {
             panic!("l'onglet de merge doit être là");
         };

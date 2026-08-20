@@ -12,6 +12,8 @@
  * ce que le backend détient ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 
+import type { Assert, Mirrors, Refuses } from "./mirroring";
+
 /** Identifiant d'onglet : l'ulid que le backend a posé dans `ASH_TAB_ID`. */
 export type TabId = string;
 
@@ -601,3 +603,33 @@ export type Tab = ShellTab | MergeTab;
 export function isShell(tab: Tab): tab is ShellTab {
     return tab.kind === "shell";
 }
+
+/* ------------------------------------------------------------------------------------- *
+ * La preuve que « un onglet = un PTY » ne peut plus se supposer.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Les seuls champs qu'un `Tab` offre **sans** qu'on ait demandé son genre.
+ *
+ * `keyof` d'une somme est l'intersection des clés de ses variantes : cette liste est donc
+ * littéralement ce que `tsc` laisse lire sur un onglet non discriminé. Tout le reste —
+ * `cwd`, `process`, `state`, `stateSince`, `paused`, `agent`, `subagents`, `title` —
+ * exige de passer par [`isShell`], et une lecture directe ne compile pas.
+ *
+ * #30 a corrigé **dix** endroits qui supposaient « un onglet est un PTY ». Cette assertion
+ * est ce qui rend le onzième impossible plutôt qu'improbable : elle rougit aussi bien le
+ * jour où un troisième genre d'onglet apparaît que le jour où quelqu'un ajoute un `cwd`
+ * neutre à [`MergeTab`] pour faire taire une erreur de compilation — c'est-à-dire au moment
+ * précis où le trou se rouvrirait.
+ */
+export type ReadableOnAnyTab = Assert<Mirrors<keyof Tab, "kind" | "tabId" | "location">>;
+
+/**
+ * Un `Tab` n'est **pas** un `TabInfo`.
+ *
+ * C'est la moitié structurelle du même filet : les dizaines de fonctions déjà écrites qui
+ * prennent un `TabInfo` refusent la somme, donc aucune d'elles ne peut se voir passer une
+ * surface d'outil par distraction. Ce qui se compile encore, ce sont celles qui prennent
+ * explicitement un [`ShellTab`] — et celles-là ont un appelant qui a discriminé.
+ */
+export type ATabIsNotATabInfo = Assert<Refuses<Tab, TabInfo>>;
