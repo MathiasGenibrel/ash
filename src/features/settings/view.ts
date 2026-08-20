@@ -5,6 +5,7 @@ import type {
     Appearance,
     FixAction,
     FontStep,
+    JournalReport,
     NotificationsReport,
     ConflictChoice,
     SettingsSnapshot,
@@ -22,6 +23,7 @@ import {
     conflictScreen,
     duplicateBanner,
     foot,
+    journalRow,
     navColumn,
     noToolsYet,
     notificationsSection,
@@ -133,6 +135,14 @@ export interface SettingsViewActions {
      */
     setNotification(state: AgentState, enabled: boolean): void;
     /**
+     * Efface le journal d'attribution (spec §10, ADR-0014).
+     *
+     * Elle n'efface rien ici : elle demande, et le backend rend la fiche relue après coup.
+     * C'est le seul geste de cet écran qui touche à ce qu'Ash a écrit **pour lui-même**, et
+     * non à un fichier de l'utilisateur — d'où l'absence d'annonce préalable.
+     */
+    purgeJournal(): void;
+    /**
      * Les six gestes de la section `shortcuts` (spec §4.4, issue #22).
      *
      * Aucun ne pose de combinaison : ils demandent, et le backend rend l'instantané entier.
@@ -207,6 +217,15 @@ export interface SettingsScene {
      * obligerait chaque ajout d'entrée à redemander une permission au système.
      */
     notifications: NotificationsReport | null;
+    /**
+     * Ce que le journal d'attribution pèse, ou `null` tant que le backend n'a pas répondu.
+     *
+     * Il n'est pas dans `snapshot` pour la raison qui vaut pour `notifications` : le journal
+     * se remplit sans qu'aucun outil soit déclaré — l'attribution ne dépend que de la sonde
+     * (ADR-0014) — et les faire voyager ensemble lierait deux choses qui ne changent ni au
+     * même moment ni pour la même raison.
+     */
+    journal: JournalReport | null;
     /**
      * Le thème et la taille de police que le backend détient, ou `null` tant qu'il n'a pas
      * répondu (spec §9).
@@ -384,6 +403,13 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
         // Sans entrée déclarée, il n'y a aucun fichier à énumérer : le geste n'aurait rien
         // à annoncer, et un bouton qui ne peut rien dire ne se propose pas.
         ...(empty ? [] : [uninstallRow(actions)]),
+        // La ligne du journal ne suit **pas** la même condition que la désinstallation : le
+        // journal se remplit dès qu'un agent reconnu commite, y compris quand aucune entrée
+        // n'est déclarée et qu'aucun hook n'est posé — l'attribution ne dépend que de la
+        // sonde (ADR-0014). La seule fois où elle ne s'affiche pas est celle où elle n'aurait
+        // rien à dire : rien de déclaré, et rien d'observé. L'écran vide garde alors son
+        // unique geste, « add ».
+        ...(empty && (scene.journal?.entries ?? 0) === 0 ? [] : [journalRow(scene.journal, actions)]),
         foot(
             empty
                 ? "ash writes to no file until you declare a tool and install its hooks."

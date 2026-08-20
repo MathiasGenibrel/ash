@@ -68,7 +68,10 @@ use features::agents::{
     Notice, NotificationPreferences, NotificationStore, Notifier, Presence, Supervisor, TabAgents,
     SUBAGENT_LINGER,
 };
-use features::git::{resolve_worktree, Entry, FileSystem, SystemFileSystem};
+use features::git::{resolve_worktree, Entry, FileSystem, SystemFileSystem, SystemGit};
+use features::journal::{
+    CommitJournal, FileJournalStore, JournalStore, TabAgent, Tabs as JournalTabs,
+};
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
 use features::probe::SystemProbe;
 use features::pty::{
@@ -281,6 +284,39 @@ impl AgentStates for SupervisedTabs {
 
     fn forget(&self, tab_id: &TabId) {
         self.0.forget(tab_id);
+    }
+}
+
+/// Relie le port du journal au registre d'onglets.
+///
+/// C'est par lui qu'ADR-0014 tient sa promesse : l'attribution « ne dépend que de la
+/// sonde ». Le registre sait quel outil tient l'avant-plan de quel onglet (ADR-0006) et où
+/// cet onglet se situe (ADR-0012) ; le journal ne connaît ni les onglets, ni les PTY, ni la
+/// table des outils.
+///
+/// Il n'y a aucune décision ici — une lecture, une projection sur quatre champs — et c'est
+/// délibéré : la règle qui choisit *quel* agent d'un worktree se voit attribuer un commit
+/// vit dans `journal/tabs.rs`, où elle se prouve.
+struct TabAuthors(Arc<PtyRegistry>);
+
+impl JournalTabs for TabAuthors {
+    fn snapshot(&self) -> Vec<TabAgent> {
+        self.0
+            .tabs()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|tab| {
+                Some(TabAgent {
+                    tab_id: tab.tab_id,
+                    worktree_root: tab.location?.worktree_root,
+                    // La **commande**, pas l'adaptateur : ADR-0014 écrit `claude` et
+                    // `codex`, et c'est aussi ce qui distingue `claude` de `claude-perso`,
+                    // deux entrées d'un même adaptateur (spec §9).
+                    agent: tab.agent.map(|agent| agent.command),
+                    since: tab.state_since,
+                })
+            })
+            .collect()
     }
 }
 
@@ -512,8 +548,25 @@ pub fn run() -> tauri::Result<()> {
         )),
         Arc::new(SupervisedTabs(Arc::clone(&agents))),
     ));
+    // Le journal d'attribution d'ADR-0014. Il naît **avant** la fenêtre parce que son
+    // horloge est lue une fois, ici : ce qui est plus vieux qu'Ash n'a pas pu être observé
+    // par lui, et cette borne est ce qui l'empêche de s'attribuer l'histoire d'un dépôt au
+    // premier `git checkout`.
+    //
+    // Il est branché sur le registre d'onglets, et sur rien d'autre : l'attribution ne
+    // dépend que de la sonde, donc elle marche pour tous les outils, hooks ou pas. Ce qui
+    // l'alimente — la surveillance de `.git/logs/HEAD` — est câblé plus bas, après `build`,
+    // avec le reste de la surveillance git.
+    let journal = CommitJournal::watching(
+        Arc::new(SystemGit::default()),
+        Arc::new(FileJournalStore::in_home()) as Arc<dyn JournalStore>,
+        Arc::new(TabAuthors(Arc::clone(&ptys))),
+        &shared::time::SystemClock,
+    );
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
+        .manage(Arc::clone(&journal))
         .manage(Arc::clone(&theme))
         .manage(Arc::clone(&fonts))
         .manage(Arc::clone(&shortcuts))
@@ -541,6 +594,8 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_tabs,
             features::pty::commands::pty_has_foreground_process,
             features::git::commands::git_metadata,
+            features::journal::commands::journal_summary,
+            features::journal::commands::journal_purge,
             features::sidebar::commands::sidebar_rows,
             features::sidebar::commands::sidebar_pin,
             features::sidebar::commands::sidebar_collapse,
@@ -665,10 +720,22 @@ pub fn run() -> tauri::Result<()> {
     // réponse sans qu'aucun `cwd` ne bouge. C'est ici — et nulle part ailleurs — que le
     // signal de `git` rejoint le registre de `pty` ; les deux features continuent de
     // s'ignorer, comme pour la résolution elle-même.
+    //
+    // C'est aussi elle qui apprend qu'un commit vient de naître : `.git/logs/HEAD` est la
+    // seule écriture qui le dise, et ADR-0014 écarte le sondage de `git log`. Le signal part
+    // vers le journal par un fil dédié — la lecture des commits lance un processus `git`, et
+    // le fil de FSEvents porte toutes les autres écritures observées du dépôt.
     let relocating = Arc::clone(&ptys);
-    let git_watch = features::git::commands::watch_metadata(app.handle().clone(), move || {
-        relocating.invalidate_locations();
-    });
+    let recording = features::journal::commands::record_commits(&journal);
+    let git_watch = features::git::commands::watch_metadata(
+        app.handle().clone(),
+        move || {
+            relocating.invalidate_locations();
+        },
+        move |worktree_root: &Path, common_dir: &Path| {
+            recording(worktree_root, common_dir);
+        },
+    );
     {
         use tauri::Manager;
         app.manage(Arc::clone(&git_watch));

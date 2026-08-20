@@ -286,7 +286,7 @@ src-tauri/src/
                          retrait de tout ce qu'Ash a écrit           — spec §10
     shortcuts/         ✓ les liaisons, leur magasin, les combinaisons
                          réservées — **le menu en dérive**           — spec §4.4
-    journal/             attribution commit → agent → prompt        — ADR-0014
+    journal/           ✓ attribution commit → agent → prompt        — ADR-0014
   shared/              ✓ réellement transverse, et justifié (l'horloge)
 src/
   app/                 ✓ composition root, tokens des thèmes, menu
