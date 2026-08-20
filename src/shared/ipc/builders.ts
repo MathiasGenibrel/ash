@@ -213,6 +213,7 @@ export class MetadataBuilder {
     private operation: GitOperation | null = null;
     private tree = { added: 0, modified: 0, deleted: 0, conflicted: 0 };
     private upstream: { ahead: number; behind: number } | null = null;
+    private conflicts: string[] = [];
     private known = true;
 
     static create(): MetadataBuilder {
@@ -258,6 +259,13 @@ export class MetadataBuilder {
         return this;
     }
 
+    /** Les chemins qui attendent une décision, et leur compte, tenus cohérents. */
+    withConflicts(...paths: string[]): this {
+        this.conflicts = paths;
+        this.tree = { ...this.tree, conflicted: paths.length };
+        return this;
+    }
+
     /** `git` absent, trop lent, ou en échec. **Pas** un arbre propre. */
     withoutStatus(): this {
         this.known = false;
@@ -268,7 +276,9 @@ export class MetadataBuilder {
         return {
             head: this.head,
             operation: this.operation,
-            status: this.known ? { tree: this.tree, upstream: this.upstream } : null,
+            status: this.known
+                ? { tree: this.tree, upstream: this.upstream, conflicts: this.conflicts }
+                : null,
         };
     }
 }

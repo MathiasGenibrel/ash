@@ -35,7 +35,10 @@ import type { OperationKind as RustOperationKind } from "./generated/OperationKi
 import type { Progress as RustProgress } from "./generated/Progress";
 import type { RecognizedAgent as RustRecognizedAgent } from "./generated/RecognizedAgent";
 import type { RepoRef as RustRepoRef } from "./generated/RepoRef";
+import type { ComposeOutcome as RustComposeOutcome } from "./generated/ComposeOutcome";
 import type { Status as RustStatus } from "./generated/Status";
+import type { StoppedCommit as RustStoppedCommit } from "./generated/StoppedCommit";
+import type { StoppedOperation as RustStoppedOperation } from "./generated/StoppedOperation";
 import type { Subagent as RustSubagent } from "./generated/Subagent";
 import type { TabInfo as RustTabInfo } from "./generated/TabInfo";
 import type { TabLocation as RustTabLocation } from "./generated/TabLocation";
@@ -55,6 +58,7 @@ import type {
     BranchSection,
     BranchWorktree,
     BusyAgent,
+    ComposeOutcome,
     Instrumented,
     GitHead,
     GitOperation,
@@ -65,6 +69,8 @@ import type {
     GitUpstream,
     RecognizedAgent,
     RepoRef,
+    StoppedCommit,
+    StoppedOperation,
     Subagent,
     TabInfo,
     TabLocation,
@@ -138,3 +144,21 @@ export type BranchOverviewStillMirrorsRust = Assert<Mirrors<RustBranchOverview, 
 export type BranchActionStillMirrorsRust = Assert<Mirrors<RustBranchAction, BranchAction>>;
 export type ActionOfferStillMirrorsRust = Assert<Mirrors<RustActionOffer, ActionOffer>>;
 export type ActionOutcomeStillMirrorsRust = Assert<Mirrors<RustActionOutcome, ActionOutcome>>;
+
+/**
+ * Le rebase arrêté de la spec §7.4, et l'issue d'une composition.
+ *
+ * `escapes` et `conflicts` sont des listes de **texte à montrer** : le jour où le backend
+ * y mettrait autre chose — une action, un identifiant — cette ligne cesserait de compiler
+ * avant que l'écran ne se mette à exécuter quoi que ce soit.
+ */
+export type StoppedCommitStillMirrorsRust = Assert<Mirrors<RustStoppedCommit, StoppedCommit>>;
+export type StoppedOperationStillMirrorsRust = Assert<
+    Mirrors<RustStoppedOperation, StoppedOperation>
+>;
+
+/**
+ * Les quatre issues d'ADR-0015. Une cinquième ajoutée en Rust — un nouveau refus — ne
+ * compile plus tant que la fenêtre n'a pas dit ce qu'elle en montre à l'utilisateur.
+ */
+export type ComposeOutcomeStillMirrorsRust = Assert<Mirrors<RustComposeOutcome, ComposeOutcome>>;

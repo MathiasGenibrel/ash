@@ -20,7 +20,9 @@ use super::git_cli::StatusReader;
 use super::metadata::{read_metadata, WorktreeMetadata};
 use super::porcelain::parse_status;
 use super::ports::FileSystem;
+use super::stopped::{read_stopped, StoppedOperation};
 use super::targets::WatchTargets;
+use super::test_command::detect_test_command;
 use super::throttle::{Decision, Throttle};
 use super::watcher::{FileWatcher, WatchHandle};
 use super::worktree::resolve_worktree;
@@ -46,16 +48,36 @@ pub type Relocate = Arc<dyn Fn() + Send + Sync>;
 
 /// Ce que la surveillance a à dire, et à qui.
 ///
-/// Les deux rappels voyagent ensemble parce qu'ils répondent à la même chose — une écriture
+/// Les trois rappels voyagent ensemble parce qu'ils répondent à la même chose — une écriture
 /// observée dans `.git` — et qu'ils sont posés au même endroit, une fois, par le
-/// composition root. Ce sont pourtant deux sorties distinctes : l'une décrit un worktree au
-/// frontend, l'autre dit qu'une résolution a vieilli, et personne n'a besoin des deux.
+/// composition root. Ce sont pourtant trois sorties distinctes : la première décrit un
+/// worktree au frontend, la deuxième dit qu'une résolution a vieilli, la troisième qu'un
+/// commit a pu naître. Aucun destinataire n'a besoin des trois.
 pub struct Listeners {
     /// L'état git d'un worktree a changé.
     pub announce: Announce,
     /// La forme d'un dépôt a changé — voir [`Relocate`].
     pub relocate: Relocate,
+    /// Le `HEAD` d'un worktree a bougé — voir [`HeadMoved`].
+    pub head_moved: HeadMoved,
 }
+
+/// Ce qu'on appelle quand le `HEAD` d'un worktree surveillé a bougé.
+///
+/// Le nom dit exactement ce que la surveillance sait : `HEAD` a bougé. **Pas** qu'un commit
+/// est né — un `checkout`, un `reset`, un `pull` écrivent le même reflog, et seul celui qui
+/// lira les commits saura faire la différence.
+///
+/// Troisième sortie, distincte des deux autres et pour les mêmes raisons qu'elles sont
+/// distinctes entre elles. Elle ne passe **pas** par la limitation de débit : un état affiché
+/// avec cinq secondes de retard reste juste, un commit qu'on n'a pas vu naître ne
+/// s'attribue plus jamais ([ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md)).
+///
+/// Elle porte les deux chemins que le destinataire ne saurait pas retrouver seul : la racine
+/// du worktree, où lire les commits, et le dossier git **commun**, qui identifie le dépôt —
+/// deux worktrees d'un même projet écrivent dans le même journal. Cette feature-ci ne sait
+/// pas ce qu'est un journal, et ne le saura pas : elle dit qu'un `HEAD` a bougé.
+pub type HeadMoved = Arc<dyn Fn(&Path, &Path) + Send + Sync>;
 
 /// Un worktree observé.
 struct Watched {
@@ -192,6 +214,25 @@ impl MetadataWatch {
         self.read(root, &git_dir, &common_dir)
     }
 
+    /// L'opération arrêtée d'un worktree, quand il y en a une (spec §7.4).
+    ///
+    /// Elle se construit sur les métadonnées **déjà** connues — c'est de là que viennent
+    /// l'opération et les chemins en conflit, sans un `git status` de plus — puis lit les
+    /// fichiers de contrôle que la ligne de statut n'a pas besoin de connaître : le commit
+    /// d'arrêt et `ORIG_HEAD`.
+    ///
+    /// Posée **à la demande**, et non poussée par la surveillance : un panneau de conflits
+    /// fermé n'a pas à faire relire `ORIG_HEAD` à chaque écriture dans `.git`.
+    ///
+    /// Rien n'est écrit, rien n'est exécuté : c'est de la lecture de bout en bout
+    /// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+    pub fn stopped(&self, root: &Path) -> Option<StoppedOperation> {
+        let metadata = self.metadata(root)?;
+        let (git_dir, _) = self.dirs_of_watched(root).or_else(|| self.dirs_of(root))?;
+        let test_command = detect_test_command(self.fs.as_ref(), root);
+        read_stopped(self.fs.as_ref(), &git_dir, &metadata, test_command)
+    }
+
     /// Relâche tous les observateurs — l'application quitte.
     ///
     /// Sans ça, l'arrêt ne serait qu'un effet de bord de la fin du processus, c'est-à-dire
@@ -259,20 +300,30 @@ impl MetadataWatch {
     /// L'état du worktree se relit — au débit près. Sa **forme**, elle, ne se relit pas :
     /// elle se signale, et à quelqu'un d'autre.
     fn on_change(self: &Arc<Self>, root: &Path, changed: &Path) {
-        let (concerns, shape) = match self.followed.lock() {
-            Ok(followed) => followed.watched.get(root).map_or((false, false), |entry| {
-                (
-                    entry.targets.concerns(changed),
-                    entry.targets.concerns_layout(changed),
-                )
-            }),
-            Err(_) => (false, false),
+        let (concerns, shape, head_moved) = match self.followed.lock() {
+            Ok(followed) => followed
+                .watched
+                .get(root)
+                .map_or((false, false, None), |entry| {
+                    (
+                        entry.targets.concerns(changed),
+                        entry.targets.concerns_layout(changed),
+                        entry
+                            .targets
+                            .concerns_head_moves(changed)
+                            .then(|| entry.common_dir.clone()),
+                    )
+                }),
+            Err(_) => (false, false, None),
         };
 
         // Hors du verrou : le rappel repart vers le composition root, qui n'a rien à faire
         // derrière le verrou d'une surveillance de fichiers.
         if shape {
             (self.listeners.relocate)();
+        }
+        if let Some(common_dir) = head_moved {
+            (self.listeners.head_moved)(root, &common_dir);
         }
         if concerns {
             self.request(root);
@@ -394,7 +445,7 @@ impl MetadataWatch {
 mod tests {
     use super::*;
     use crate::features::git::fakes::{
-        ControlledTime, RecordedAnnounces, RecordedRelocations, WatchedTree,
+        ControlledTime, RecordedAnnounces, RecordedHeadMoves, RecordedRelocations, WatchedTree,
     };
     use crate::features::git::metadata::{Head, Upstream};
 
@@ -408,6 +459,7 @@ mod tests {
         time: Arc<ControlledTime>,
         announces: Arc<RecordedAnnounces>,
         relocations: Arc<RecordedRelocations>,
+        head_moves: Arc<RecordedHeadMoves>,
     }
 
     impl WatchBuilder {
@@ -421,6 +473,7 @@ mod tests {
                 time: ControlledTime::new(),
                 announces: RecordedAnnounces::new(),
                 relocations: RecordedRelocations::new(),
+                head_moves: RecordedHeadMoves::new(),
             }
         }
 
@@ -435,6 +488,7 @@ mod tests {
                 Listeners {
                     announce: self.announces.announce(),
                     relocate: self.relocations.relocate(),
+                    head_moved: self.head_moves.head_moved(),
                 },
             )
         }
@@ -677,6 +731,53 @@ mod tests {
 
         // Then
         assert_eq!(world.relocations.count(), 0);
+    }
+
+    #[test]
+    fn given_a_followed_worktree_when_its_head_moves_then_the_commit_is_signalled_with_its_repository(
+    ) {
+        // Given — un worktree suivi. ADR-0014 attribue un commit à l'agent qui l'a écrit,
+        // et ne peut le faire qu'en voyant `HEAD` bouger : `.git/logs/HEAD` est la seule
+        // écriture qui le dise, et le sondage de `git log` est écarté.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        watch.follow(&["/dev/ash".to_owned()]);
+        world.announces.forget();
+        let invocations_after_attach = world.tree.invocations();
+
+        // When — l'agent commite dans son terminal
+        world.tree.touch("/dev/ash/.git/logs/HEAD");
+
+        // Then — le signal nomme où lire les commits **et** sous quelle identité de dépôt
+        // les ranger : deux worktrees d'un même projet partagent un journal
+        assert_eq!(
+            world.head_moves.moves(),
+            vec![("/dev/ash".to_owned(), "/dev/ash/.git".to_owned())]
+        );
+        // Et le reflog ne fait toujours pas relire les métadonnées : un commit ne change ni
+        // la branche ni l'opération en cours, et le `git status` qu'il coûterait serait payé
+        // par la ligne de statut sans rien lui apprendre.
+        assert_eq!(world.tree.invocations(), invocations_after_attach);
+        assert!(world.announces.branches().is_empty());
+    }
+
+    #[test]
+    fn given_a_burst_of_commits_when_they_arrive_within_the_throttle_window_then_none_of_them_is_dropped(
+    ) {
+        // Given — un `git rebase` réécrit dix commits en moins de cinq secondes, et la
+        // limitation de débit des métadonnées n'en garderait qu'un. Un affichage en retard
+        // reste juste ; un commit qu'on n'a pas vu naître ne s'attribue plus jamais.
+        let world = WatchBuilder::new();
+        let watch = world.build();
+        watch.follow(&["/dev/ash".to_owned()]);
+
+        // When — dix écritures du reflog dans la même fenêtre, sans avancer l'horloge
+        for _ in 0..10 {
+            world.tree.touch("/dev/ash/.git/logs/HEAD");
+        }
+
+        // Then
+        assert_eq!(world.head_moves.moves().len(), 10);
     }
 
     #[test]

@@ -9,6 +9,7 @@ import {
     aNotificationsReport,
     aShortcutsReport,
     aSnapshot,
+    aJournalReport,
     aTool,
     aVerification,
 } from "./builders";
@@ -35,6 +36,7 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         removal: null,
         fonts: null,
         notifications: aNotificationsReport(),
+        journal: aJournalReport(),
         appearance: anAppearance(),
         shortcuts: aShortcutsReport(),
         capture: null,
@@ -205,6 +207,37 @@ describe("le panneau de la fenêtre de réglages", () => {
         expect(said(composed)).toContain("the .bak copies stay where they are.");
     });
 
+    it("Given nothing declared and nothing attributed, when the panel is composed, then the empty screen keeps its single gesture", () => {
+        // Given — l'écran vide dit ce que le vide coûte et n'offre qu'`add`. La ligne du
+        // journal n'a rien à y dire non plus : rien n'a été observé, donc rien à purger.
+        const bare = scene({ snapshot: aSnapshot({ tools: [] }), journal: aJournalReport() });
+
+        // When
+        const composed = settingsPanel(bare, IDLE_ACTIONS);
+
+        // Then
+        const buttons = composed.flatMap((child) => findAll(child, "ui-button")).map(plainText);
+        expect(buttons).toEqual(["add"]);
+    });
+
+    it("Given nothing declared but commits already attributed, when the panel is composed, then the journal can still be purged", () => {
+        // Given — le cas que la condition de la désinstallation ne couvre pas : l'attribution
+        // ne dépend que de la sonde (ADR-0014), donc le journal se remplit sans qu'aucune
+        // entrée soit déclarée. Le lier à la liste des outils rendrait la promesse de la
+        // spec §10 inatteignable pour qui n'a rien déclaré.
+        const recorded = scene({
+            snapshot: aSnapshot({ tools: [] }),
+            journal: aJournalReport({ entries: 4, repos: 1, summary: "4 commits attributed" }),
+        });
+
+        // When
+        const composed = settingsPanel(recorded, IDLE_ACTIONS);
+
+        // Then
+        const buttons = composed.flatMap((child) => findAll(child, "ui-button")).map(plainText);
+        expect(buttons).toEqual(["add", "purge 4 commits attributed"]);
+    });
+
     it("Given two entries pointing at the same folder, when the panel is composed, then the banner sits between the header and the list", () => {
         // Given — elle ne décrit aucune des deux cartes en particulier (§3.7) : posée dans
         // l'une d'elles, elle accuserait celle qu'on regarde
@@ -220,8 +253,9 @@ describe("le panneau de la fenêtre de réglages", () => {
         );
         const shapes = composed.map((child) => find(child, "settings-banner") !== null);
 
-        // Then — l'en-tête, la note, la bannière, le corps, la désinstallation, le pied
-        expect(shapes).toEqual([false, false, true, false, false, false]);
+        // Then — l'en-tête, la note, la bannière, le corps, la désinstallation, le journal,
+        // le pied
+        expect(shapes).toEqual([false, false, true, false, false, false, false]);
         expect(composed.flatMap((child) => findAll(child, "settings-card"))).toHaveLength(2);
     });
 });

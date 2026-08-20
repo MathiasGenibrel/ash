@@ -6,11 +6,17 @@ Ash est une application macOS qui entoure un shell plutôt que de le remplacer :
 supervise les agents de code lancés dans de vrais PTY, et apporte un git conscient de
 ces agents. Voir [`docs/spec.md`](./docs/spec.md) et [`docs/adr/`](./docs/adr/).
 
-**J0, J1, J2 et J3 sont terminés ; J4 — « Ouverture » — est le jalon en cours.**
-Restent ouverts : l'épinglage d'un worktree (#20), l'adaptateur `codex` qui commence par
-une enquête (#21), le reste des réglages — raccourcis, apparence, notifications (#22) —
-et la désinstallation propre (#23), plus le spike #62 sur les limites de la découverte
-bornée. Son critère de sortie : **un deuxième outil supporté sans toucher au cœur.**
+**J0 à J4 sont terminés ; J5 — « Git » — est le jalon en cours.** Il pèse à lui seul autant
+que J1 à J4 réunis : panneau bas, popup de branches, graphe et journal d'attribution, tableau
+des worktrees, onglet de merge, fiche de branche. Son critère de sortie : **un rebase en
+conflit se traite sans quitter Ash, et l'historique dit quel agent a écrit quoi.** Le premier
+ticket est #24, le panneau bas — l'infrastructure des trois vues git, et celui qui porte le
+risque technique du jalon.
+
+**Le critère de sortie de J4 a été amendé** (spec §11) : il demandait « un deuxième outil
+supporté sans toucher au cœur », et c'est l'adaptateur `codex` (#21) qui le portait.
+L'enquête a conclu que le trait `Adapter` **suffit tel quel** ; l'implémentation, elle, est
+sortie du jalon. Ne la reprends pas sans qu'on te le demande.
 
 **Ash remplace déjà un terminal quotidien.** De vrais
 shells dans des onglets avec leurs raccourcis et un menu natif, une sonde qui suit le
@@ -79,6 +85,22 @@ agit (ADR-0010), et rien ne s'écrit sans un geste explicite.
 Ce qui reste à faire du côté des agents : brancher cette reconnaissance sur la machine à
 états — c'est elle qui donnera enfin son producteur à `AgentEvent::AgentStarted`, que
 `supervisor.rs` n'émet toujours pas (il le dit lui-même en tête de fichier).
+
+**Les raccourcis sont réglables, et la liste est restée unique** (spec §4.4) : un magasin
+persistant (`~/.ash/shortcuts.json`, **les écarts seulement**) détient les liaisons, et le
+menu natif en **dérive** — il est reconstruit à l'exécution, parce que muda n'écrit un
+accélérateur dans le `NSMenuItem` que s'il est `Some` : effacer un raccourci par
+`set_accelerator(None)` laisserait la touche sur l'entrée. Une combinaison est nommée par le
+**caractère qu'elle produit**, jamais par la position de la touche : macOS apparie par
+caractère, et nommer par position rendait un raccourci faux sur tout clavier non-QWERTY. Le
+repli sur la position ne sert qu'aux caractères que muda ne sait pas écrire (`&`, `é`, `⌥`
+composé). L'invariant « une combinaison, une action » a **une seule lecture et une seule
+écriture**, et les cinq chemins y passent — capture, effacement, retour au défaut, `reset
+all`, relecture d'un fichier édité à la main.
+
+`⌘K` n'est sur **aucune** entrée de menu, et c'est délibéré : un accélérateur de menu est
+consommé par `performKeyEquivalent:` avant d'atteindre la webview, donc le poser reviendrait à
+le retirer au shell. Il n'y a pas de moyen terme.
 
 **La fenêtre de réglages choisit le thème sur un aperçu, pas sur trois boutons** (spec §9) :
 trois tuiles de 150 px, chacune une miniature redessinée de la sidebar avec ses **cinq**
@@ -249,8 +271,9 @@ src-tauri/src/
                          (UNUserNotificationCenter)                 — spec §8
     git/               ✓ résolution worktree/dépôt, surveillance de
                          `.git`, métadonnées                        — ADR-0011/12
-    theme/             ✓ clair / sombre / système, taille et police du
-                         terminal, densité de la sidebar — persistés
+    theme/             ✓ les cinq préférences d'apparence : thème, taille et
+                         famille de police, densité de la sidebar, et la
+                         colonne de gauche (`~/.ash/theme.json`)     — spec §9
     sidebar/           ✓ ce que la colonne garde d'une session à
                          l'autre : worktrees épinglés et lignes
                          repliées, `~/.ash/state.json`              — spec §3.1/5.2
@@ -259,8 +282,11 @@ src-tauri/src/
       adapters/        ✓ claude-code, generic (codex reste à écrire — #21)
     hooks/             ✓ entrées marquées dans settings.json, fusion,
                          diff, sauvegarde                            — ADR-0007
-    settings/          ✓ outils, vérification d'un chemin, état des hooks
-    journal/             attribution commit → agent → prompt        — ADR-0014
+    settings/          ✓ outils, vérification d'un chemin, état des hooks,
+                         retrait de tout ce qu'Ash a écrit           — spec §10
+    shortcuts/         ✓ les liaisons, leur magasin, les combinaisons
+                         réservées — **le menu en dérive**           — spec §4.4
+    journal/           ✓ attribution commit → agent → prompt        — ADR-0014
   shared/              ✓ réellement transverse, et justifié (l'horloge)
 src/
   app/                 ✓ composition root, tokens des thèmes, menu

@@ -232,6 +232,15 @@ export interface GitUpstream {
 export interface GitStatus {
     tree: GitTreeStatus;
     upstream: GitUpstream | null;
+    /**
+     * Les chemins qui attendent une décision, tels que git les écrit — un chemin exotique
+     * y arrive entre guillemets et échappé, comme git l'affiche partout ailleurs.
+     *
+     * La liste est **bornée** par le backend ; `tree.conflicted` ne l'est pas. Afficher
+     * `conflicts.length` là où l'utilisateur attend un nombre de fichiers dirait « 100 »
+     * pour un dépôt qui en a trois mille.
+     */
+    conflicts: string[];
 }
 
 /**
@@ -251,6 +260,58 @@ export interface WorktreeMetadata {
     operation: GitOperation | null;
     status: GitStatus | null;
 }
+
+/**
+ * Le commit sur lequel un rebase ou un `am` s'est arrêté (spec §7.4).
+ *
+ * `subject` est `null` pour le moteur `apply` et pour `git am` : ils n'écrivent nulle part
+ * le message du commit en cours, et Ash n'en invente pas.
+ */
+export interface StoppedCommit {
+    /** L'identifiant abrégé — celui qu'un `git show` accepte tel quel. */
+    commit: string;
+    subject: string | null;
+}
+
+/**
+ * Un rebase ou un merge **arrêté**, tel que le backend le lit (spec §7.4).
+ *
+ * Ash **ne touche à rien** : tout ici est de la lecture. `escapes` en est la preuve la plus
+ * visible — ce sont les commandes de secours (`git rebase --abort`, `--skip`) rendues comme
+ * du **texte à montrer**, jamais comme des actions qu'Ash exécuterait
+ * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+ *
+ * `conflicts` peut être **vide** sans que ce soit une anomalie : un rebase interactif
+ * s'arrête aussi sur un `edit` ou un `break`, sans le moindre conflit.
+ *
+ * `testCommand` est `null` quand rien dans le worktree ne la nomme. C'est une réponse, pas
+ * un manque : un prompt qui nomme la mauvaise commande coûte plus cher qu'un prompt muet.
+ */
+export interface StoppedOperation {
+    operation: GitOperation;
+    conflicts: string[];
+    /** Combien il y en a en tout, ou `null` si `git` n'a pas répondu. */
+    conflictedTotal: number | null;
+    stoppedAt: StoppedCommit | null;
+    /** `ORIG_HEAD` abrégé — le filet de secours, affiché et jamais utilisé. */
+    origHead: string | null;
+    testCommand: string | null;
+    escapes: string[];
+}
+
+/**
+ * Ce qu'il est advenu d'une demande de composition (`pty_compose`).
+ *
+ * Ce n'est pas un détail d'implémentation : c'est ce que l'écran doit dire à l'utilisateur.
+ * `written` s'accompagne de « ash typed this for you — not sent yet », `queued` de
+ * « queued behind the current turn » — et dans les deux cas **rien n'a été envoyé**
+ * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+ *
+ * `prompt-not-empty` : l'utilisateur a déjà commencé à taper, et Ash n'insère pas au milieu
+ * d'une frappe. `no-agent` : aucun outil reconnu ne tient l'avant-plan de l'onglet, et le
+ * texte y serait une ligne de commande plutôt qu'un prompt.
+ */
+export type ComposeOutcome = "written" | "queued" | "prompt-not-empty" | "no-agent";
 
 /**
  * Ce que porte l'event `ash://git-metadata`.

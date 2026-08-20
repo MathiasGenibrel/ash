@@ -61,6 +61,72 @@ const STATUS_ARGS: [&str; 5] = [
     "--branch",
 ];
 
+/// Ce que la lecture des derniers commits ajoute au préfixe, et pourquoi chacun est là.
+///
+/// **La même question que pour `git status` se repose ici, et elle a la même réponse** :
+/// cet appel-ci part tout seul lui aussi — une écriture dans `.git/logs/HEAD` suffit à le
+/// déclencher, sans qu'aucune commande git n'ait été tapée —, donc visiter un dépôt hostile
+/// ne doit rien exécuter. Ce que `git log` peut exécuter, et ce qui le neutralise :
+///
+/// - `core.fsmonitor` : une **commande**, posée dans le `.git/config` du dépôt visité, que
+///   git lance pour rafraîchir l'index. Surchargée en `-c` par [`HARDENED_PREFIX`], comme
+///   pour `git status` — et c'est bien la composition d'[`Invocation`], pas cette liste-ci,
+///   que le test de la frontière relit ;
+/// - `core.pager` / `pager.log` : un pager est une commande, et le dépôt la configure.
+///   `--no-pager` la coupe, en plus de `core.pager=cat` du préfixe et du fait que la sortie
+///   est un tube ;
+/// - la vérification de signature, qui lance `gpg` : `--no-show-signature` l'écarte
+///   explicitement plutôt que de compter sur `log.showSignature` valant faux ;
+/// - les pilotes `textconv` et `diff`, eux aussi des commandes : ils ne s'exécutent que sur
+///   un diff, et **aucune option de diff n'est passée**. Le format demandé ne contient que
+///   des champs d'en-tête de commit.
+///
+/// Ce qui reste lu depuis le dépôt sans être exécuté — `mailmap`, `log.date` — ne change
+/// que du texte, et ce texte est déjà traité comme non fiable : il finit dans un fichier
+/// JSON, jamais dans une commande.
+const LOG_ARGS: [&str; 7] = [
+    // Un pager est une commande, et `pager.log` est une valeur du dépôt. Redondant avec le
+    // `core.pager=cat` du préfixe, et gardé quand même : c'est la seule protection qui ne
+    // dépende pas de ce que le dépôt a écrit dans sa configuration.
+    "--no-pager",
+    "log",
+    // `gpg` est une commande, et `log.showSignature` peut la réclamer.
+    "--no-show-signature",
+    // Aucun nom de ref dans la sortie : ce qui est lu ici est un commit, pas une branche.
+    "--no-decorate",
+    // Combien de commits on relit à chaque mouvement de `HEAD` : assez pour couvrir un
+    // `git rebase` d'une branche entière, qui en réécrit toute une série d'un coup ; assez
+    // peu pour que la lecture reste un processus court sur un dépôt de dix ans. Ce qui
+    // dépasse n'est pas perdu : un commit plus vieux que ce budget a déjà été vu naître, ou
+    // ne l'a jamais été.
+    "--max-count=50",
+    // Séparateur de champs : l'unité de séparation ASCII, qu'aucun sujet de commit ne
+    // contient. Le sujet (`%s`) est d'une seule ligne par construction, donc la ligne reste
+    // l'unité d'enregistrement.
+    "--format=%H%x1f%at%x1f%aI%x1f%s",
+    "HEAD",
+];
+
+/// Un commit tel que git le décrit, et rien de plus.
+///
+/// Les trois champs qui comptent pour [ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md)
+/// sont `sha`, `author_date` et `subject` : le premier identifie, les deux autres survivent
+/// à un rebase, un amend et un cherry-pick — ce sont eux qui rattrapent l'attribution quand
+/// le `sha` a changé.
+///
+/// `author_date` est gardée **telle que git l'écrit** (`%aI`, ISO 8601 strict), et pas
+/// reformatée : la correspondance de repli compare deux chaînes, et toute normalisation en
+/// route serait une occasion de ne plus reconnaître ce qu'on a soi-même écrit. `authored_at`
+/// est la même date en secondes Unix (`%at`), qui se compare à une horloge sans analyser
+/// quoi que ce soit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitRecord {
+    pub sha: String,
+    pub author_date: String,
+    pub authored_at: u64,
+    pub subject: String,
+}
+
 /// L'état d'un arbre de travail, tel que `git` sait seul le dire.
 ///
 /// Rend la sortie **brute** : l'interprétation est une règle pure, et elle vit dans
@@ -219,6 +285,8 @@ enum Invocation {
     Refs,
     /// Quelle branche vit dans quel worktree — ADR-0012.
     Worktrees,
+    /// Les derniers commits de `HEAD`, pour le journal d'attribution — ADR-0014.
+    Log,
     /// Les verbes qui **écrivent** : `switch`, `rebase`, `merge`. Les opérandes sont
     /// ajoutés par [`TreeWriter::run`], après ce préfixe et jamais dedans.
     Tree,
@@ -229,10 +297,11 @@ impl Invocation {
     /// et elle n'existe que pour eux : la production, elle, nomme toujours une invocation
     /// précise.
     #[cfg(test)]
-    const ALL: [Invocation; 4] = [
+    const ALL: [Invocation; 5] = [
         Invocation::Status,
         Invocation::Refs,
         Invocation::Worktrees,
+        Invocation::Log,
         Invocation::Tree,
     ];
 
@@ -242,6 +311,7 @@ impl Invocation {
             Invocation::Status => &STATUS_ARGS,
             Invocation::Refs => &REF_ARGS,
             Invocation::Worktrees => &WORKTREE_ARGS,
+            Invocation::Log => &LOG_ARGS,
             Invocation::Tree => &TREE_ARGS,
         }
     }
@@ -327,9 +397,56 @@ impl TreeWriter for SystemGit {
 }
 
 impl SystemGit {
+    /// Les derniers commits de `HEAD`, du plus récent au plus ancien.
+    ///
+    /// Rend un vecteur vide pour tout ce qui peut mal se passer — `git` absent, dépôt sans
+    /// commit, délai dépassé. L'appelant en fait la même chose : il n'attribue rien.
+    ///
+    /// C'est une méthode, et **pas** un port : le port par lequel on demande les commits
+    /// appartient à qui pose la question — `features/journal` — comme `AgentStates`
+    /// appartient à `pty` et non à `agents`. Cette feature-ci n'apporte que le seul endroit
+    /// du dépôt où le binaire `git` est lancé.
+    pub fn recent_commits(&self, worktree_root: &Path) -> Vec<CommitRecord> {
+        self.capture(worktree_root, Invocation::Log)
+            .as_deref()
+            .map(parse_log)
+            .unwrap_or_default()
+    }
+}
+
+/// Les lignes d'un `git log` formaté, en commits.
+///
+/// Une ligne qu'on ne comprend pas est **jetée**, pas devinée : la sortie de git vient d'un
+/// dépôt que personne n'a validé, et un sujet exotique ne doit pas faire disparaître les
+/// commits qui suivent.
+fn parse_log(output: &str) -> Vec<CommitRecord> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\u{1f}');
+            let sha = fields.next()?;
+            let authored_at = fields.next()?.parse().ok()?;
+            let author_date = fields.next()?;
+            // Le sujet est le **reste** de la ligne : il ne peut pas contenir de séparateur,
+            // mais le supposer coûterait un commit perdu le jour où git en écrirait un.
+            let subject = fields.collect::<Vec<_>>().join("\u{1f}");
+            (!sha.is_empty()).then(|| CommitRecord {
+                sha: sha.to_owned(),
+                author_date: author_date.to_owned(),
+                authored_at,
+                subject,
+            })
+        })
+        .collect()
+}
+
+impl SystemGit {
     /// Lance `git`, sous délai, et rend sa sortie standard si — et seulement si — il a réussi.
     ///
-    /// Le seul chemin de lecture du dépôt, partagé par les trois questions qu'Ash pose.
+    /// Le seul endroit du dépôt où un processus `git` de lecture est créé : toutes les
+    /// questions qu'Ash pose passent par ici, donc la façon dont l'appel est construit —
+    /// programme nommé, arguments composés par [`Invocation`], répertoire explicite, délai
+    /// tenu — ne se décide qu'une fois.
     fn capture(&self, worktree_root: &Path, invocation: Invocation) -> Option<String> {
         let args = invocation.args();
         // `Command` prend le programme et ses arguments séparément : aucun shell n'est
@@ -474,6 +591,71 @@ mod tests {
             "aucune substitution venue du dépôt : un nom de branche ne devient pas une \
              directive de format"
         );
+    }
+
+    #[test]
+    fn given_the_log_invocation_when_a_visited_repository_configures_a_command_then_none_of_them_runs(
+    ) {
+        // Given — la lecture des commits part d'une écriture dans `.git/logs/HEAD` : elle
+        // s'exécute donc sur un dépôt que personne n'a validé, exactement comme
+        // `git status` s'exécute sur un simple `cd`. Les trois commandes qu'un dépôt peut
+        // faire lancer à `git log` sont son pager, son `fsmonitor` et son `gpg`. La liste
+        // relue est celle que la production compose, préfixe compris.
+        let args = Invocation::Log.args();
+
+        // When
+        let neutralised = |flag: &str| args.contains(&flag);
+
+        // Then
+        assert!(
+            sets(&args, "core.fsmonitor=false"),
+            "`core.fsmonitor` est une commande du dépôt visité, et `git log` rafraîchit \
+             l'index"
+        );
+        assert!(neutralised("--no-pager"), "`pager.log` est une commande");
+        assert!(
+            neutralised("--no-show-signature"),
+            "`log.showSignature` fait lancer `gpg` sur chaque commit lu"
+        );
+        assert!(
+            !args.iter().any(|argument| argument.starts_with("--patch")
+                || argument.starts_with("-p")
+                || argument.starts_with("--stat")),
+            "aucune option de diff : c'est ce qui garde les pilotes `textconv` hors jeu"
+        );
+    }
+
+    #[test]
+    fn given_a_log_output_when_it_is_read_then_each_commit_keeps_the_date_git_wrote() {
+        // Given — la date d'auteur est la moitié de la clé de repli d'ADR-0014 : la
+        // reformater, c'est ne plus reconnaître après un rebase ce qu'on a soi-même écrit.
+        let output = "8f3a1c2\u{1f}1755000000\u{1f}2026-08-12T14:03:21+02:00\u{1f}feat: onglets\n\
+                      1b2c3d4\u{1f}1754000000\u{1f}2026-07-31T09:00:00+02:00\u{1f}fix: rebase\n";
+
+        // When
+        let commits = parse_log(output);
+
+        // Then
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].sha, "8f3a1c2");
+        assert_eq!(commits[0].author_date, "2026-08-12T14:03:21+02:00");
+        assert_eq!(commits[0].authored_at, 1_755_000_000);
+        assert_eq!(commits[0].subject, "feat: onglets");
+    }
+
+    #[test]
+    fn given_a_log_output_with_an_unreadable_line_when_it_is_read_then_the_others_survive() {
+        // Given — la sortie vient d'un dépôt que personne n'a validé. Une ligne tronquée ne
+        // doit pas emporter les commits qui la suivent.
+        let output = "tronquée\n\
+                      1b2c3d4\u{1f}1754000000\u{1f}2026-07-31T09:00:00+02:00\u{1f}fix: rebase\n";
+
+        // When
+        let commits = parse_log(output);
+
+        // Then
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].sha, "1b2c3d4");
     }
 
     #[test]

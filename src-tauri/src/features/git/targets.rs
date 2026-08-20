@@ -127,6 +127,29 @@ impl WatchTargets {
     pub fn concerns_layout(&self, changed: &Path) -> bool {
         changed == self.worktrees_dir || changed.parent() == Some(self.worktrees_dir.as_path())
     }
+
+    /// Ce changement est-il un **mouvement de `HEAD`** ?
+    ///
+    /// Le journal d'attribution d'
+    /// [ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md) demande de
+    /// « surveiller `.git/logs/HEAD` par dépôt, pas sonder `git log` », et c'est là que la
+    /// question se pose : `logs/HEAD` est le reflog de **ce** worktree, où git écrit une
+    /// ligne à chaque déplacement de `HEAD` — un commit, mais aussi un `checkout`, un
+    /// `reset`, un `pull`.
+    ///
+    /// Troisième question, et troisième réponse indépendante, pour la même raison que
+    /// [`Self::concerns_layout`] : un commit ne change ni la branche, ni l'opération en
+    /// cours, et il n'entre pas dans la limitation de débit des métadonnées — un commit
+    /// manqué n'est pas un affichage en retard, c'est une attribution perdue pour toujours.
+    ///
+    /// **Le reflog n'est pas dans [`Self::concerns`]**, et il n'a pas à y entrer : il ne
+    /// change rien de ce que la ligne de statut affiche. Le test qui l'exclut est plus vieux
+    /// que ce journal, et il reste vrai.
+    pub fn concerns_head_moves(&self, changed: &Path) -> bool {
+        // Le reflog du worktree, dans **son** dossier git : un worktree lié a le sien, et
+        // c'est bien celui-là qu'il faut lire — `HEAD` y est propre à lui (ADR-0012).
+        relative(&self.git_dir, changed) == Some(Path::new("logs/HEAD"))
+    }
 }
 
 /// Les fichiers propres au worktree : sa branche, son merge, son rebase.
@@ -235,6 +258,33 @@ mod tests {
         // Then
         assert!(watches_siblings);
         assert!(targets.concerns_layout(Path::new("/dev/ash/.git/worktrees/toc")));
+    }
+
+    #[test]
+    fn given_a_worktree_when_its_reflog_grows_then_a_commit_may_have_been_born_there() {
+        // Given — ADR-0014 : « surveiller `.git/logs/HEAD` par dépôt, pas sonder
+        // `git log` ». Dans un worktree lié, le reflog qui compte est **le sien** : celui
+        // du dépôt commun raconte l'histoire d'un frère.
+        let linked = TargetsBuilder::linked();
+        let plain = TargetsBuilder::plain();
+
+        // When / Then
+        assert!(linked.concerns_head_moves(Path::new("/dev/ash/.git/worktrees/sidebar/logs/HEAD")));
+        assert!(plain.concerns_head_moves(Path::new("/dev/ash/.git/logs/HEAD")));
+        assert!(!linked.concerns_head_moves(Path::new("/dev/ash/.git/logs/HEAD")));
+    }
+
+    #[test]
+    fn given_the_reflog_being_written_when_its_lock_appears_then_no_commit_is_read_yet() {
+        // Given — git écrit `logs/HEAD.lock` avant de renommer. Lire à ce moment-là, c'est
+        // lancer un `git log` sur un dépôt à moitié écrit, et pour rien : le renommage
+        // arrivera.
+        let targets = TargetsBuilder::plain();
+
+        // When / Then
+        assert!(!targets.concerns_head_moves(Path::new("/dev/ash/.git/logs/HEAD.lock")));
+        assert!(!targets.concerns_head_moves(Path::new("/dev/ash/.git/logs/refs/heads/main")));
+        assert!(!targets.concerns_head_moves(Path::new("/dev/ash/.git/HEAD")));
     }
 
     #[test]
