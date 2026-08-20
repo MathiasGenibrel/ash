@@ -70,7 +70,7 @@ describe("the warning that names the agent a checkout would disturb", () => {
         );
     });
 
-    it("Given an agent that is waiting for an answer, when the popup warns, then it is named like one that writes", () => {
+    it("Given an agent that is waiting for an answer, when the popup warns, then it is named, and said to be waiting rather than working", () => {
         // Given — la règle vient du backend (`at_risk`) : `waiting` reprendra dès qu'on
         // lui répond, et il reprendra sur un arbre qui n'est plus celui qu'il a lu
         const waiting = anAgent().named("claude").inState("waiting").build();
@@ -78,8 +78,25 @@ describe("the warning that names the agent a checkout would disturb", () => {
         // When
         const warning = warnAbout([waiting], "ash");
 
-        // Then
-        expect(warning).toContain("claude");
+        // Then — le mot est celui de `shared/agent-state` : la sidebar montre `waiting` au
+        // même instant, et deux vues du même fait ne peuvent pas se contredire
+        expect(warning).toBe("claude is waiting in ash — this would move files under it");
+    });
+
+    it("Given one agent writing and another waiting, when the popup warns, then each is said in its own state", () => {
+        // Given — les deux sont en danger, et pour deux raisons différentes
+        const agents = [
+            anAgent().named("codex").inState("waiting").build(),
+            anAgent().named("claude").build(),
+        ];
+
+        // When
+        const warning = warnAbout(agents, "ash");
+
+        // Then — l'ordre est celui de la planche `1e`, le même que la sidebar
+        expect(warning).toBe(
+            "claude is working, and codex is waiting in ash — this would move files under it",
+        );
     });
 
     it("Given nobody working in this worktree, when the popup warns, then there is nothing to say", () => {

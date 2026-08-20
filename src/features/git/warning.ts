@@ -17,6 +17,7 @@
  * ce que l'outil affiche n'est interprété.
  */
 
+import { AGENT_STATES, presentAgentState } from "@/shared/agent-state";
 import type { BusyAgent } from "@/shared/ipc";
 
 /** Ce que la confirmation propose de faire de chaque agent. */
@@ -49,25 +50,31 @@ export function warnAbout(
 ): string | null {
     if (agents.length === 0) return null;
 
-    const working = agents.filter((agent) => !agent.paused);
-    const stopped = agents.filter((agent) => agent.paused);
-
+    // Un groupe par état, dans l'ordre de la planche `1e` — donc `working` avant `waiting`,
+    // le même ordre que la sidebar. Le mot vient de `shared/agent-state`, et pas d'ici : il
+    // n'y a qu'une présentation des cinq états dans tout le dépôt, et une phrase qui dirait
+    // « claude is working » pendant que la sidebar montre `waiting` serait deux vues du même
+    // fait qui se contredisent à l'écran, au moment précis où l'utilisateur décide.
     const clauses: string[] = [];
-    if (working.length > 0) {
-        clauses.push(`${enumerate(working.map((agent) => agent.name))} ${verb(working.length)}`);
+    for (const state of AGENT_STATES) {
+        const named = agents.filter((agent) => !agent.paused && agent.state === state);
+        if (named.length > 0) {
+            clauses.push(clause(named, presentAgentState(state).label));
+        }
     }
+
+    // `paused` n'est pas un sixième état, et n'en deviendra pas un : c'est un fait du groupe
+    // de processus (`TabInfo.paused`), qui se superpose à l'état sans le remplacer. Il est
+    // dit en dernier parce que c'est celui qui ne réclame rien de l'utilisateur.
+    const stopped = agents.filter((agent) => agent.paused);
     if (stopped.length > 0) {
-        clauses.push(
-            `${enumerate(stopped.map((agent) => agent.name))} ${
-                stopped.length === 1 ? "is" : "are"
-            } paused`,
-        );
+        clauses.push(clause(stopped, "paused"));
     }
 
     // La conséquence n'est écrite que s'il reste quelqu'un pour la subir : tout le monde
     // étant déjà arrêté, la phrase serait un avertissement contre un danger écarté.
     const consequence =
-        working.length > 0 ? " — this would move files under it" : " — nothing is writing";
+        stopped.length === agents.length ? " — nothing is writing" : " — this would move files under it";
     return `${clauses.join(", and ")} in ${worktreeName}${consequence}`;
 }
 
@@ -92,6 +99,8 @@ function enumerate(names: readonly string[]): string {
     return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1] ?? ""}`;
 }
 
-function verb(count: number): string {
-    return count === 1 ? "is working" : "are working";
+/** `claude is working`, `claude and codex are waiting`. */
+function clause(agents: readonly BusyAgent[], said: string): string {
+    const names = enumerate(agents.map((agent) => agent.name));
+    return `${names} ${agents.length === 1 ? "is" : "are"} ${said}`;
 }
