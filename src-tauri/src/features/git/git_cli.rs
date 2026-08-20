@@ -121,14 +121,6 @@ pub struct CommitRecord {
     pub subject: String,
 }
 
-/// Les derniers commits de `HEAD`, du plus récent au plus ancien.
-///
-/// Rend un vecteur vide pour tout ce qui peut mal se passer — `git` absent, dépôt sans
-/// commit, délai dépassé. L'appelant en fait la même chose : il n'attribue rien.
-pub trait CommitLog: Send + Sync {
-    fn recent(&self, worktree_root: &Path) -> Vec<CommitRecord>;
-}
-
 /// L'état d'un arbre de travail, tel que `git` sait seul le dire.
 ///
 /// Rend la sortie **brute** : l'interprétation est une règle pure, et elle vit dans
@@ -160,8 +152,17 @@ impl StatusReader for SystemGit {
     }
 }
 
-impl CommitLog for SystemGit {
-    fn recent(&self, worktree_root: &Path) -> Vec<CommitRecord> {
+impl SystemGit {
+    /// Les derniers commits de `HEAD`, du plus récent au plus ancien.
+    ///
+    /// Rend un vecteur vide pour tout ce qui peut mal se passer — `git` absent, dépôt sans
+    /// commit, délai dépassé. L'appelant en fait la même chose : il n'attribue rien.
+    ///
+    /// C'est une méthode, et **pas** un port : le port par lequel on demande les commits
+    /// appartient à qui pose la question — `features/journal` — comme `AgentStates`
+    /// appartient à `pty` et non à `agents`. Cette feature-ci n'apporte que le seul endroit
+    /// du dépôt où le binaire `git` est lancé.
+    pub fn recent_commits(&self, worktree_root: &Path) -> Vec<CommitRecord> {
         self.output(worktree_root, &HARDENED_LOG_ARGS)
             .as_deref()
             .map(parse_log)

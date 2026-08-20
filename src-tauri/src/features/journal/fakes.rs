@@ -8,8 +8,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::features::git::{CommitLog, CommitRecord};
 use crate::shared::time::{Clock, UnixMillis};
+
+use super::commits::{CommitLog, CommitRecord};
 
 use super::entry::Entry;
 use super::error::JournalError;

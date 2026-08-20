@@ -70,7 +70,8 @@ use features::agents::{
 };
 use features::git::{resolve_worktree, Entry, FileSystem, SystemFileSystem, SystemGit};
 use features::journal::{
-    CommitJournal, FileJournalStore, JournalStore, TabAgent, Tabs as JournalTabs,
+    CommitJournal, CommitLog as JournalCommits, CommitRecord, FileJournalStore, JournalStore,
+    TabAgent, Tabs as JournalTabs,
 };
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
 use features::probe::SystemProbe;
@@ -320,6 +321,25 @@ impl JournalTabs for TabAuthors {
     }
 }
 
+/// Relie le port du journal au seul endroit du dépôt où le binaire `git` est lancé.
+///
+/// `features/journal` pose la question — *quels commits `HEAD` porte-t-il ?* — et
+/// `features/git` sait seul y répondre, derrière la frontière de sécurité de `git_cli.rs`.
+/// Aucune des deux features ne dépend de l'autre : c'est ici qu'elles se rencontrent, comme
+/// `pty` et `agents` se rencontrent dans [`SupervisedTabs`].
+///
+/// **Public**, seul de tous les branchements de ce fichier : `tests/journal_real_rebase.rs`
+/// assemble le journal sur un vrai dépôt et un vrai `git`, et il doit le faire par le même
+/// chemin que la production — une seconde définition du même branchement dériverait sans
+/// que rien ne le dise.
+pub struct GitCommits(pub SystemGit);
+
+impl JournalCommits for GitCommits {
+    fn recent(&self, worktree_root: &Path) -> Vec<CommitRecord> {
+        self.0.recent_commits(worktree_root)
+    }
+}
+
 /// Relie la fenêtre de réglages à l'écriture des hooks, en traduisant un **identifiant**
 /// d'adaptateur en instrumentation.
 ///
@@ -558,7 +578,7 @@ pub fn run() -> tauri::Result<()> {
     // l'alimente — la surveillance de `.git/logs/HEAD` — est câblé plus bas, après `build`,
     // avec le reste de la surveillance git.
     let journal = CommitJournal::watching(
-        Arc::new(SystemGit::default()),
+        Arc::new(GitCommits(SystemGit::default())),
         Arc::new(FileJournalStore::in_home()) as Arc<dyn JournalStore>,
         Arc::new(TabAuthors(Arc::clone(&ptys))),
         &shared::time::SystemClock,

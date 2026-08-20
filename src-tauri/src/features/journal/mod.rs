@@ -56,17 +56,21 @@
 //! |---|---|---|
 //! | `JournalStore` (`store.rs`) | `FileJournalStore` (idem) | `MemoryJournal` (`fakes.rs`) |
 //! | `Tabs` (`tabs.rs`) | `lib.rs`, sur le registre de PTY | `FakeTabs` (`fakes.rs`) |
-//! | `CommitLog` | `features::git` (`git_cli.rs`) | `FakeCommits` (`fakes.rs`) |
+//! | `CommitLog` (`commits.rs`) | `lib.rs`, sur `SystemGit` | `FakeCommits` (`fakes.rs`) |
 //!
-//! Le troisième n'appartient pas à cette feature, et c'est délibéré : **il n'y a qu'un seul
-//! endroit du dépôt où le binaire `git` est lancé**, et c'est `features/git/git_cli.rs`, avec
-//! la frontière de sécurité qui l'encadre. Le journal consomme son API publique plutôt que
-//! d'ouvrir un second site d'invocation.
+//! Les trois ports appartiennent à la feature, parce que c'est elle qui pose les trois
+//! questions ; les trois adaptateurs du système sont posés par le composition root. Le
+//! troisième mérite un mot : **il n'y a qu'un seul endroit du dépôt où le binaire `git` est
+//! lancé**, et c'est `features/git/git_cli.rs`, avec la frontière de sécurité qui l'encadre.
+//! Le journal n'en ouvre pas un second — il demande, et `lib.rs` branche la méthode qui
+//! répond. Seul le vocabulaire d'un commit, [`CommitRecord`], vient de `features::git` : il
+//! décrit ce que git dit, et la colonne `by` du graphe (#27) lira le même.
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
 pub mod commands;
 
+mod commits;
 mod entry;
 mod error;
 #[cfg(test)]
@@ -77,6 +81,7 @@ mod resolve;
 mod store;
 mod tabs;
 
+pub use commits::{CommitLog, CommitRecord};
 pub use entry::Entry;
 pub use error::JournalError;
 pub use journal::{CommitJournal, JournalSummary};
