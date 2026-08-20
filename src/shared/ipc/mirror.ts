@@ -19,6 +19,16 @@ import type { BranchCard as RustBranchCard } from "./generated/BranchCard";
 import type { CardLog as RustCardLog } from "./generated/CardLog";
 import type { CardMode as RustCardMode } from "./generated/CardMode";
 import type { LogState as RustLogState } from "./generated/LogState";
+import type { ActionOffer as RustActionOffer } from "./generated/ActionOffer";
+import type { ActionOutcome as RustActionOutcome } from "./generated/ActionOutcome";
+import type { Branch as RustBranch } from "./generated/Branch";
+import type { BranchAction as RustBranchAction } from "./generated/BranchAction";
+import type { BranchGroup as RustBranchGroup } from "./generated/BranchGroup";
+import type { BranchKind as RustBranchKind } from "./generated/BranchKind";
+import type { BranchOverview as RustBranchOverview } from "./generated/BranchOverview";
+import type { BranchSection as RustBranchSection } from "./generated/BranchSection";
+import type { BranchWorktree as RustBranchWorktree } from "./generated/BranchWorktree";
+import type { BusyAgent as RustBusyAgent } from "./generated/BusyAgent";
 import type { Head as RustHead } from "./generated/Head";
 import type { Instrumented as RustInstrumented } from "./generated/Instrumented";
 import type { MetadataChanged as RustMetadataChanged } from "./generated/MetadataChanged";
@@ -40,12 +50,28 @@ import type { TreeStatus as RustTreeStatus } from "./generated/TreeStatus";
 import type { Upstream as RustUpstream } from "./generated/Upstream";
 import type { WorktreeMetadata as RustWorktreeMetadata } from "./generated/WorktreeMetadata";
 import type { SidebarRows as RustSidebarRows } from "./generated/SidebarRows";
+import type { LastWork as RustLastWork } from "./generated/LastWork";
+import type { WorktreeRemoval as RustWorktreeRemoval } from "./generated/WorktreeRemoval";
+import type { RepoLine as RustRepoLine } from "./generated/RepoLine";
+import type { WorkSource as RustWorkSource } from "./generated/WorkSource";
+import type { WorktreeAgent as RustWorktreeAgent } from "./generated/WorktreeAgent";
+import type { WorktreeRow as RustWorktreeRow } from "./generated/WorktreeRow";
 import type {
+    ActionOffer,
+    ActionOutcome,
     AgentState,
     BranchCard,
     CardLog,
     CardLogState,
     CardMode,
+    Branch,
+    BranchAction,
+    BranchGroup,
+    BranchKind,
+    BranchOverview,
+    BranchSection,
+    BranchWorktree,
+    BusyAgent,
     ComposeOutcome,
     Instrumented,
     GitHead,
@@ -63,8 +89,14 @@ import type {
     TabInfo,
     TabLocation,
     SidebarRows,
+    LastWork,
+    WorktreeRemoval,
+    WorkSource,
+    WorktreeAgent,
     WorktreeMetadata,
     WorktreeMetadataChanged,
+    WorktreeRepo,
+    WorktreeRow,
 } from "./index";
 import type { Assert, Mirrors } from "./mirroring";
 
@@ -116,6 +148,24 @@ export type WorktreeMetadataChangedStillMirrorsRust = Assert<
 >;
 
 /**
+ * La popup de branches (spec §7.1).
+ *
+ * Les deux assertions qui portent le ticket sont `BranchWorktree` — la colonne qui nomme le
+ * worktree quand la branche vit ailleurs — et `BusyAgent` : un champ perdu là, et
+ * l'avertissement cesserait de **nommer** l'agent pour se contenter de compter.
+ */
+export type BranchKindStillMirrorsRust = Assert<Mirrors<RustBranchKind, BranchKind>>;
+export type BranchWorktreeStillMirrorsRust = Assert<Mirrors<RustBranchWorktree, BranchWorktree>>;
+export type BranchStillMirrorsRust = Assert<Mirrors<RustBranch, Branch>>;
+export type BranchGroupStillMirrorsRust = Assert<Mirrors<RustBranchGroup, BranchGroup>>;
+export type BranchSectionStillMirrorsRust = Assert<Mirrors<RustBranchSection, BranchSection>>;
+export type BusyAgentStillMirrorsRust = Assert<Mirrors<RustBusyAgent, BusyAgent>>;
+export type BranchOverviewStillMirrorsRust = Assert<Mirrors<RustBranchOverview, BranchOverview>>;
+export type BranchActionStillMirrorsRust = Assert<Mirrors<RustBranchAction, BranchAction>>;
+export type ActionOfferStillMirrorsRust = Assert<Mirrors<RustActionOffer, ActionOffer>>;
+export type ActionOutcomeStillMirrorsRust = Assert<Mirrors<RustActionOutcome, ActionOutcome>>;
+
+/**
  * Le rebase arrêté de la spec §7.4, et l'issue d'une composition.
  *
  * `escapes` et `conflicts` sont des listes de **texte à montrer** : le jour où le backend
@@ -144,3 +194,29 @@ export type CardModeStillMirrorsRust = Assert<Mirrors<RustCardMode, CardMode>>;
 export type CardLogStateStillMirrorsRust = Assert<Mirrors<RustLogState, CardLogState>>;
 export type CardLogStillMirrorsRust = Assert<Mirrors<RustCardLog, CardLog>>;
 export type BranchCardStillMirrorsRust = Assert<Mirrors<RustBranchCard, BranchCard>>;
+
+/**
+ * Le tableau des worktrees (spec §7.3).
+ *
+ * `WorktreeRepo` est confronté au `RepoLine` du backend **et** doit rester la même forme que
+ * [`RepoRef`] : c'est par cette clé que la fiche de branche (#31) parlera du même dépôt que
+ * la colonne de gauche. Le jour où l'une des deux bougerait, l'une de ces deux lignes
+ * cesserait de compiler.
+ */
+export type WorktreeRepoStillMirrorsRust = Assert<Mirrors<RustRepoLine, WorktreeRepo>>;
+export type WorktreeRepoStillMatchesRepoRef = Assert<Mirrors<RepoRef, WorktreeRepo>>;
+export type WorktreeAgentStillMirrorsRust = Assert<Mirrors<RustWorktreeAgent, WorktreeAgent>>;
+/**
+ * Les deux sources de `last worked by`. Une troisième ajoutée en Rust ne compile plus tant
+ * que la fenêtre n'a pas dit ce qu'elle en montre — et cette colonne n'affirme que ce qu'Ash
+ * a observé (ADR-0014).
+ */
+export type WorkSourceStillMirrorsRust = Assert<Mirrors<RustWorkSource, WorkSource>>;
+export type LastWorkStillMirrorsRust = Assert<Mirrors<RustLastWork, LastWork>>;
+export type WorktreeRowStillMirrorsRust = Assert<Mirrors<RustWorktreeRow, WorktreeRow>>;
+/**
+ * La fiche de suppression. `carries` et `command` sont du **texte à montrer** : le jour où le
+ * backend y mettrait une action, cette ligne cesserait de compiler avant que l'écran ne se
+ * mette à supprimer quoi que ce soit (ADR-0015).
+ */
+export type WorktreeRemovalStillMirrorsRust = Assert<Mirrors<RustWorktreeRemoval, WorktreeRemoval>>;

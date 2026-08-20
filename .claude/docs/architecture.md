@@ -14,7 +14,8 @@ src-tauri/src/
   main.rs                composition root : assemblage, configuration, démarrage
   features/
     pty/                 PTY et cycle de vie des onglets shell
-    probe/               sonde fg_pid + cwd (libproc)             — ADR-0005
+    probe/               les processus vus par le système : fg_pid, cwd (libproc),
+                         et le signal posé sur un groupe (killpg)  — ADR-0005/0015
     notifications/       bannières macOS, autorisation, clic
                          (UNUserNotificationCenter)               — spec §8
     agents/              découverte, machine à états, trait Adapter — ADR-0006/7/8
@@ -76,7 +77,7 @@ pour un agent : la question « où vit la résolution du workspace ? » se répo
 | Feature | ADR | Ce qu'elle possède |
 |---|---|---|
 | `pty` | [0001](../../docs/adr/0001-application-graphique-avec-pty-embarques.md), [0002](../../docs/adr/0002-tauri-rust-portable-pty.md) | la création d'un bash, son environnement (`ASH_TAB_ID`, `ASH_SOCK`), son cycle de vie |
-| `probe` | [0005](../../docs/adr/0005-sonde-cwd-libproc.md) | `tcgetpgrp`, `proc_pidinfo`, et **rien** qui interprète un état |
+| `probe` | [0005](../../docs/adr/0005-sonde-cwd-libproc.md), [0015](../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md) | `tcgetpgrp`, `proc_pidinfo`, `killpg`, et **rien** qui interprète un état. Le nom dit « sonde », la feature dit **ce que le crate sait des processus tels que le système les voit — et le seul endroit d'où il leur parle** : depuis la pause d'ADR-0015, elle écrit (`SIGSTOP`/`SIGCONT`) autant qu'elle lit. Le signal reste ici et pas dans `pty` pour deux raisons qui tiennent ensemble : la cible d'un signal est le groupe en avant-plan, que seule cette feature sait nommer (`foreground_pgid`), et l'`unsafe` du crate y est **confiné** — le déplacer donnerait à `pty` son propre `libc` et un second site `unsafe`. Ce qui n'entre pas ici : aucun verbe destructeur (voir `ProcessControl`) |
 | `agents` | [0006](../../docs/adr/0006-decouverte-automatique-des-agents.md), [0007](../../docs/adr/0007-etats-par-hooks.md), [0008](../../docs/adr/0008-abstraction-adapter.md) | le vocabulaire commun `idle/working/waiting/done/error`, le trait `Adapter`, le socket d'events, et **la décision** — une machine à états par onglet, que `pty` consulte par son port `AgentStates` |
 | `git` | [0011](../../docs/adr/0011-git-domaine-de-premier-plan.md), [0012](../../docs/adr/0012-worktree-unite-de-travail.md) | refs, worktrees, dépôt commun, état de rebase, couloirs du graphe |
 | `journal` | [0014](../../docs/adr/0014-attribution-locale-des-commits.md) | l'écriture et la relecture de l'attribution |

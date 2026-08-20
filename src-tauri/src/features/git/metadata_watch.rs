@@ -21,6 +21,7 @@ use super::metadata::{read_metadata, WorktreeMetadata};
 use super::porcelain::parse_status;
 use super::ports::FileSystem;
 use super::stopped::{read_stopped, StoppedOperation};
+use super::table::WorktreeFacts;
 use super::targets::WatchTargets;
 use super::test_command::detect_test_command;
 use super::throttle::{Decision, Throttle};
@@ -438,6 +439,18 @@ impl MetadataWatch {
     /// worktree hors de tout dépôt n'a pas de dossier git, et n'a donc rien à surveiller.
     fn dirs_of(&self, root: &Path) -> Option<(PathBuf, PathBuf)> {
         resolve_worktree(self.fs.as_ref(), root).ok()?.git_dirs()
+    }
+}
+
+/// La surveillance, vue par le tableau des worktrees (spec §7.3).
+///
+/// L'implémentation est ici plutôt que dans `table.rs` parce que c'est cet objet-ci qui sait
+/// répondre : une racine déjà observée rend son dernier état sans toucher au disque, une
+/// racine inconnue est lue une fois. Le tableau, lui, ne connaît que le trait — c'est ce qui
+/// permet de prouver ses règles sans monter un observateur de fichiers ni lancer `git`.
+impl WorktreeFacts for MetadataWatch {
+    fn metadata(&self, worktree_root: &Path) -> Option<WorktreeMetadata> {
+        MetadataWatch::metadata(self, worktree_root)
     }
 }
 

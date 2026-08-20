@@ -14,7 +14,7 @@ use super::locate::{TabLocation, WorktreeLocator};
 use super::recognition::AgentRecognition;
 use super::session::{PtySession, PtySpawner, PtySpec};
 use super::terminal_env::terminal_env;
-use crate::features::probe::{Probe, TabObservation, TabWatch};
+use crate::features::probe::{Pid, Probe, ProcessControl, TabObservation, TabWatch};
 
 /// Identifiant d'onglet — un ulid, posé dans `ASH_TAB_ID` au lancement du shell.
 ///
@@ -56,6 +56,13 @@ pub struct PtyRegistry {
     /// ce qui l'empêche de connaître les hooks, les adaptateurs et l'horloge des trente
     /// secondes — trois choses qu'un tenancier de PTY n'a pas à savoir.
     agents: Arc<dyn AgentStates>,
+    /// De quoi arrêter et reprendre le groupe en avant-plan d'un onglet (ADR-0015).
+    ///
+    /// Injecté comme la sonde, et pour la même raison : la règle qui compte — on n'arrête
+    /// pas un shell à son invite, et un onglet arrêté se reprend — se vérifie sans envoyer
+    /// un seul signal réel. Un `cargo test` qui posterait un vrai `SIGSTOP` arrêterait la
+    /// machine de qui le lance.
+    control: Arc<dyn ProcessControl>,
     /// L'âge des localisations retenues (voir [`Self::invalidate_locations`]).
     revision: AtomicU64,
     tabs: Mutex<Vec<Tab>>,
@@ -90,6 +97,13 @@ struct Tab {
     watch: SharedWatch,
     /// La dernière localisation résolue, et le répertoire pour lequel elle l'a été.
     place: SharedPlace,
+    /// Le groupe de processus arrêté par [`PtyRegistry::pause`], quand il y en a un.
+    ///
+    /// Le pgid est **retenu** plutôt que redemandé au moment de reprendre : un groupe arrêté
+    /// ne rend plus la main, donc `tcgetpgrp` continuerait de le désigner — mais si le
+    /// terminal a été fermé entre-temps, le descripteur ne dit plus rien, et l'agent
+    /// resterait arrêté sans personne pour le réveiller. Ce champ est le fil auquel on tire.
+    paused: SharedPause,
     /// Ce que le registre retient de la **saisie** de cet onglet — voir [`super::compose`].
     compose: SharedDesk,
     /// Le dernier `TabInfo` que la boucle a poussé vers la webview.
@@ -128,6 +142,9 @@ type SharedPlace = Arc<Mutex<Option<Located>>>;
 /// Ce que la webview sait déjà d'un onglet, tenu à part du verrou du registre pour la même
 /// raison que la sonde et la localisation.
 type SharedAnnouncement = Arc<Mutex<Option<TabInfo>>>;
+
+/// Le groupe arrêté d'un onglet, tenu à part du verrou du registre pour la même raison.
+type SharedPause = Arc<Mutex<Option<Pid>>>;
 
 /// Le pupitre de composition d'un onglet, tenu à part du verrou du registre pour la même
 /// raison que la sonde : il est touché à **chaque frappe**, et une frappe clavier n'a pas
@@ -216,6 +233,18 @@ pub struct TabInfo {
     /// Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
     /// n'a pas pu être situé.
     pub location: Option<TabLocation>,
+    /// Le groupe en avant-plan de cet onglet est **arrêté** — `SIGSTOP`
+    /// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+    ///
+    /// Ce n'est **pas** un sixième état d'agent, et il ne passe pas par `agents` : un état
+    /// d'agent vient d'un hook (ADR-0007), et un processus arrêté n'en émet aucun — c'est
+    /// justement ce qui le rend invisible autrement. Le registre, lui, sait qu'il a posté le
+    /// signal, et c'est le seul à le savoir.
+    ///
+    /// Il voyage dans la fiche parce qu'un agent laissé arrêté sans rien qui le dise est un
+    /// piège : il paraîtrait `working` pour toujours, et personne ne saurait qu'il attend un
+    /// `SIGCONT`.
+    pub paused: bool,
 }
 
 /// Ce qu'`open` rend au-delà de l'identifiant : de quoi lancer le lecteur.
@@ -232,6 +261,7 @@ impl PtyRegistry {
         locator: Arc<dyn WorktreeLocator>,
         recognition: Arc<dyn AgentRecognition>,
         agents: Arc<dyn AgentStates>,
+        control: Arc<dyn ProcessControl>,
     ) -> Self {
         Self {
             spawner,
@@ -239,6 +269,7 @@ impl PtyRegistry {
             locator,
             recognition,
             agents,
+            control,
             revision: AtomicU64::new(0),
             tabs: Mutex::new(Vec::new()),
         }
@@ -288,6 +319,7 @@ impl PtyRegistry {
             watch,
             place: Arc::new(Mutex::new(None)),
             announced: Arc::new(Mutex::new(None)),
+            paused: Arc::new(Mutex::new(None)),
             compose: Arc::new(Mutex::new(ComposeDesk::default())),
         });
 
@@ -416,6 +448,80 @@ impl PtyRegistry {
         self.with_tab(tab_id, |tab| tab.session.has_foreground_process())
     }
 
+    /// Arrête le groupe en avant-plan de cet onglet — la « pause » d'ADR-0015.
+    ///
+    /// **`SIGSTOP` sur le groupe en avant-plan, et rien d'autre.** Pas une touche écrite
+    /// dans le PTY, pas un `Esc` supposé interrompre, pas une lecture de ce que l'outil
+    /// affiche : Ash n'interprète pas l'interface d'un agent
+    /// ([ADR-0010](../../../../docs/adr/0010-la-sidebar-informe-le-terminal-agit.md)), et
+    /// composer un texte serait le geste de l'utilisateur, pas le sien
+    /// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+    ///
+    /// **Un shell à son invite n'est pas mis en pause**, et ce refus est la règle qui compte
+    /// ici : le groupe en avant-plan serait alors celui du shell lui-même, l'onglet
+    /// deviendrait muet au clavier, et rien dans la fenêtre ne ressemblerait à une panne
+    /// autant que ça. Il n'y a rien à arrêter dans un onglet où rien ne tourne.
+    ///
+    /// Idempotent : mettre en pause un onglet déjà arrêté ne poste pas un second signal.
+    pub fn pause(&self, tab_id: &str) -> Result<(), PtyError> {
+        let (terminal, running, held) = self.with_tab(tab_id, |tab| {
+            Ok((
+                tab.session.terminal(),
+                tab.session.has_foreground_process()?,
+                Arc::clone(&tab.paused),
+            ))
+        })?;
+
+        let mut held = held
+            .lock()
+            .map_err(|_| PtyError::Io("verrou de pause empoisonné".to_owned()))?;
+        if held.is_some() {
+            return Ok(());
+        }
+        if !running {
+            return Err(PtyError::NothingToPause(tab_id.to_owned()));
+        }
+        let terminal = terminal.ok_or_else(|| PtyError::NothingToPause(tab_id.to_owned()))?;
+
+        let pgid = self
+            .probe
+            .foreground_pgid(terminal.master_fd)
+            .map_err(|why| PtyError::Io(why.to_string()))?;
+        self.control
+            .pause(pgid)
+            .map_err(|why| PtyError::Io(why.to_string()))?;
+
+        *held = Some(pgid);
+        Ok(())
+    }
+
+    /// Reprend le groupe arrêté — `SIGCONT`.
+    ///
+    /// C'est la moitié sans laquelle la pause serait un piège : un agent arrêté n'émet plus
+    /// aucun hook, donc plus aucun état, et rien d'autre qu'Ash ne sait qu'il attend un
+    /// signal. Le pgid vient de ce que [`Self::pause`] a retenu et non d'une nouvelle sonde :
+    /// un onglet dont le terminal s'est refermé entre-temps doit **quand même** pouvoir
+    /// rendre la main à son groupe.
+    ///
+    /// Idempotent : reprendre un onglet qui tourne ne fait rien.
+    pub fn resume(&self, tab_id: &str) -> Result<(), PtyError> {
+        let held = self.with_tab(tab_id, |tab| Ok(Arc::clone(&tab.paused)))?;
+        let mut held = held
+            .lock()
+            .map_err(|_| PtyError::Io("verrou de pause empoisonné".to_owned()))?;
+        let Some(pgid) = *held else {
+            return Ok(());
+        };
+
+        self.control
+            .resume(pgid)
+            .map_err(|why| PtyError::Io(why.to_string()))?;
+        // Oublié **après** le succès : un `SIGCONT` refusé laisse le groupe arrêté, et
+        // effacer la mémoire ferait perdre le seul fil qui permette de réessayer.
+        *held = None;
+        Ok(())
+    }
+
     /// Envoie des octets au shell — une frappe de l'utilisateur, ou un texte composé.
     ///
     /// Le **pupitre** en prend note au passage : c'est la seule source d'Ash sur ce que
@@ -533,6 +639,7 @@ impl PtyRegistry {
                 watch: Arc::clone(&tab.watch),
                 place: Arc::clone(&tab.place),
                 announced: Arc::clone(&tab.announced),
+                paused: Arc::clone(&tab.paused),
                 compose: Arc::clone(&tab.compose),
             })
             .collect())
@@ -544,6 +651,11 @@ impl PtyRegistry {
     /// un onglet de la même façon, sans quoi une migration annoncée par la boucle
     /// contredirait la prochaine relecture.
     fn describe(&self, tab: TabHandle, seen: Option<TabObservation>) -> TabInfo {
+        let paused = tab
+            .paused
+            .lock()
+            .map(|held| held.is_some())
+            .unwrap_or(false);
         let cwd = seen
             .as_ref()
             .map_or_else(|| tab.start_dir.clone(), |seen| seen.cwd.clone());
@@ -592,6 +704,7 @@ impl PtyRegistry {
             state: agents.status.state,
             state_since: agents.status.since,
             subagents: agents.subagents,
+            paused,
         }
     }
 
@@ -699,6 +812,7 @@ struct TabHandle {
     watch: SharedWatch,
     place: SharedPlace,
     announced: SharedAnnouncement,
+    paused: SharedPause,
     compose: SharedDesk,
 }
 
@@ -716,9 +830,9 @@ mod tests {
     use crate::features::agents::Instrumented;
     use crate::features::probe::{Pid, ProbeError, ProcessInfo};
     use crate::features::pty::fakes::{
-        composing_registry, located_registry, observed_registry, recognizing_registry, registry,
-        spec, supervised_registry, Composing, CountingLocator, FakeAgentStates, FakeSpawner,
-        SpecBuilder,
+        composing_registry, located_registry, observed_registry, pausable_registry,
+        recognizing_registry, registry, spec, supervised_registry, Composing, CountingLocator,
+        FakeAgentStates, FakeSpawner, SpecBuilder, LAUNCHED,
     };
     use std::os::fd::RawFd;
     use std::sync::atomic::Ordering;
@@ -736,6 +850,121 @@ mod tests {
     /// Un onglet réduit à ce que le scénario regarde : qui il est, et où il est.
     fn described(tab: TabInfo) -> (TabId, String) {
         (tab.tab_id, tab.cwd)
+    }
+
+    /// Un onglet où un agent tient l'avant-plan — le seul cas où la pause a un sens.
+    fn tab_running_an_agent() -> (
+        PtyRegistry,
+        TabId,
+        Arc<crate::features::pty::fakes::FakeProcessControl>,
+    ) {
+        let (registry, spawner, probe, control) = pausable_registry();
+        registry.open(spec(), "01J0AGENT".to_owned()).unwrap();
+        probe.hand_over_to("claude");
+        spawner.foreground.store(true, Ordering::SeqCst);
+        (registry, "01J0AGENT".to_owned(), control)
+    }
+
+    #[test]
+    fn given_an_agent_is_writing_when_the_user_pauses_it_then_its_foreground_group_is_stopped() {
+        // Given
+        let (registry, tab, control) = tab_running_an_agent();
+
+        // When
+        registry.pause(&tab).unwrap();
+
+        // Then — un `SIGSTOP` sur le groupe en avant-plan, et rien d'autre (ADR-0015)
+        assert_eq!(control.posted(), vec![("SIGSTOP", LAUNCHED)]);
+    }
+
+    #[test]
+    fn given_a_paused_agent_when_it_is_resumed_then_the_same_group_gets_a_sigcont() {
+        // Given
+        let (registry, tab, control) = tab_running_an_agent();
+        registry.pause(&tab).unwrap();
+
+        // When
+        registry.resume(&tab).unwrap();
+
+        // Then — le groupe retenu par la pause, pas une nouvelle sonde : un onglet dont le
+        // terminal s'est refermé doit quand même pouvoir rendre la main à son agent
+        assert_eq!(
+            control.posted(),
+            vec![("SIGSTOP", LAUNCHED), ("SIGCONT", LAUNCHED)]
+        );
+    }
+
+    #[test]
+    fn given_a_paused_agent_when_the_tab_is_described_then_its_card_says_it_is_paused() {
+        // Given
+        let (registry, tab, _) = tab_running_an_agent();
+
+        // When
+        registry.pause(&tab).unwrap();
+
+        // Then — sans ça, l'agent paraîtrait `working` pour toujours et personne ne saurait
+        // qu'il attend un `SIGCONT`
+        let described = registry.tabs().unwrap();
+        assert!(described.iter().all(|shown| shown.paused));
+
+        // And — reprendre l'efface
+        registry.resume(&tab).unwrap();
+        assert!(registry.tabs().unwrap().iter().all(|shown| !shown.paused));
+    }
+
+    #[test]
+    fn given_a_shell_sitting_at_its_prompt_when_asked_to_pause_it_then_nothing_is_signalled() {
+        // Given — rien ne tourne : le groupe en avant-plan est celui du shell lui-même
+        let (registry, _, _, control) = pausable_registry();
+        registry.open(spec(), "01J0SHELL".to_owned()).unwrap();
+
+        // When
+        let refused = registry.pause("01J0SHELL");
+
+        // Then — l'arrêter rendrait l'onglet muet au clavier, sans que rien ne l'explique
+        assert!(matches!(refused, Err(PtyError::NothingToPause(_))));
+        assert!(control.posted().is_empty());
+    }
+
+    #[test]
+    fn given_an_already_paused_agent_when_pausing_it_again_then_no_second_signal_is_posted() {
+        // Given
+        let (registry, tab, control) = tab_running_an_agent();
+        registry.pause(&tab).unwrap();
+
+        // When
+        registry.pause(&tab).unwrap();
+
+        // Then
+        assert_eq!(control.posted(), vec![("SIGSTOP", LAUNCHED)]);
+    }
+
+    #[test]
+    fn given_a_resume_the_system_refuses_when_it_is_retried_then_the_tab_is_still_known_as_paused()
+    {
+        // Given
+        let (registry, tab, control) = tab_running_an_agent();
+        registry.pause(&tab).unwrap();
+        control.refuse.store(true, Ordering::SeqCst);
+
+        // When
+        let failed = registry.resume(&tab);
+
+        // Then — oublier le groupe ici ferait perdre le seul fil qui permette de réessayer
+        assert!(failed.is_err());
+        assert!(registry.tabs().unwrap().iter().all(|shown| shown.paused));
+    }
+
+    #[test]
+    fn given_a_tab_that_was_never_paused_when_it_is_resumed_then_nothing_is_signalled() {
+        // Given
+        let (registry, tab, control) = tab_running_an_agent();
+
+        // When
+        registry.resume(&tab).unwrap();
+
+        // Then
+        assert!(control.posted().is_empty());
     }
 
     /// Test Data Builder : un onglet où un agent reconnu tient l'avant-plan.
@@ -1538,6 +1767,7 @@ mod tests {
             Arc::new(CountingLocator::default()),
             Arc::new(super::super::recognition::NoRecognition),
             Arc::new(FakeAgentStates::default()),
+            Arc::new(crate::features::pty::fakes::FakeProcessControl::default()),
         ));
         registry.open(spec(), "A".to_owned()).unwrap();
 
