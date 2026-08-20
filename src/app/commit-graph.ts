@@ -31,10 +31,18 @@ export function parseCommitGraph(value: unknown): CommitGraph | null {
     return value as CommitGraph;
 }
 
-/** Demande la fenêtre du graphe d'un worktree. */
+/**
+ * Demande le graphe d'un worktree.
+ *
+ * `window` reste **absente** tant qu'on n'a pas élargi : la première fenêtre est un choix de
+ * produit, et il est du côté qui lance le processus `git`. Un nombre écrit ici en serait une
+ * seconde copie, et c'est elle qui gagnerait.
+ */
 export async function readCommitGraph(
     worktreeRoot: string,
-    window: number,
+    window: number | null,
 ): Promise<CommitGraph | null> {
-    return parseCommitGraph(await invoke<unknown>("git_commit_graph", { worktreeRoot, window }));
+    return parseCommitGraph(
+        await invoke<unknown>("git_commit_graph", { worktreeRoot, window: window ?? undefined }),
+    );
 }

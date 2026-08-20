@@ -3,7 +3,7 @@ import "./graph.css";
 import { paint } from "@/shared/ui";
 
 import type { CommitGraph } from "./contract";
-import { commitGraphView, WINDOW_STEP, type CommitGraphState } from "./graph-view";
+import { commitGraphView, type CommitGraphState } from "./graph-view";
 
 /**
  * Le graphe de commits, posé dans le corps du panneau bas (#24, spec §7.2).
@@ -24,8 +24,12 @@ export interface CommitGraphPorts {
     /**
      * La fenêtre du graphe d'un worktree, ou `null` quand il n'y a rien à montrer — hors
      * dépôt, ou `git` qui n'a pas répondu. Les deux se rendent pareil.
+     *
+     * `window` vaut `null` pour un graphe qui s'ouvre : c'est le backend qui décide de quoi
+     * est faite une première fenêtre, et il l'annonce dans sa réponse. Le panneau ne nomme un
+     * nombre qu'en élargissant, à partir de ce qui lui a été annoncé.
      */
-    read(worktreeRoot: string, window: number): Promise<CommitGraph | null>;
+    read(worktreeRoot: string, window: number | null): Promise<CommitGraph | null>;
 }
 
 export interface CommitGraphPanel {
@@ -46,7 +50,8 @@ export function mountCommitGraph(ports: CommitGraphPorts): CommitGraphPanel {
     element.className = "git-graph-host";
 
     let root: string | null = null;
-    let windowSize = WINDOW_STEP;
+    // `null` tant que rien n'a été élargi : voir `CommitGraphPorts.read`.
+    let windowSize: number | null = null;
     let state: CommitGraphState = { graph: null, selected: null };
     /**
      * Le numéro de la lecture en cours.
@@ -110,7 +115,7 @@ export function mountCommitGraph(ports: CommitGraphPorts): CommitGraphPanel {
         show(worktreeRoot) {
             if (worktreeRoot === root) return;
             root = worktreeRoot;
-            windowSize = WINDOW_STEP;
+            windowSize = null;
             state = { graph: null, selected: null };
             read();
         },
