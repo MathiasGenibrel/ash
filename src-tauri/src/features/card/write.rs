@@ -108,10 +108,22 @@ pub enum LogWrite {
 /// **Une lecture, un classement.** C'est ici, et nulle part ailleurs, que le fichier est lu
 /// et que sa zone est classée ; [`write_log`] ne fait que poser ce que ce plan porte.
 pub fn plan(files: &dyn CardFiles, path: &Path, table: &str) -> Result<Plan, CardError> {
-    let content = read(files, path)?.filter(|content| !content.trim().is_empty());
+    Ok(plan_of(&read(files, path)?.unwrap_or_default(), table))
+}
+
+/// Le même plan, pour une fiche **déjà lue**.
+///
+/// Tout ce qui se décide se décide ici, et sans toucher au disque : l'écran, qui a besoin de
+/// la source *et* de l'état du bloc, les obtient donc d'une seule lecture — deux lectures
+/// pourraient décrire deux fichiers différents, et le rendu ne dirait plus la même chose que
+/// le diff. C'est aussi ce qui rend la décision interrogeable sans aucun double.
+///
+/// Une fiche vide et une fiche absente sont le même cas : il n'y a rien de l'utilisateur.
+pub(super) fn plan_of(source: &str, table: &str) -> Plan {
+    let content = Some(source).filter(|content| !content.trim().is_empty());
     let table = table.to_owned();
 
-    let (state, note, document) = match content.as_deref() {
+    let (state, note, document) = match content {
         None => (
             LogState::NoCard,
             "there is no card yet — ash would write one, with its log block.".to_owned(),
@@ -120,16 +132,16 @@ pub fn plan(files: &dyn CardFiles, path: &Path, table: &str) -> Result<Plan, Car
         Some(content) => classify(content, &table),
     };
 
-    Ok(Plan {
+    Plan {
         state,
         diff: document
             .as_ref()
-            .map(|would| text_diff::preview(content.as_deref().unwrap_or_default(), would.as_str()))
+            .map(|would| text_diff::preview(content.unwrap_or_default(), would.as_str()))
             .unwrap_or_default(),
         table,
         note,
         document,
-    })
+    }
 }
 
 /// Dans quel état est la zone d'Ash, ce qu'on en dit, et la fiche telle qu'il la laisserait.
