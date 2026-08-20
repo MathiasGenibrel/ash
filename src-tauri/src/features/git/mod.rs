@@ -46,11 +46,20 @@
 //! | `FileWatcher` (`watcher.rs`) | `watcher.rs` | `fakes.rs` |
 //! | `Clock`, `Scheduler` (`shared/time.rs`) | `shared/time.rs` | `fakes.rs` |
 //! | `StatusReader` (`git_cli.rs`) | `git_cli.rs` | `fakes.rs` |
+//! | `BranchReader`, `TreeWriter` (`git_cli.rs`) | `git_cli.rs` | `branch_actions.rs` |
+//! | `WorkingAgents` (`working_agents.rs`) | `lib.rs` | `branches.rs` |
+//!
+//! Le dernier n'est pas un effet système : c'est un **fait** que `git` ne peut pas
+//! connaître — quel agent écrit dans ce worktree. Il est un port pour la même raison que
+//! `pty::AgentStates` : sans lui, `git` importerait `pty`, et l'avertissement de la spec
+//! §7.1 ne se vérifierait qu'en ouvrant un PTY.
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
 pub mod commands;
 
+mod branch_actions;
+mod branches;
 mod control;
 mod error;
 mod git_cli;
@@ -65,6 +74,7 @@ mod targets;
 mod test_command;
 mod throttle;
 mod watcher;
+mod working_agents;
 mod worktree;
 
 /// L'arbre en mémoire qui double le port `FileSystem` dans les tests de la feature.
@@ -75,8 +85,15 @@ mod fake_fs;
 #[cfg(test)]
 mod fakes;
 
+pub use branch_actions::{ActionOffer, ActionOutcome, BranchAction};
+pub use branches::{
+    overview as branch_overview, Branch, BranchGroup, BranchKind, BranchOverview, BranchSection,
+    BranchWorktree,
+};
 pub use error::GitError;
-pub use git_cli::{CommitRecord, StatusReader, SystemGit, STATUS_TIMEOUT};
+pub use git_cli::{
+    BranchReader, CommitRecord, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
+};
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,
     WorktreeMetadata,
@@ -88,4 +105,5 @@ pub use prompt::{compose_conflict_prompt, PromptSubject};
 pub use stopped::{read_stopped, StoppedCommit, StoppedOperation};
 pub use system_fs::SystemFileSystem;
 pub use test_command::detect_test_command;
+pub use working_agents::{at_risk, BusyAgent, WorkingAgents};
 pub use worktree::{resolve_worktree, Repo, Worktree, WorktreeLocation};
