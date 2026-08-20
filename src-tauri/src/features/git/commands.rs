@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use super::git_cli::SystemGit;
+use super::branch_actions::{ActionOffer, ActionOutcome, BranchAction};
+use super::branches::{overview, BranchOverview};
+use super::git_cli::{BranchReader, SystemGit, TreeWriter};
 use super::metadata::WorktreeMetadata;
 use super::metadata_watch::{Listeners, MetadataWatch};
 use super::prompt::compose_conflict_prompt;
@@ -18,6 +20,7 @@ use super::system_fs::SystemFileSystem;
 use super::table::{WorktreeRemoval, WorktreeRow, WorktreeTable};
 use super::throttle::MIN_INTERVAL;
 use super::watcher::SystemWatcher;
+use super::working_agents::WorkingAgents;
 use crate::shared::time::{SystemClock, ThreadScheduler};
 
 /// Nom de l'event qui porte l'état git d'un worktree.
@@ -212,4 +215,100 @@ pub fn follow_worktrees(watch: &Arc<MetadataWatch>) -> impl Fn(Vec<String>) + Se
         // Échouer à envoyer signifie que le fil est parti : il n'y a plus rien à suivre.
         let _ = sender.send(roots);
     }
+}
+
+/// Les branches d'un worktree, groupées, situées, et avec les agents qu'elles menacent.
+///
+/// Une seule réponse pour les quatre choses que la popup montre — la liste, les groupes, le
+/// worktree qui détient chaque branche, et les agents en danger. **Une seule et pas quatre**,
+/// parce qu'elles doivent être vraies au même instant : lues séparément, la popup pourrait
+/// nommer un agent qui vient de finir, ou proposer un checkout sur une branche qu'un autre
+/// worktree vient de prendre.
+///
+/// **`async` volontairement**, comme [`git_metadata`] et pour la même raison : deux
+/// invocations de `git` n'ont rien à faire sur le fil qui dessine la fenêtre.
+///
+/// `None` quand `git` n'a pas répondu — absent du `PATH`, dépôt illisible, délai dépassé.
+/// L'écran montre alors qu'il n'a pas su lire, il n'invente pas une liste vide.
+#[tauri::command]
+pub async fn git_branches<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+) -> Option<BranchOverview> {
+    let root = std::path::PathBuf::from(&worktree_root);
+    let reader = app.state::<Arc<dyn BranchReader>>();
+    let agents = app.state::<Arc<dyn WorkingAgents>>();
+
+    let refs = reader.refs(&root)?;
+    let worktrees = reader.worktrees(&root)?;
+    Some(overview(
+        &root,
+        &refs,
+        &worktrees,
+        agents.in_worktree(&root),
+    ))
+}
+
+/// Ce que `⌘⏎` propose pour une branche — les trois verbes, refus compris.
+///
+/// Un appel séparé de [`git_branches`], et sur un geste explicite : les offres dépendent de
+/// l'état du dépôt *à cet instant*, et les recalculer à l'ouverture de la popup les rendrait
+/// périmées dès qu'un autre worktree prend une branche. Elles sont donc relues au moment où
+/// on les montre — le même instant que celui où l'utilisateur les lira.
+///
+/// Vide quand la branche n'existe plus : la popup montre alors qu'il n'y a rien à faire,
+/// elle n'invente pas une action sur un nom.
+#[tauri::command]
+pub async fn git_branch_offers<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+    branch: String,
+) -> Option<Vec<ActionOffer>> {
+    let root = std::path::PathBuf::from(&worktree_root);
+    let reader = app.state::<Arc<dyn BranchReader>>();
+    let agents = app.state::<Arc<dyn WorkingAgents>>();
+
+    let refs = reader.refs(&root)?;
+    let worktrees = reader.worktrees(&root)?;
+    let shown = overview(&root, &refs, &worktrees, agents.in_worktree(&root));
+
+    Some(
+        shown
+            .sections
+            .iter()
+            .flat_map(|section| &section.branches)
+            .find(|candidate| candidate.name == branch)
+            .map(|found| super::branch_actions::offers(&shown, found))
+            .unwrap_or_default(),
+    )
+}
+
+/// Lance une action de branche — `⌘⏎` (spec §7.1).
+///
+/// Elle **relit la liste avant d'agir**, et c'est ce qui la rend sûre : le nom reçu sert à
+/// retrouver une branche dans ce que le dépôt contient *maintenant*, et c'est cette
+/// branche-là qui part vers le processus. Une branche effacée, prise par un autre worktree, ou
+/// dont le nom ressemble à une option, est refusée — jamais devinée (voir
+/// [`super::branch_actions`]).
+///
+/// Rien ici ne met un agent en pause, et rien ne demande de confirmation : ces deux gestes
+/// appartiennent à l'utilisateur, et la commande n'est appelée qu'après. Ash ne valide rien à
+/// sa place ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+#[tauri::command]
+pub async fn git_branch_action<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+    action: BranchAction,
+    branch: String,
+) -> Option<ActionOutcome> {
+    let root = std::path::PathBuf::from(&worktree_root);
+    let reader = app.state::<Arc<dyn BranchReader>>();
+    let agents = app.state::<Arc<dyn WorkingAgents>>();
+    let writer = app.state::<Arc<dyn TreeWriter>>();
+
+    let refs = reader.refs(&root)?;
+    let worktrees = reader.worktrees(&root)?;
+    let shown = overview(&root, &refs, &worktrees, agents.in_worktree(&root));
+
+    Some(super::branch_actions::run(&writer, &shown, action, &branch))
 }

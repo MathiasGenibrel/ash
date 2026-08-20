@@ -34,6 +34,7 @@ export class TabBuilder {
     private worktreeName = "solo";
     private repo: { id: string; name: string } | null = null;
     private located = true;
+    private stopped = false;
     /**
      * L'onglet est entré dans son état à l'époque Unix.
      *
@@ -125,6 +126,12 @@ export class TabBuilder {
         return this;
     }
 
+    /** L'agent de cet onglet est arrêté — `SIGSTOP` (ADR-0015). */
+    paused(): this {
+        this.stopped = true;
+        return this;
+    }
+
     /** Le backend n'a pas su situer ce répertoire — `.git` cassé, dépôt disparu. */
     unlocated(cwd: string): this {
         this.cwd = cwd;
@@ -141,6 +148,7 @@ export class TabBuilder {
             state: this.state,
             stateSince: this.stateSince,
             subagents: this.subagents,
+            paused: this.stopped,
             location: this.located
                 ? {
                       worktreeRoot: this.worktreeRoot,
