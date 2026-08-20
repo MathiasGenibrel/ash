@@ -942,8 +942,6 @@ pub fn run() -> tauri::Result<()> {
             features::git::commands::git_conflict_prompt,
             features::git::commands::git_worktrees,
             features::git::commands::git_worktree_removal,
-            features::journal::commands::journal_summary,
-            features::journal::commands::journal_purge,
             features::sidebar::commands::sidebar_rows,
             features::sidebar::commands::sidebar_pin,
             features::sidebar::commands::sidebar_collapse,
