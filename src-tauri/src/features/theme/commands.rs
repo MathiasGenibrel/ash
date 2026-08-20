@@ -1,8 +1,8 @@
 //! La surface de la feature vers le frontend : seize commandes, six events.
 //!
 //! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode, les
-//! trois pas de taille et les deux paliers de densité. Il **rend** la palette ; les quatre
-//! choix, eux, sont ici
+//! trois pas de taille, les deux paliers de densité et les quatre noms de vue du panneau
+//! bas. Il **rend** la palette, la colonne et le panneau ; les six choix, eux, sont ici
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 //!
 //! Ce que ce module ne contient **pas**, et c'est délibéré : le menu natif. Ses
