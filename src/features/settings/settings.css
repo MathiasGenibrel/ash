@@ -1518,6 +1518,26 @@
     color: var(--ash-error);
 }
 
+/* Le journal d'attribution (spec §10, ADR-0014) : la même sobriété que la ligne de
+ * désinstallation juste au-dessus, parce que les deux répondent à la même question — ce
+ * qu'ash laisse sur cette machine. Il n'a pas de couleur à lui : ce qu'il efface lui
+ * appartient. */
+.settings-journal {
+    padding: 0 16px 12px;
+}
+
+.settings-journal-name {
+    font-size: 11px;
+    color: var(--ash-fg-dim);
+    white-space: nowrap;
+}
+
+/* Le chemin sur sa propre ligne, comme celui de l'autorisation macOS : on le lit pour aller
+ * y regarder, pas au passage. */
+.settings-journal-path {
+    padding-top: 6px;
+}
+
 .settings-uninstall-file {
     display: flex;
     flex-direction: column;

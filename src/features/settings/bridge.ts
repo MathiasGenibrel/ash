@@ -5,6 +5,7 @@ import type { AgentState } from "@/shared/ipc";
 
 import type {
     FocusedTool,
+    JournalReport,
     NotificationsReport,
     RemovalOutcome,
     RemovalPlan,
@@ -61,6 +62,8 @@ export const tauriSettings: SettingsPorts = {
         invoke<NotificationsReport>("settings_set_notification", { state, enabled }),
     // Le nom du paramètre est `tool` des deux côtés : Tauri passe les arguments par nom, et
     // une faute de frappe ici se verrait à l'exécution, pas à la compilation.
+    journal: () => invoke<JournalReport>("journal_summary"),
+    purgeJournal: () => invoke<JournalReport>("journal_purge"),
     declareTool: (draft: ToolDraft) =>
         invoke<SettingsSnapshot>("settings_declare_tool", { tool: draft }),
     forgetTool: (command: string) => invoke<SettingsSnapshot>("settings_forget_tool", { command }),

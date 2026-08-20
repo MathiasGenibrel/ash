@@ -24,6 +24,7 @@ export { degradedNotice, degradedRow } from "./degraded";
 export { diffView } from "./diff-view";
 export { duplicateBanner, type DuplicateBannerActions } from "./duplicate-banner";
 export { hooksNote, hooksRow, type HooksRowActions } from "./hooks-row";
+export { journalRow, type JournalActions } from "./journal-row";
 export { navColumn } from "./nav";
 export { notificationsSection } from "./notifications";
 export {

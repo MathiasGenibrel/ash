@@ -15,7 +15,7 @@ use super::error::GitError;
 use super::fake_fs::FakeFs;
 use super::git_cli::StatusReader;
 use super::metadata::{Head, WorktreeMetadata};
-use super::metadata_watch::{Announce, Relocate};
+use super::metadata_watch::{Announce, Committed, Relocate};
 use super::ports::{Entry, FileSystem};
 use super::targets::WatchRoot;
 use super::watcher::{FileWatcher, OnChange, WatchHandle};
@@ -392,5 +392,33 @@ impl RecordedRelocations {
 
     pub fn count(&self) -> usize {
         self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Les mouvements de `HEAD` remontés, worktree par dépôt.
+///
+/// Le pendant de [`RecordedRelocations`] pour la troisième sortie de la surveillance : elle
+/// ne dit pas *quel* commit est né — la surveillance ne le sait pas — mais **où** aller le
+/// lire, et sous quelle identité de dépôt le ranger.
+#[derive(Default)]
+pub struct RecordedCommits(Mutex<Vec<(String, String)>>);
+
+impl RecordedCommits {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Le rappel à injecter dans la surveillance.
+    pub fn committed(self: &Arc<Self>) -> Committed {
+        let recorded = Arc::clone(self);
+        Arc::new(move |root: &Path, common_dir: &Path| {
+            if let Ok(mut moves) = recorded.0.lock() {
+                moves.push((root.display().to_string(), common_dir.display().to_string()));
+            }
+        })
+    }
+
+    pub fn moves(&self) -> Vec<(String, String)> {
+        self.0.lock().map(|moves| moves.clone()).unwrap_or_default()
     }
 }

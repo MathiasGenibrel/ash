@@ -30,6 +30,7 @@ import type { RemovedFile as RustRemovedFile } from "@/shared/ipc/generated/Remo
 import type { SettingsSnapshot as RustSettingsSnapshot } from "@/shared/ipc/generated/SettingsSnapshot";
 import type { CapturePreview as RustCapturePreview } from "@/shared/ipc/generated/CapturePreview";
 import type { ConflictChoice as RustConflictChoice } from "@/shared/ipc/generated/ConflictChoice";
+import type { JournalReport as RustJournalReport } from "@/shared/ipc/generated/JournalReport";
 import type { KeyStroke as RustKeyStroke } from "@/shared/ipc/generated/KeyStroke";
 import type { Reservation as RustReservation } from "@/shared/ipc/generated/Reservation";
 import type { ReservedBy as RustReservedBy } from "@/shared/ipc/generated/ReservedBy";
@@ -56,6 +57,7 @@ import type {
     HookState,
     Mismatch,
     NotificationPermission,
+    JournalReport,
     NotificationsReport,
     NotificationSwitch,
     Outcome,
@@ -127,6 +129,15 @@ export type NotificationsReportStillMirrorsRust = Assert<
 export type NotificationSwitchStillMirrorsRust = Assert<
     Mirrors<RustNotificationSwitch, NotificationSwitch>
 >;
+
+/**
+ * Le journal d'attribution (ADR-0014), et pourquoi sa forme est vérifiée comme les autres.
+ *
+ * Aucune autre commande ne la renvoie, donc un champ perdu en route ne se verrait nulle
+ * part ailleurs — et le champ qui compte est celui qui porte la promesse de la spec §10 sur
+ * des prompts.
+ */
+export type JournalReportStillMirrorsRust = Assert<Mirrors<RustJournalReport, JournalReport>>;
 
 /**
  * « Retirer ash de tous les fichiers » (spec §10), dans ses deux temps.
