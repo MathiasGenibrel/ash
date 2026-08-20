@@ -18,6 +18,7 @@ import type {
 } from "./ports";
 import { askToClose } from "./confirm-dialog";
 import { tauriGit } from "./git-bridge";
+import { tauriLinks } from "./link-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
 import { tauriPty } from "./pty-bridge";
 import { StatusLine, composeStatusLine } from "./status-line";
@@ -325,7 +326,22 @@ export function mountTerminals(
         // Chaque terminal suit le thème, la taille et la police pour son compte, et s'en
         // désabonne en se libérant : l'atelier n'a à connaître ni la palette ni l'apparence
         // pour savoir qu'un onglet est ouvert.
-        createView: () => new XtermView(stack, theme, fontSize, fontFamily),
+        // Les liens du terminal (spec §4.2) : chaque vue a les siens, et tous demandent au
+        // même backend. Le `cwd` est lu **à chaque survol**, sur l'onglet affiché : c'est le
+        // seul qui puisse recevoir la souris, et sa valeur change à chaque `cd` — la sonde
+        // d'ADR-0005 la suit, et c'est elle qui donne à Ash ce qu'un terminal ordinaire n'a
+        // pas, de quoi résoudre un chemin **relatif** sans se tromper.
+        createView: () =>
+            new XtermView(stack, theme, fontSize, fontFamily, {
+                bridge: tauriLinks,
+                cwd: () => {
+                    // Un onglet de merge n'a pas de `cwd` (ADR-0003 : il ne porte pas de
+                    // PTY), et il n'a pas de terminal non plus — d'où le `null`, qui laisse
+                    // les chemins relatifs inertes plutôt que de les résoudre ailleurs.
+                    const tab = activeTab(shown);
+                    return tab?.kind === "shell" ? tab.cwd : null;
+                },
+            }),
         // La surface d'un onglet qui n'est pas un shell se pose dans la **même** pile : un
         // seul onglet visible à la fois, terminal ou non (ADR-0003). L'atelier ne sait pas
         // ce qu'elle montre ; le composition root, lui, sait la fabriquer.

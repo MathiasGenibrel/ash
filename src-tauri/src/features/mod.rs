@@ -8,6 +8,7 @@ pub mod card;
 pub mod git;
 pub mod hooks;
 pub mod journal;
+pub mod links;
 pub mod merge;
 pub mod notifications;
 pub mod probe;

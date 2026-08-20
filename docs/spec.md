@@ -204,6 +204,23 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     son auteur, une instance installée tourne pendant qu'on en développe une
     autre, et la bande de titre est l'endroit où l'œil les sépare. La fenêtre de
     réglages suit la même règle : `settings — <application>`.
+- **Chemins et URL cliquables sous `⌘`.** `⌘` maintenu, le survol d'une URL
+  `http(s)` ou d'un chemin **qui existe** — absolu, `~/…`, ou relatif au `cwd` de
+  l'onglet — le souligne et change le curseur en main ; le clic ouvre l'URL dans le
+  navigateur par défaut, ou **révèle** le chemin dans le Finder. `⌘` relâché, ou la
+  fenêtre passée derrière, tout redevient du texte, et le clic va à l'application qui
+  suit la souris comme avant.
+  - **Ash n'exécute rien.** Un `.sh`, un `.app`, un binaire : révélés, jamais lancés.
+    Et seuls `http` et `https` s'ouvrent — une liste blanche, pas une liste noire :
+    la sortie d'un PTY est du texte hostile, et `javascript:`, `data:`, `file:` ou
+    `vbscript:` peuvent y être peints par ce qu'on affiche. La frontière est dans
+    `src-tauri/src/features/links/`, et se lit comme celles de `git_cli.rs` et de
+    `token.rs`.
+  - **Le `cwd` de l'onglet est ce qu'Ash a et qu'un terminal ordinaire n'a pas**
+    ([ADR-0005](./adr/0005-sonde-cwd-libproc.md)) : c'est lui qui rend un chemin
+    relatif résoluble sans se tromper, à travers les `cd`. La vérification
+    d'existence est **asynchrone** et ne retient jamais le rendu ; un chemin pas
+    encore vérifié reste du texte.
 - Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent.
   La branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
   - **L'usage est à sa droite** — amendé le 2026-08-20. Quatre morceaux, dans cet
