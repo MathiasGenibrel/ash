@@ -222,9 +222,20 @@ export function mountBranchPopup(host: HTMLElement, ports: BranchPopupPorts): Br
                     success: false,
                     output: "git could not be started",
                 };
+                // Une action qui a marché n'a rien à raconter : la branche du pied de fenêtre
+                // et la sidebar disent déjà où l'on est. Un écran « done » qu'il faut fermer
+                // ajoute un geste à chaque changement de branche, et c'est celui qu'on finit
+                // par cliquer sans lire — donc celui qui masquerait un échec le jour où il
+                // s'en présente un. L'échec, lui, garde son écran : il nomme ses deux côtés
+                // et rapporte ce que git a dit (spec §7.1).
+                if (answered.success) {
+                    model = { ...model, running: false };
+                    close();
+                    ports.onRepositoryChanged();
+                    return;
+                }
                 model = { ...model, running: false, stage: { kind: "outcome", outcome: answered } };
                 render();
-                if (answered.success) ports.onRepositoryChanged();
             })
             .catch(() => {
                 if (overlay === null) return;
