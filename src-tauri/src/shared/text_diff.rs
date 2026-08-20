@@ -1,10 +1,17 @@
-//! Le diff que la spec §10 exige **avant** qu'Ash n'écrive.
+//! Le diff que la spec §10 exige **avant** qu'Ash n'écrive dans un fichier de l'utilisateur.
 //!
 //! « Il signale, propose le diff, et demande. » Écrire — ou refuser — sans montrer ce qui
-//! changerait laisse l'utilisateur devant un choix aveugle. Depuis l'amendement du
-//! 2026-08-12 d'[ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), le diff n'est plus
-//! seulement la forme d'un refus : c'est **ce sur quoi l'utilisateur tranche**, et il porte
-//! le fichier tel qu'il est face au fichier tel qu'Ash le laisserait.
+//! changerait laisse l'utilisateur devant un choix aveugle.
+//!
+//! **Il est ici, et non dans `features/hooks`, depuis #31.** Il y est né pour les
+//! `settings.json` ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)) ; la fiche de
+//! branche ([ADR-0013](../../../docs/adr/0013-fiche-de-branche-dans-le-depot.md)) pose
+//! exactement la même question sur un `.md`, et la réponse ne dépend d'aucune des deux : ce
+//! sont deux chaînes de texte, comparées ligne à ligne. Les deux conditions de `shared/`
+//! sont donc remplies — deux features s'en servent, et il ne porte la règle d'aucune. Ce
+//! qui, lui, **n'a pas** été partagé est le régime d'écriture (sauvegarde, refus, marqueurs) :
+//! il ne se lit pareil que de loin, et les deux ports qu'il traverse n'acceptent pas le même
+//! type de document.
 //!
 //! Il est écrit ici plutôt que pris dans une bibliothèque : deux blocs de vingt lignes ne
 //! justifient pas une dépendance, et la comparaison est celle du manuel — plus longue

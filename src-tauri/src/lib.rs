@@ -68,6 +68,7 @@ use features::agents::{
     Notice, NotificationPreferences, NotificationStore, Notifier, Presence, Supervisor, TabAgents,
     SUBAGENT_LINGER,
 };
+use features::card::{AgentWork as CardWork, Cards, FileModeStore, SystemCardFiles, WorkRecord};
 use features::git::{
     resolve_worktree, BusyAgent, Entry, FileSystem, InhabitingTab, SystemFileSystem, SystemGit,
     TabPresence, WorkHistory, Worked, WorkingAgents, WorktreeTable,
@@ -324,6 +325,52 @@ impl AgentStates for SupervisedTabs {
 
     fn forget(&self, tab_id: &TabId) {
         self.0.forget(tab_id);
+    }
+}
+
+/// Relie le port de la fiche de branche au journal d'attribution, et à git.
+///
+/// La fiche demande *qui a écrit quoi dans ce worktree* ; la réponse tient en deux features
+/// dont aucune ne connaît la fiche. `features::git` sait seul lancer `git log` — derrière la
+/// frontière de sécurité de `git_cli.rs`, et c'est toujours le seul endroit du dépôt qui
+/// lance le binaire —, et `features::journal` sait seul qui tenait l'avant-plan quand chacun
+/// de ces commits est né ([ADR-0014](../../docs/adr/0014-attribution-locale-des-commits.md)).
+///
+/// La résolution du worktree vers son dossier git **commun** est ici aussi, et pour la même
+/// raison qu'elle est dans [`GitWorktrees`] : c'est la clé sous laquelle le journal range un
+/// dépôt, et `features::card` n'a pas à savoir ce qu'est un dépôt.
+///
+/// Il n'y a aucune décision ici — une résolution, une lecture, une projection sur deux
+/// champs. Ce que la table dit d'un travail vit dans `card/log.rs`, où ça se prouve.
+struct CardWorkFromJournal {
+    journal: Arc<CommitJournal>,
+    git: SystemGit,
+}
+
+impl CardWork for CardWorkFromJournal {
+    fn in_worktree(&self, worktree_root: &Path) -> Vec<WorkRecord> {
+        let Ok(located) = resolve_worktree(&SystemFileSystem, worktree_root) else {
+            return Vec::new();
+        };
+        let Some(repo) = located.repo.map(|repo| repo.git_dir.display().to_string()) else {
+            return Vec::new();
+        };
+        self.git
+            .recent_commits(worktree_root)
+            .iter()
+            .filter_map(|commit| {
+                // Un commit qu'Ash n'a pas vu naître n'a pas d'agent, et la fiche ne lui en
+                // invente pas : la colonne resterait vide dans le graphe aussi.
+                let entry = self.journal.attribution(&repo, commit)?;
+                if entry.agent.is_empty() {
+                    return None;
+                }
+                Some(WorkRecord {
+                    agent: entry.agent,
+                    authored_at: commit.authored_at,
+                })
+            })
+            .collect()
     }
 }
 
@@ -690,9 +737,26 @@ pub fn run() -> tauri::Result<()> {
         &shared::time::SystemClock,
     );
 
+    // La fiche de branche d'ADR-0013. Elle ne connaît ni git, ni le journal, ni les
+    // onglets : elle demande où elle vit, ce que le bloc porte, et qui a écrit dans ce
+    // worktree — et c'est ici que les trois questions trouvent leurs répondants.
+    let cards = Cards::new(
+        Arc::new(SystemCardFiles),
+        Arc::new(FileModeStore::in_home()),
+        Arc::new(CardWorkFromJournal {
+            journal: Arc::clone(&journal),
+            git: SystemGit::default(),
+        }),
+        Arc::new(shared::time::SystemClock),
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/")),
+    );
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&journal))
+        .manage(Arc::clone(&cards))
         .manage(Arc::clone(&git) as Arc<dyn features::git::BranchReader>)
         .manage(Arc::clone(&git) as Arc<dyn features::git::TreeWriter>)
         .manage(Arc::new(TabAgentsInWorktree(Arc::clone(&ptys))) as Arc<dyn WorkingAgents>)
@@ -726,6 +790,11 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_pause,
             features::pty::commands::pty_resume,
             features::git::commands::git_metadata,
+            features::journal::commands::journal_summary,
+            features::journal::commands::journal_purge,
+            features::card::commands::branch_card,
+            features::card::commands::branch_card_write_log,
+            features::card::commands::branch_card_place,
             features::git::commands::git_branches,
             features::git::commands::git_branch_offers,
             features::git::commands::git_branch_action,

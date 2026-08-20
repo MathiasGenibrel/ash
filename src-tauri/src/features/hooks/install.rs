@@ -1,7 +1,9 @@
-//! Poser les entrées, et les reprendre. Le seul endroit du produit qui écrit chez
-//! l'utilisateur.
+//! Poser les entrées, et les reprendre — le seul endroit qui écrive dans un `settings.json`.
 //!
-//! L'ordre des gestes est la règle, et il ne se réarrange pas :
+//! L'ordre des gestes est la règle, et il ne se réarrange pas. C'est le même que celui de
+//! [`card::write`](crate::features::card), qui écrit l'autre fichier de l'utilisateur
+//! (ADR-0013) : les deux features le tiennent chacune pour son format, et
+//! [`hooks`](super) dit pourquoi il n'est pas partagé.
 //!
 //! 1. **lire** le fichier tel qu'il est ;
 //! 2. **décider** — rien à faire, fusionner, réécrire, ou refuser ;

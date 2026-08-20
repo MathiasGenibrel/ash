@@ -360,6 +360,75 @@ export interface SidebarRows {
 }
 
 /**
+ * Où vit la fiche de branche
+ * ([ADR-0013](../../../docs/adr/0013-fiche-de-branche-dans-le-depot.md)).
+ *
+ * `repo` est le cas nominal — `.ash/worktree.md`, versionné, qui voyage avec la branche et
+ * qu'un agent qui la reprend peut lire. `local` est le repli quand l'équipe ne veut pas du
+ * fichier dans le dépôt : la fiche vit alors dans `~/.ash/worktrees/`, et **perd son unique
+ * avantage**. Ash ne force ni l'un ni l'autre, et n'écrit jamais dans un `.gitignore`.
+ */
+export type CardMode = "repo" | "local";
+
+/**
+ * Ce que le bloc `<!-- ash:log -->` porte, et ce qu'Ash a le droit d'en faire.
+ *
+ * Cinq des huit valeurs sont des **refus**, et c'est le sujet de la fiche : Ash n'écrit que
+ * ce qui lui appartient, et sait le reconnaître. `edited-by-hand` et `conflicted` sont les
+ * deux que la spec §10 et ADR-0013 nomment ; `unterminated` et `duplicated` sont ce qu'une
+ * fusion laisse derrière elle. Dans les cinq cas, le fichier n'est pas touché.
+ */
+export type CardLogState =
+    | "current"
+    | "stale"
+    | "no-card"
+    | "no-block"
+    | "edited-by-hand"
+    | "conflicted"
+    | "unterminated"
+    | "duplicated";
+
+/**
+ * L'état de la zone d'Ash dans la fiche, **calculé une seule fois** côté Rust.
+ *
+ * `writable` n'est pas déduit de `state` par l'écran, et c'est délibéré : agir et afficher
+ * doivent lire la même décision, sans quoi un bouton allumé pourrait proposer une écriture
+ * que le backend refusera — c'est la leçon de `hooks::presence`.
+ */
+export interface CardLog {
+    state: CardLogState;
+    /** La table telle qu'elle irait dans le bloc. */
+    table: string;
+    /** Le fichier tel qu'il est face au fichier tel qu'Ash le laisserait (spec §10). */
+    diff: string;
+    /** Ce qui se passe, ou ce qui ne se passera pas, en une phrase. */
+    note: string;
+    writable: boolean;
+}
+
+/**
+ * La fiche de branche d'un worktree (spec §7.5).
+ *
+ * `source` est du markdown **brut**, et c'est le seul endroit du contrat où du texte non
+ * interprété traverse : ADR-0013 exige que le rendu n'invente aucune syntaxe, donc l'écran
+ * met en forme ce que n'importe quel éditeur afficherait déjà. Rien ici n'est du HTML, et
+ * rien n'est posé par `innerHTML`.
+ */
+export interface BranchCard {
+    /** La racine du worktree — la même clé que celle des onglets (`TabLocation`). */
+    worktreeRoot: string;
+    path: string;
+    /** Où la fiche irait dans l'autre mode — ce que l'interrupteur promet. */
+    otherPath: string;
+    mode: CardMode;
+    /** `.ash` est gitignoré : la fiche ne partira pas avec la branche. */
+    ignoredByTheRepo: boolean;
+    exists: boolean;
+    source: string;
+    log: CardLog;
+}
+
+/**
  * Un agent qui tourne **en ce moment** dans un worktree — la colonne `agents now` du
  * tableau (spec §7.3).
  *
