@@ -40,6 +40,15 @@ pub enum Listing {
     /// `⌘1 … ⌘9`. Elle ne se capture pas : neuf positions rendues réglables une par une
     /// feraient neuf lignes presque identiques, et une famille à demi rebindée ne veut rien
     /// dire. `through` nomme l'action de l'autre extrémité.
+    ///
+    /// **Elle est incessible, et c'est une décision, pas un reste** (issue #137). La question
+    /// s'est posée le jour où capturer `⌘1` sur une autre action a posé deux liaisons sur la
+    /// touche : fallait-il refuser la capture, ou rendre la famille cessible ? Rendre
+    /// cessible demandait de décider ce que devient une famille amputée et ce que le retour
+    /// au défaut lui rend, pour une combinaison qui n'a aucune raison d'aller ailleurs — et
+    /// `⌘1`…`⌘9` s'adaptent déjà au clavier, puisque macOS y répond sous `⌘&`, `⌘é`, `⌘"` sur
+    /// un AZERTY. C'est donc la capture qui est refusée, et le refus **nomme** ce qui tient
+    /// la touche : on annonce, on n'interdit pas sans expliquer.
     Family { through: String },
 }
 
@@ -88,15 +97,22 @@ pub struct ShortcutRow {
     pub reservation: Option<Reservation>,
 }
 
-/// Les deux lignes d'un conflit, et les deux issues qui le referment.
+/// Les deux lignes d'un conflit, et la ou les issues qui le referment.
 ///
 /// Il naît d'une capture qui viserait une combinaison déjà prise, et **rien n'est appliqué
 /// tant qu'il vit** : c'est la règle de la planche, « ash ne réattribue jamais en silence ».
+///
+/// Il a **deux formes**, et ce qui les distingue est son détenteur (issue #137) :
+/// une ligne réglable peut céder sa combinaison, la famille des positions d'onglet ne le peut
+/// pas. La seconde forme est donc un **refus** : les deux mêmes lignes, un diagnostic qui dit
+/// pourquoi c'est sans appel, et **pas** de `give` — voir [`Held`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutConflict {
-    /// La combinaison disputée, en glyphes.
+    /// La combinaison disputée, en glyphes — et écrite comme elle a été **pressée** : `⌘&`
+    /// sur un clavier français, là où la liaison, elle, se lit `⌘1`. Le bloc répond à une
+    /// frappe, donc il parle de la touche qui est sous les doigts.
     pub keys: String,
     /// L'action qui détient la combinaison — la ligne `already assigned`.
     pub holder: String,
@@ -108,8 +124,13 @@ pub struct ShortcutConflict {
     /// win`.
     pub diagnosis: String,
     /// Le libellé de l'issue conséquente — `give ⌘X to New Tab`.
-    pub give: String,
-    /// Le libellé de l'issue secondaire — `keep the old one`.
+    ///
+    /// **Absent quand le détenteur ne peut pas céder** : la famille `Tab 1 … Tab 9` n'est pas
+    /// réglable, donc lui reprendre `⌘1` ne tiendrait pas une session — la relecture du
+    /// fichier le lui rendrait au démarrage suivant. Le bloc n'est alors plus un choix, c'est
+    /// un refus, et il n'offre que `keep`.
+    pub give: Option<String>,
+    /// Le libellé de l'issue secondaire — `keep the old one`. Seule issue d'un refus.
     pub keep: String,
 }
 
@@ -163,7 +184,34 @@ pub struct Rebound(pub bool);
 struct Pending {
     action: String,
     combination: Combination,
-    holder: String,
+    /// La combinaison écrite comme elle a été **pressée** — `⌘&` sur un AZERTY, là où la
+    /// liaison, elle, s'écrit `⌘1`. Retenue ici parce que la frappe est perdue ensuite, et
+    /// que tout ce que le bloc dit parle de ce qui vient d'être tapé.
+    keys: String,
+    holder: Held,
+}
+
+/// Qui tient la combinaison disputée — et, par là, **ce que le bloc peut offrir**.
+///
+/// Les deux cas ne sont pas un booléen posé à côté d'un identifiant : c'est cette valeur qui
+/// rend un `give` sur une ligne fixe **inconstruisible**, plutôt qu'une vérification de plus
+/// au moment de résoudre (issue #137). Le refus n'est pas une exception rattrapée en chemin,
+/// c'est l'autre branche du même type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Held {
+    /// Une ligne réglable : elle peut céder sa combinaison, et le bloc a ses deux issues.
+    Negotiable(String),
+    /// Une ligne qui ne se règle pas — la famille des positions d'onglet. Rien ne lui est
+    /// repris : `⌘1`…`⌘9` restent à la sélection d'onglet, et le bloc devient un refus.
+    Fixed(String),
+}
+
+impl Held {
+    fn action(&self) -> &str {
+        match self {
+            Held::Negotiable(action) | Held::Fixed(action) => action,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -237,23 +285,35 @@ impl Bindings {
         //    un fichier bricolé poserait deux fois la même touche dans le menu natif, où
         //    c'est la dernière posée qui gagne, en silence — exactement ce que le bloc de
         //    conflit existe pour éviter.
+        //
+        //    Les lignes **fixes** sont tranchées avant toutes les autres, quel que soit leur
+        //    rang : leur combinaison ne bouge jamais, ni par le fichier ni par un geste. Les
+        //    compter est ce qui ferme le trou de l'issue #137 — un `shortcuts.json` bricolé
+        //    qui pose `⌘1` sur New Tab est tranché ici, par le même chemin que le reste, et
+        //    New Tab repart de son défaut plutôt que de doubler la sélection d'onglet.
+        let fixed: Vec<&ActionBinding> = self
+            .actions
+            .iter()
+            .filter(|one| !one.rebindable())
+            .collect();
         let ordered: Vec<&ActionBinding> =
             self.actions.iter().filter(|one| one.rebindable()).collect();
         for (rank, declared) in ordered.iter().enumerate() {
-            let settled = &ordered[..rank];
+            let settled = || fixed.iter().chain(ordered[..rank].iter()).copied();
             // Une ligne sans raccourci ne dispute rien à personne.
             let Some(in_use) = effective(declared, &kept) else {
                 continue;
             };
-            if holder(settled.iter().copied(), &declared.action, &in_use, &kept).is_none() {
+            if holder(settled(), &declared.action, &in_use, &kept).is_none() {
                 continue;
             }
             // Son défaut s'il est libre — elle y repart, comme si le fichier n'avait rien
             // dit d'elle. Sinon rien : elle reste **sans** raccourci plutôt que d'en porter
             // un que le menu donnerait à une autre.
-            let fallback = declared.default.clone().filter(|free| {
-                holder(settled.iter().copied(), &declared.action, free, &kept).is_none()
-            });
+            let fallback = declared
+                .default
+                .clone()
+                .filter(|free| holder(settled(), &declared.action, free, &kept).is_none());
             // Et c'est [`record`] qui l'inscrit, comme partout ailleurs : l'assainissement
             // n'a pas plus le droit qu'une capture d'écrire une valeur qui répète le défaut.
             record(declared, fallback, &mut kept);
@@ -340,11 +400,11 @@ impl Bindings {
 
         let (label, keys) = match &declared.listing {
             Listing::Hidden => return None,
-            Listing::Row => (declared.label.clone(), written(&in_use)),
+            Listing::Row => (self.listed_as(&declared.action), written(&in_use)),
             Listing::Family { through } => {
                 let last = self.actions.iter().find(|one| &one.action == through)?;
                 (
-                    format!("{} … {}", declared.label, last.label),
+                    self.listed_as(&declared.action),
                     format!("{} … {}", written(&in_use), written(&last.default)),
                 )
             }
@@ -362,29 +422,91 @@ impl Bindings {
         })
     }
 
+    /// Le bloc qu'une capture en attente fait sortir — un choix, ou un refus.
+    ///
+    /// Les deux textes se répondent, et c'est voulu : le premier dit ce qui **se passerait**
+    /// sans ce bloc — dans un menu natif, deux entrées sur la même touche laissent gagner la
+    /// dernière posée, sans rien dire à personne. Le second dit ce qu'Ash **ne fera pas**, et
+    /// pourquoi, dans le registre d'une combinaison réservée (`reserved.rs`) : on annonce, on
+    /// n'interdit pas sans expliquer.
     fn conflict(&self, pending: &Pending) -> ShortcutConflict {
-        let name = |action: &str| {
-            self.actions
-                .iter()
-                .find(|one| one.action == action)
-                .map(|one| one.label.clone())
-                .unwrap_or_else(|| action.to_owned())
+        let keys = pending.keys.clone();
+        let asked_label = self.listed_as(&pending.action);
+        let holder_label = self.listed_as(pending.holder.action());
+        let (diagnosis, give) = match &pending.holder {
+            Held::Negotiable(_) => (
+                format!("two actions on {keys} — the last one set would silently win"),
+                Some(format!("give {keys} to {asked_label}")),
+            ),
+            Held::Fixed(_) => (
+                format!(
+                    "{keys} belongs to {holder_label} — that row is not rebindable, and ash will not take it away"
+                ),
+                None,
+            ),
         };
-        let keys = pending.combination.glyphs();
-        let asked_label = name(&pending.action);
         ShortcutConflict {
-            holder: pending.holder.clone(),
-            holder_label: name(&pending.holder),
+            holder: pending.holder.action().to_owned(),
+            holder_label,
             asked: pending.action.clone(),
-            // Le diagnostic dit ce qui se passerait **sans** ce bloc, et c'est le point :
-            // dans un menu natif, deux entrées sur la même touche laissent gagner la
-            // dernière posée, sans rien dire à personne.
-            diagnosis: format!("two actions on {keys} — the last one set would silently win"),
-            give: format!("give {keys} to {asked_label}"),
+            diagnosis,
+            give,
             keep: "keep the old one".to_owned(),
             asked_label,
             keys,
         }
+    }
+
+    /// Le nom sous lequel une action se **lit** dans la liste — le sien, ou celui de la
+    /// famille qui l'englobe.
+    ///
+    /// Les huit positions d'onglet qui suivent `Tab 1` n'ont pas de ligne à elles
+    /// (`Listing::Hidden`) : nommer le détenteur de `⌘é` « Tab 2 » désignerait une ligne que
+    /// l'écran ne montre nulle part, et un refus qui nomme l'invisible n'explique rien. La
+    /// famille se retrouve par l'ordre de déclaration — de sa ligne jusqu'à l'action que son
+    /// `through` nomme, incluse.
+    ///
+    /// **Seule une action sans ligne à elle se lit sous une autre.** Une action qui a la
+    /// sienne porte son propre libellé, quel que soit son rang : sans cette condition, une
+    /// ligne ordinaire déclarée entre `Tab 1` et `Tab 9` dans `menu.rs` se ferait renommer
+    /// « Tab 1 … Tab 9 » dans les réglages, et l'ordre de déclaration d'un fichier
+    /// déciderait en silence du nom affiché par un autre.
+    fn listed_as(&self, action: &str) -> String {
+        let Some((rank, declared)) = self
+            .actions
+            .iter()
+            .enumerate()
+            .find(|(_, one)| one.action == action)
+        else {
+            return action.to_owned();
+        };
+        let heading = match declared.listing {
+            Listing::Hidden => self.covering(rank).unwrap_or(declared),
+            _ => declared,
+        };
+        match &heading.listing {
+            Listing::Family { through } => self
+                .actions
+                .iter()
+                .find(|one| &one.action == through)
+                .map(|last| format!("{} … {}", heading.label, last.label))
+                .unwrap_or_else(|| heading.label.clone()),
+            _ => heading.label.clone(),
+        }
+    }
+
+    /// La ligne de famille qui englobe l'action de ce rang, s'il y en a une.
+    fn covering(&self, rank: usize) -> Option<&ActionBinding> {
+        self.actions.iter().enumerate().find_map(|(head, one)| {
+            let Listing::Family { through } = &one.listing else {
+                return None;
+            };
+            let tail = self
+                .actions
+                .iter()
+                .position(|other| &other.action == through)?;
+            (head <= rank && rank <= tail).then_some(one)
+        })
     }
 
     /// Ce que le bloc de capture montre d'une frappe, sans rien retenir.
@@ -419,7 +541,10 @@ impl Bindings {
                 action: action.to_owned(),
             });
         }
-        Ok(self.claim(declared, Some(combination)))
+        // Ce que le bloc de conflit écrira est la combinaison **telle qu'elle a été pressée**
+        // — `⌘&` sur un AZERTY : c'est la seule touche que l'utilisateur ait sous les doigts.
+        let pressed = combination.glyphs_pressed(stroke);
+        Ok(self.claim(declared, Some(combination), Some(pressed)))
     }
 
     /// Pose ce qu'une action doit porter — **le seul chemin par lequel une liaison change**.
@@ -434,7 +559,12 @@ impl Bindings {
     /// **Rien n'est appliqué tant qu'un conflit vit** : si une autre ligne tient déjà ce
     /// qu'on veut poser, la demande est mise en attente et le bloc sort. C'est l'utilisateur
     /// qui tranche, par l'une des deux issues nommées de [`resolve`](Self::resolve).
-    fn claim(&self, declared: &ActionBinding, wanted: Option<Combination>) -> Rebound {
+    fn claim(
+        &self,
+        declared: &ActionBinding,
+        wanted: Option<Combination>,
+        pressed: Option<String>,
+    ) -> Rebound {
         let mut chosen = self.locked();
         if let Some(sought) = &wanted {
             if let Some(held) = holder(
@@ -445,8 +575,15 @@ impl Bindings {
             ) {
                 chosen.pending = Some(Pending {
                     action: declared.action.clone(),
+                    keys: pressed.unwrap_or_else(|| sought.glyphs()),
                     combination: sought.clone(),
-                    holder: held.action.clone(),
+                    // Ce que le détenteur **est** décide de ce que le bloc offrira, et c'est
+                    // décidé ici, une fois : une ligne qui ne se règle pas ne cède rien.
+                    holder: if held.rebindable() {
+                        Held::Negotiable(held.action.clone())
+                    } else {
+                        Held::Fixed(held.action.clone())
+                    },
                 });
                 return Rebound(false);
             }
@@ -479,7 +616,7 @@ impl Bindings {
                 action: action.to_owned(),
             });
         }
-        Ok(self.claim(declared, None))
+        Ok(self.claim(declared, None, None))
     }
 
     /// Rend son défaut à une ligne — l'icône de retour, qui n'existe que sur les lignes
@@ -490,9 +627,21 @@ impl Bindings {
     /// qu'on la lui a donnée. Le geste ouvre alors le **même** bloc de conflit qu'une
     /// capture, avec ses deux issues nommées, et rien n'est écrit tant que l'utilisateur n'a
     /// pas choisi.
+    ///
+    /// Elle **refuse** une ligne qui ne se règle pas, comme [`bind`](Self::bind) et
+    /// [`clear`](Self::clear) : les trois gestes qui écrivent posent alors la même condition,
+    /// et le côté `asked` d'un conflit est rebindable **par construction**. Sans ce garde, la
+    /// propriété tenait encore, mais par un raisonnement à distance — « personne ne peut
+    /// détenir `⌘1`, puisque l'assainissement tranche les lignes fixes d'abord » —, et ce
+    /// genre de preuve est exactement ce que l'issue #137 a vu se périmer.
     pub fn reset(&self, action: &str) -> Result<Rebound, ShortcutError> {
         let declared = self.declared(action)?;
-        Ok(self.claim(declared, declared.default.clone()))
+        if !declared.rebindable() {
+            return Err(ShortcutError::FixedBinding {
+                action: action.to_owned(),
+            });
+        }
+        Ok(self.claim(declared, declared.default.clone(), None))
     }
 
     /// `reset all` — toutes les lignes reprennent leur défaut.
@@ -517,7 +666,11 @@ impl Bindings {
         Rebound(rebound)
     }
 
-    /// Referme un conflit par l'une de ses deux issues.
+    /// Referme un conflit par l'issue choisie.
+    ///
+    /// Elles sont deux quand le détenteur peut céder, **une seule** quand il ne le peut pas :
+    /// c'est [`Held`] qui le dit, et c'est pourquoi un `give` sur une ligne fixe ne se
+    /// construit pas ici (issue #137).
     ///
     /// `Give` ne se contente pas de poser la combinaison sur la nouvelle action : elle
     /// **retire** celle de l'ancienne. Les laisser toutes les deux serait rouvrir le conflit
@@ -527,19 +680,24 @@ impl Bindings {
         let Some(pending) = chosen.pending.take() else {
             return Rebound(false);
         };
-        match choice {
-            ConflictChoice::Keep => Rebound(false),
-            ConflictChoice::Give => {
+        match (choice, &pending.holder) {
+            // `Keep` jette la capture — et c'est la **seule** issue d'un refus : le bloc
+            // qu'une ligne fixe fait sortir n'offre pas de `give`, et un `give` qui
+            // arriverait quand même n'a rien à quoi s'appliquer. Le reprendre à la famille
+            // des positions d'onglet ne tiendrait de toute façon pas une session : la
+            // relecture du fichier le lui rendrait au démarrage suivant (issue #137).
+            (ConflictChoice::Keep, _) | (ConflictChoice::Give, Held::Fixed(_)) => Rebound(false),
+            (ConflictChoice::Give, Held::Negotiable(holder)) => {
                 // L'ancienne détentrice **d'abord** : la combinaison doit être libre avant
                 // d'être reposée, sans quoi les deux lignes la porteraient le temps d'une
                 // instruction — et c'est cet état-là que le bloc existe pour ne jamais
                 // atteindre.
                 let mut next = chosen.overrides.clone();
                 for (action, wanted) in [
-                    (&pending.holder, None),
-                    (&pending.action, Some(pending.combination.clone())),
+                    (holder.as_str(), None),
+                    (pending.action.as_str(), Some(pending.combination.clone())),
                 ] {
-                    if let Some(declared) = self.actions.iter().find(|one| &one.action == action) {
+                    if let Some(declared) = self.actions.iter().find(|one| one.action == action) {
                         record(declared, wanted, &mut next);
                     }
                 }
@@ -593,9 +751,12 @@ impl Bindings {
 /// `among` n'est pas toujours toute la table : l'assainissement d'un fichier ne compare
 /// qu'aux lignes qu'il a **déjà tranchées**, pour que l'arbitrage suive l'ordre du menu.
 ///
-/// Les lignes qui ne se règlent pas (la famille des positions d'onglet) sont hors du compte :
-/// une combinaison ne leur est ni prise ni donnée, et le bloc de conflit n'aurait pas d'issue
-/// à offrir de leur côté.
+/// **Tout le monde compte, y compris les lignes qui ne se règlent pas** (issue #137). La
+/// question posée ici est « qui tient cette combinaison ? », et elle n'a rien à voir avec
+/// « à qui puis-je proposer une issue ? » : mêler les deux — en filtrant sur `rebindable` —
+/// laissait `⌘1`…`⌘9` tenues par personne aux yeux de la règle, et une capture de `⌘1` posait
+/// alors **deux** actions sur la touche, en silence. Ce que le détenteur est se lit après,
+/// une fois qu'il est trouvé : voir [`Held`].
 fn holder<'a>(
     among: impl IntoIterator<Item = &'a ActionBinding>,
     except: &str,
@@ -603,9 +764,7 @@ fn holder<'a>(
     overrides: &BTreeMap<String, Option<Combination>>,
 ) -> Option<&'a ActionBinding> {
     among.into_iter().find(|other| {
-        other.action != except
-            && other.rebindable()
-            && effective(other, overrides).as_ref() == Some(combination)
+        other.action != except && effective(other, overrides).as_ref() == Some(combination)
     })
 }
 
@@ -686,6 +845,19 @@ mod tests {
                 listing: Listing::Family {
                     through: through.to_owned(),
                 },
+            });
+            self
+        }
+
+        /// Une position d'onglet qui n'a pas de ligne à elle : elle porte sa combinaison, et
+        /// se lit sous la ligne de la famille — `Tab 2 … Tab 9` dans le menu réel.
+        fn hidden(mut self, action: &str, label: &str, default: &str) -> Self {
+            self.actions.push(ActionBinding {
+                action: action.to_owned(),
+                group: "terminal".to_owned(),
+                label: label.to_owned(),
+                default: Some(Combination::parse(default).unwrap()),
+                listing: Listing::Hidden,
             });
             self
         }
@@ -870,7 +1042,7 @@ mod tests {
         let conflict = report.conflict.unwrap();
         assert_eq!(conflict.holder, "tab:close");
         assert_eq!(conflict.asked, "tab:new");
-        assert_eq!(conflict.give, "give ⌘W to New Tab");
+        assert_eq!(conflict.give.as_deref(), Some("give ⌘W to New Tab"));
         assert_eq!(
             conflict.diagnosis,
             "two actions on ⌘W — the last one set would silently win"
@@ -976,7 +1148,7 @@ mod tests {
         let conflict = report.conflict.unwrap();
         assert_eq!(conflict.holder, "tab:close");
         assert_eq!(conflict.asked, "tab:new");
-        assert_eq!(conflict.give, "give ⌘T to New Tab");
+        assert_eq!(conflict.give.as_deref(), Some("give ⌘T to New Tab"));
         assert_eq!(conflict.keep, "keep the old one");
     }
 
@@ -1060,16 +1232,26 @@ mod tests {
     #[test]
     fn given_every_path_that_poses_a_combination_when_one_of_them_would_double_it_then_no_two_actions_carry_it(
     ) {
-        // Given — quatre chemins mènent à une liaison, et l'invariant n'en a qu'un seul
+        // Given — cinq chemins mènent à une liaison, et l'invariant n'en a qu'un seul
         // endroit : avoir eu deux règles à deux endroits est exactement ce qui a laissé le
-        // retour au défaut poser une combinaison déjà tenue (issue #134)
+        // retour au défaut poser une combinaison déjà tenue (issue #134), et n'avoir compté
+        // que les lignes **réglables** est ce qui laissait la famille des positions d'onglet
+        // tenue par personne (issue #137)
         let three = || {
             BindingsBuilder::new()
                 .action("tab:new", "New Tab", Some("Cmd+T"))
                 .action("tab:close", "Close Tab", Some("Cmd+W"))
                 .action("tab:clear", "Clear Scrollback", None)
+                .family("tab:select:1", "Tab 1", "Cmd+1", "tab:select:9")
+                .hidden("tab:select:9", "Tab 9", "Cmd+9")
         };
-        let rows = ["tab:new", "tab:close", "tab:clear"];
+        let rows = [
+            "tab:new",
+            "tab:close",
+            "tab:clear",
+            "tab:select:1",
+            "tab:select:9",
+        ];
 
         // When — 1. une capture qui vise une combinaison prise
         let captured = three().build();
@@ -1092,7 +1274,8 @@ mod tests {
         all.resolve(ConflictChoice::Give);
         all.reset_all();
 
-        // 4. un fichier édité à la main, qui pose la même touche deux fois
+        // 4. un fichier édité à la main, qui pose la même touche deux fois — et qui pose
+        //    aussi `⌘1`, que la famille des positions d'onglet tient sans pouvoir la céder
         let store = Arc::new(FakeStore::default());
         let mut bricolage = BTreeMap::new();
         for action in ["tab:new", "tab:close"] {
@@ -1101,6 +1284,10 @@ mod tests {
                 Some(Combination::parse("Cmd+KeyJ").unwrap()),
             );
         }
+        bricolage.insert(
+            "tab:clear".to_owned(),
+            Some(Combination::parse("Cmd+Digit1").unwrap()),
+        );
         store
             .save(&StoredBindings {
                 bindings: bricolage,
@@ -1108,13 +1295,36 @@ mod tests {
             .unwrap();
         let edited = three().store(store as Arc<dyn BindingStore>).build();
 
-        // Then — aucun chemin ne pose deux fois la même touche, et les deux qui devaient
+        // 5. une capture qui vise une combinaison tenue par une ligne **fixe**
+        let fixed = three().build();
+        fixed
+            .bind("tab:new", &stroke("1", "Digit1", true, false))
+            .unwrap();
+        // le bloc est lu avant d'être refermé : c'est lui qui porte le refus
+        let refusal = fixed.report().conflict.unwrap();
+        // et l'issue qu'il n'offre pas, demandée quand même : elle ne prend rien à personne
+        fixed.resolve(ConflictChoice::Give);
+
+        // Then — aucun chemin ne pose deux fois la même touche, et les trois qui devaient
         // s'arrêter se sont arrêtés sur le bloc plutôt qu'en silence
-        for settled in [&captured, &restored, &all, &edited] {
+        for settled in [&captured, &restored, &all, &edited, &fixed] {
             assert_eq!(doubled(settled, &rows), Vec::<String>::new());
         }
         assert!(captured.report().conflict.is_some());
         assert!(restored.report().conflict.is_some());
+        // Le refus nomme la famille qui tient la touche, et n'offre que « garder l'ancien » :
+        // `⌘1` reste à la sélection d'onglet, et New Tab garde ce qu'elle avait
+        assert_eq!(refusal.holder_label, "Tab 1 … Tab 9");
+        assert_eq!(refusal.give, None);
+        assert!(refusal.diagnosis.contains("⌘1 belongs to Tab 1 … Tab 9"));
+        assert_eq!(fixed.accelerator("tab:new").as_deref(), Some("Cmd+KeyT"));
+        assert_eq!(
+            fixed.accelerator("tab:select:1").as_deref(),
+            Some("Cmd+Digit1")
+        );
+        // Et le fichier bricolé est tranché à la relecture, par le même chemin : `⌘1` n'est
+        // pas volée à la famille, et la ligne qui la réclamait repart sans raccourci
+        assert_eq!(edited.accelerator("tab:clear"), None);
     }
 
     #[test]
@@ -1281,12 +1491,14 @@ mod tests {
         // identiques, et une famille à demi rebindée ne veut rien dire (spec §4.4)
         let bindings = BindingsBuilder::new()
             .family("tab:select:1", "Tab 1", "Cmd+1", "tab:select:9")
-            .action("tab:select:9", "Tab 9", Some("Cmd+9"))
+            .hidden("tab:select:9", "Tab 9", "Cmd+9")
             .build();
 
         // When
         let report = bindings.report();
         let refused = bindings.bind("tab:select:1", &stroke("j", "KeyJ", true, false));
+        // et le retour au défaut, qui écrit comme la capture, se voit refuser de même
+        let unreset = bindings.reset("tab:select:1");
 
         // Then
         let family = row(&report, "tab:select:1");
@@ -1294,6 +1506,66 @@ mod tests {
         assert_eq!(family.keys, "⌘1 … ⌘9");
         assert!(!family.rebindable);
         assert!(matches!(refused, Err(ShortcutError::FixedBinding { .. })));
+        assert!(matches!(unreset, Err(ShortcutError::FixedBinding { .. })));
+    }
+
+    #[test]
+    fn given_a_row_of_its_own_declared_inside_the_family_when_it_is_listed_then_it_keeps_its_label()
+    {
+        // Given — la famille se retrouve par l'ordre de déclaration, et rien n'empêche
+        // `menu.rs` d'insérer un jour une action ordinaire entre ses deux extrémités. Elle a
+        // sa ligne, donc elle porte son nom : l'ordre d'un fichier ne renomme pas ce qu'un
+        // autre affiche
+        let bindings = BindingsBuilder::new()
+            .family("tab:select:1", "Tab 1", "Cmd+1", "tab:select:9")
+            .action("tab:new", "New Tab", Some("Cmd+T"))
+            .hidden("tab:select:9", "Tab 9", "Cmd+9")
+            .build();
+
+        // When
+        let report = bindings.report();
+
+        // Then — et le refus qu'une capture de `⌘1` fait sortir nomme les deux de la même
+        // façon que la liste, puisque c'est la même fonction qui les nomme
+        assert_eq!(row(&report, "tab:new").label, "New Tab");
+        assert_eq!(row(&report, "tab:select:1").label, "Tab 1 … Tab 9");
+        bindings
+            .bind("tab:new", &stroke("1", "Digit1", true, false))
+            .unwrap();
+        let refusal = bindings.report().conflict.unwrap();
+        assert_eq!(refusal.asked_label, "New Tab");
+        assert_eq!(refusal.holder_label, "Tab 1 … Tab 9");
+    }
+
+    #[test]
+    fn given_a_french_keyboard_when_a_tab_position_key_is_captured_then_the_refusal_names_the_key_pressed_and_the_family_holding_it(
+    ) {
+        // Given — sur un AZERTY, la touche qui joue `⌘2` est marquée `é`, et c'est macOS qui
+        // en décide : la liaison, elle, reste `Cmd+Digit2`. Un refus qui parlerait de `⌘2`
+        // nommerait une touche que l'utilisateur n'a nulle part, et `Tab 2` une ligne que
+        // l'écran ne montre pas — elle se lit sous la famille
+        let bindings = BindingsBuilder::new()
+            .action("tab:new", "New Tab", Some("Cmd+T"))
+            .family("tab:select:1", "Tab 1", "Cmd+1", "tab:select:9")
+            .hidden("tab:select:2", "Tab 2", "Cmd+2")
+            .hidden("tab:select:9", "Tab 9", "Cmd+9")
+            .build();
+
+        // When
+        bindings
+            .bind("tab:new", &stroke("é", "Digit2", true, false))
+            .unwrap();
+
+        // Then — le refus parle de la touche pressée, nomme la famille, et n'a qu'une issue
+        let refusal = bindings.report().conflict.unwrap();
+        assert_eq!(refusal.keys, "⌘É");
+        assert_eq!(refusal.holder_label, "Tab 1 … Tab 9");
+        assert_eq!(
+            refusal.diagnosis,
+            "⌘É belongs to Tab 1 … Tab 9 — that row is not rebindable, and ash will not take it away"
+        );
+        assert_eq!(refusal.give, None);
+        assert_eq!(refusal.keep, "keep the old one");
     }
 
     #[test]

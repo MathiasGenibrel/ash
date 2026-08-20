@@ -1306,7 +1306,13 @@
     cursor: pointer;
 }
 
+/* La famille `⌘1 … ⌘9` n'est pas un bouton — elle ne se capture pas —, mais elle est une
+ * ligne de la même liste : sans les mêmes règles de disposition, son `spacer` ne pousse rien
+ * et sa pastille se colle au libellé au lieu de s'aligner à droite avec les autres. */
 .settings-shortcut-fixed {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
     flex: 1;
     padding: 3px 6px;
 }

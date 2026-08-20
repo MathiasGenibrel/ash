@@ -344,7 +344,9 @@ fn descriptor(action: Action) -> Descriptor {
         Action::ChooseTheme(_) => Listing::Hidden,
         // Les neuf positions se lisent en **une** ligne, d'un bout à l'autre — la spec §4.4
         // les écrit ainsi, et neuf lignes identiques à un rang près feraient perdre les
-        // autres raccourcis dans la liste. Elle ne se capture pas : voir `Listing::Family`.
+        // autres raccourcis dans la liste. Elle ne se capture pas, et **rien ne lui prend sa
+        // combinaison** : une capture qui viserait `⌘1` se voit refuser, avec le nom de la
+        // famille qui la tient (issue #137, et `Listing::Family` pour le pourquoi).
         Action::SelectTab(1) => Listing::Family {
             through: Action::SelectTab(DIRECT_TABS).id(),
         },
