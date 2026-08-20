@@ -313,9 +313,10 @@ function counts(status: GitStatus | null): StatusChip[] {
  * attend, avec son raccourci — c'est ce qui rend `⌘B` supportable (bloc `1b`).
  *
  * **Le reste du temps, il n'y a rien à rappeler.** La maquette y mettait `⌘K commands`, mais
- * la palette de commandes n'existe pas, et `⌘K` appartient désormais au shell : Ash ne le
- * pose sur aucune entrée de menu, précisément pour que le terminal le reçoive (#132). Une
- * ligne de statut qui annonce une touche ne faisant rien coûte plus qu'un coin vide.
+ * la palette de commandes n'existe pas : le rappel annoncerait une touche qui n'ouvre rien,
+ * et ça coûte plus qu'un coin vide. `⌘K` existe bien depuis #159 — il efface le scrollback,
+ * comme dans les autres terminaux de macOS —, ce qui n'est justement pas ce que la maquette
+ * promettait ici.
  */
 function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip | null {
     // Un prédicat de type, et pas seulement un filtre : `waiting` ne peut contenir que des
