@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 
 import type { ComposeOutcome, TabId } from "@/shared/ipc";
 
-import { handOverConflictsToAgent, type HandOverDeps } from "./compose-prompt";
+import { MergeTabBuilder, TabBuilder } from "@/shared/ipc/builders";
+
+import { agentTabIn, handOverConflictsToAgent, type HandOverDeps } from "./compose-prompt";
 import type { GitBridge, PtyBridge } from "./ports";
 
 /**
@@ -125,5 +127,73 @@ describe("passer un rebase arrêté à l'agent de l'onglet", () => {
         // sans raison
         expect(notice).toBeNull();
         expect(scene.steps).toEqual(["asked /dev/ash"]);
+    });
+});
+
+describe("à qui passer le reste des conflits", () => {
+    it("Given a merge tab and a shell running an agent in the same worktree, when the tab to hand over to is picked, then the shell is chosen", () => {
+        // Given
+        const merge = MergeTabBuilder.create().id("M").inWorktree("/wt/ash-merge", "ash").build();
+        const shell = TabBuilder.create()
+            .named("S")
+            .runningAgent("claude")
+            .inWorktree("/wt/ash-merge", "ash")
+            .build();
+
+        // When
+        const target = agentTabIn([merge, shell], "/wt/ash-merge");
+
+        // Then
+        expect(target).toBe("S");
+    });
+
+    it("Given only a bare shell in the worktree, when the tab to hand over to is picked, then nothing is offered", () => {
+        // Given — le backend refuserait de composer dans un onglet sans agent reconnu
+        // (`no-agent`), et viser cet onglet ferait sélectionner un terminal sous les yeux de
+        // l'utilisateur pour lui annoncer un refus.
+        const bare = TabBuilder.create().named("S").inWorktree("/wt/ash-merge", "ash").build();
+
+        // When
+        const target = agentTabIn([bare], "/wt/ash-merge");
+
+        // Then
+        expect(target).toBeNull();
+    });
+
+    it("Given an agent running in another worktree, when the tab to hand over to is picked, then it is not chosen", () => {
+        // Given — le prompt parle des conflits de *ce* worktree : l'écrire ailleurs donnerait
+        // à un agent des chemins qui n'existent pas chez lui.
+        const elsewhere = TabBuilder.create()
+            .named("S")
+            .runningAgent("claude")
+            .inWorktree("/wt/ash-sidebar", "ash")
+            .build();
+
+        // When
+        const target = agentTabIn([elsewhere], "/wt/ash-merge");
+
+        // Then
+        expect(target).toBeNull();
+    });
+
+    it("Given two agents in the worktree, when the tab to hand over to is picked, then the first in backend order wins", () => {
+        // Given — l'ordre de la liste est celui que `⌘1..9` numérote : celui qu'on désigne
+        // est celui qu'on voit en premier.
+        const first = TabBuilder.create()
+            .named("A")
+            .runningAgent("claude")
+            .inWorktree("/wt/ash-merge", "ash")
+            .build();
+        const second = TabBuilder.create()
+            .named("B")
+            .runningAgent("claude")
+            .inWorktree("/wt/ash-merge", "ash")
+            .build();
+
+        // When
+        const target = agentTabIn([first, second], "/wt/ash-merge");
+
+        // Then
+        expect(target).toBe("A");
     });
 });

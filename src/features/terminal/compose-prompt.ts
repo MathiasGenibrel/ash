@@ -20,7 +20,8 @@
  * n'aura pas résolu.
  */
 
-import type { ComposeOutcome, TabId } from "@/shared/ipc";
+import { isShell } from "@/shared/ipc";
+import type { ComposeOutcome, Tab, TabId } from "@/shared/ipc";
 
 import type { GitBridge, PtyBridge } from "./ports";
 
@@ -106,4 +107,33 @@ export async function writePromptInTab(
 
     const outcome = await deps.pty.compose(tabId, prompt);
     return NOTICES[outcome];
+}
+
+/**
+ * L'onglet où poser un prompt de conflit : un **shell du même worktree** qui porte un agent
+ * reconnu ([ADR-0006](../../../docs/adr/0006-decouverte-automatique-des-agents.md)).
+ *
+ * Les trois conditions se lisent d'un bloc, et chacune a un coût si on l'oublie :
+ *
+ * - **shell** — une surface d'outil n'a pas de PTY (ADR-0003) ; y composer n'a aucun sens,
+ *   et rien côté backend n'existe pour le faire ;
+ * - **agent reconnu** — le backend refuse de composer dans un onglet qui n'en porte pas
+ *   (`no-agent`). Viser un `zsh` à son invite ferait donc sélectionner un terminal sous les
+ *   yeux de l'utilisateur pour lui annoncer un refus ;
+ * - **même worktree** — le prompt parle des conflits de *ce* worktree. L'écrire ailleurs
+ *   donnerait à un agent des chemins qui n'existent pas chez lui.
+ *
+ * Le premier dans **l'ordre du backend**, qui est celui que `⌘1..9` numérote : à deux agents
+ * dans le même worktree, celui qu'on désigne est celui qu'on voit en premier.
+ *
+ * `null` quand il n'y en a aucun, et Ash n'en ouvre **pas** un pour l'occasion : ouvrir un
+ * onglet est un geste de l'utilisateur, et l'écran le lui dit
+ * ([ADR-0010](../../../docs/adr/0010-la-sidebar-informe-l-ecran-agit.md)).
+ */
+export function agentTabIn(tabs: readonly Tab[], worktreeRoot: string): TabId | null {
+    const found = tabs.find(
+        (tab) =>
+            isShell(tab) && tab.agent !== null && tab.location?.worktreeRoot === worktreeRoot,
+    );
+    return found?.tabId ?? null;
 }

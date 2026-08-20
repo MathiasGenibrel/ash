@@ -50,6 +50,7 @@ export type { Step } from "./tabs";
  * panneau appellera ceci ; il n'appellera jamais `pty-bridge` directement.
  */
 export {
+    agentTabIn,
     handOverConflictsToAgent,
     writePromptInTab,
     type ComposeNotice,

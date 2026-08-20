@@ -6,6 +6,7 @@ import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { SidebarRows } from "@/shared/ipc";
 import {
+    agentTabIn,
     mountTerminals,
     tauriPtyBridge,
     writePromptInTab,
@@ -103,24 +104,6 @@ function mount(
     // passer le reste de ses conflits. Un seul abonnement, une seule vérité (ADR-0009).
     let tabs: readonly Tab[] = [];
 
-    /**
-     * L'onglet où poser un prompt de conflit : un **shell du même worktree** qui porte un
-     * agent reconnu (ADR-0006).
-     *
-     * `null` quand il n'y en a aucun. Ash n'en ouvre pas un pour l'occasion : ouvrir un
-     * onglet est un geste de l'utilisateur, et l'écran le lui dit
-     * ([ADR-0010](../../docs/adr/0010-la-sidebar-informe-l-ecran-agit.md)).
-     */
-    const agentTabIn = (worktreeRoot: string): TabId | null => {
-        const found = tabs.find(
-            (tab) =>
-                tab.kind === "shell" &&
-                tab.agent !== null &&
-                tab.location?.worktreeRoot === worktreeRoot,
-        );
-        return found?.tabId ?? null;
-    };
-
     const terminals: Terminals = mountTerminals(
         host,
         theme,
@@ -134,7 +117,11 @@ function mount(
             tab.kind === "merge"
                 ? createMergeSurface(tab, {
                       bridge: mergeBridge,
-                      agentTab: agentTabIn,
+                      // À qui passer le reste des conflits — la règle appartient à la
+                      // feature terminal, qui détient les onglets et le pupitre de
+                      // composition. Le composition root ne fait que lui donner la liste
+                      // qu'il tient (ADR-0009).
+                      agentTab: (worktreeRoot) => agentTabIn(tabs, worktreeRoot),
                       // Le **même** chemin d'écriture que la vue `conflicts` du panneau bas :
                       // sélectionner l'onglet, puis composer, jamais envoyer (ADR-0015).
                       writePrompt: async (prompt, tabId) =>
