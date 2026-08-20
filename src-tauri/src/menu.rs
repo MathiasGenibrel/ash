@@ -12,7 +12,10 @@
 //! - c'est le même code pour le clavier et pour la souris, or la spec §4.4 exige que
 //!   « toutes ces actions soient également atteignables à la souris » ;
 //! - sur macOS, un accélérateur de menu est consommé par `performKeyEquivalent:` avant
-//!   d'atteindre la webview : `Cmd+K` ne part donc pas dans le shell ;
+//!   d'atteindre la webview : ce que le menu déclare, xterm.js ne le voit jamais, donc
+//!   une entrée de menu et une frappe du terminal ne peuvent pas se disputer la même
+//!   touche. C'est vrai de toute combinaison, y compris de celles qu'un shell utilise
+//!   vraiment — d'où le soin pris à choisir les défauts (voir la famille git plus bas) ;
 //! - `Cmd+W` est sinon capté par la fermeture de fenêtre. Le menu « Window » construit
 //!   ici n'a **volontairement pas** d'entrée « Close Window » : `Cmd+W` ferme un onglet,
 //!   comme dans tout émulateur de terminal.
@@ -482,18 +485,32 @@ fn descriptor(action: Action) -> Descriptor {
         Action::CloseTab => ("terminal", "Close Tab", Some("Cmd+W")),
         Action::NextTab => ("terminal", "Select Next Tab", Some("Ctrl+Tab")),
         Action::PreviousTab => ("terminal", "Select Previous Tab", Some("Ctrl+Shift+Tab")),
-        // **Aucun raccourci par défaut, et c'est `⌘K` qui est en jeu.** La touche appartient
-        // au shell — `⌃K` coupe la fin de ligne, `⌘K` efface l'écran dans les terminaux de
-        // macOS —, et c'est justement pour ça qu'Ash ne peut pas la déclarer « au cas où » :
-        // le deuxième point de l'en-tête de ce module dit qu'un accélérateur de menu est
-        // consommé par `performKeyEquivalent:` **avant** d'atteindre la webview. La poser
-        // ici, c'est la retirer au shell — il n'y a pas de moyen terme.
+        // **`⌘K`, et ce défaut ne retire rien à personne** (issue #159). Il a longtemps été
+        // laissé vide au motif inverse — « la touche appartient au shell, et un accélérateur
+        // de menu est consommé par `performKeyEquivalent:` avant la webview, donc la poser
+        // ici serait la lui retirer ». La seconde moitié de ce raisonnement était fausse, et
+        // le résultat était un trou : la spec §4.4 promettait un effacement que rien ne
+        // produisait, et personne ne récupérait la touche pour autant.
         //
-        // L'entrée de menu, elle, reste : l'action existe, elle est cliquable à la souris
-        // (spec §4.4), et la fenêtre de réglages la propose comme n'importe quelle autre. Qui
-        // veut `⌘K` pour Ash peut la lui donner — et `reserved.rs` l'avertira alors que le
-        // terminal la lui prenait.
-        Action::ClearScrollback => ("terminal", "Clear Scrollback", None),
+        // Ce que `⌘` fait dans un terminal : **rien**. Le modificateur Command n'a aucune
+        // représentation dans l'encodage d'entrée d'un terminal, contrairement à `Ctrl`, qui
+        // produit un caractère de contrôle, et à `Alt`/`Meta`, qui préfixe par `ESC`. Aucun
+        // `⌘` quoi que ce soit ne descend dans un PTY, jamais — Terminal.app et iTerm2
+        // implémentent leur `⌘K` eux-mêmes, comme une action applicative, et iTerm2 va
+        // jusqu'à proposer de **mapper** explicitement des combinaisons `⌘` vers des
+        // séquences d'échappement : une option qui n'aurait aucun sens si elles y
+        // descendaient toutes seules.
+        //
+        // Ce qui appartient vraiment au shell, c'est `⌃K` — couper la fin de ligne —, et
+        // c'est une **autre** combinaison, que macOS n'apparie pas avec celle-ci. Ash ne la
+        // déclare nulle part.
+        //
+        // Reste vrai, et sert ailleurs : un accélérateur de menu est bien consommé avant la
+        // webview (deuxième point de l'en-tête de ce module). C'est ce qui rend `⌘K`
+        // atteignable ici, et ce qui obligerait à réfléchir si le défaut portait `Ctrl`.
+        // Comme n'importe quel autre, il reste **réglable** : la fenêtre de réglages peut
+        // l'effacer ou le donner à une autre action.
+        Action::ClearScrollback => ("terminal", "Clear Scrollback", Some("Cmd+K")),
         Action::ToggleSidebar => ("view", "Toggle Sidebar", Some("Cmd+B")),
         // Les deux seules entrées dont le libellé et l'accélérateur se calculent : la
         // position d'onglet est dans les deux, et `DIRECT_TABS` décide combien il y en a.
@@ -521,11 +538,12 @@ fn descriptor(action: Action) -> Descriptor {
         // `⌘⌃B`, qui porte `Cmd` et ne descend donc dans aucun PTY. La mnémonique est
         // **B**ranches, **G**raph, **W**orktrees, **M**erge, **I**nfo.
         //
-        // Ces cinq-là ne posent pas la question de `⌘K` (voir `ClearScrollback`), et c'est
-        // ce qui les rend déclarables : un accélérateur de menu est bien consommé par
-        // `performKeyEquivalent:` avant la webview, mais aucun shell n'attend `⌘⌃`
-        // quoi que ce soit — macOS ne fait descendre `Cmd` dans aucune séquence de
-        // terminal. Ce qu'on retire au shell en les posant est exactement rien.
+        // Ce qu'on retire au shell en les posant est exactement rien, et pour la même raison
+        // que `⌘K` (voir `ClearScrollback`) : un accélérateur de menu est bien consommé par
+        // `performKeyEquivalent:` avant la webview, mais aucune combinaison portant `Cmd` ne
+        // descend dans une séquence de terminal — macOS n'en fait rien descendre. La
+        // question ne se pose que pour un défaut qui porterait `Ctrl` seul, et aucun n'en
+        // porte.
         //
         // Les trois combinaisons `⌘⌃` que **macOS** prend — `⌘⌃F`, `⌘⌃D`, `⌘⌃Espace` — sont
         // dans `features::shortcuts::reserved`, et le test
@@ -1506,9 +1524,10 @@ mod tests {
         // le menu ne déclare plus, et c'est l'écran qu'on croit
         let listed = menu_bindings().report();
 
-        // Then — chaque ligne est rangée sous un groupe, et une action sans raccourci **du
-        // tout** (les trois thèmes) n'y figure pas. Une ligne sans combinaison, elle, en est
-        // une : `Clear Scrollback` n'a pas de défaut, et se règle comme les autres
+        // Then — chaque ligne est rangée sous un groupe, et une action qu'aucun raccourci ne
+        // vise (les trois thèmes) n'y figure pas. `Clear Scrollback` y porte son défaut
+        // depuis #159 ; une ligne peut encore se retrouver sans combinaison, mais parce que
+        // l'utilisateur l'a effacée — `bindings.rs` tient ce cas-là
         assert!(listed.rows.iter().all(|row| !row.group.is_empty()));
         assert!(listed
             .rows
@@ -1517,7 +1536,7 @@ mod tests {
         assert!(listed
             .rows
             .iter()
-            .any(|row| row.label == "Clear Scrollback" && row.keys.is_empty()));
+            .any(|row| row.label == "Clear Scrollback" && row.keys == "⌘K"));
         assert!(!listed.rows.iter().any(|row| row.label == "Light"));
     }
 
@@ -1679,25 +1698,30 @@ mod tests {
         let lost: Vec<String> = declared
             .iter()
             .filter(|binding| {
-                binding.default.is_none()
-                    && !binding.action.starts_with("view:theme:")
-                    && binding.action != Action::ClearScrollback.id()
+                binding.default.is_none() && !binding.action.starts_with("view:theme:")
             })
             .map(|binding| binding.action.clone())
             .collect();
 
-        // Then — les trois thèmes et `Clear Scrollback` sont les seules actions sans
-        // raccourci d'origine, et les quatre le sont **exprès** : un thème se change une fois
-        // par saison, et `⌘K` appartient au shell
+        // Then — les trois thèmes sont les seules actions sans raccourci d'origine, et elles
+        // le sont **exprès** : un thème se change une fois par saison. `Clear Scrollback`
+        // faisait exception jusqu'à #159 ; il ne la fait plus, et l'exemption est partie avec
         assert_eq!(lost, Vec::<String>::new());
     }
 
     #[test]
-    fn given_a_fresh_install_when_the_menu_is_built_then_no_entry_carries_cmd_k() {
-        // Given — `⌘K` appartient au shell. Et ce n'est pas une question de goût : un
-        // accélérateur de menu est consommé par `performKeyEquivalent:` **avant** d'atteindre
-        // la webview (en-tête de ce module), donc toute entrée qui le porterait le retirerait
-        // au terminal. C'est ce test qui garantit que le shell le reçoit
+    fn given_a_fresh_install_when_the_menu_is_built_then_cmd_k_carries_clear_scrollback_and_it_alone(
+    ) {
+        // Given — l'inverse de ce que ce test verrouillait jusqu'à #159, et il faut dire
+        // pourquoi : `⌘K` avait été laissé libre « pour le shell », alors que `⌘` n'atteint
+        // aucun PTY — le modificateur Command n'a aucune représentation dans l'encodage
+        // d'entrée d'un terminal, là où `Ctrl` produit un caractère de contrôle et `Alt`
+        // préfixe par `ESC`. Personne ne recevait donc la touche, et la spec §4.4 promettait
+        // un effacement que rien ne produisait. Ce que le shell garde, c'est `⌃K` — une
+        // autre combinaison, qu'Ash ne déclare nulle part.
+        //
+        // La seconde assertion tient l'invariant « une combinaison, une action » sur ce
+        // cas-ci : `⌘K` posé deux fois ferait gagner silencieusement le dernier écrit
         let bindings = menu_bindings();
         let taken = Combination::parse("Cmd+K").unwrap().accelerator();
 
@@ -1709,7 +1733,7 @@ mod tests {
             .collect();
 
         // Then
-        assert_eq!(carried, Vec::<String>::new());
+        assert_eq!(carried, vec![Action::ClearScrollback.id()]);
     }
 
     #[test]
