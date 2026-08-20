@@ -40,6 +40,8 @@ src/
   shared/
     ipc/                 le contrat Rust ↔ TypeScript
     agent-state/         la présentation des cinq états — sidebar et ligne de statut
+    resizable-edge/      la géométrie d'un bord qu'on règle au glissement — la
+                         colonne de gauche et le panneau bas
 ```
 
 **`features/panel/` est une surface, pas une vue.** Elle porte la hauteur réglable, le
@@ -188,6 +190,15 @@ porte aucune règle propre à l'une d'elles. Préfère des noms de rôle (`share
 
 Quand `shared/` grossit, c'est en général le signe qu'une feature n'a pas été nommée.
 Cherche la capacité manquante avant d'ajouter un fichier de plus.
+
+**`shared/resizable-edge` est le cas qui passe l'examen.** Deux surfaces se règlent au
+glissement d'un bord — la colonne de gauche par son bord droit (#129), le panneau bas par
+son bord haut (#24) —, et la mesure y avait été écrite deux fois : deux bornes relatives,
+deux clamps, deux écarts de saisie, deux poignées bornées, deux pourcentages pour
+`aria-valuenow`. Ce qui est parti là-bas est de la **géométrie**, sans un mot du domaine.
+Ce qui est resté chez chaque feature est tout ce qui la distingue : ses fractions, son axe,
+son pas de clavier, et la règle qui dit ce que relâcher sous le plancher veut dire — replier
+une colonne, ou rendre sa hauteur au terminal.
 
 ## Injection de dépendances
 
