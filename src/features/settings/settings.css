@@ -923,6 +923,25 @@
     color: var(--ash-fg-strong);
 }
 
+/* ── La section `usage` (ADR-0016, condition 3) ────────────────────────────────────────
+ *
+ * Elle emprunte la mise en page de `notifications` — l'interrupteur, la ligne d'état et sa
+ * prose — parce que c'est la même sorte de section : un fait du système, sa conséquence, et
+ * un réglage. Une seule règle lui est propre, et c'est l'adresse : elle se lit **en premier**,
+ * parce qu'on ne coupe pas quelque chose dont on ignore ce que c'est. */
+.settings-usage-endpoint {
+    padding: 12px 16px 4px;
+    font-size: 12.5px;
+    color: var(--ash-fg-done);
+}
+
+/* Un jeton qu'on ne peut pas lire est le seul état teinté de la section : c'est celui qui
+ * coûte quelque chose. `absent` et `untried` ne coûtent rien — personne n'a rien refusé. */
+.settings-permission.is-refused,
+.settings-permission.is-unreadable {
+    color: var(--ash-error);
+}
+
 /* ── La section `appearance` (spec §9) ─────────────────────────────────────────────────
  *
  * Le contenu commence **sous le titre**, comme celui de `tools`. Deux blocs : les trois

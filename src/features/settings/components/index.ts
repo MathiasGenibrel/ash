@@ -33,6 +33,7 @@ export {
     type ShortcutsActions,
 } from "./shortcuts";
 export { testDetail, testRow, type TestDetailActions } from "./test-row";
+export { usageSection, type UsageActions } from "./usage";
 export {
     uninstallRow,
     uninstallScreen,

@@ -3,8 +3,9 @@
 Chaque fichier trace une décision structurante : son contexte, ce qui a été décidé,
 ce que ça coûte, et ce qui a été écarté et pourquoi.
 
-Statut au 2026-08-10 : 0001 à 0010 sont issues de la session de cadrage du 2026-08-07,
-0011 à 0015 de la revue de la direction visuelle. Les ADR qui portaient la mention
+Statut au 2026-08-20 : 0001 à 0010 sont issues de la session de cadrage du 2026-08-07,
+0011 à 0015 de la revue de la direction visuelle, et 0016-0017 du premier besoin qui sort
+de la machine — les quotas de la spec §4.2. Les ADR qui portaient la mention
 « à réviser avec le design » ont été reprises : 0001 et 0002 confirmées, 0003
 reformulée.
 
@@ -25,6 +26,8 @@ reformulée.
 | [0013](./0013-fiche-de-branche-dans-le-depot.md) | La fiche de branche vit dans le dépôt, en markdown | — |
 | [0014](./0014-attribution-locale-des-commits.md) | L'attribution d'un commit à un agent est un journal local | — |
 | [0015](./0015-ash-compose-l-utilisateur-envoie.md) | Ash compose, l'utilisateur envoie | — |
+| [0016](./0016-ash-sort-sur-le-reseau.md) | Ash sort sur le réseau, à quatre conditions | — |
+| [0017](./0017-ash-lit-le-jeton-de-l-outil.md) | Ash lit le jeton de l'outil qu'il supervise | — |
 
 ## Dépendances
 
@@ -46,6 +49,9 @@ reformulée.
  ├─ 0014 attribution locale des commits     (amende 0009)
  └─ 0015 ash compose, l'utilisateur envoie  (amende 0010)
 
+0016 ash sort sur le réseau
+ └─ 0017 ash lit le jeton de l'outil        (découle aussi de 0007)
+
 0009 cycle de vie          (la plus révisable)
 0010 sidebar informe
 ```
@@ -58,4 +64,6 @@ Elles traversent plusieurs ADR et se citent plus souvent qu'elles ne se déciden
   fichier de l'utilisateur — `settings.json` (0007), `<!-- ash:log -->` (0013) — il
   écrit entre marqueurs, sauvegarde avant, et refuse d'écraser une édition manuelle.
 - **On voit ce qui va partir avant que ça parte.** Vaut pour les hooks (0007) comme
-  pour les prompts composés (0015).
+  pour les prompts composés (0015) — et désormais pour ce qui sort de la machine (0016).
+- **Ce qu'Ash n'a pas, il ne l'invente pas.** Une mesure absente disparaît : pas de zéro,
+  pas de tiret, pas de dernière valeur connue maquillée en fraîche (0016).

@@ -243,6 +243,53 @@ export interface NotificationsReport {
 }
 
 /**
+ * L'issue de la **dernière** lecture du trousseau, telle que `features::usage` la retient
+ * ([ADR-0017](../../../docs/adr/0017-ash-lit-le-jeton-de-l-outil.md), conséquences).
+ *
+ * Les conséquences de l'ADR l'exigent nommément : « la fenêtre de réglages doit donc pouvoir
+ * dire *le jeton n'est pas lisible* ». Sans ces cinq mots, un refus, un item absent et une
+ * panne donneraient le même écran vide — et c'est précisément le prix du « en échec, la
+ * valeur disparaît ».
+ *
+ * `untried` n'est **pas** une panne : aucun appel ne part tant qu'Ash est derrière une autre
+ * fenêtre (ADR-0016, condition 2), donc « rien tenté » est l'état normal d'une session qu'on
+ * vient d'ouvrir en arrière-plan.
+ *
+ * **La lire ne lit rien.** C'est un souvenir que le fil de fond a laissé, pas une question
+ * posée au système : ouvrir cette section ne doit faire surgir aucun dialogue de trousseau
+ * (ADR-0016, condition 1).
+ */
+export type UsageReadability = "untried" | "readable" | "absent" | "refused" | "unreadable";
+
+/**
+ * La section `usage` de la fenêtre, telle que le backend la compose (ADR-0016, condition 3).
+ *
+ * Elle porte les deux moitiés de la condition : **savoir qu'Ash appelle** — l'hôte est nommé
+ * en toutes lettres dans `endpoint`, et il vient de la constante que le code appelle
+ * vraiment — et **pouvoir le couper**, par `polling`.
+ *
+ * Rien n'est décidé ici, pas même les phrases : elles viennent de
+ * `features/settings/usage.rs`, comme celles des notifications et pour la même raison — ce
+ * sont des règles de produit, et une règle de produit ne se recopie pas dans un écran
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface UsageReport {
+    /** L'interrupteur d'ADR-0016. La fenêtre le montre ; `features::usage` le détient. */
+    polling: boolean;
+    token: UsageReadability;
+    /** La phrase de la ligne d'état du jeton. */
+    summary: string;
+    /** Sa conséquence, en prose. */
+    note: string;
+    /** Où reprendre l'autorisation du trousseau, mot pour mot. */
+    path: string;
+    /** L'hôte qu'Ash appelle, en toutes lettres. */
+    endpoint: string;
+    /** La limite des deux comptes — ce qu'Ash ne sait pas, et qu'il préfère dire. */
+    accounts: string;
+}
+
+/**
  * Ce que le journal d'attribution pèse, tel que `features::journal` le dit
  * ([ADR-0014](../../../docs/adr/0014-attribution-locale-des-commits.md)).
  *
@@ -573,6 +620,27 @@ export interface SettingsPorts {
      * promettrait le silence à qui continuerait d'être dérangé.
      */
     setNotification(state: AgentState, enabled: boolean): Promise<NotificationsReport>;
+    /**
+     * Ce que la section `usage` affiche (ADR-0016, condition 3).
+     *
+     * **Elle ne déclenche aucune lecture de trousseau ni aucun appel réseau** : le backend
+     * rend un booléen et un souvenir, tous deux déjà dans le poller. C'est la condition 1
+     * d'ADR-0016 appliquée à une surface qui n'y penserait pas — ouvrir un panneau ne fait
+     * pas surgir un dialogue macOS.
+     *
+     * Demandée à chaque ouverture de la section, comme `notifications` : la lisibilité du
+     * jeton change pendant qu'Ash tourne, au premier appel du fil de fond.
+     */
+    usage(): Promise<UsageReport>;
+    /**
+     * Coupe ou rallume les appels sortants (ADR-0016, condition 3).
+     *
+     * Elle rend la section **recomposée par le backend**, pour la raison de
+     * [`setNotification`] : c'est lui qui détient la position, et l'écran ne fait que la
+     * rendre. Couper fait aussi disparaître les deux quotas de la barre d'état — une valeur
+     * qu'on ne rafraîchit plus ne doit pas rester à l'écran en passant pour fraîche.
+     */
+    setUsagePolling(enabled: boolean): Promise<UsageReport>;
     /** Ce que le journal d'attribution a retenu — **il ne rend aucune ligne du fichier**. */
     journal(): Promise<JournalReport>;
     /**

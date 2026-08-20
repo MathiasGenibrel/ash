@@ -1,18 +1,25 @@
 /**
- * Les quatre sections de la fenêtre, et la façon de passer de l'une à l'autre.
+ * Les sections de la fenêtre, et la façon de passer de l'une à l'autre.
  *
  * L'ordre est celui de la maquette et n'est pas négociable au fil d'une tâche : `tools`,
  * `shortcuts`, `appearance`, `notifications`. Il va du plus structurant au plus
  * accessoire, et c'est aussi l'ordre dans lequel `⌥↓` les parcourt.
+ *
+ * `usage` s'ajoute **à la fin**, et pour la même règle : c'est la plus périphérique des
+ * cinq — elle ne commande ni un outil, ni une touche, ni un pixel, mais ce qui sort de la
+ * machine ([ADR-0016](../../../docs/adr/0016-ash-sort-sur-le-reseau.md)). Elle est en
+ * dernier parce que l'ordre existant ne se réarrange pas pour loger un nouveau venu :
+ * quatre positions apprises se retrouveraient déplacées d'un cran.
  */
 
-export type SettingsSection = "tools" | "shortcuts" | "appearance" | "notifications";
+export type SettingsSection = "tools" | "shortcuts" | "appearance" | "notifications" | "usage";
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     "tools",
     "shortcuts",
     "appearance",
     "notifications",
+    "usage",
 ];
 
 /** De quoi décider d'un déplacement sans dépendre d'un `KeyboardEvent` réel. */

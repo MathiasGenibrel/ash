@@ -122,6 +122,39 @@ millisecondes depuis l'époque Unix — envoyée une seule fois, au changement d
 partir `ash://tab-changed` chaque seconde pour chaque onglet actif. Le compteur qui
 s'incrémente est un fait d'affichage, et il le reste.
 
+**Ash sort sur le réseau, pour la première fois, et à quatre conditions**
+([ADR-0016](./docs/adr/0016-ash-sort-sur-le-reseau.md)) : les quotas de session et
+hebdomadaire (spec §4.2) ne sont dans aucun fichier de la machine, et `features/usage/` va les
+demander à `api.anthropic.com` — **la seule adresse réseau du dépôt**, nommée dans `api.rs`,
+sans client HTTP générique offert au reste du code. Jamais sur un chemin de rendu, de sonde
+ou de hook : un fil de fond, un `GET` bloquant que personne n'attend. Jamais quand la fenêtre
+n'est pas devant — et le retour au premier plan est un **front**, pas seulement un niveau : il
+réveille le fil, qui redemande un appel sans attendre la fin du cycle. Le tout passe par un
+portillon unique de dix lignes (`poller.rs`), qui porte aussi le plancher d'**un appel par
+minute** : trois bascules d'application en dix secondes n'en font pas trois. Le jeton vient du
+trousseau de l'outil ([ADR-0017](./docs/adr/0017-ash-lit-le-jeton-de-l-outil.md)) par
+`/usr/bin/security`, à `argv` constant — la **seconde frontière de sécurité** du dépôt après
+`git_cli.rs` —, et un refus est définitif : Ash ne redemande jamais.
+
+**Ce qui traverse est une date, jamais un décompte.** `Quota` porte un pourcentage et
+`resetsAt`, en millisecondes depuis l'époque Unix — comme `TabInfo.stateSince`, et pour la
+même raison : le `resets in 2h14` de la maquette s'égrène à l'écran. La durée de la fenêtre
+(cinq heures) n'est écrite **nulle part**, et c'est un résultat, pas un oubli : l'API n'expose
+aucune durée, `resetsAt` suffit, et une fenêtre qui passerait à quatre heures n'aurait rien à
+corriger. En échec — jeton absent, refusé, illisible, hôte injoignable, appels coupés — la
+valeur **disparaît** : ni zéro, ni tiret, ni dernière valeur connue maquillée en fraîche, et
+aucune notification d'aucune sorte.
+
+**La cinquième section de la fenêtre de réglages est `usage`**, et elle existe parce que le
+silence a un prix. Elle nomme l'hôte qu'Ash appelle avant d'offrir l'interrupteur qui le coupe
+— on ne coupe pas ce qu'on ne sait pas nommer —, elle dit **laquelle** des cinq issues de
+lecture du trousseau s'applique (rien tenté / lisible / absent / refusé / illisible), sans
+quoi un refus, un item absent et une panne donneraient le même écran vide, et elle admet
+qu'avec deux comptes Claude Code, Ash **ne sait pas** auquel le quota se rapporte (ADR-0007) —
+mieux vaut ne rien rattacher que rattacher au mauvais. **L'ouvrir ne lit rien** : ni trousseau,
+ni réseau. Elle rapporte un souvenir que le fil de fond a laissé, parce qu'un panneau qui irait
+chercher ferait surgir un dialogue macOS sur un chemin de rendu.
+
 `ash-event` lit **l'entrée standard** que tout hook lui donne, et en tire `agent_id` /
 `agent_type` (ADR-0007, amendement du 2026-08-13) — les deux clés que les lignes filles
 consomment, bornées à 256 octets pour qu'une clé démesurée ne fasse jamais partir une trame
@@ -133,7 +166,8 @@ ne peut retenir un hook, donc bloquer un agent.
 - **Type de projet** : application de bureau macOS
 - **Coquille** : Tauri v2 ([ADR-0002](./docs/adr/0002-tauri-rust-portable-pty.md))
 - **Backend** : Rust — `portable-pty`, `libc` (la sonde), `notify` (la surveillance de
-  `.git`), `objc2` + `objc2-user-notifications` (les bannières). Le socket unix et le
+  `.git`), `objc2` + `objc2-user-notifications` (les bannières), `ureq` (**le seul appel
+  réseau**, ADR-0016). Le socket unix et le
   binaire `ash-event` ([ADR-0007](./docs/adr/0007-etats-par-hooks.md)) existent depuis
   J2 : le crate porte **deux binaires**, `ash` et `ash-event` (`src/bin/ash-event.rs`)
 - **Frontend** : TypeScript + xterm.js, dans la webview système (WKWebView)
@@ -292,6 +326,9 @@ src-tauri/src/
                          sauvegarde, ses refus, le mode local        — ADR-0013
     merge/             ✓ le déroulé d'un merge : ses conflits, ses fichiers,
                          ses verbes git                              — spec §7.4
+    usage/             ✓ les quotas de session et hebdomadaire : le trousseau,
+                         **la seule adresse réseau du dépôt**, la cadence,
+                         l'interrupteur                              — ADR-0016/17
   shared/              ✓ réellement transverse, et justifié (l'horloge, le diff)
 src/
   app/                 ✓ composition root, tokens des thèmes, menu
@@ -316,6 +353,15 @@ fichiers, le parsing des fichiers de contrôle et **le seul appel à `git`** du 
 appel est encadré par une frontière de sécurité documentée dans `git_cli.rs` — Ash lance
 `git status` sur un simple `cd`, donc visiter un dépôt hostile ne doit rien exécuter. Si
 tu ajoutes un verbe git, repose la question pour lui.
+
+`features/usage/` est la seule qui sorte de la machine, et la seule qui lise un secret.
+Les deux ADR qui l'encadrent — [ADR-0016](./docs/adr/0016-ash-sort-sur-le-reseau.md) et
+[ADR-0017](./docs/adr/0017-ash-lit-le-jeton-de-l-outil.md) — posent quatre conditions
+chacune, et son `mod.rs` dit laquelle vit dans quel fichier. Deux frontières de sécurité s'y
+lisent comme celle de `git_cli.rs` : `token.rs`, pour le second binaire externe qu'Ash lance
+(`/usr/bin/security`, `argv` constant), et `api.rs`, pour l'unique URL du dépôt. Si tu ajoutes
+un appel réseau, repose les quatre questions pour lui — et note qu'il n'y a **pas** de client
+HTTP générique à réutiliser, c'est délibéré.
 
 Détail et justification : [`.claude/docs/architecture.md`](./.claude/docs/architecture.md).
 
@@ -468,7 +514,7 @@ chacun. `dev-architecture` s'arrête si
 
 ## Ce qui est déjà décidé, et ne se rediscute pas dans une tâche
 
-Les 15 ADR de [`docs/adr/`](./docs/adr/) sont des décisions prises. Une tâche les
+Les 17 ADR de [`docs/adr/`](./docs/adr/) sont des décisions prises. Une tâche les
 applique ; elle ne les renégocie pas. Si une tâche révèle qu'une ADR est fausse, la
 conduite est d'écrire l'amendement — pas de coder contre elle en silence.
 

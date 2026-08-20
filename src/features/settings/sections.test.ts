@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { moveSection, SETTINGS_SECTIONS, sectionStep } from "./sections";
+import { moveSection, SETTINGS_SECTIONS, sectionStep, type SettingsSection } from "./sections";
 
 describe("la navigation entre sections", () => {
     it("Given a bare arrow key, when the window reads it, then it is not a section move", () => {
@@ -39,7 +39,7 @@ describe("la navigation entre sections", () => {
 
     it("Given the last section, when the move goes down, then it stays where it is", () => {
         // Given
-        const last = SETTINGS_SECTIONS[SETTINGS_SECTIONS.length - 1] ?? "notifications";
+        const last = SETTINGS_SECTIONS[SETTINGS_SECTIONS.length - 1] ?? "usage";
 
         // When
         const moved = moveSection(last, 1);
@@ -56,5 +56,24 @@ describe("la navigation entre sections", () => {
 
         // Then
         expect(landed).toBe("appearance");
+    });
+
+    it("Given the four sections the mockup drew, when usage joins them, then none of them moved", () => {
+        // Given — la section `usage` est arrivée après coup (ADR-0016). Elle est en dernier
+        // pour une raison qui se perdrait sans ce test : réarranger la liste pour loger un
+        // nouveau venu déplacerait quatre positions déjà apprises, et `⌥↓` ne mènerait plus
+        // où l'habitude le dit
+        const drawnByTheMockup: SettingsSection[] = [
+            "tools",
+            "shortcuts",
+            "appearance",
+            "notifications",
+        ];
+
+        // When
+        const order = [...SETTINGS_SECTIONS];
+
+        // Then
+        expect(order).toEqual([...drawnByTheMockup, "usage"]);
     });
 });

@@ -26,6 +26,7 @@ import type {
     SettingsSnapshot,
     ShortcutsReport,
     ToolDraft,
+    UsageReport,
     Verification,
     WindowPorts,
 } from "./contract";
@@ -52,6 +53,8 @@ export type {
     ThemeMode,
     ToolDeclaration,
     ToolDraft,
+    UsageReadability,
+    UsageReport,
     Verification,
     WindowPorts,
 } from "./contract";
@@ -131,6 +134,15 @@ export function mountSettings(
     /** Ce que le backend dit des notifications macOS, ou `null` tant qu'il n'a rien dit. */
     let notifications: NotificationsReport | null = null;
     /**
+     * Ce que le backend dit des appels de quotas, ou `null` tant qu'il n'a rien dit.
+     *
+     * Relu à chaque ouverture de la section, comme `notifications` : la lisibilité du jeton
+     * change pendant qu'Ash tourne, au premier appel du fil de fond. **La relecture ne
+     * déclenche rien** — ni trousseau, ni réseau ([ADR-0016](../../../docs/adr/0016-ash-sort-sur-le-reseau.md),
+     * condition 1).
+     */
+    let usage: UsageReport | null = null;
+    /**
      * Ce que le backend dit du journal d'attribution, ou `null` tant qu'il n'a rien dit.
      *
      * Relu à l'ouverture **et** après chaque purge : c'est le backend qui compte, et un zéro
@@ -204,6 +216,7 @@ export function mountSettings(
             // tourne : la relire en ouvrant la section est la seule façon de ne pas
             // afficher un état d'hier.
             if (next === "notifications") void askNotifications();
+            if (next === "usage") void askUsage();
             draw();
         },
         startAdding: () => {
@@ -346,6 +359,13 @@ export function mountSettings(
         setNotification: (state, enabled) => {
             void flipNotification(state, enabled);
         },
+        // Même chemin exactement, pour la même raison : `features::usage` détient
+        // l'interrupteur et son portillon le consulte au moment de sortir. Le couper ici
+        // n'empêcherait aucun paquet de partir, et c'est le paquet qu'ADR-0016 donne à
+        // couper — pas le chiffre.
+        setUsagePolling: (enabled) => {
+            void flipUsagePolling(enabled);
+        },
         purgeJournal: () => {
             void purgeJournal();
         },
@@ -478,6 +498,32 @@ export function mountSettings(
     async function askNotifications(): Promise<void> {
         try {
             notifications = await ports.notifications();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
+    /** Relit la section `usage`. Un refus la laisse à ce qu'elle montrait. */
+    async function askUsage(): Promise<void> {
+        try {
+            usage = await ports.usage();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
+    /**
+     * Coupe ou rallume les appels sortants. Un refus laisse la section telle qu'elle était.
+     *
+     * Rien n'est basculé ici : `features::usage` détient le choix et le consulte au moment de
+     * sortir. Un interrupteur retourné à l'écran sans que le backend l'ait retenu promettrait
+     * le silence à une machine qui continuerait d'appeler.
+     */
+    async function flipUsagePolling(enabled: boolean): Promise<void> {
+        try {
+            usage = await ports.setUsagePolling(enabled);
         } catch {
             return;
         }
@@ -641,6 +687,7 @@ export function mountSettings(
             conflict,
             removal,
             notifications,
+            usage,
             journal,
             appearance,
             fonts,
@@ -712,6 +759,7 @@ export function mountSettings(
         event.preventDefault();
         section = moveSection(section, step);
         if (section === "notifications") void askNotifications();
+        if (section === "usage") void askUsage();
         draw();
         view.focusActiveSection();
     });
