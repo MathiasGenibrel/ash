@@ -1,13 +1,20 @@
 import type {
     AgentState,
+    ConflictFile,
     GitHead,
     GitOperation,
+    GitOperationKind,
+    MergeView,
+    SideLabel,
     GitStatus,
     Instrumented,
+    MergeTab,
     RecognizedAgent,
     PinnedWorktree,
+    RepoRef,
+    ShellTab,
     Subagent,
-    TabInfo,
+
     WorktreeMetadata,
 } from "./index";
 
@@ -139,8 +146,16 @@ export class TabBuilder {
         return this;
     }
 
-    build(): TabInfo {
+    /**
+     * L'onglet, **étiqueté shell** (`kind: "shell"`).
+     *
+     * L'étiquette est dans la fabrique et non ajoutée par chaque test : depuis #30 un
+     * onglet est une somme (`Shell | Merge`), et un test qui décrirait un onglet sans son
+     * genre décrirait une forme que le backend n'envoie plus.
+     */
+    build(): ShellTab {
         return {
+            kind: "shell",
             tabId: this.tabId,
             cwd: this.cwd,
             process: this.process,
@@ -153,6 +168,72 @@ export class TabBuilder {
                 ? {
                       worktreeRoot: this.worktreeRoot,
                       worktreeName: this.worktreeName,
+                      repo: this.repo,
+                  }
+                : null,
+        };
+    }
+}
+
+/**
+ * Test Data Builder : un **onglet de merge** (spec §7.4) — le premier onglet sans PTY.
+ *
+ * Ses défauts décrivent le décor courant : un rebase de `feat` sur `main`, arrêté, dans un
+ * worktree seul sous son dépôt. Il n'a **ni `cwd`, ni état, ni pause** — et c'est ce que
+ * ce constructeur rend visible dans les tests qui rangent une liste d'onglets.
+ */
+export class MergeTabBuilder {
+    static create(): MergeTabBuilder {
+        return new MergeTabBuilder();
+    }
+
+    private tabId = "merge-1";
+    private worktreeRoot = "/dev/ash";
+    private title = "rebase feat onto main";
+    private isLive = true;
+    private located = true;
+    private repo: RepoRef | null = null;
+
+    id(tabId: string): this {
+        this.tabId = tabId;
+        return this;
+    }
+
+    named(title: string): this {
+        this.title = title;
+        return this;
+    }
+
+    inFlatWorktree(root: string): this {
+        this.worktreeRoot = root;
+        this.repo = null;
+        return this;
+    }
+
+    inWorktree(root: string, repoName: string, repoId = `/dev/${repoName}/.git`): this {
+        this.worktreeRoot = root;
+        this.repo = { id: repoId, name: repoName };
+        return this;
+    }
+
+    /** L'opération s'est terminée ailleurs : l'onglet reste, et le dit. */
+    finished(): this {
+        this.isLive = false;
+        this.title = "nothing to merge";
+        return this;
+    }
+
+    build(): MergeTab {
+        return {
+            kind: "merge",
+            tabId: this.tabId,
+            worktreeRoot: this.worktreeRoot,
+            title: this.title,
+            live: this.isLive,
+            location: this.located
+                ? {
+                      worktreeRoot: this.worktreeRoot,
+                      worktreeName: basename(this.worktreeRoot),
                       repo: this.repo,
                   }
                 : null,
@@ -286,4 +367,100 @@ export class MetadataBuilder {
 function basename(path: string): string {
     const segments = path.split("/").filter((segment) => segment.length > 0);
     return segments[segments.length - 1] ?? "/";
+}
+
+/**
+ * Test Data Builder : ce que l'onglet de merge montre (spec §7.4).
+ *
+ * Les défauts décrivent le décor du ticket — un rebase de `feat` sur `main`, arrêté sur un
+ * fichier à un hunk, `continue` éteint. Les deux côtés portent des **noms de branche**, et
+ * c'est ce que les scénarios inversent quand ils parlent d'un merge.
+ */
+export class MergeViewBuilder {
+    private title = "rebase feat onto main";
+    private left: SideLabel = { name: "main", role: "the branch you are rebasing onto" };
+    private right: SideLabel = { name: "feat", role: "your commits, being replayed" };
+    private kind: GitOperationKind = "rebase";
+    private files: ConflictFile[] = [conflicted("src/probe.rs")];
+    private hidden = 0;
+    private escapes = ["git rebase --abort", "git rebase --skip"];
+    private stopped = true;
+
+    static create(): MergeViewBuilder {
+        return new MergeViewBuilder();
+    }
+
+    /** Le même conflit, pris dans l'autre sens : `main` reste à gauche, son rôle change. */
+    merging(): this {
+        this.kind = "merge";
+        this.title = "merge feat into main";
+        this.left = { name: "main", role: "the branch you are on" };
+        this.right = { name: "feat", role: "the branch being merged in" };
+        this.escapes = ["git merge --abort"];
+        return this;
+    }
+
+    withFiles(...files: ConflictFile[]): this {
+        this.files = files;
+        return this;
+    }
+
+    /** git compte plus de conflits que la liste n'en porte — elle est bornée à cent. */
+    withHidden(hidden: number): this {
+        this.hidden = hidden;
+        return this;
+    }
+
+    /** L'opération s'est terminée ailleurs : il n'y a plus rien à résoudre. */
+    finished(): this {
+        this.stopped = false;
+        return this;
+    }
+
+    build(): MergeView {
+        const unresolved = this.files.filter((file) => !file.resolved).length;
+        return {
+            tabId: "merge-1",
+            worktreeRoot: "/dev/ash",
+            title: this.stopped ? this.title : "nothing to merge",
+            stopped: this.stopped
+                ? {
+                      operation: {
+                          kind: this.kind,
+                          branch: this.kind === "merge" ? null : "feat",
+                          onto: this.kind === "merge" ? "feat" : "main",
+                          progress: this.kind === "merge" ? null : { step: 2, total: 5 },
+                      },
+                      sides: { left: this.left, right: this.right },
+                      files: this.files,
+                      hidden: this.hidden,
+                      unresolved,
+                      origHead: "80eca44",
+                      escapes: this.escapes,
+                      continueCommand: `git ${this.kind} --continue`,
+                      canContinue: unresolved === 0 && this.hidden === 0,
+                  }
+                : null,
+        };
+    }
+}
+
+/** Un fichier en conflit, avec autant de hunks qu'on lui en donne de côtés. */
+export function conflicted(path: string, hunks = 1): ConflictFile {
+    return {
+        path,
+        hunks: Array.from({ length: hunks }, (_unused, index) => ({
+            index,
+            ours: `main ${String(index)}\n`,
+            base: null,
+            theirs: `feat ${String(index)}\n`,
+        })),
+        resolved: hunks === 0,
+        unreadable: false,
+    };
+}
+
+/** Un chemin que git a dû échapper : Ash le liste, le compte, et ne l'ouvre pas. */
+export function unreadableConflict(path: string): ConflictFile {
+    return { path, hunks: [], resolved: false, unreadable: true };
 }

@@ -8,7 +8,14 @@
 import "./terminal.css";
 
 import type { WorktreeMetadata } from "@/shared/ipc";
-import type { FontFamilySignal, FontSizeSignal, TabId, TabInfo, ThemeSignal } from "./ports";
+import type {
+    FontFamilySignal,
+    FontSizeSignal,
+    Tab,
+    TabId,
+    ThemeSignal,
+    ToolSurfaceFactory,
+} from "./ports";
 import { askToClose } from "./confirm-dialog";
 import { tauriGit } from "./git-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
@@ -21,11 +28,16 @@ import { TerminalWorkbench, type Origin } from "./workbench";
 export type {
     FontFamilySignal,
     FontSizeSignal,
+    MergeTab,
     PtyFrame,
+    ShellTab,
+    Tab,
     TabId,
     TabInfo,
     TerminalSize,
     ThemeSignal,
+    ToolSurface,
+    ToolSurfaceFactory,
 } from "./ports";
 export type { Origin } from "./workbench";
 export type { Step } from "./tabs";
@@ -39,6 +51,7 @@ export type { Step } from "./tabs";
  */
 export {
     handOverConflictsToAgent,
+    writePromptInTab,
     type ComposeNotice,
     type HandOver,
     type HandOverDeps,
@@ -52,8 +65,18 @@ export {
  */
 export { TERMINAL_THEME_TOKENS } from "./theme";
 
+/**
+ * Le pont réel vers les commandes de PTY.
+ *
+ * Publié pour l'unique usage du composition root : l'onglet de merge (#30) passe « le
+ * reste » à un agent par `writePromptInTab`, qui a besoin du même pont que l'atelier. Un
+ * second pont fabriqué ailleurs serait un second chemin vers `pty_compose`, donc une
+ * seconde occasion d'oublier la sélection préalable qu'ADR-0015 impose.
+ */
+export { tauriPty as tauriPtyBridge } from "./pty-bridge";
+
 /** Ce que la feature annonce de ses onglets à qui les affiche autrement — la sidebar. */
-export type TabsListener = (tabs: readonly TabInfo[], activeTabId: TabId | null) => void;
+export type TabsListener = (tabs: readonly Tab[], activeTabId: TabId | null) => void;
 
 /**
  * L'onglet actif et l'état git du worktree qui le porte — de quoi dire **où l'on est**.
@@ -68,7 +91,8 @@ export type TabsListener = (tabs: readonly TabInfo[], activeTabId: TabId | null)
  * pas les deux, et rien de ce qui l'affiche n'a à le faire.
  */
 export interface ActiveTab {
-    readonly tab: TabInfo;
+    /** L'onglet actif — **des deux genres** : un terminal, ou une surface d'outil. */
+    readonly tab: Tab;
     readonly metadata: WorktreeMetadata | null;
 }
 
@@ -89,6 +113,14 @@ export interface Terminals {
      */
     cycleTab(step: Step): Promise<void>;
     clearActiveScrollback(): Promise<void>;
+    /**
+     * Relit la liste d'onglets, et sélectionne celui qu'on vient d'ouvrir ailleurs.
+     *
+     * L'onglet de merge (#30) naît d'un geste dans le panneau des conflits, pas d'un `⌘T` :
+     * le backend le connaît avant la webview. C'est le seul chemin par lequel un onglet
+     * ouvert hors de cette feature devient visible.
+     */
+    adoptTab(tabId: TabId): Promise<void>;
     /**
      * S'abonne à l'état des onglets.
      *
@@ -161,6 +193,7 @@ export function mountTerminals(
     fontSize: FontSizeSignal,
     fontFamily: FontFamilySignal,
     below?: HTMLElement,
+    createSurface?: ToolSurfaceFactory,
 ): Terminals {
     host.classList.add("terminal-workbench");
 
@@ -254,6 +287,10 @@ export function mountTerminals(
         // désabonne en se libérant : l'atelier n'a à connaître ni la palette ni l'apparence
         // pour savoir qu'un onglet est ouvert.
         createView: () => new XtermView(stack, theme, fontSize, fontFamily),
+        // La surface d'un onglet qui n'est pas un shell se pose dans la **même** pile : un
+        // seul onglet visible à la fois, terminal ou non (ADR-0003). L'atelier ne sait pas
+        // ce qu'elle montre ; le composition root, lui, sait la fabriquer.
+        ...(createSurface === undefined ? {} : { createSurface }),
         confirmClose: (tab) => askToClose(host, tab.cwd),
         onRender: (state) => {
             shown = state;
@@ -284,6 +321,10 @@ export function mountTerminals(
         selectTabAt: (position) => workbench.selectAt(position),
         cycleTab: (step) => workbench.cycle(step),
         clearActiveScrollback: () => workbench.clearActive(),
+        adoptTab: async (tabId) => {
+            await workbench.refresh();
+            await workbench.select(tabId);
+        },
         onTabs: (listener) => {
             listeners.push(listener);
             // L'abonné arrive après le premier rendu : lui donner l'état courant tout de

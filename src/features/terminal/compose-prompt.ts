@@ -78,13 +78,32 @@ export async function handOverConflictsToAgent(
     deps: HandOverDeps,
 ): Promise<ComposeNotice | null> {
     const prompt = await deps.git.conflictPrompt(handOver.worktreeRoot);
+    return writePromptInTab(prompt, handOver.tabId, deps);
+}
+
+/**
+ * Les deux temps qui comptent, **écrits une seule fois** : sélectionner, puis composer.
+ *
+ * Extraits pour l'onglet de merge (#30), qui passe « le reste » à l'agent avec un prompt
+ * venu d'ailleurs — `merge_rest_prompt`, composé par le même `compose_conflict_prompt` côté
+ * Rust, sur les seuls chemins qu'il n'a pas résolus. Le **chemin d'écriture** reste unique :
+ * un second appel à `pty_compose` posé ailleurs pourrait oublier la sélection préalable, et
+ * c'est précisément la condition « visible » d'ADR-0015 qui tomberait.
+ *
+ * `null` quand il n'y a rien à écrire : ni onglet à sélectionner, ni message à afficher.
+ */
+export async function writePromptInTab(
+    prompt: string | null,
+    tabId: TabId,
+    deps: Pick<HandOverDeps, "pty" | "selectTab">,
+): Promise<ComposeNotice | null> {
     if (prompt === null || prompt.length === 0) return null;
 
     // Avant l'écriture, et sans condition : l'utilisateur doit **voir** le terminal où le
     // texte va se poser, y compris quand la composition finit par être refusée — sinon le
     // refus parlerait d'un prompt qu'il ne regarde pas.
-    deps.selectTab(handOver.tabId);
+    deps.selectTab(tabId);
 
-    const outcome = await deps.pty.compose(handOver.tabId, prompt);
+    const outcome = await deps.pty.compose(tabId, prompt);
     return NOTICES[outcome];
 }

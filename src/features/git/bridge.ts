@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { ActionOffer, ActionOutcome, BranchOverview, TabId } from "@/shared/ipc";
+import type {
+    ActionOffer,
+    ActionOutcome,
+    BranchOverview,
+    StoppedOperation,
+    TabId,
+} from "@/shared/ipc";
 import type { AgentPause, BranchesBridge } from "./ports";
 
 /**
@@ -32,3 +38,12 @@ export const tauriPause: AgentPause = {
     pause: (tabId: TabId) => invoke<void>("pty_pause", { tabId }),
     resume: (tabId: TabId) => invoke<void>("pty_resume", { tabId }),
 };
+
+/**
+ * Ce qui est arrêté dans un worktree — la lecture de #29, telle quelle.
+ *
+ * `null` est le cas courant : rien n'est en cours. C'est aussi ce qui dira à `⌘⌃M` (#32)
+ * qu'il n'est pas actif.
+ */
+export const stoppedOperation = (worktreeRoot: string): Promise<StoppedOperation | null> =>
+    invoke<StoppedOperation | null>("git_stopped_operation", { worktreeRoot });

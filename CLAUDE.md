@@ -263,6 +263,7 @@ src-tauri/src/
   main.rs              ✓ point d'entrée, qui appelle `lib.rs`
   lib.rs               ✓ composition root : assemblage, configuration, démarrage
   menu.rs              ✓ menu natif macOS et routage de ses actions
+  tabs.rs              ✓ la somme `Shell | Merge` et l'ordre des onglets  — ADR-0003
   bin/ash-event.rs     ✓ le binaire que les hooks appellent            — ADR-0007
   features/
     pty/               ✓ PTY, onglets, boucle de sonde 300 ms       — ADR-0003
@@ -294,7 +295,9 @@ src/
     terminal/          ✓ xterm.js, ligne de statut
     sidebar/           ✓ dépôts, worktrees, onglets, lignes filles
     settings/          ✓ la fenêtre de réglages
-    git/                 popup de branches, graphe, merge, fiche
+    git/                 popup de branches, graphe, fiche ; ✓ la vue des
+                         conflits, minimale, en attendant #29
+    merge/             ✓ les trois panneaux de l'onglet de merge     — spec §7.4
   shared/
     ipc/               ✓ le contrat Rust ↔ TypeScript, et ses builders
     agent-state/       ✓ présentation des cinq états, partagée par

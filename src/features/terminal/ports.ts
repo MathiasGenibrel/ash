@@ -9,9 +9,10 @@
 
 import type {
     ComposeOutcome,
+    ShellTab,
     StoppedOperation,
+    Tab,
     TabId,
-    TabInfo,
     WorktreeMetadata,
     WorktreeMetadataChanged,
 } from "@/shared/ipc";
@@ -21,7 +22,33 @@ import type {
  * feature : la sidebar les lit aussi. Ils sont réexportés ici pour que les consommateurs
  * de la feature n'aient qu'un point d'entrée.
  */
-export type { TabId, TabInfo } from "@/shared/ipc";
+export type { MergeTab, ShellTab, Tab, TabId, TabInfo } from "@/shared/ipc";
+export { isShell } from "@/shared/ipc";
+
+/**
+ * La surface d'un onglet qui **n'est pas un terminal**
+ * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md), reformulation du 2026-08-10 :
+ * « un onglet est soit un terminal, soit une surface d'outil »).
+ *
+ * L'atelier ne sait pas ce qu'elle montre, et c'est le point : il sait la poser dans la
+ * pile, la montrer, la cacher et la fermer — exactement ce qu'il fait d'un terminal. Ce
+ * qu'il y a dedans est fabriqué par le composition root, qui seul connaît `features/merge`.
+ */
+export interface ToolSurface {
+    readonly element: HTMLElement;
+    setVisible(visible: boolean): void;
+    /** L'onglet se ferme : le backend l'oublie, et la surface se retire. */
+    close(): Promise<void>;
+}
+
+/**
+ * Fabrique la surface d'un onglet qui n'est pas un shell.
+ *
+ * Rend `null` pour un genre d'onglet que l'application ne sait pas montrer — le jour où le
+ * backend en ajouterait un troisième avant que la webview ne suive. La ligne existerait
+ * alors dans la sidebar sans surface, plutôt que de faire tomber la fenêtre.
+ */
+export type ToolSurfaceFactory = (tab: Tab) => ToolSurface | null;
 
 export interface TerminalSize {
     cols: number;
@@ -139,8 +166,14 @@ export interface PtyBridge {
     resize(tabId: TabId, size: TerminalSize): Promise<void>;
     ack(tabId: TabId): Promise<void>;
     close(tabId: TabId): Promise<void>;
-    /** Les onglets vivants, dans l'ordre que le backend détient — et lui seul. */
-    tabs(): Promise<TabInfo[]>;
+    /**
+     * Les onglets vivants, dans l'ordre que le backend détient — et lui seul.
+     *
+     * **Les deux genres** depuis #30 : les shells, puis les surfaces de merge. L'ordre est
+     * celui que `⌘1..9` numérote, et il est composé au composition root Rust
+     * (`src-tauri/src/tabs.rs`), jamais ici.
+     */
+    tabs(): Promise<Tab[]>;
     /** Vrai si quelque chose tourne dans l'onglet : `Cmd+W` demandera confirmation. */
     hasForegroundProcess(tabId: TabId): Promise<boolean>;
     /**
@@ -151,8 +184,12 @@ export interface PtyBridge {
      * qu'il apprend avoir changé de dépôt : rien ici ne scrute, ne minute, ni ne relit la
      * liste à intervalle régulier. Seuls les onglets qui ont **changé** traversent la
      * frontière ; un onglet posé à son invite ne réveille pas la webview.
+     *
+     * Seuls des **shells** traversent ce canal : c'est la boucle de sonde du registre de
+     * PTY, et un onglet de merge n'y entre jamais. Ce que l'onglet de merge a de changeant
+     * — son compte de conflits — se relit à la demande, pas au rythme de 300 ms.
      */
-    onTabsChanged(handler: (changed: TabInfo[]) => void): Promise<Unsubscribe>;
+    onTabsChanged(handler: (changed: ShellTab[]) => void): Promise<Unsubscribe>;
 }
 
 /**

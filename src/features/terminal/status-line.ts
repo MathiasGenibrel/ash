@@ -1,4 +1,5 @@
-import type { AgentState, GitOperation, GitStatus, TabInfo, WorktreeMetadata } from "@/shared/ipc";
+import { isShell } from "@/shared/ipc";
+import type { AgentState, GitOperation, GitStatus, ShellTab, WorktreeMetadata } from "@/shared/ipc";
 import {
     agentGlyph,
     elapsedSince as sinceEntering,
@@ -126,6 +127,18 @@ export function composeStatusLine(
         };
     }
 
+    // Une surface d'outil n'a **ni processus, ni état, ni durée** : le segment de droite
+    // dit ce que l'onglet est, et rien de plus. Y afficher `idle · 12m` serait chronométrer
+    // un état qui n'existe pas — c'est précisément ce que le typage des onglets évite.
+    if (!isShell(tab)) {
+        return {
+            cwd: { text: elide(tab.worktreeRoot), tone: "path", title: tab.worktreeRoot },
+            git: gitSegment(metadata),
+            agent: { state: null, text: tab.title, tone: "text" },
+            hint: hint(state, sidebarCollapsed),
+        };
+    }
+
     const shown = presentAgentState(tab.state);
     const elapsed = elapsedSince(tab, now);
     return {
@@ -155,7 +168,7 @@ export function composeStatusLine(
  * forme, elle, est partagée avec les lignes de sous-agents de la sidebar
  * ([`@/shared/agent-state`]).
  */
-function elapsedSince(tab: TabInfo, now: number): string | null {
+function elapsedSince(tab: ShellTab, now: number): string | null {
     return tab.state === "idle" ? null : sinceEntering(tab.stateSince, now);
 }
 
@@ -273,7 +286,7 @@ function counts(status: GitStatus | null): StatusChip[] {
  * ligne de statut qui annonce une touche ne faisant rien coûte plus qu'un coin vide.
  */
 function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip | null {
-    const waiting = state.tabs.filter((tab) => tab.state === "waiting");
+    const waiting = state.tabs.filter((tab) => isShell(tab) && tab.state === "waiting");
     const first = waiting[0];
 
     if (!sidebarCollapsed || first === undefined) {
@@ -286,7 +299,7 @@ function hint(state: TabsState, sidebarCollapsed: boolean): StatusChip | null {
         // `omelette-web/claude` : le dépôt, puis le programme qui tient l'avant-plan. C'est
         // ce que le libellé d'onglet portait quand la barre existait, et la colonne repliée
         // est justement le moment où le contexte manque.
-        text: `${waiting.length} waiting · ${locationLabel(first)}/${first.process}${shortcut}`,
+        text: `${waiting.length} waiting · ${locationLabel(first)}/${isShell(first) ? first.process : first.title}${shortcut}`,
         tone: "accent",
         title: null,
     };

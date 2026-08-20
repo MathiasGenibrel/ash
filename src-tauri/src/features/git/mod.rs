@@ -92,7 +92,7 @@ pub use branches::{
 };
 pub use error::GitError;
 pub use git_cli::{
-    BranchReader, CommitRecord, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
+    BranchReader, CommitRecord, Completed, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
 };
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,

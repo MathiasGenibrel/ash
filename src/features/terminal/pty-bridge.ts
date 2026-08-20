@@ -2,7 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type { ComposeOutcome } from "@/shared/ipc";
-import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize } from "./ports";
+import type { PtyBridge, PtyFrame, ShellTab, Tab, TabId, TabInfo, TerminalSize } from "./ports";
 
 /**
  * Nom de l'event que la boucle de sonde émet. Contrat avec `TAB_CHANGED_EVENT` dans
@@ -34,10 +34,17 @@ export const tauriPty: PtyBridge = {
     resize: (tabId, size) => invoke("pty_resize", { tabId, cols: size.cols, rows: size.rows }),
     ack: (tabId) => invoke("pty_ack", { tabId }),
     close: (tabId) => invoke("pty_close", { tabId }),
-    tabs: () => invoke<TabInfo[]>("pty_tabs"),
+    // `tabs` et non `pty_tabs` : la liste porte **les deux genres** d'onglet depuis #30, et
+    // c'est le composition root Rust qui les réunit — la feature `pty` ne connaît pas les
+    // surfaces de merge, et `merge` ne connaît pas les PTY.
+    tabs: () => invoke<Tab[]>("tabs"),
     hasForegroundProcess: (tabId) => invoke<boolean>("pty_has_foreground_process", { tabId }),
     onTabsChanged: (handler) =>
         listen<TabInfo[]>(TAB_CHANGED_EVENT, (event) => {
-            handler(event.payload);
+            // L'event vient de la boucle de sonde du registre de PTY : **tout ce qui en
+            // sort est un shell**, par construction. L'étiquette est posée ici plutôt que
+            // devinée plus loin — sans elle, la seule façon de reconnaître le genre d'un
+            // onglet serait de tester la présence d'un champ.
+            handler(event.payload.map((tab): ShellTab => ({ ...tab, kind: "shell" })));
         }),
 };

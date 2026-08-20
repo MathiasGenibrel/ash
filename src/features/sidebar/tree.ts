@@ -1,4 +1,5 @@
-import type { AgentState, PinnedWorktree, TabId, TabInfo, TabLocation } from "@/shared/ipc";
+import { isShell } from "@/shared/ipc";
+import type { AgentState, PinnedWorktree, Tab, TabId, TabLocation } from "@/shared/ipc";
 import { instrumentationMark, type InstrumentationMark } from "./instrumentation";
 import { basename, shortSuffix, truncate } from "./labels";
 import { bubbleState } from "./states";
@@ -24,7 +25,17 @@ export interface SidebarTabNode {
     readonly label: string;
     /** Le nom entier, pour l'infobulle. */
     readonly title: string;
-    readonly state: AgentState;
+    /**
+     * L'état d'agent de la ligne, ou `null` pour une **surface d'outil** — l'onglet de merge
+     * (#30), qui n'a pas de processus.
+     *
+     * `null` n'est pas un sixième état, et ce n'est pas non plus `idle` : `idle` veut dire
+     * « un shell est là, à son invite », et l'afficher sous un onglet où rien ne tourne
+     * ferait remonter un état inventé jusqu'à la ligne de dépôt
+     * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md) : un état a une source, ou il
+     * n'existe pas).
+     */
+    readonly state: AgentState | null;
     readonly active: boolean;
     /**
      * Le marqueur « non instrumenté », ou `null` quand la ligne n'a rien à signaler.
@@ -53,7 +64,8 @@ export interface SidebarTabNode {
  * est juste — il se passe encore quelque chose là-dessous.
  */
 export function tabStates(tab: SidebarTabNode): readonly AgentState[] {
-    return [tab.state, ...tab.subagents.map((child) => child.state)];
+    const own = tab.state === null ? [] : [tab.state];
+    return [...own, ...tab.subagents.map((child) => child.state)];
 }
 
 export interface WorktreeNode {
@@ -154,25 +166,36 @@ export const emptyTree: SidebarTree = { groups: [], tabCount: 0, waitingCount: 0
  * réorganise pas la colonne sous les yeux de l'utilisateur quand un agent démarre. Un tri
  * alphabétique ferait sauter les lignes à chaque ouverture d'onglet.
  */
-export function buildSidebar(
-    tabs: readonly TabInfo[],
-    options: SidebarOptions,
-): SidebarTree {
+export function buildSidebar(tabs: readonly Tab[], options: SidebarOptions): SidebarTree {
     const groups = new Map<string, MutableGroup>();
 
     for (const tab of tabs) {
         const place = placeOf(tab);
         const group = groupFor(groups, place);
         const worktree = worktreeFor(group, place);
-        worktree.tabs.push({
-            tabId: tab.tabId,
-            label: truncate(tab.process),
-            title: tab.process,
-            state: tab.state,
-            active: tab.tabId === options.activeTabId,
-            mark: instrumentationMark(tab.agent),
-            subagents: subagentNodes(tab.subagents),
-        });
+        // Un onglet de merge n'a ni programme en avant-plan, ni état, ni sous-agents : sa
+        // ligne dit ce que l'onglet **est**, et rien qu'il ne détienne pas.
+        worktree.tabs.push(
+            isShell(tab)
+                ? {
+                      tabId: tab.tabId,
+                      label: truncate(tab.process),
+                      title: tab.process,
+                      state: tab.state,
+                      active: tab.tabId === options.activeTabId,
+                      mark: instrumentationMark(tab.agent),
+                      subagents: subagentNodes(tab.subagents),
+                  }
+                : {
+                      tabId: tab.tabId,
+                      label: truncate(tab.title),
+                      title: tab.title,
+                      state: null,
+                      active: tab.tabId === options.activeTabId,
+                      mark: null,
+                      subagents: [],
+                  },
+        );
     }
 
     // Les épingles **après** les onglets, et jamais avant : l'ordre de la colonne est celui
@@ -187,7 +210,7 @@ export function buildSidebar(
     return {
         groups: [...groups.values()].map((group) => freeze(group, options)),
         tabCount: tabs.length,
-        waitingCount: tabs.filter((tab) => tab.state === "waiting").length,
+        waitingCount: tabs.filter((tab) => isShell(tab) && tab.state === "waiting").length,
     };
 }
 
@@ -204,14 +227,17 @@ interface Place {
  * worktree, à plat, nommé d'après son répertoire. Le masquer serait la seule façon de
  * perdre un onglet vivant.
  */
-function placeOf(tab: TabInfo): Place {
+function placeOf(tab: Tab): Place {
     const location = tab.location;
     if (location === null) {
+        // Le repli diffère selon le genre : un shell se range par son répertoire courant,
+        // une surface d'outil par la racine du worktree qu'elle traite.
+        const path = isShell(tab) ? tab.cwd : tab.worktreeRoot;
         return {
-            groupKey: `flat:${tab.cwd}`,
+            groupKey: `flat:${path}`,
             repo: null,
-            worktreeKey: tab.cwd,
-            worktreeName: basename(tab.cwd),
+            worktreeKey: path,
+            worktreeName: basename(path),
         };
     }
     return placeOfWorktree(location);

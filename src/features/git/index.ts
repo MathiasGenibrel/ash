@@ -55,3 +55,10 @@ export {
     visibleRows,
     type BranchRow,
 } from "./branch-list";
+
+/**
+ * La vue `conflicts` du panneau bas — **minimale**, posée par #30 pour avoir une porte
+ * d'entrée vers l'onglet de merge. Voir l'en-tête de `conflicts.ts` : #29 la remplacera.
+ */
+export { conflictsView, paintConflicts, type ConflictsActions } from "./conflicts";
+export { stoppedOperation } from "./bridge";

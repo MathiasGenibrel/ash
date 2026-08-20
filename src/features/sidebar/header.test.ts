@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-import type { TabInfo } from "@/shared/ipc";
+import type { Tab } from "@/shared/ipc";
 import { TabBuilder } from "@/shared/ipc/builders";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import { buildSidebar } from "./tree";
 
 /** Sept agents, dont `waiting` d'entre eux — le décor du `1 waiting / 7 agents` de la spec. */
-function sevenAgents(waiting: number): readonly TabInfo[] {
+function sevenAgents(waiting: number): readonly Tab[] {
     return Array.from({ length: 7 }, (_, index) =>
         TabBuilder.create()
             .named(`T${index}`)
@@ -16,7 +16,7 @@ function sevenAgents(waiting: number): readonly TabInfo[] {
     );
 }
 
-function header(tabs: readonly TabInfo[], columnCollapsed: boolean): SidebarHeaderModel {
+function header(tabs: readonly Tab[], columnCollapsed: boolean): SidebarHeaderModel {
     const tree = buildSidebar(tabs, {
         activeTabId: null,
         collapsed: new Set(),
