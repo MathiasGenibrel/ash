@@ -50,6 +50,15 @@ import type { TreeStatus as RustTreeStatus } from "./generated/TreeStatus";
 import type { Upstream as RustUpstream } from "./generated/Upstream";
 import type { WorktreeMetadata as RustWorktreeMetadata } from "./generated/WorktreeMetadata";
 import type { SidebarRows as RustSidebarRows } from "./generated/SidebarRows";
+import type { ConflictFile as RustConflictFile } from "./generated/ConflictFile";
+import type { Hunk as RustHunk } from "./generated/Hunk";
+import type { MergeOutcome as RustMergeOutcome } from "./generated/MergeOutcome";
+import type { MergeSides as RustMergeSides } from "./generated/MergeSides";
+import type { MergeTab as RustMergeTab } from "./generated/MergeTab";
+import type { MergeView as RustMergeView } from "./generated/MergeView";
+import type { SideLabel as RustSideLabel } from "./generated/SideLabel";
+import type { StoppedView as RustStoppedView } from "./generated/StoppedView";
+import type { Tab as RustTab } from "./generated/Tab";
 import type { LastWork as RustLastWork } from "./generated/LastWork";
 import type { WorktreeRemoval as RustWorktreeRemoval } from "./generated/WorktreeRemoval";
 import type { RepoLine as RustRepoLine } from "./generated/RepoLine";
@@ -86,6 +95,15 @@ import type {
     StoppedCommit,
     StoppedOperation,
     Subagent,
+    ConflictFile,
+    MergeHunk,
+    MergeOutcome,
+    MergeSides,
+    MergeStopped,
+    MergeTab,
+    MergeView,
+    SideLabel,
+    Tab,
     TabInfo,
     TabLocation,
     SidebarRows,
@@ -182,6 +200,27 @@ export type StoppedOperationStillMirrorsRust = Assert<
  * compile plus tant que la fenêtre n'a pas dit ce qu'elle en montre à l'utilisateur.
  */
 export type ComposeOutcomeStillMirrorsRust = Assert<Mirrors<RustComposeOutcome, ComposeOutcome>>;
+
+/**
+ * L'onglet de merge (spec §7.4, issue #30).
+ *
+ * `Tab` est l'assertion qui compte : elle confronte la somme écrite à la main à
+ * l'énumération étiquetée de `src-tauri/src/tabs.rs`. Le jour où un troisième genre
+ * d'onglet naîtrait côté Rust — ADR-0003 laisse la porte ouverte aux surfaces d'outil —,
+ * c'est cette ligne qui refuserait de compiler avant que la webview ne dise ce qu'elle en
+ * montre.
+ */
+export type SideLabelStillMirrorsRust = Assert<Mirrors<RustSideLabel, SideLabel>>;
+export type MergeSidesStillMirrorsRust = Assert<Mirrors<RustMergeSides, MergeSides>>;
+export type MergeHunkStillMirrorsRust = Assert<Mirrors<RustHunk, MergeHunk>>;
+export type ConflictFileStillMirrorsRust = Assert<Mirrors<RustConflictFile, ConflictFile>>;
+export type MergeStoppedStillMirrorsRust = Assert<Mirrors<RustStoppedView, MergeStopped>>;
+export type MergeViewStillMirrorsRust = Assert<Mirrors<RustMergeView, MergeView>>;
+export type MergeOutcomeStillMirrorsRust = Assert<Mirrors<RustMergeOutcome, MergeOutcome>>;
+export type MergeTabStillMirrorsRust = Assert<
+    Mirrors<RustMergeTab, Omit<MergeTab, "kind">>
+>;
+export type TabStillMirrorsRust = Assert<Mirrors<RustTab, Tab>>;
 
 /**
  * La fiche de branche d'ADR-0013, et l'état de la seule zone qu'Ash y écrit.

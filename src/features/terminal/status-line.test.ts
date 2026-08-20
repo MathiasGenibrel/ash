@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { MetadataBuilder, TabBuilder } from "@/shared/ipc/builders";
-import type { WorktreeMetadata } from "@/shared/ipc";
+import { MergeTabBuilder, MetadataBuilder, TabBuilder } from "@/shared/ipc/builders";
+import type { Tab, WorktreeMetadata } from "@/shared/ipc";
 import { composeStatusLine, elide, type StatusLineModel } from "./status-line";
 import type { TabsState } from "./tabs";
 
@@ -13,7 +13,7 @@ import type { TabsState } from "./tabs";
  * `0s` sans avoir à s'en soucier.
  */
 function showing(
-    tab = TabBuilder.create().running("claude").inFlatWorktree("/dev/omelette-web").build(),
+    tab: Tab = TabBuilder.create().running("claude").inFlatWorktree("/dev/omelette-web").build(),
     metadata: WorktreeMetadata | null = MetadataBuilder.create().build(),
     sidebarCollapsed = false,
     now = 0,
@@ -266,5 +266,22 @@ describe("le répertoire courant", () => {
         // Then
         expect(shown).toBe("…rc/features/sidebar");
         expect(shown.length).toBeLessThanOrEqual(20);
+    });
+});
+
+describe("la ligne de statut d'un onglet sans PTY", () => {
+    it("Given a merge tab, when the status line is composed, then it names the operation and times nothing", () => {
+        // Given — un onglet de merge n'a ni processus ni état d'agent. Un `idle · 12m` y
+        // serait la durée d'un état qui n'existe pas — c'est précisément ce que le typage
+        // des onglets rend impossible (ADR-0003, ADR-0007).
+        const merge = MergeTabBuilder.create().inFlatWorktree("/dev/ash").build();
+
+        // When — une heure plus tard qu'à l'ouverture, pour qu'un compteur se verrait
+        const line = showing(merge, MetadataBuilder.create().build(), false, 3_600_000);
+
+        // Then
+        expect(line.agent.state).toBeNull();
+        expect(line.agent.text).toBe("rebase feat onto main");
+        expect(line.cwd.text).toContain("ash");
     });
 });

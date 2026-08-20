@@ -12,6 +12,8 @@ tâche, pas un état observé. Il est la référence de `dev-integration` et
 ```
 src-tauri/src/
   main.rs                composition root : assemblage, configuration, démarrage
+  tabs.rs                la somme `Shell | Merge` et l'ordre des onglets — le seul
+                         module qui connaisse les deux features     — ADR-0003
   features/
     pty/                 PTY et cycle de vie des onglets shell
     probe/               les processus vus par le système : fg_pid, cwd (libproc),
@@ -21,6 +23,8 @@ src-tauri/src/
     agents/              découverte, machine à états, trait Adapter — ADR-0006/7/8
       adapters/          claude-code, codex, generic
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12
+    merge/               l'onglet de merge : hunks, côtés nommés, `continue` —
+                         **le premier onglet sans PTY**    — spec §7.4 / ADR-0003
     journal/             attribution commit → agent → prompt       — ADR-0014
     card/                la fiche de branche : le bloc `ash:log`, sa sauvegarde,
                          ses refus, et le mode local              — ADR-0013
@@ -38,7 +42,8 @@ src/
     sidebar/             dépôts, worktrees, agents, subagents
     panel/               la surface du panneau bas : hauteur, repli, barre
                          d'onglets — jamais de terminal      — spec §4.3 / ADR-0003
-    git/                 popup de branches, graphe, merge, fiche
+    git/                 popup de branches, graphe, fiche, vue des conflits
+    merge/               les trois panneaux de l'onglet de merge      — spec §7.4
     settings/            la fenêtre de réglages
   shared/
     ipc/                 le contrat Rust ↔ TypeScript

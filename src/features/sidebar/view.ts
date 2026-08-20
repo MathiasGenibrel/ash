@@ -274,6 +274,8 @@ export class SidebarView {
     }
 
     private tabRow(tab: SidebarTabNode, shape: "flat" | "grouped"): HTMLElement {
+        if (tab.state === null) return this.toolRow(tab, shape);
+
         const shown = presentAgentState(tab.state);
         const row = document.createElement("button");
         row.type = "button";
@@ -288,6 +290,34 @@ export class SidebarView {
 
         row.append(glyph(tab.state), name, text("span", shown.label, "ash-agent-state"));
         if (tab.mark !== null) row.append(this.instrumentationMark(tab.mark));
+        row.addEventListener("click", () => {
+            this.actions.selectTab(tab.tabId);
+        });
+        return row;
+    }
+
+    /**
+     * La ligne d'un onglet qui n'est **pas** un agent — la surface de merge (#30).
+     *
+     * Ni glyphe d'état, ni teinte, ni rail : elle n'en a aucun, et lui prêter le `idle` d'un
+     * shell à son invite ferait remonter un état inventé jusqu'à la ligne du dépôt. Ce
+     * qu'elle porte à droite, c'est ce qu'elle **est** — `merge` —, et son clic sélectionne
+     * l'onglet comme n'importe quelle autre ligne.
+     */
+    private toolRow(tab: SidebarTabNode, shape: "flat" | "grouped"): HTMLElement {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = `ash-agent is-${shape} is-tool`;
+        if (tab.active) row.classList.add("is-selected");
+
+        const name = text("span", tab.label, "ash-agent-name");
+        name.title = tab.title;
+
+        row.append(
+            text("span", "⑂", "ash-agent-glyph"),
+            name,
+            text("span", "merge", "ash-agent-state"),
+        );
         row.addEventListener("click", () => {
             this.actions.selectTab(tab.tabId);
         });
@@ -378,7 +408,12 @@ export class SidebarView {
         const initials = text("span", abbreviate(label), "ash-rail-initials");
         if (shown.tinted) initials.classList.add("ash-accent");
 
-        entry.append(initials, ...plan.children.map((tab) => glyph(tab.state)));
+        // Une surface d'outil n'a pas d'état, donc pas de pastille : le rail replié ne
+        // montre que ce qui en a un.
+        entry.append(
+            initials,
+            ...plan.children.flatMap((tab) => (tab.state === null ? [] : [glyph(tab.state)])),
+        );
         return entry;
     }
 
