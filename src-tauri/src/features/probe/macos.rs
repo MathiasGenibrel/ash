@@ -9,6 +9,7 @@
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 
+use super::control::{signalable, ProcessControl};
 use super::error::ProbeError;
 use super::port::{process_name, Pid, Probe, ProcessInfo};
 
@@ -48,6 +49,45 @@ impl Probe for SystemProbe {
     fn argv0(&self, pid: Pid) -> Option<String> {
         first_argument(pid)
     }
+}
+
+impl ProcessControl for SystemProbe {
+    fn pause(&self, pgid: Pid) -> Result<(), ProbeError> {
+        signal_group(pgid, libc::SIGSTOP)
+    }
+
+    fn resume(&self, pgid: Pid) -> Result<(), ProbeError> {
+        signal_group(pgid, libc::SIGCONT)
+    }
+}
+
+/// Poste un signal au groupe de processus entier — `killpg`.
+///
+/// **Le groupe, et pas le pid**, parce que c'est le groupe qui tient l'avant-plan du
+/// terminal : un agent lance des fils d'exécution et des sous-processus, et arrêter le seul
+/// chef de groupe laisserait ses enfants écrire dans le worktree pendant le checkout — donc
+/// laisserait la pause mentir. C'est aussi ce que `tcgetpgrp` désigne, et ce que le noyau
+/// signale déjà lui-même pour `SIGWINCH` à chaque redimensionnement.
+///
+/// Le garde de [`signalable`] passe **avant** l'appel, jamais après : c'est lui qui
+/// distingue « un pgid » de « mon propre groupe ».
+fn signal_group(pgid: Pid, signal: libc::c_int) -> Result<(), ProbeError> {
+    let target = signalable(pgid)?;
+
+    // SAFETY: `killpg` ne fait que poster un signal ; il n'écrit dans aucune mémoire que
+    // nous détenons et ne prend aucun pointeur. Un groupe disparu ou refusé n'est pas un
+    // comportement indéfini : l'appel rend -1 et pose `errno`, cas traité juste après. Le
+    // seul argument dangereux — un pgid qui désignerait notre propre groupe — a été écarté
+    // au-dessus.
+    let answered = unsafe { libc::killpg(target, signal) };
+
+    if answered != 0 {
+        return Err(ProbeError::SignalRefused {
+            pgid: target,
+            errno: std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+        });
+    }
+    Ok(())
 }
 
 /// Le répertoire courant d'un processus — `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.

@@ -126,6 +126,21 @@ export interface Terminals {
      * onglet ; la barre est partie avec cette moitié-là (spec §4.2, amendée le 2026-08-17).
      */
     setSidebarCollapsed(collapsed: boolean): void;
+    /**
+     * L'utilisateur a demandé la popup de branches depuis le pied de fenêtre (spec §7.1).
+     *
+     * La ligne de statut est l'**ancre** de cette popup, mais elle ne la connaît pas : elle
+     * annonce le geste, et le composition root décide quoi en faire — comme pour la sidebar
+     * et pour la bande de titre. La feature terminal n'importe rien de `features/git`.
+     */
+    onBranchesRequested(listener: () => void): void;
+    /**
+     * L'élément qui porte la branche, sur lequel la popup doit se poser.
+     *
+     * `null` quand la ligne ne montre pas de branche — hors dépôt, ou avant le premier
+     * rendu. C'est celui qui ouvre la popup qui décide alors où la poser.
+     */
+    branchAnchor(): HTMLElement | null;
 }
 
 /**
@@ -164,7 +179,10 @@ export function mountTerminals(
     // La ligne de statut parle de l'onglet **actif** et du worktree qui le porte
     // (ADR-0012). Elle ne détient rien : le `cwd` vient de la sonde, l'état git de la
     // surveillance, l'état d'agent du backend.
-    const status = new StatusLine();
+    const branchListeners: (() => void)[] = [];
+    const status = new StatusLine(() => {
+        for (const listener of branchListeners) listener();
+    });
     let shown: TabsState = noTabs;
     let sidebarCollapsed = false;
 
@@ -283,5 +301,9 @@ export function mountTerminals(
             sidebarCollapsed = collapsed;
             drawStatus();
         },
+        onBranchesRequested: (listener) => {
+            branchListeners.push(listener);
+        },
+        branchAnchor: () => status.anchor,
     };
 }

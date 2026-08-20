@@ -15,8 +15,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ash_lib::features::git::{
-    parse_status, read_metadata, resolve_worktree, GitError, Head, OperationKind, Progress, Status,
-    StatusReader, SystemFileSystem, SystemGit, WorktreeLocation, WorktreeMetadata,
+    branch_overview, parse_status, read_metadata, resolve_worktree, BranchGroup, BranchOverview,
+    BranchReader, GitError, Head, OperationKind, Progress, Status, StatusReader, SystemFileSystem,
+    SystemGit, WorktreeLocation, WorktreeMetadata,
 };
 
 /// Un dossier temporaire qui se supprime à la fin du test, réussi ou non.
@@ -609,4 +610,83 @@ fn given_a_visited_repository_that_configures_a_fsmonitor_command_when_ash_reads
         "`core.fsmonitor` du dépôt visité a été exécuté — visiter un dossier suffirait \
          à faire tourner du code arbitraire"
     );
+}
+
+/// Ce que la popup de branches montrerait pour ce worktree, en passant par le vrai `git`.
+fn branches_of(worktree_root: &Path) -> BranchOverview {
+    let git = SystemGit::default();
+    let refs = git
+        .refs(worktree_root)
+        .expect("`git for-each-ref` doit répondre");
+    let worktrees = git
+        .worktrees(worktree_root)
+        .expect("`git worktree list` doit répondre");
+    branch_overview(worktree_root, &refs, &worktrees, Vec::new())
+}
+
+fn named(shown: &BranchOverview, group: BranchGroup) -> Vec<String> {
+    shown
+        .sections
+        .iter()
+        .find(|section| section.group == group)
+        .map(|section| {
+            section
+                .branches
+                .iter()
+                .map(|branch| branch.name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn given_a_real_repository_with_a_linked_worktree_when_listing_its_branches_then_the_branch_held_elsewhere_names_that_worktree(
+) {
+    // Given — un dépôt sur `main`, et un worktree lié qui détient `toc`. C'est le décor exact
+    // de la colonne de droite de la spec §7.1, et aucun double ne prouve que le format que
+    // `for-each-ref` et `worktree list --porcelain` écrivent vraiment est celui qu'Ash lit.
+    let sandbox = Sandbox::new("branch-popup");
+    let repo = sandbox.path("omelette");
+    repository_at(&repo);
+    git(
+        &repo,
+        &["worktree", "add", "--quiet", "../omelette-toc", "-b", "toc"],
+    );
+
+    // When
+    let shown = branches_of(&repo);
+
+    // Then — la branche courante est en tête, et `toc` est nommée avec le worktree qui la tient
+    assert_eq!(shown.current.as_deref(), Some("main"));
+    assert_eq!(named(&shown, BranchGroup::Current), vec!["main".to_owned()]);
+
+    let held = shown
+        .sections
+        .iter()
+        .flat_map(|section| &section.branches)
+        .find(|branch| branch.name == "toc")
+        .and_then(|branch| branch.worktree.clone())
+        .expect("`toc` est prise par le worktree lié");
+    assert_eq!(held.name, "omelette-toc");
+}
+
+#[test]
+fn given_a_real_worktree_stopped_on_a_rebase_when_listing_its_branches_then_git_still_names_the_branch_being_rebased(
+) {
+    // Given — un rebase arrêté sur conflit, où le `HEAD` du disque est détaché
+    let sandbox = Sandbox::new("branch-popup-rebase");
+    let repo = repository_with_a_conflicting_rebase(&sandbox);
+
+    // When
+    let shown = branches_of(&repo);
+
+    // Then — `git worktree list` nomme la branche en cours de rebase, et non un détachement.
+    // C'est la bonne réponse pour la popup, et elle s'accorde avec ce que `read_metadata` lit
+    // déjà de son côté (`rebase-merge/head-name`) : le worktree **détient** toujours `feat`,
+    // qui est là où le rebase atterrira. C'est ce qui dit qu'aucun autre worktree ne peut la
+    // prendre, et c'est ce qui donne à un libellé d'action son second côté. La popup n'a donc
+    // pas d'état « détaché » à inventer pendant un rebase — seul un `git checkout <sha>` en
+    // produit un, et c'est le test unitaire de `branches.rs` qui le couvre.
+    assert_eq!(shown.current.as_deref(), Some("feat"));
+    assert_eq!(named(&shown, BranchGroup::Current), vec!["feat".to_owned()]);
 }

@@ -5,6 +5,7 @@
 //! les deux conditions : lire l'heure est un effet système, pas une règle de git ni une
 //! règle d'agent.
 
+pub mod text_diff;
 pub mod time;
 
 /// Le filet du contrat ne mord que si `cargo` a lu `src-tauri/.cargo/config.toml`.

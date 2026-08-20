@@ -11,13 +11,13 @@
 
 use std::path::PathBuf;
 
-use super::diff;
 use super::document::is_an_empty_object;
 use super::merge;
 use super::ports::ConfigFiles;
 use super::presence::presence;
 use super::Presence;
 use crate::features::agents::Instrumentation;
+use crate::shared::text_diff as diff;
 
 /// Ce qu'un retrait ferait à un fichier, sans l'avoir fait.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,278 @@
+/**
+ * La fiche de branche, dans le corps du panneau bas.
+ *
+ * Les couleurs viennent toutes des tokens de `app/styles.css` : la fiche suit les trois
+ * thèmes sans en connaître aucun. Rien ici ne fixe une couleur en dur.
+ */
+
+.ash-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--ash-text);
+}
+
+.ash-card-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    gap: 0;
+}
+
+/* ── L'en-tête : où vit la fiche, ce que le bloc porte ─────────────────────── */
+
+.ash-card-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--ash-border);
+    flex: 0 0 auto;
+}
+
+.ash-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ash-card-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--ash-mono, monospace);
+    color: var(--ash-text-dim);
+}
+
+.ash-card-mode {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--ash-border);
+    color: var(--ash-text-dim);
+}
+
+.ash-card-mode.is-local {
+    border-style: dashed;
+}
+
+.ash-card-warning {
+    margin: 0;
+    color: var(--ash-state-waiting, var(--ash-text-dim));
+}
+
+.ash-card-log {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ash-card-note {
+    flex: 1 1 auto;
+    margin: 0;
+    color: var(--ash-text-dim);
+}
+
+.ash-card-state {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: var(--ash-mono, monospace);
+    background: var(--ash-surface-raised, transparent);
+    border: 1px solid var(--ash-border);
+}
+
+/* Les cinq refus se voient d'un coup d'œil : Ash ne touche pas au fichier. */
+.ash-card-state.is-conflicted,
+.ash-card-state.is-edited-by-hand,
+.ash-card-state.is-unterminated,
+.ash-card-state.is-duplicated {
+    color: var(--ash-state-error, var(--ash-text));
+    border-color: currentcolor;
+}
+
+.ash-card-diff {
+    max-height: 160px;
+    margin: 0;
+    overflow: auto;
+    padding: 6px 8px;
+    border: 1px solid var(--ash-border);
+    border-radius: 3px;
+    font-family: var(--ash-mono, monospace);
+    white-space: pre;
+    color: var(--ash-text-dim);
+}
+
+/* ── Les deux volets : rendu à gauche, source à droite ─────────────────────── */
+
+.ash-card-panes {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+}
+
+.ash-card-rendered {
+    flex: 1 1 60%;
+    min-width: 0;
+    overflow: auto;
+    padding: 10px 14px;
+}
+
+.ash-card-source {
+    flex: 1 1 40%;
+    min-width: 0;
+    margin: 0;
+    overflow: auto;
+    padding: 10px 12px;
+    border-left: 1px solid var(--ash-border);
+    font-family: var(--ash-mono, monospace);
+    white-space: pre;
+    color: var(--ash-text-dim);
+}
+
+.ash-card-empty {
+    margin: 0;
+    color: var(--ash-text-dim);
+}
+
+/* ── Le front matter et la progression ─────────────────────────────────────── */
+
+.ash-card-meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0 10px;
+    margin: 0 0 8px;
+    font-family: var(--ash-mono, monospace);
+    color: var(--ash-text-dim);
+}
+
+.ash-card-meta-key::after {
+    content: ":";
+}
+
+.ash-card-meta-value {
+    margin: 0;
+    color: var(--ash-text);
+}
+
+.ash-card-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.ash-card-progress-count {
+    font-family: var(--ash-mono, monospace);
+    color: var(--ash-text-dim);
+}
+
+.ash-card-progress-track {
+    flex: 1 1 auto;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ash-border);
+}
+
+.ash-card-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--ash-accent, var(--ash-text));
+}
+
+/* ── Le markdown rendu ─────────────────────────────────────────────────────── */
+
+.ash-md {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ash-md-heading {
+    margin: 4px 0 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ash-md-paragraph,
+.ash-md-quote {
+    margin: 0;
+    line-height: 1.5;
+}
+
+.ash-md-quote {
+    padding-left: 10px;
+    border-left: 2px solid var(--ash-border);
+    color: var(--ash-text-dim);
+}
+
+.ash-md-list {
+    margin: 0;
+    padding-left: 18px;
+    line-height: 1.6;
+}
+
+.ash-md-task {
+    list-style: none;
+    margin-left: -18px;
+}
+
+.ash-md-task.is-done {
+    color: var(--ash-text-dim);
+}
+
+.ash-md-box {
+    margin-right: 6px;
+}
+
+.ash-md-table {
+    border-collapse: collapse;
+}
+
+.ash-md-cell {
+    padding: 2px 8px;
+    border: 1px solid var(--ash-border);
+    text-align: left;
+}
+
+.ash-md-code {
+    margin: 0;
+    padding: 6px 8px;
+    overflow: auto;
+    border: 1px solid var(--ash-border);
+    border-radius: 3px;
+    font-family: var(--ash-mono, monospace);
+    white-space: pre;
+}
+
+.ash-md-note {
+    margin: 0 0 2px;
+    color: var(--ash-text-dim);
+}
+
+.ash-md-inline-code {
+    padding: 0 3px;
+    border-radius: 2px;
+    border: 1px solid var(--ash-border);
+    font-family: var(--ash-mono, monospace);
+}
+
+/* Un lien est du texte : la webview n'ouvre rien qu'elle n'ait décidé. */
+.ash-md-link {
+    text-decoration: underline dotted;
+}
+
+.ash-md-rule {
+    height: 0;
+    margin: 4px 0;
+    border: none;
+    border-top: 1px solid var(--ash-border);
+}
