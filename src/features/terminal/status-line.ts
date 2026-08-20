@@ -1,5 +1,11 @@
 import { isShell } from "@/shared/ipc";
-import type { AgentState, GitOperation, GitStatus, ShellTab, WorktreeMetadata } from "@/shared/ipc";
+import type {
+    AgentState,
+    GitOperation,
+    GitStatus,
+    ShellTab,
+    WorktreeMetadata,
+} from "@/shared/ipc";
 import {
     agentGlyph,
     elapsedSince as sinceEntering,
@@ -7,6 +13,12 @@ import {
 } from "@/shared/agent-state";
 import { branchOf, locationLabel } from "@/shared/tab-context";
 import { activeTab, type TabsState } from "./tabs";
+import {
+    composeContextGauge,
+    UsageSegments,
+    type ContextGauge,
+    type QuotaSegment,
+} from "./usage";
 
 /**
  * La ligne de statut de la zone terminal (spec §4.2) : `cwd` · branche et état de l'arbre ·
@@ -28,6 +40,11 @@ import { activeTab, type TabsState } from "./tabs";
  * maquette. Elle n'est pas une exception à la règle : le backend envoie la **date d'entrée**
  * dans l'état, une fois, en absolu, et l'écart jusqu'à maintenant est un fait d'affichage.
  * C'est ce qui laisse la fiche d'un onglet identique d'une passe de sonde à l'autre.
+ *
+ * **La droite de la ligne appartient à `usage.ts`** : la jauge de contexte de l'onglet, et
+ * les deux quotas du compte. Le modèle ci-dessous ne porte que la première — la seconde bat à
+ * un autre rythme, et la frontière entre les deux est un `<div class="status-main">` que
+ * `render` est seul à vider.
  */
 
 /**
@@ -90,6 +107,16 @@ export interface StatusLineModel {
     readonly agent: StatusAgent;
     /** Le rappel de la sidebar repliée. `null` quand il n'y a rien à rappeler. */
     readonly hint: StatusChip | null;
+    /**
+     * La place que la conversation de l'onglet actif occupe dans sa fenêtre — `null` quand
+     * il n'y a rien à montrer.
+     *
+     * Elle est **dans ce modèle** parce qu'elle bat au rythme de l'onglet : elle arrive avec
+     * sa fiche, et change quand on en change. Les deux quotas du **compte**, eux, n'y sont
+     * pas — ils ne dépendent d'aucune sélection, et les faire passer par ici les ferait
+     * repartir à chaque changement d'onglet (voir `usage.ts`).
+     */
+    readonly context: ContextGauge | null;
 }
 
 /**
@@ -124,6 +151,7 @@ export function composeStatusLine(
             git: [{ text: "no repo", tone: "faint", title: null }],
             agent: { state: null, text: "no agents", tone: "faint" },
             hint: null,
+            context: null,
         };
     }
 
@@ -136,6 +164,9 @@ export function composeStatusLine(
             git: gitSegment(metadata),
             agent: { state: null, text: tab.title, tone: "text" },
             hint: hint(state, sidebarCollapsed),
+            // Une surface d'outil n'a pas de conversation : pas de transcript, donc pas de
+            // fenêtre de contexte à mesurer.
+            context: null,
         };
     }
 
@@ -150,6 +181,7 @@ export function composeStatusLine(
             tone: shown.tinted ? "accent" : "text",
         },
         hint: hint(state, sidebarCollapsed),
+        context: composeContextGauge(tab.usage),
     };
 }
 
@@ -323,6 +355,17 @@ export function elide(path: string, max: number = MAX_CWD): string {
 export class StatusLine {
     readonly element: HTMLElement;
     /**
+     * Ce qui se refait à chaque rendu — `cwd`, git, agent, rappel.
+     *
+     * `display: contents` : il ne dessine rien, ses enfants restent les éléments du `flex` de
+     * la ligne. Ce qu'il apporte est une **frontière** — `replaceChildren` ne peut plus
+     * atteindre le groupe d'usage, donc un changement d'onglet ne peut pas détruire des
+     * pastilles de quota qui ne parlent pas d'onglets (voir `usage.ts`).
+     */
+    private readonly main: HTMLElement;
+    /** Le groupe de droite : les deux quotas, la jauge de contexte et son libellé. */
+    private readonly usage = new UsageSegments();
+    /**
      * Le morceau qui porte la branche, une fois peint — l'ancre de la popup.
      *
      * `null` quand la ligne ne montre pas de branche : hors dépôt, ou avant le premier
@@ -340,11 +383,28 @@ export class StatusLine {
         this.element = document.createElement("div");
         this.element.className = "terminal-status";
         this.element.setAttribute("role", "status");
+
+        this.main = document.createElement("div");
+        this.main.className = "status-main";
+        this.element.append(this.main, this.usage.element);
     }
 
     /** Sur quoi la popup de branches doit s'ancrer, si la ligne montre une branche. */
     get anchor(): HTMLElement | null {
         return this.anchorElement;
+    }
+
+    /**
+     * Les quotas du compte ont parlé — l'event `ash://account-usage`, ou le battement de la
+     * seconde qui fait avancer leurs décomptes.
+     *
+     * Un chemin séparé de `render`, et c'est tout l'intérêt : ces deux valeurs ne dépendent
+     * d'aucun onglet, et rien de ce qui redessine la ligne ne doit les faire repartir. Les
+     * quotas arrivent **déjà composés**, comme la jauge l'est dans `StatusLineModel` : les
+     * deux rythmes ont la même forme, seul leur déclencheur diffère.
+     */
+    showQuotas(quotas: readonly QuotaSegment[]): void {
+        this.usage.showQuotas(quotas);
     }
 
     render(model: StatusLineModel): void {
@@ -365,7 +425,8 @@ export class StatusLine {
         );
         if (model.hint !== null) nodes.push(chip(model.hint));
 
-        this.element.replaceChildren(...nodes);
+        this.main.replaceChildren(...nodes);
+        this.usage.showContext(model.context);
     }
 }
 

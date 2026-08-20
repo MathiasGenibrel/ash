@@ -1,0 +1,492 @@
+import { badge, column, paint, row, text, type UiComponent } from "@/shared/ui";
+import type { AccountUsage, Quota, SessionUsage } from "@/shared/ipc";
+
+/**
+ * L'usage, à droite de la ligne de statut (spec §4.2, vues 5 et 5b de la maquette).
+ *
+ * Quatre morceaux, dans cet ordre : le quota de **session** (`s 63% · 2h14`), le quota
+ * **hebdomadaire** (`w 28% · 3d 09h`), la **jauge de contexte** de la conversation, et son
+ * libellé (`ctx 41%`). Chacun n'apparaît que si sa donnée existe, et une donnée absente ne
+ * laisse **rien** derrière elle — ni tiret, ni zéro, ni dernière valeur connue
+ * ([ADR-0016](../../../docs/adr/0016-ash-sort-sur-le-reseau.md), condition 3). L'écran ne
+ * signale pas d'erreur non plus : il ne sait pas laquelle des quatre raisons s'applique.
+ *
+ * **Deux rythmes cohabitent ici, et c'est ce que ce fichier est venu séparer.** La jauge de
+ * contexte suit l'onglet — elle arrive avec sa fiche, par `ash://tab-changed` —, tandis que
+ * les deux quotas sont ceux du **compte** : ils ne dépendent d'aucune sélection, et changer
+ * d'onglet ne les touche pas. Ils vivent donc dans des nœuds **persistants**, créés une fois
+ * et mis à jour en place : un changement d'onglet ne peut pas les faire clignoter ni repartir
+ * leur transition, parce qu'il ne les détruit jamais. C'est une propriété de structure, pas
+ * une discipline de rendu — la ligne de statut, elle, refait tous ses morceaux à chaque
+ * passage.
+ *
+ * **Rien n'est produit ici.** `usedTokens` et les deux pourcentages viennent du backend ; les
+ * `2h14` et `3d 09h` sont dérivés à l'affichage d'une **date absolue**, exactement comme la
+ * durée d'état de `status-line.ts` — un décompte transporté ferait repartir
+ * `ash://account-usage` chaque seconde pour animer un compteur
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ *
+ * ## Ce que cette tranche ne porte pas
+ *
+ * Le menu contextuel « show in the status bar » de la vue 5c — six interrupteurs réglés par
+ * fenêtre — n'existe pas. [`SHOWN_IN_STATUS_BAR`] en est **le défaut sans le moyen de le
+ * changer**, et c'est assumé : livrer la moitié d'un réglage coûte plus qu'une constante
+ * nommée. `⌘⌥U`, écrit au pied du popover, est un **indice** : la vue d'usage complète
+ * n'existe pas, et aucune liaison n'est réclamée pour cette combinaison — les liaisons vivent
+ * dans `features/shortcuts`, et une combinaison non réclamée n'a rien à y faire.
+ */
+
+/** Lequel des deux quotas — l'ordre de la maquette est celui de cette union. */
+export type QuotaKind = "session" | "weekly";
+
+/** Une pastille de quota, telle qu'elle se lit : `s 63% · 2h14`. */
+export interface QuotaSegment {
+    readonly kind: QuotaKind;
+    /** La lettre colorée qui ouvre la pastille — `s` en `--ash-working`, `w` en `--ash-done`. */
+    readonly letter: string;
+    /** `63%` — arrondi, parce que l'hôte rend parfois un pourcentage fractionnaire. */
+    readonly percent: string;
+    /**
+     * `2h14`, ou `null` quand il n'y a pas de date de remise à zéro — ou qu'elle est
+     * passée. Le pourcentage, lui, s'affiche quand même : n'avoir qu'une des deux moitiés
+     * vaut mieux que n'en avoir aucune.
+     */
+    readonly resets: string | null;
+    /** Entre `0` et `1` : la barre pleine du popover. */
+    readonly ratio: number;
+}
+
+/**
+ * Les défauts de la maquette (vue 5c) : le weekly est **masqué dans la barre**.
+ *
+ * Il reste dans le popover, et c'est précisément ce que le clic sur une pastille sert à
+ * révéler — sans quoi un quota qu'Ash connaît n'aurait aucun endroit où se lire.
+ */
+export const SHOWN_IN_STATUS_BAR: Readonly<Record<QuotaKind, boolean>> = {
+    session: true,
+    weekly: false,
+};
+
+/** Ce que la conversation occupe de sa fenêtre — la jauge, et le mot qui la double. */
+export interface ContextGauge {
+    /** Entre `0` et `100`, arrondi : la **même** valeur pour la largeur et pour le libellé. */
+    readonly percent: number;
+    /** `ctx 41%`. */
+    readonly label: string;
+    readonly level: ContextLevel;
+}
+
+/**
+ * Les trois paliers de la maquette. Ils nomment ce que la couleur **dit**, pas sa teinte :
+ * `--ash-working`, puis `--ash-warning`, puis `--ash-accent`.
+ *
+ * À `90 %` la maquette est formelle — corail, et *« aucune alerte modale »*. Un contexte
+ * plein n'est pas une panne : il annonce un compactage, que l'outil fera tout seul.
+ */
+export type ContextLevel = "fresh" | "loaded" | "compacting";
+
+/** `≥ 70 %` : chargé. */
+export const LOADED_AT = 70;
+/** `≥ 90 %` : bientôt compacté. */
+export const COMPACTING_AT = 90;
+
+/**
+ * Les deux quotas, dans l'ordre de la maquette, sans ceux qu'on n'a pas.
+ *
+ * `now` n'entre que dans les décomptes : les pourcentages, eux, sont ceux que le backend a
+ * mesurés.
+ */
+export function composeQuotas(usage: AccountUsage, now: number): readonly QuotaSegment[] {
+    return [
+        segment("session", "s", usage.session, now),
+        segment("weekly", "w", usage.weekly, now),
+    ].filter((quota): quota is QuotaSegment => quota !== null);
+}
+
+/** Ce que la **barre** montre des quotas — voir [`SHOWN_IN_STATUS_BAR`]. */
+export function inStatusBar(quotas: readonly QuotaSegment[]): readonly QuotaSegment[] {
+    return quotas.filter((quota) => SHOWN_IN_STATUS_BAR[quota.kind]);
+}
+
+function segment(
+    kind: QuotaKind,
+    letter: string,
+    quota: Quota | null,
+    now: number,
+): QuotaSegment | null {
+    if (quota === null) return null;
+
+    const percent = clamp(quota.percent);
+    return {
+        kind,
+        letter,
+        percent: `${String(percent)}%`,
+        resets: remainingUntil(quota.resetsAt, now),
+        ratio: percent / 100,
+    };
+}
+
+/**
+ * La jauge de l'onglet actif, ou `null` quand il n'y a rien à montrer.
+ *
+ * `null` couvre les trois absences que rien ne doit distinguer à l'écran — outil sans
+ * transcript, aucun hook encore passé, mesure sans résultat — **et** une fenêtre annoncée
+ * vide, qui n'est pas une donnée mais une division par zéro.
+ *
+ * Le seuil est lu sur le pourcentage **affiché**, et non sur le rapport brut : une jauge qui
+ * écrirait `70%` en restant bleue se lirait comme un bug, et c'est le chiffre qui est la
+ * promesse.
+ *
+ * ⚠️ Ce pourcentage n'est pas exact, et ne peut pas l'être : `usedTokens` est mesuré,
+ * `windowTokens` est une **supposition** que le transcript ne dément ni ne confirme (voir
+ * [`SessionUsage`]). D'où le dépassement possible, ramené à `100 %` plutôt qu'écrit tel quel.
+ */
+export function composeContextGauge(usage: SessionUsage | null): ContextGauge | null {
+    if (usage === null || usage.windowTokens <= 0) return null;
+
+    const percent = clamp((usage.usedTokens / usage.windowTokens) * 100);
+    return {
+        percent,
+        label: `ctx ${String(percent)}%`,
+        level:
+            percent >= COMPACTING_AT ? "compacting" : percent >= LOADED_AT ? "loaded" : "fresh",
+    };
+}
+
+/**
+ * `14m`, `2h14`, `3d 09h` — au plus deux unités, et jamais de seconde.
+ *
+ * C'est le miroir de `formatElapsed` de `@/shared/agent-state` : même mécanisme — une date
+ * absolue entre, un fait d'affichage sort —, unités différentes. Elle n'est pas réutilisée
+ * telle quelle parce qu'elle s'arrête à l'heure : un quota hebdomadaire s'y lirait `65h00m`,
+ * et sa seconde y ferait battre la ligne pour un chiffre qui bouge une fois par minute. Elle
+ * reste donc **ici**, dans la seule feature qui la lit — `shared/` demande deux features.
+ *
+ * C'est la **troisième** fois que la question se pose, et la troisième réponse identique :
+ * `aged` de `features/git/table-view.ts` écrit `3d ago` pour la même raison. Trois grammaires,
+ * trois échelles, aucun risque de divergence — les trois ne rendent jamais la même valeur. Le
+ * jour où deux d'entre elles répondraient à la même question, c'est **celles-là** qu'il
+ * faudrait fondre, pas les trois.
+ */
+export function formatRemaining(millis: number): string {
+    const minutes = Math.floor(millis / 60_000);
+    if (minutes < 60) return `${String(minutes)}m`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${String(hours)}h${pad(minutes % 60)}`;
+
+    return `${String(Math.floor(hours / 24))}d ${pad(hours % 24)}h`;
+}
+
+/**
+ * Le temps qui reste avant la remise à zéro, ou `null` quand il n'y a rien à écrire.
+ *
+ * `null` sur une date **passée** autant que sur une date absente : l'hôte a pu ne rien dire,
+ * ou le fil de fond ne pas avoir encore rappelé depuis la fin de la fenêtre. Écrire `0m`
+ * dans le second cas annoncerait une remise à zéro qu'Ash n'a pas constatée.
+ */
+export function remainingUntil(resetsAt: number | null, now: number): string | null {
+    if (resetsAt === null) return null;
+    const left = resetsAt - now;
+    return left <= 0 ? null : formatRemaining(left);
+}
+
+function pad(value: number): string {
+    return value.toString().padStart(2, "0");
+}
+
+function clamp(percent: number): number {
+    return Math.min(100, Math.max(0, Math.round(percent)));
+}
+
+/* ------------------------------------------------------------------------------------- *
+ * Le popover (vue 5b) — deux lignes, et rien de plus.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Ce que le clic sur une pastille ouvre : les **deux** quotas, chacun avec son décompte et
+ * sa barre, puis un pied.
+ *
+ * Les deux barres mesurent le **quota**, jamais le temps écoulé dans la fenêtre : `5h window`
+ * est un libellé de la maquette, et la durée d'une fenêtre n'existe nulle part — ni ici, ni
+ * côté backend ([`Quota`] ne porte que `percent` et `resetsAt`). Une troisième barre qui
+ * prétendrait la montrer serait inventée de bout en bout.
+ */
+export function composeUsagePopover(quotas: readonly QuotaSegment[]): UiComponent {
+    const card = column().class("status-usage-card");
+
+    for (const quota of quotas) {
+        const line = row(
+            badge(quota.letter).class("status-usage-mark", `is-${quota.kind}`),
+            badge(quota.kind).class("status-usage-name"),
+        )
+            .spacer()
+            .add(badge(quota.percent).class("status-usage-share"))
+            .class("status-usage-line");
+
+        // Rien à la place d'un décompte absent : une ligne vide dirait qu'on attend une
+        // valeur, alors qu'il n'y en a pas.
+        if (quota.resets !== null) {
+            line.add(badge(`resets in ${quota.resets}`).class("status-usage-resets"));
+        }
+
+        card.add(
+            line,
+            row(
+                row()
+                    .class("status-usage-fill", `is-${quota.kind}`)
+                    .attr("style", `width: ${String(Math.round(quota.ratio * 100))}%`),
+            ).class("status-usage-rail"),
+        );
+    }
+
+    return card.add(
+        row(text("5h window"))
+            .spacer()
+            .add(badge("⌘⌥U").class("status-usage-key"))
+            .class("status-usage-foot"),
+    );
+}
+
+/* ------------------------------------------------------------------------------------- *
+ * Le rendu — des nœuds posés une fois, et mis à jour en place.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Le groupe de droite de la ligne de statut.
+ *
+ * Il ne décide rien : il pose ce que les deux composeurs ci-dessus ont décidé. Ce qu'il tient
+ * en propre est ce que le modèle n'a pas — les éléments eux-mêmes, et le popover ouvert.
+ *
+ * **Deux entrées, une par rythme, et de la même forme** : [`showContext`] pour ce qui vient
+ * avec l'onglet, [`showQuotas`] pour ce qui vient du compte. Les deux reçoivent une valeur
+ * déjà composée, et c'est ce qui dit où poser un segment de plus — dans `StatusLineModel`
+ * s'il parle de l'onglet, dans `composeQuotas` s'il parle du compte, jamais dans cette classe.
+ *
+ * **Il ne reconstruit jamais ses nœuds.** C'est ce qui rend les deux critères de la tâche
+ * structurels plutôt que respectés : la transition de 700 ms de la jauge ne peut pas repartir
+ * d'un rendu à l'autre, et un changement d'onglet ne peut pas faire clignoter des quotas
+ * qu'il ne touche pas.
+ */
+export class UsageSegments {
+    readonly element: HTMLElement;
+
+    private readonly pills = new Map<QuotaKind, QuotaPill>();
+    private readonly gauge: HTMLElement;
+    private readonly fill: HTMLElement;
+    private readonly label: HTMLElement;
+
+    /** Les deux quotas tels qu'ils ont été composés — le popover les relit à l'ouverture. */
+    private quotas: readonly QuotaSegment[] = [];
+    private popover: HTMLElement | null = null;
+    /** Ce qui est réellement à l'écran — voir [`fold`]. */
+    private shownQuotas = 0;
+    private shownGauge = false;
+
+    constructor() {
+        this.element = document.createElement("div");
+        this.element.className = "status-usage";
+
+        for (const kind of ["session", "weekly"] as const) {
+            const pill = quotaPill(kind, () => {
+                this.togglePopover();
+            });
+            this.pills.set(kind, pill);
+            this.element.append(pill.element);
+        }
+
+        this.gauge = document.createElement("span");
+        this.gauge.className = "status-usage-gauge";
+        // La jauge ne dit rien qu'un lecteur d'écran puisse lire : `ctx 41%`, juste à côté,
+        // le dit en toutes lettres. Deux voix pour un chiffre en feraient entendre deux.
+        this.gauge.setAttribute("aria-hidden", "true");
+        this.fill = document.createElement("span");
+        this.fill.className = "status-usage-fill";
+        this.gauge.append(this.fill);
+
+        this.label = document.createElement("span");
+        this.label.className = "status-usage-label";
+
+        this.element.append(this.gauge, this.label);
+        this.showContext(null);
+    }
+
+    /**
+     * Les quotas du compte, déjà composés — c'est le **rythme du compte**, celui de l'event
+     * `ash://account-usage` et du battement de seconde qui fait avancer les décomptes.
+     *
+     * Le jumeau de [`showContext`], et volontairement de la même forme : les deux entrées
+     * reçoivent une valeur composée ailleurs, cette classe n'en décide aucune. Le même appel
+     * sert l'event et le battement — la composition est pure, et écrire une valeur identique
+     * ne touche pas le DOM.
+     */
+    showQuotas(quotas: readonly QuotaSegment[]): void {
+        this.quotas = quotas;
+        const shown = new Map(inStatusBar(this.quotas).map((quota) => [quota.kind, quota]));
+
+        for (const [kind, pill] of this.pills) {
+            pill.show(shown.get(kind) ?? null);
+        }
+        this.shownQuotas = shown.size;
+        this.fold();
+
+        // Le popover ouvert suit la même valeur que la barre : il n'a pas de source à lui.
+        // Et si les deux quotas viennent de disparaître, il disparaît avec eux — un cadre
+        // vide serait la façon de dire « il manque quelque chose », ce qu'ADR-0016 refuse.
+        if (this.popover === null) return;
+        if (this.quotas.length === 0) this.closePopover();
+        else this.paintPopover(this.popover);
+    }
+
+    /**
+     * La jauge de l'onglet actif, déjà composée — le **rythme de l'onglet**, celui de
+     * `ash://tab-changed`. `null` efface le segment : pas de jauge à zéro, pas de `ctx —`.
+     */
+    showContext(gauge: ContextGauge | null): void {
+        this.gauge.hidden = gauge === null;
+        this.label.hidden = gauge === null;
+        this.shownGauge = gauge !== null;
+        this.fold();
+        if (gauge === null) {
+            // Le palier part avec la jauge : le laisser sur le groupe garderait un `compacting`
+            // qui ne décrit plus rien, et que la première règle posée sur une pastille lirait.
+            delete this.element.dataset["context"];
+            return;
+        }
+
+        this.element.dataset["context"] = gauge.level;
+        write(this.label, gauge.label);
+        const width = `${String(gauge.percent)}%`;
+        if (this.fill.style.width !== width) this.fill.style.width = width;
+    }
+
+    /**
+     * Le groupe entier s'efface quand il n'a rien à montrer.
+     *
+     * Ce n'est pas une coquetterie : la ligne est un `flex` à `gap: 14 px`, et un élément
+     * vide compte quand même pour un `gap`. Sans ce repli, un onglet sans usage — un shell à
+     * son invite — pousserait le rappel de sidebar repliée de 14 px vers la gauche. La ligne
+     * doit rester celle d'avant, au pixel.
+     */
+    private fold(): void {
+        this.element.hidden = this.shownQuotas === 0 && !this.shownGauge;
+    }
+
+    /** Referme le popover, s'il est ouvert — le clic ailleurs, et le clic droit. */
+    closePopover(): void {
+        if (this.popover === null) return;
+        document.removeEventListener("pointerdown", this.onPointerDown, true);
+        document.removeEventListener("contextmenu", this.onContextMenu, true);
+        this.popover.remove();
+        this.popover = null;
+    }
+
+    private togglePopover(): void {
+        if (this.popover !== null) {
+            this.closePopover();
+            return;
+        }
+
+        const card = document.createElement("div");
+        card.className = "status-usage-popover";
+        card.setAttribute("role", "dialog");
+        card.setAttribute("aria-label", "account usage");
+        this.paintPopover(card);
+
+        // Posé dans le `body`, et non dans la ligne de statut : celle-ci coupe ce qui la
+        // dépasse (`overflow: hidden`), et un popover ancré au-dessus d'elle en dépasse par
+        // construction.
+        document.body.append(card);
+        this.popover = card;
+        this.anchor(card);
+
+        document.addEventListener("pointerdown", this.onPointerDown, true);
+        document.addEventListener("contextmenu", this.onContextMenu, true);
+    }
+
+    private paintPopover(card: HTMLElement): void {
+        card.replaceChildren(paint(composeUsagePopover(this.quotas).build()));
+    }
+
+    /**
+     * Au-dessus du groupe, aligné sur son bord droit — et ramené dans la fenêtre s'il
+     * déborde. Même règle que la popup de branches : l'ancre est au **pied** de la fenêtre,
+     * ouvrir vers le bas la ferait sortir de l'écran.
+     */
+    private anchor(card: HTMLElement): void {
+        const bounds = this.element.getBoundingClientRect();
+        card.style.right = `${String(Math.round(Math.max(8, window.innerWidth - bounds.right)))}px`;
+        card.style.bottom = `${String(Math.round(window.innerHeight - bounds.top + 6))}px`;
+    }
+
+    /**
+     * Un clic ailleurs referme — y compris sur la jauge, qui n'ouvre rien.
+     *
+     * Seules les **pastilles** sont exclues, et pas le groupe entier : leur propre `click`
+     * bascule déjà, et les deux gestes se seraient annulés — le popover se serait refermé
+     * puis rouvert dans le même battement.
+     */
+    private readonly onPointerDown = (event: Event): void => {
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (this.popover?.contains(target) === true) return;
+        for (const pill of this.pills.values()) {
+            if (pill.element.contains(target)) return;
+        }
+        this.closePopover();
+    };
+
+    /** Le clic droit referme, où qu'il tombe — y compris sur la pastille qui a ouvert. */
+    private readonly onContextMenu = (): void => {
+        this.closePopover();
+    };
+}
+
+/** Une pastille de la barre : la lettre, le pourcentage, le décompte. */
+interface QuotaPill {
+    readonly element: HTMLElement;
+    show(quota: QuotaSegment | null): void;
+}
+
+function quotaPill(kind: QuotaKind, onClick: () => void): QuotaPill {
+    // Un vrai `<button>`, comme l'ancre de branche : c'est ce qui le met sur le chemin de
+    // `tab` et dans l'arbre d'accessibilité sans une ligne de code.
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = "status-usage-quota";
+    element.dataset["quota"] = kind;
+    element.title = `${kind} usage`;
+    element.addEventListener("click", onClick);
+
+    const mark = span("status-usage-mark");
+    const percent = span("status-usage-percent");
+    const resets = span("status-usage-resets");
+    element.append(mark, percent, resets);
+
+    return {
+        element,
+        show: (quota): void => {
+            element.hidden = quota === null;
+            if (quota === null) return;
+            write(mark, quota.letter);
+            write(percent, quota.percent);
+            write(resets, quota.resets === null ? "" : ` · ${quota.resets}`);
+        },
+    };
+}
+
+function span(className: string): HTMLElement {
+    const element = document.createElement("span");
+    element.className = className;
+    return element;
+}
+
+/**
+ * Écrire, mais seulement si le mot a changé.
+ *
+ * Ce n'est pas une optimisation : c'est ce qui fait qu'un rendu déclenché par un changement
+ * d'onglet ne touche pas un nœud de quota, alors même qu'il le traverse.
+ */
+function write(element: HTMLElement, value: string): void {
+    if (element.textContent !== value) element.textContent = value;
+}
