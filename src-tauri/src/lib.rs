@@ -69,7 +69,8 @@ use features::agents::{
     SUBAGENT_LINGER,
 };
 use features::git::{
-    resolve_worktree, BusyAgent, Entry, FileSystem, SystemFileSystem, SystemGit, WorkingAgents,
+    resolve_worktree, BusyAgent, Entry, FileSystem, InhabitingTab, SystemFileSystem, SystemGit,
+    TabPresence, WorkHistory, Worked, WorkingAgents, WorktreeTable,
 };
 use features::journal::{
     CommitJournal, CommitLog as JournalCommits, CommitRecord, FileJournalStore, JournalStore,
@@ -356,6 +357,59 @@ impl JournalTabs for TabAuthors {
                 })
             })
             .collect()
+    }
+}
+
+/// Relie le port des onglets du **tableau des worktrees** au registre de PTY.
+///
+/// C'est la jointure que la spec §7.3 décrit en une phrase — « Ash les connaît parce qu'il
+/// connaît le `cwd` de chaque onglet » — et c'est ici qu'elle se fait : `git` ne sait pas ce
+/// qu'est un onglet, `pty` ne sait pas ce qu'est un tableau. Le consommateur possède le port,
+/// le composition root relie, exactement comme [`TabAuthors`] juste au-dessus.
+///
+/// Il n'y a aucune décision ici — une lecture, une projection sur cinq champs — et c'est
+/// délibéré : la règle qui décide ce qu'un agent présent dit d'un worktree vit dans
+/// `git/table.rs`, où elle se prouve.
+struct InhabitedWorktrees(Arc<PtyRegistry>);
+
+impl TabPresence for InhabitedWorktrees {
+    fn inhabiting(&self) -> Vec<InhabitingTab> {
+        self.0
+            .tabs()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|tab| {
+                Some(InhabitingTab {
+                    tab_id: tab.tab_id,
+                    worktree_root: std::path::PathBuf::from(tab.location?.worktree_root),
+                    // La **commande**, comme pour l'attribution : `claude`, et non
+                    // l'adaptateur qui le traduit (ADR-0006).
+                    agent: tab.agent.map(|agent| agent.command),
+                    state: tab.state,
+                    since: tab.state_since,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Relie la colonne `last worked by` du tableau au journal d'attribution.
+///
+/// Le journal est la **seule** mémoire d'un agent qui survive à la fermeture de son onglet :
+/// ADR-0009 interdit d'en persister une autre, et ADR-0014 borne celle-ci aux commits qu'Ash
+/// a vus naître. Un agent qui a travaillé sans rien valider n'y est pas — la colonne se tait
+/// alors, plutôt que de nommer quelqu'un qu'Ash n'a pas observé.
+struct JournalledWork(Arc<CommitJournal>);
+
+impl WorkHistory for JournalledWork {
+    fn last_worked(&self, repo: &Path, worktree_root: &Path) -> Option<Worked> {
+        let worked = self
+            .0
+            .last_worked_in(&repo.to_string_lossy(), worktree_root)?;
+        Some(Worked {
+            agent: worked.agent,
+            at: worked.at,
+        })
     }
 }
 
@@ -677,6 +731,8 @@ pub fn run() -> tauri::Result<()> {
             features::git::commands::git_branch_action,
             features::git::commands::git_stopped_operation,
             features::git::commands::git_conflict_prompt,
+            features::git::commands::git_worktrees,
+            features::git::commands::git_worktree_removal,
             features::journal::commands::journal_summary,
             features::journal::commands::journal_purge,
             features::sidebar::commands::sidebar_rows,
@@ -822,6 +878,25 @@ pub fn run() -> tauri::Result<()> {
     {
         use tauri::Manager;
         app.manage(Arc::clone(&git_watch));
+    }
+
+    // Le tableau des worktrees (spec §7.3), assemblé **après** la surveillance parce qu'il
+    // lit ce qu'elle sait : c'est elle qui rend l'état d'un worktree sans relancer un
+    // `git status` pour une racine déjà observée.
+    //
+    // Ses trois autres sources sont les trois features qui ne se connaissent pas : le
+    // système de fichiers pour énumérer les worktrees d'un dépôt — **aucun verbe git de plus**
+    // n'est lancé pour ça —, les onglets pour `agents now`, et le journal pour
+    // `last worked by`.
+    {
+        use tauri::Manager;
+        app.manage(WorktreeTable::new(
+            Arc::new(SystemFileSystem),
+            Arc::clone(&git_watch) as Arc<dyn features::git::WorktreeFacts>,
+            Arc::new(InhabitedWorktrees(Arc::clone(&ptys))),
+            Arc::new(JournalledWork(Arc::clone(&journal))),
+            Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
+        ));
     }
 
     // La boucle de sonde d'ADR-0005 démarre ici, et pas dans une commande : elle observe
