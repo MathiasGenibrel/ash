@@ -63,6 +63,20 @@ export type Accepts<Rust, Sent> = [Writable<Sent>] extends [Writable<Rust>]
     : "the window sends something the Rust type would refuse to deserialize";
 
 /**
+ * `true` quand `Wide` n'est **pas** acceptable là où `Narrow` est attendu.
+ *
+ * L'inverse d'une assertion de compatibilité, et il en faut une : certaines décisions de ce
+ * projet tiennent à ce qu'un type soit *refusé*. Un onglet, depuis #30, est une somme
+ * `Shell | Merge`, et tout l'intérêt du typage est qu'on ne puisse pas passer la somme à ce
+ * qui attend un shell. Sans cette assertion, la garantie ne serait qu'une habitude — et
+ * elle disparaîtrait le jour où quelqu'un compléterait la variante fautive « pour que ça
+ * compile ».
+ */
+export type Refuses<Wide, Narrow> = [Wide] extends [Narrow]
+    ? "this type is still accepted where the narrow one is expected — the guarantee is gone"
+    : true;
+
+/**
  * Le point où la comparaison devient une erreur de compilation.
  *
  * `Assert<Mirrors<…>>` ne se réduit à rien quand les deux types s'accordent, et refuse la
