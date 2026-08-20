@@ -57,13 +57,35 @@ pub enum ComposeOutcome {
     NoAgent,
 }
 
+/// Ce que le registre voit de l'onglet au moment où on lui demande de composer.
+///
+/// Deux booléens, et **pas** un `TabInfo` : le pupitre n'a que faire du répertoire, du
+/// titre ou de la place de l'onglet, et les lui donner rendrait la règle d'ADR-0015
+/// intestable sans construire une fiche d'onglet entière. C'est le registre qui traduit ce
+/// qu'il a annoncé en ces deux faits ; c'est le pupitre qui en tire l'issue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Foreground {
+    /// Un outil reconnu tient-il l'avant-plan ? (`features/agents` par le port
+    /// [`super::recognition`] — `pty` ne connaît aucun nom d'outil.)
+    pub agent_is_running: bool,
+    /// Un tour d'agent est-il en cours ? C'est le seul cas qui **retient** au lieu de
+    /// refuser.
+    pub turn_in_progress: bool,
+}
+
 /// Ce que le registre retient d'un onglet pour arbitrer une composition.
 ///
 /// Un compteur et un texte en attente. Rien de ce qui est ici ne vient de la **sortie** du
 /// PTY — voir l'angle mort en tête de module.
+///
+/// # Invariant
+///
+/// `pending` est un **majorant** de ce que porte la ligne de saisie : jamais moins que la
+/// réalité, parfois plus. Toute évolution de [`Self::wrote`] doit le préserver, parce que
+/// c'est lui qui garantit que l'approximation penche du côté du refus.
 #[derive(Debug, Default)]
 pub struct ComposeDesk {
-    /// Les octets entrés depuis la dernière validation.
+    /// Les octets entrés depuis la dernière validation. Majorant, jamais minorant.
     pending: usize,
     /// Le texte retenu le temps d'un tour d'agent.
     queued: Option<String>,
@@ -90,23 +112,57 @@ impl ComposeDesk {
         }
     }
 
-    /// Le prompt est-il vide, pour autant qu'Ash puisse le savoir ?
-    pub fn prompt_is_empty(&self) -> bool {
-        self.pending == 0
+    /// **La règle d'ADR-0015**, et le seul endroit où elle se lit : les trois refus et le
+    /// report, dans l'ordre documenté en tête de module.
+    ///
+    /// Le pupitre décide **et** agit sur ce qui lui appartient : quand il rend
+    /// [`ComposeOutcome::Queued`], le texte est déjà retenu ici. Ce qu'il ne fait jamais,
+    /// c'est écrire dans le PTY — il n'en a pas le moyen, et c'est voulu : cette règle se
+    /// teste sans le moindre PTY.
+    ///
+    /// [`ComposeOutcome::Written`] est donc une **instruction** pour l'appelant, pas un
+    /// constat : le registre, et lui seul, pose alors les octets dans le terminal.
+    pub fn arbitrate(&mut self, foreground: Foreground, text: &str) -> ComposeOutcome {
+        // « Passer le travail à l'agent qui tourne déjà là » (ADR-0015) : un shell à son
+        // invite n'est pas ça, et le texte y serait une ligne de commande.
+        if !foreground.agent_is_running {
+            return ComposeOutcome::NoAgent;
+        }
+        // Un texte déjà retenu compte comme un prompt occupé : il ira dans cette ligne de
+        // saisie à la fin du tour, et en composer un second l'y rejoindrait.
+        if !self.prompt_is_empty() || self.is_holding() {
+            return ComposeOutcome::PromptNotEmpty;
+        }
+        if foreground.turn_in_progress {
+            // La frappe atterrirait au milieu d'une sortie : on attend la fin du tour.
+            // C'est un problème de placement, pas d'autorisation — l'envoi reste celui de
+            // l'utilisateur, avant comme après.
+            self.queued = Some(text.to_owned());
+            return ComposeOutcome::Queued;
+        }
+        ComposeOutcome::Written
     }
 
-    /// Retient un texte le temps du tour en cours.
-    pub fn hold(&mut self, text: String) {
-        self.queued = Some(text);
-    }
-
-    /// Le texte retenu, s'il y en a un — et il n'est rendu qu'une fois.
-    pub fn release(&mut self) -> Option<String> {
+    /// Le texte retenu, **quand le tour est fini** — et il n'est rendu qu'une fois.
+    ///
+    /// L'autre moitié du corollaire de file d'attente d'ADR-0015 : `arbitrate` retient,
+    /// ceci rend. Rien ne sort tant que le tour dure, pour que la frappe atterrisse dans
+    /// le prompt et non au milieu d'une sortie. **Ce n'est pas un envoi différé** : le
+    /// texte sera écrit, jamais validé.
+    pub fn release_after_turn(&mut self, turn_in_progress: bool) -> Option<String> {
+        if turn_in_progress {
+            return None;
+        }
         self.queued.take()
     }
 
+    /// Le prompt est-il vide, pour autant qu'Ash puisse le savoir ?
+    fn prompt_is_empty(&self) -> bool {
+        self.pending == 0
+    }
+
     /// Y a-t-il un texte en attente ?
-    pub fn is_holding(&self) -> bool {
+    fn is_holding(&self) -> bool {
         self.queued.is_some()
     }
 }
@@ -210,20 +266,123 @@ mod tests {
         assert!(desk.prompt_is_empty());
     }
 
+    /// Un onglet où un agent tourne, entre deux tours : le cas nominal d'ADR-0015.
+    const AGENT_AT_REST: Foreground = Foreground {
+        agent_is_running: true,
+        turn_in_progress: false,
+    };
+
+    #[test]
+    fn given_an_agent_at_rest_and_an_empty_prompt_when_ash_composes_then_the_registry_is_told_to_write(
+    ) {
+        // Given
+        let mut desk = DeskBuilder::default().desk;
+
+        // When
+        let outcome = desk.arbitrate(AGENT_AT_REST, "resous les conflits");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::Written);
+        // Rien n'est retenu : c'est l'appelant qui écrit, tout de suite.
+        assert_eq!(desk.release_after_turn(false), None);
+    }
+
+    #[test]
+    fn given_a_tab_where_no_recognized_tool_holds_the_foreground_when_ash_composes_then_it_refuses()
+    {
+        // Given — un shell à son invite : le texte y serait une ligne de commande, et
+        // ADR-0015 parle de passer le travail à l'agent qui tourne déjà là
+        let mut desk = DeskBuilder::default().desk;
+        let shell = Foreground {
+            agent_is_running: false,
+            turn_in_progress: false,
+        };
+
+        // When
+        let outcome = desk.arbitrate(shell, "resous les conflits");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::NoAgent);
+    }
+
+    #[test]
+    fn given_a_prompt_the_user_has_started_typing_when_ash_composes_then_it_refuses_rather_than_inserting(
+    ) {
+        // Given — l'ADR-0015 le demande mot pour mot : pas d'insertion au milieu d'une
+        // frappe, parce que l'utilisateur enverrait le mélange des deux textes
+        let mut desk = DeskBuilder::default().typed("expliq").desk;
+
+        // When
+        let outcome = desk.arbitrate(AGENT_AT_REST, "resous les conflits");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::PromptNotEmpty);
+    }
+
+    #[test]
+    fn given_an_agent_in_the_middle_of_a_turn_when_ash_composes_then_the_text_waits_for_the_end_of_the_turn(
+    ) {
+        // Given — le corollaire de file d'attente : Ash écrit quand même, plus tard
+        let mut desk = DeskBuilder::default().desk;
+        let working = Foreground {
+            agent_is_running: true,
+            turn_in_progress: true,
+        };
+
+        // When
+        let outcome = desk.arbitrate(working, "resous les conflits");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::Queued);
+        assert_eq!(desk.release_after_turn(true), None);
+        assert_eq!(
+            desk.release_after_turn(false).as_deref(),
+            Some("resous les conflits")
+        );
+    }
+
+    #[test]
+    fn given_a_text_already_waiting_for_the_end_of_a_turn_when_ash_composes_again_then_it_refuses()
+    {
+        // Given — le texte retenu ira dans cette ligne de saisie : en composer un second
+        // l'y rejoindrait, et l'utilisateur enverrait les deux d'un seul `⏎`
+        let mut desk = DeskBuilder::default().desk;
+        let working = Foreground {
+            agent_is_running: true,
+            turn_in_progress: true,
+        };
+        desk.arbitrate(working, "resous les conflits");
+
+        // When
+        let outcome = desk.arbitrate(working, "et relance les tests");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::PromptNotEmpty);
+        assert_eq!(
+            desk.release_after_turn(false).as_deref(),
+            Some("resous les conflits")
+        );
+    }
+
     #[test]
     fn given_a_text_held_for_the_end_of_a_turn_when_it_is_released_then_it_is_released_only_once() {
         // Given — le corollaire de file d'attente d'ADR-0015 : le texte part **une** fois,
         // à la fin du tour. Le rendre deux fois écrirait le prompt en double.
         let mut desk = ComposeDesk::default();
-        desk.hold("resous les conflits".to_owned());
+        desk.arbitrate(
+            Foreground {
+                agent_is_running: true,
+                turn_in_progress: true,
+            },
+            "resous les conflits",
+        );
 
         // When
-        let first = desk.release();
-        let second = desk.release();
+        let first = desk.release_after_turn(false);
+        let second = desk.release_after_turn(false);
 
         // Then
         assert_eq!(first.as_deref(), Some("resous les conflits"));
         assert_eq!(second, None);
-        assert!(!desk.is_holding());
     }
 }
