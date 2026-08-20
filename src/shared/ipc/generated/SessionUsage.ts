@@ -20,7 +20,15 @@ export type SessionUsage = {
  */
 usedTokens: number, 
 /**
- * La fenêtre dans laquelle ces tokens tiennent — voir [`DEFAULT_CONTEXT_WINDOW`] pour
- * ce que cette valeur sait, et ce qu'elle suppose.
+ * La fenêtre dans laquelle ces tokens tiennent — **quand on la connaît**.
+ *
+ * `None` veut dire « aucune source ne nomme de modèle reconnu », et c'est une réponse à
+ * part entière : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`),
+ * sans barre et sans couleur de seuil. C'est le seul champ de tout le contrat dont
+ * l'absence a coûté un bug — un dénominateur supposé à 200 000 faisait lire `ctx 28%`
+ * sur une conversation qui occupait 6 % de sa fenêtre.
+ *
+ * Le numérateur, lui, **reste** : il est exact, et l'effacer avec le dénominateur serait
+ * perdre ce qu'Ash sait vraiment.
  */
-windowTokens: number, };
+windowTokens: number | null, };

@@ -112,13 +112,18 @@ export interface RecognizedAgent {
  * **Deux nombres, et pas un pourcentage** : le calcul est un fait d'affichage, et le garder
  * ici laisse l'écran libre de dire `128k / 200k` plutôt qu'un `73 %`.
  *
- * `windowTokens` est une **supposition**, et c'est une limite connue : le transcript nomme le
- * modèle sans dire si la session est de 200 k ou de 1 M, et aucun hook ne le dit non plus.
- * `usedTokens`, lui, est exact.
+ * `windowTokens` vaut `null` quand **aucune source ne nomme de modèle reconnu** — ni
+ * `ANTHROPIC_MODEL`, ni le `.claude/` du dépôt, ni celui du foyer. C'est une réponse, pas une
+ * panne : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`), sans barre et
+ * sans couleur de seuil.
+ *
+ * Ce champ portait auparavant une **supposition** — 200 000, quel que soit le modèle —, et
+ * elle mentait d'un facteur cinq sur une session d'un million : `ctx 28%` là où `/context`
+ * lisait 6 %. `usedTokens`, lui, a toujours été exact, et le reste.
  */
 export interface SessionUsage {
     usedTokens: number;
-    windowTokens: number;
+    windowTokens: number | null;
 }
 
 /**

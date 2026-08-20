@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::state::AgentState;
-use super::usage::{SessionUsage, UsageSupport};
+use super::usage::{ModelSource, UsageSupport};
 
 /// Le marqueur qu'Ash pose dans **chacune** de ses entrées, suivi de sa version.
 ///
@@ -237,5 +237,38 @@ pub trait Adapter: Send + Sync {
     /// `None` est la réponse normale — une queue sans tour d'assistant, un format qui a
     /// changé, un fichier encore vide. Ce n'est pas une erreur : l'onglet garde ce qu'il
     /// savait déjà.
-    fn read_usage(&self, transcript_tail: &str) -> Option<SessionUsage>;
+    ///
+    /// **Un nombre, et pas un pourcentage ni une fenêtre.** Le transcript mesure le
+    /// numérateur, et rien d'autre : le dénominateur ne s'y trouve pas, et il a coûté un bug
+    /// de faire semblant du contraire ([`Self::context_window`]).
+    fn read_used_tokens(&self, transcript_tail: &str) -> Option<u64>;
+
+    /// Où cet outil peut nommer le modèle avec lequel il tourne, **du plus spécifique au
+    /// moins spécifique**.
+    ///
+    /// L'ordre *est* la règle, et il appartient à l'adaptateur parce qu'il reproduit celui de
+    /// l'outil : pour Claude Code, `ANTHROPIC_MODEL`, puis le `settings.local.json` du dépôt,
+    /// puis son `settings.json`, puis celui du foyer.
+    ///
+    /// **Ce sont des adresses, jamais des contenus** : l'adaptateur décrit où regarder, la
+    /// feature ouvre ([`super::usage::ToolConfig`]). Le même partage que pour
+    /// [`Self::instrumentation`], et pour la même raison — un adaptateur qui lirait le disque
+    /// ferait exister une deuxième façon de lire chez l'utilisateur.
+    ///
+    /// `cwd` est le dossier où l'agent tourne, quand on le connaît ; `home` le dossier
+    /// personnel, résolu par la feature. Les deux sont facultatifs, et une liste **vide** est
+    /// la réponse normale d'un outil qui répond [`UsageSupport::None`].
+    fn model_sources(&self, cwd: Option<&Path>, home: Option<&Path>) -> Vec<ModelSource>;
+
+    /// La fenêtre de contexte de ce modèle, si l'outil sait ce que cet identifiant désigne.
+    ///
+    /// **C'est ici que vit la table, et nulle part ailleurs** : `opus[1m]` ne veut rien dire
+    /// pour le cœur, et un identifiant que l'outil ne reconnaît pas ne doit surtout pas
+    /// tomber sur une valeur par défaut. C'est très exactement le bug qu'un
+    /// `DEFAULT_CONTEXT_WINDOW = 200_000` a produit : un pourcentage cinq fois trop haut,
+    /// affiché avec l'aplomb d'une mesure.
+    ///
+    /// `None` est donc la bonne réponse pour tout ce qui n'est pas reconnu, et la jauge
+    /// disparaît alors sans que la mesure disparaisse avec elle.
+    fn context_window(&self, model: &str) -> Option<u64>;
 }

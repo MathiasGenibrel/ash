@@ -67,13 +67,27 @@ export const SHOWN_IN_STATUS_BAR: Readonly<Record<QuotaKind, boolean>> = {
     weekly: false,
 };
 
-/** Ce que la conversation occupe de sa fenêtre — la jauge, et le mot qui la double. */
+/**
+ * Ce que la conversation occupe de sa fenêtre — la jauge, et le mot qui la double.
+ *
+ * **Les trois champs tombent ensemble.** `percent` et `level` valent `null` exactement quand
+ * la fenêtre est inconnue, et le libellé bascule alors sur la mesure brute (`ctx 57k`). Il n'y
+ * a donc pas d'état où une barre serait peinte sans pourcentage, ni l'inverse : c'est ce qui
+ * rend impossible de repeindre un seuil sur un rapport qu'on n'a pas.
+ */
 export interface ContextGauge {
-    /** Entre `0` et `100`, arrondi : la **même** valeur pour la largeur et pour le libellé. */
-    readonly percent: number;
-    /** `ctx 41%`. */
+    /**
+     * Entre `0` et `100`, arrondi : la **même** valeur pour la largeur et pour le libellé.
+     *
+     * `null` quand la fenêtre est inconnue — aucune source ne nomme de modèle reconnu. Rien
+     * n'est alors mis en rapport, et c'est la correction du bug qui faisait lire `ctx 28%` à
+     * une conversation occupant 6 % de sa fenêtre.
+     */
+    readonly percent: number | null;
+    /** `ctx 41%` quand la fenêtre est connue, `ctx 57k` sinon. */
     readonly label: string;
-    readonly level: ContextLevel;
+    /** `null` avec `percent` : sans dénominateur, aucun seuil ne veut dire quoi que ce soit. */
+    readonly level: ContextLevel | null;
 }
 
 /**
@@ -130,27 +144,47 @@ function segment(
  * La jauge de l'onglet actif, ou `null` quand il n'y a rien à montrer.
  *
  * `null` couvre les trois absences que rien ne doit distinguer à l'écran — outil sans
- * transcript, aucun hook encore passé, mesure sans résultat — **et** une fenêtre annoncée
- * vide, qui n'est pas une donnée mais une division par zéro.
+ * transcript, aucun hook encore passé, mesure sans résultat. Ce sont les cas où Ash ne sait
+ * **rien** de cette conversation.
+ *
+ * **Une fenêtre inconnue n'en fait pas partie**, et c'est ce que cette tranche est venue
+ * corriger : `usedTokens` est exact, et l'effacer parce qu'on n'a pas de dénominateur serait
+ * perdre ce qu'Ash sait vraiment. Le libellé montre alors la mesure sans la mettre en rapport
+ * — `ctx 57k` —, sans barre et sans couleur de seuil. Une fenêtre **annoncée vide** est
+ * traitée pareil : zéro ne se divise pas, et ce n'est pas une donnée.
  *
  * Le seuil est lu sur le pourcentage **affiché**, et non sur le rapport brut : une jauge qui
  * écrirait `70%` en restant bleue se lirait comme un bug, et c'est le chiffre qui est la
- * promesse.
- *
- * ⚠️ Ce pourcentage n'est pas exact, et ne peut pas l'être : `usedTokens` est mesuré,
- * `windowTokens` est une **supposition** que le transcript ne dément ni ne confirme (voir
- * [`SessionUsage`]). D'où le dépassement possible, ramené à `100 %` plutôt qu'écrit tel quel.
+ * promesse. Le dépassement, lui, est ramené à `100 %` : une conversation compactée peut
+ * déclarer plus que sa fenêtre le temps d'un tour, et `ctx 143%` ne veut rien dire.
  */
 export function composeContextGauge(usage: SessionUsage | null): ContextGauge | null {
-    if (usage === null || usage.windowTokens <= 0) return null;
+    if (usage === null) return null;
 
-    const percent = clamp((usage.usedTokens / usage.windowTokens) * 100);
+    const window = usage.windowTokens;
+    if (window === null || window <= 0) {
+        return { percent: null, label: `ctx ${abbreviate(usage.usedTokens)}`, level: null };
+    }
+
+    const percent = clamp((usage.usedTokens / window) * 100);
     return {
         percent,
         label: `ctx ${String(percent)}%`,
         level:
             percent >= COMPACTING_AT ? "compacting" : percent >= LOADED_AT ? "loaded" : "fresh",
     };
+}
+
+/**
+ * `57k`, `900` — un compte de tokens écrit court, et sans décimale.
+ *
+ * La règle est volontairement plate : au-dessus de mille, les milliers arrondis suivis d'un
+ * `k` ; en dessous, le nombre tel quel. Une décimale (`57.2k`) ferait battre le dernier
+ * chiffre à chaque tour d'agent pour une précision que personne ne lit dans une barre d'état
+ * de 12 px.
+ */
+function abbreviate(tokens: number): string {
+    return tokens >= 1000 ? `${String(Math.round(tokens / 1000))}k` : String(Math.round(tokens));
 }
 
 /**
@@ -343,10 +377,14 @@ export class UsageSegments {
      * `ash://tab-changed`. `null` efface le segment : pas de jauge à zéro, pas de `ctx —`.
      */
     showContext(gauge: ContextGauge | null): void {
-        this.gauge.hidden = gauge === null;
+        // La **barre** ne sort que s'il y a un rapport à montrer ; le **libellé** sort dès
+        // qu'il y a une mesure. C'est toute la différence entre « Ash ne sait rien » et « Ash
+        // sait combien, mais pas sur combien » — et le seul endroit où elle se voit.
+        this.gauge.hidden = gauge === null || gauge.percent === null;
         this.label.hidden = gauge === null;
         this.shownGauge = gauge !== null;
         this.fold();
+
         if (gauge === null) {
             // Le palier part avec la jauge : le laisser sur le groupe garderait un `compacting`
             // qui ne décrit plus rien, et que la première règle posée sur une pastille lirait.
@@ -354,8 +392,16 @@ export class UsageSegments {
             return;
         }
 
-        this.element.dataset["context"] = gauge.level;
         write(this.label, gauge.label);
+
+        if (gauge.percent === null || gauge.level === null) {
+            // Une mesure sans rapport : le mot reste, le palier part. Peindre une couleur de
+            // seuil ici reviendrait à annoncer un compactage sur un chiffre qu'Ash n'a pas.
+            delete this.element.dataset["context"];
+            return;
+        }
+
+        this.element.dataset["context"] = gauge.level;
         const width = `${String(gauge.percent)}%`;
         if (this.fill.style.width !== width) this.fill.style.width = width;
     }

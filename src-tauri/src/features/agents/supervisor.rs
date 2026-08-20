@@ -87,7 +87,7 @@ use super::notify::{notice, Notice, Notifier};
 use super::preferences::{NotificationChoices, NotificationPreferences};
 use super::state::{AgentState, AgentStatus};
 use super::subagents::{Subagent, Subagents};
-use super::usage::{self, SessionUsage, Transcripts};
+use super::usage::{self, SessionUsage, ToolConfig, Transcripts};
 use super::wire::EventFrame;
 use crate::shared::time::{Clock, UnixMillis};
 
@@ -147,6 +147,16 @@ pub struct Supervisor {
     /// Un port, pour la raison habituelle : ouvrir un fichier est un effet système, et les
     /// scénarios du superviseur doivent pouvoir décrire un transcript au lieu d'en écrire un.
     transcripts: Arc<dyn Transcripts>,
+    /// Par où la configuration d'un outil se lit (`usage.rs`).
+    ///
+    /// Le second port de la mesure, et il existe pour la même raison que le premier : lire un
+    /// `settings.json` et une variable d'environnement sont des effets système, et sans lui,
+    /// aucun scénario ne pourrait décrire un utilisateur tournant en `opus[1m]` sans toucher
+    /// au `~/.claude` de qui lance les tests.
+    ///
+    /// Il est consulté **au même rythme que la mesure** — à l'arrivée d'un hook portant un
+    /// transcript, jamais à une passe de sonde ni sur un chemin de rendu.
+    config: Arc<dyn ToolConfig>,
     tabs: Mutex<Tabs>,
 }
 
@@ -239,6 +249,7 @@ impl Supervisor {
         preferences: Arc<NotificationPreferences>,
         subagent_linger: Duration,
         transcripts: Arc<dyn Transcripts>,
+        config: Arc<dyn ToolConfig>,
     ) -> Self {
         Self {
             clock,
@@ -247,6 +258,7 @@ impl Supervisor {
             preferences,
             subagent_linger,
             transcripts,
+            config,
             tabs: Mutex::new(Tabs::default()),
         }
     }
@@ -512,7 +524,9 @@ impl Supervisor {
         usage::measure(
             &self.adapters,
             self.transcripts.as_ref(),
+            self.config.as_ref(),
             event.transcript_path.as_deref(),
+            event.cwd.as_deref().map(std::path::Path::new),
         )
     }
 }
@@ -581,10 +595,10 @@ mod tests {
     use super::*;
     use crate::features::agents::adapters::{ClaudeCodeAdapter, GenericAdapter};
     use crate::features::agents::fakes::{
-        FakeNotificationStore, FakeNotifier, FakeTranscripts, ManualClock, FAKE_EPOCH,
+        FakeNotificationStore, FakeNotifier, FakeToolConfig, FakeTranscripts, ManualClock,
+        FAKE_EPOCH,
     };
     use crate::features::agents::subagents::SUBAGENT_LINGER;
-    use crate::features::agents::usage::DEFAULT_CONTEXT_WINDOW;
     use std::path::PathBuf;
 
     const TAB: &str = "01J0TAB";
@@ -611,6 +625,12 @@ mod tests {
         /// Les transcripts que ce scénario **décrit** — vide par défaut, donc aucun chemin
         /// nommé par un hook ne mènera nulle part.
         transcripts: FakeTranscripts,
+        /// La configuration de l'outil que ce scénario **décrit**.
+        ///
+        /// Elle nomme un modèle par défaut, parce que la plupart des scénarios ne parlent pas
+        /// de la fenêtre et ont malgré tout besoin d'un pourcentage lisible. Aucun d'eux ne
+        /// touche au `~/.claude` de qui lance les tests.
+        config: FakeToolConfig,
         /// L'outil que cet onglet est censé faire tourner n'a pas d'adaptateur à lui.
         ///
         /// Faux par défaut : les scénarios courants assemblent les **vrais** adaptateurs, tels
@@ -626,8 +646,31 @@ mod tests {
                 subagent_linger: SUBAGENT_LINGER,
                 choices: NotificationChoices::default(),
                 transcripts: FakeTranscripts::new(),
+                config: FakeToolConfig::new()
+                    .homed_at(HOME)
+                    .declaring_model(HOME_SETTINGS, "sonnet"),
                 only_generic: false,
             }
+        }
+
+        /// L'utilisateur de ce scénario tourne avec ce modèle-là, déclaré dans son foyer.
+        fn running_the_model(mut self, model: &str) -> Self {
+            self.config = FakeToolConfig::new()
+                .homed_at(HOME)
+                .declaring_model(HOME_SETTINGS, model);
+            self
+        }
+
+        /// Aucune source ne nomme de modèle : le cas par défaut d'une installation neuve.
+        fn naming_no_model(mut self) -> Self {
+            self.config = FakeToolConfig::new().homed_at(HOME);
+            self
+        }
+
+        /// Le dépôt de cet onglet déclare son propre modèle, par-dessus celui du foyer.
+        fn whose_repository_declares(mut self, model: &str) -> Self {
+            self.config = self.config.declaring_model(REPO_SETTINGS, model);
+            self
         }
 
         /// Un transcript existe à ce chemin, et il porte ce texte.
@@ -675,6 +718,7 @@ mod tests {
                 FakeNotificationStore::holding(self.choices),
                 self.subagent_linger,
                 Arc::new(self.transcripts) as Arc<dyn Transcripts>,
+                Arc::new(self.config) as Arc<dyn ToolConfig>,
             );
             supervisor.on_window_focus(self.focused);
             Assembled {
@@ -713,6 +757,14 @@ mod tests {
 
     /// Le chemin qu'un hook de Claude Code met sur son entrée standard.
     const TRANSCRIPT: &str = "/Users/x/.claude/projects/ash/session.jsonl";
+
+    /// Le foyer de l'utilisateur du scénario, et le fichier où il nomme son modèle.
+    const HOME: &str = "/Users/x";
+    const HOME_SETTINGS: &str = "/Users/x/.claude/settings.json";
+
+    /// Le dépôt où l'agent de ces scénarios tourne, et le fichier qu'il y pose.
+    const REPO: &str = "/dev/ash";
+    const REPO_SETTINGS: &str = "/dev/ash/.claude/settings.local.json";
 
     /// Une queue de transcript qui déclare exactement `used` tokens.
     ///
@@ -1425,7 +1477,7 @@ mod tests {
             sweep_usage(&supervisor, Presence::Program),
             Some(SessionUsage {
                 used_tokens: 146_273,
-                window_tokens: DEFAULT_CONTEXT_WINDOW,
+                window_tokens: Some(200_000),
             })
         );
     }
@@ -1518,5 +1570,62 @@ mod tests {
         let after = supervisor.state(TAB, Presence::Program);
         assert_eq!(after.status.state, AgentState::Working);
         assert_eq!(after.usage.map(|usage| usage.used_tokens), Some(12_345));
+    }
+
+    #[test]
+    fn given_a_hook_saying_where_it_ran_when_the_repository_declares_its_own_model_then_that_window_is_the_one_measured(
+    ) {
+        // Given — le `cwd` traverse comme une **donnée**, jamais comme une corrélation
+        // (ADR-0007 : `ASH_TAB_ID` reste la seule). Ce qu'il apporte est le chemin des deux
+        // couches de configuration du dépôt, que le foyer seul ne peut pas donner.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .running_the_model("sonnet")
+            .whose_repository_declares("opus[1m]")
+            .holding_transcript(TRANSCRIPT, &transcript_of(57_200))
+            .build();
+        sweep(&supervisor, Presence::Program);
+
+        // When
+        supervisor.on_hook(
+            &hook("waiting", TAB)
+                .with_transcript(Some(TRANSCRIPT))
+                .with_cwd(Some(REPO)),
+        );
+
+        // Then — la fenêtre du dépôt, pas celle du foyer. L'onglet reste bien corrélé par son
+        // `tab_id` : c'est lui, et lui seul, qui a désigné cette machine à états.
+        assert_eq!(
+            sweep_usage(&supervisor, Presence::Program),
+            Some(SessionUsage {
+                used_tokens: 57_200,
+                window_tokens: Some(1_000_000),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_tab_whose_tool_names_no_model_anywhere_when_it_is_measured_then_the_window_is_unknown_and_the_count_survives(
+    ) {
+        // Given — l'installation par défaut : personne n'a posé de `model` nulle part. C'est
+        // le cas que l'ancien `DEFAULT_CONTEXT_WINDOW` traitait en supposant 200 000, ce qui
+        // faisait lire `ctx 29%` à une conversation qui en occupait 6 % de sa fenêtre réelle.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .naming_no_model()
+            .holding_transcript(TRANSCRIPT, &transcript_of(57_200))
+            .build();
+        sweep(&supervisor, Presence::Program);
+
+        // When
+        supervisor.on_hook(&hook("waiting", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // Then — aucun dénominateur, et le numérateur intact : l'écran lira `ctx 57k`, sans
+        // barre et sans couleur de seuil.
+        assert_eq!(
+            sweep_usage(&supervisor, Presence::Program),
+            Some(SessionUsage {
+                used_tokens: 57_200,
+                window_tokens: None,
+            })
+        );
     }
 }
