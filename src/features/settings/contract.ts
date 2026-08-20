@@ -338,10 +338,15 @@ export interface Reservation {
 }
 
 /**
- * Les deux lignes d'un conflit et ses deux issues. Miroir de `ShortcutConflict` en Rust.
+ * Les deux lignes d'un conflit et la ou les issues qui le referment. Miroir de
+ * `ShortcutConflict` en Rust.
  *
  * Il naît d'une capture qui viserait une combinaison déjà prise, et **rien n'est appliqué
  * tant qu'il vit** : ash ne réattribue jamais en silence.
+ *
+ * `give` est **absent** quand le détenteur ne peut pas céder — la famille `Tab 1 … Tab 9`
+ * n'est pas réglable. Le bloc est alors un refus, et sa seule issue est `keep`. La fenêtre ne
+ * décide pas laquelle des deux formes elle a sous les yeux : elle rend ce qui lui est donné.
  */
 export interface ShortcutConflict {
     keys: string;
@@ -350,7 +355,7 @@ export interface ShortcutConflict {
     asked: string;
     askedLabel: string;
     diagnosis: string;
-    give: string;
+    give: string | null;
     keep: string;
 }
 

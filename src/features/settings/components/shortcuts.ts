@@ -103,7 +103,7 @@ export function shortcutsSection(
                 posed = true;
                 // Les libellés sont cherchés dans **toutes** les lignes, pas seulement celles
                 // du groupe courant : rien n'oblige les deux fautives à être voisines.
-                body.add(conflictBlock(report.conflict, report.rows, actions));
+                body.add(conflictBlock(report.conflict, actions));
                 continue;
             }
             body.add(
@@ -244,43 +244,52 @@ function captureBlock(line: ShortcutRow, capture: ShortcutCapture): UiComponent 
 }
 
 /**
- * Le bloc de conflit : les **deux** lignes fautives, le diagnostic, et deux issues nommées.
+ * Le bloc de conflit : les **deux** lignes fautives, le diagnostic, et ses issues nommées.
  *
  * « Un conflit interne se résout par un choix explicite : ash ne réattribue jamais en
  * silence. » Le premier bouton est le conséquent — il donne la combinaison —, le second le
  * secondaire. Aucun des deux n'est un défaut : rien n'est appliqué tant que le bloc est là.
+ *
+ * **Il n'y en a qu'un quand le backend n'offre pas `give`** : la combinaison est alors tenue
+ * par une ligne qui ne se règle pas, et le bloc est un refus (issue #137). L'écran ne fait
+ * pas ce partage, il le lit — le diagnostic dit déjà pourquoi c'est sans appel.
  */
 function conflictBlock(
     conflict: ShortcutConflict | null,
-    lines: readonly ShortcutRow[],
     actions: ShortcutsActions,
 ): UiComponent {
     const block = tag("div", "settings-conflict-block");
     if (conflict === null) return block;
 
-    const named = (action: string, mention: string): UiComponent =>
+    // Le libellé vient du **contrat**, pas de la liste affichée : une combinaison peut être
+    // tenue par une ligne que l'écran ne montre pas — les huit positions d'onglet cachées
+    // derrière « Tab 1 … Tab 9 » (issue #137). Les chercher dans `lines` rendait alors
+    // l'identifiant interne, `tab:select:2`, dans une fenêtre de réglages. Le backend a déjà
+    // décidé sous quel nom chaque détenteur se lit ; l'écran le rend, il ne le redevine pas.
+    const named = (name: string, mention: string): UiComponent =>
         row(
-            label(
-                "settings-shortcut-name",
-                lines.find((line) => line.action === action)?.label ?? action,
-            ),
+            label("settings-shortcut-name", name),
             spacer(),
             label("settings-conflict-mention", mention),
             label("settings-shortcut-keys is-conflicting", conflict.keys),
         ).class("settings-shortcut");
 
     return block.add(
-        named(conflict.holder, "already assigned"),
-        named(conflict.asked, "just now"),
+        named(conflict.holderLabel, "already assigned"),
+        named(conflict.askedLabel, "just now"),
         row(
             label("settings-capture-warn-glyph", "△"),
             label("settings-conflict-diagnosis", conflict.diagnosis),
             spacer(),
-            button(conflict.give)
-                .class("settings-conflict-give")
-                .onClick(() => {
-                    actions.resolveConflict("give");
-                }),
+            ...(conflict.give === null
+                ? []
+                : [
+                      button(conflict.give)
+                          .class("settings-conflict-give")
+                          .onClick(() => {
+                              actions.resolveConflict("give");
+                          }),
+                  ]),
             button(conflict.keep)
                 .class("settings-conflict-keep")
                 .onClick(() => {
