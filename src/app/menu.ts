@@ -70,7 +70,24 @@ export type MenuAction =
     /** `Ctrl+Shift+Tab` : l'onglet précédent, en bouclant. */
     | { kind: "previous-tab" }
     /** `Cmd+B` : replie ou déplie la colonne. */
-    | { kind: "toggle-sidebar" };
+    | { kind: "toggle-sidebar" }
+    /** `⌘⌃B` : ouvre ou referme la popup de branches (spec §7.1). */
+    | { kind: "toggle-branches" }
+    /** `⌘⌃G` : le graphe de commits dans le panneau bas (spec §7.2). */
+    | { kind: "toggle-graph" }
+    /** `⌘⌃W` : le tableau des worktrees dans le panneau bas (spec §7.3). */
+    | { kind: "toggle-worktrees" }
+    /**
+     * `⌘⌃M` : l'onglet de merge du worktree courant (spec §7.4).
+     *
+     * L'entrée de menu est **éteinte** quand rien n'est arrêté là où l'on regarde, donc
+     * cette action n'arrive normalement que sur un rebase ou un merge arrêté. Le backend
+     * refuse quand même si le worktree est redevenu tranquille entre-temps : une entrée
+     * éteinte est une politesse, pas une garantie.
+     */
+    | { kind: "open-merge" }
+    /** `⌘⌃I` : la fiche de branche dans le panneau bas (spec §7.5). */
+    | { kind: "toggle-branch-card" };
 
 /**
  * Les sept verbes de la section `shortcuts` des réglages (spec §4.4, issue #22).
@@ -155,6 +172,25 @@ export function resolveShortcutConflict(choice: ConflictChoice): Promise<Shortcu
     return invoke<ShortcutsReport>("shortcut_resolve", { choice });
 }
 
+/**
+ * Annonce au menu le worktree que la fenêtre regarde — l'onglet actif a changé.
+ *
+ * **La fenêtre ne décide de rien** : elle nomme un worktree, et le backend en tire l'état de
+ * l'entrée « Resolve Conflicts », qui n'est active que pendant un rebase ou un merge arrêté
+ * (spec §4.4). La règle et la lecture sont en Rust
+ * ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)) ; ce qui part d'ici est le
+ * seul fait que le backend n'a pas — quel onglet est devant.
+ *
+ * `null` quand l'onglet actif n'est dans aucun worktree, ou qu'il n'y en a plus.
+ *
+ * Elle n'est **pas** rappelée quand un rebase commence : c'est la surveillance de `.git` qui
+ * le voit, et elle rouvre la question toute seule côté backend. La fenêtre n'a donc rien à
+ * observer, et rien à tenir à jour.
+ */
+export function worktreeInView(worktreeRoot: string | null): Promise<void> {
+    return invoke<void>("menu_worktree_in_view", { worktreeRoot });
+}
+
 /** S'abonne aux actions de menu. Rend de quoi se désabonner. */
 export function onMenuAction(handle: (action: MenuAction) => void): Promise<UnlistenFn> {
     return listen<string>(MENU_ACTION_EVENT, (event) => {
@@ -179,6 +215,16 @@ export function parseMenuAction(id: string): MenuAction | null {
             return { kind: "previous-tab" };
         case "view:toggle-sidebar":
             return { kind: "toggle-sidebar" };
+        case "git:branches":
+            return { kind: "toggle-branches" };
+        case "git:graph":
+            return { kind: "toggle-graph" };
+        case "git:worktrees":
+            return { kind: "toggle-worktrees" };
+        case "git:merge":
+            return { kind: "open-merge" };
+        case "git:branch-card":
+            return { kind: "toggle-branch-card" };
         default:
             break;
     }
