@@ -99,7 +99,9 @@ impl Cards {
             })?
             .unwrap_or_default();
         let table = self.table(worktree_root);
-        let plan = write::plan(self.files.as_ref(), &place.path, &table)?;
+        // **Une seule lecture du fichier** : la source que l'écran rend et l'état du bloc
+        // qu'il annonce décrivent alors les mêmes octets, forcément.
+        let plan = write::plan_of(&source, &table);
 
         Ok(BranchCard {
             worktree_root: worktree_root.to_string_lossy().into_owned(),
