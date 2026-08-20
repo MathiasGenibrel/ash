@@ -285,3 +285,36 @@ describe("la ligne de statut d'un onglet sans PTY", () => {
         expect(line.cwd.text).toContain("ash");
     });
 });
+
+describe("la jauge de contexte de la ligne", () => {
+    it("Given two tabs whose conversations differ, when the selected one changes, then the line shows the context of the tab in front", () => {
+        // Given — la jauge suit **l'onglet** : elle arrive avec sa fiche, et c'est ce qui la
+        // sépare des deux quotas du compte, qu'un changement d'onglet ne touche pas.
+        const light = TabBuilder.create().named("T1").running("claude").consuming(82_000).build();
+        const full = TabBuilder.create().named("T2").running("claude").consuming(184_000).build();
+        const tabs = [light, full];
+        const metadata = MetadataBuilder.create().build();
+
+        // When
+        const first = composeStatusLine({ tabs, activeTabId: "T1" }, metadata, false, 0);
+        const second = composeStatusLine({ tabs, activeTabId: "T2" }, metadata, false, 0);
+
+        // Then
+        expect(first.context?.label).toBe("ctx 41%");
+        expect(second.context?.label).toBe("ctx 92%");
+        expect(second.context?.level).toBe("compacting");
+    });
+
+    it("Given a shell at its prompt, when the status line is composed, then it carries nothing more than it did before the gauge existed", () => {
+        // Given — aucun outil reconnu, donc aucun transcript : pas de jauge à zéro, pas de
+        // `ctx —`. La ligne doit rester celle d'aujourd'hui, au pixel.
+        const shell = TabBuilder.create().running("zsh", "idle").build();
+
+        // When
+        const line = showing(shell);
+
+        // Then
+        expect(line.context).toBeNull();
+        expect(line.agent.text).toBe("zsh · idle");
+    });
+});

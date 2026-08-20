@@ -8,6 +8,7 @@
  */
 
 import type {
+    AccountUsage,
     ComposeOutcome,
     ShellTab,
     StoppedOperation,
@@ -230,4 +231,21 @@ export interface GitBridge {
      * que rien n'ait encore été écrit nulle part.
      */
     conflictPrompt(worktreeRoot: string): Promise<string | null>;
+}
+
+/**
+ * Ce qu'Ash sait de l'usage du **compte** — la troisième frontière, et la plus petite.
+ *
+ * Une lecture et un event, comme le thème : la webview lit une fois en s'affichant, puis
+ * l'event la tient à jour. Elle ne redemande jamais, et n'a **aucun moyen de déclencher un
+ * appel réseau** ([ADR-0016](../../../docs/adr/0016-ash-sort-sur-le-reseau.md), condition
+ * 2) : c'est un fil de fond du backend qui décide quand appeler, et s'il appelle.
+ */
+export interface UsageBridge {
+    /**
+     * Les deux quotas, tels que le fil de fond les connaît **déjà**. N'attend rien, et
+     * n'appelle rien : les deux peuvent être `null`, et c'est un cas nominal.
+     */
+    snapshot(): Promise<AccountUsage>;
+    onAccountUsage(handler: (usage: AccountUsage) => void): Promise<Unsubscribe>;
 }
