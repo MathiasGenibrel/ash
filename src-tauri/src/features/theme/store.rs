@@ -74,6 +74,7 @@ fn encode(appearance: Appearance) -> String {
 mod tests {
     use super::*;
 
+    use super::super::bottom_panel::{BottomPanel, PanelHeight, PanelView};
     use super::super::density::SidebarDensity;
     use super::super::font::TerminalFont;
     use super::super::font_size::{FontSize, FontStep};
@@ -81,7 +82,7 @@ mod tests {
     use super::super::sidebar_column::{SidebarColumn, SidebarWidth};
 
     /// L'apparence complète, telle qu'une session l'aurait réglée de bout en bout.
-    fn all_five_chosen() -> Appearance {
+    fn all_six_chosen() -> Appearance {
         Appearance {
             mode: ThemeMode::Dark,
             font_size: FontSize::DEFAULT.stepped(FontStep::Bigger),
@@ -91,6 +92,11 @@ mod tests {
                 width: SidebarWidth::from(300),
                 collapsed: false,
             },
+            panel: BottomPanel {
+                height: PanelHeight::from(280),
+                open: true,
+                view: PanelView::Worktrees,
+            },
         }
     }
 
@@ -98,14 +104,14 @@ mod tests {
     fn given_a_stored_choice_when_it_is_read_back_then_it_is_the_same_choice() {
         // Given — le fichier est le seul lien entre deux sessions ; sa forme est un
         // contrat avec la version d'Ash de demain
-        let written = encode(all_five_chosen());
+        let written = encode(all_six_chosen());
 
         // When
         let read = decode(&written);
 
-        // Then — les cinq préférences font l'aller-retour, pas seulement les deux
+        // Then — les six préférences font l'aller-retour, pas seulement les deux
         // premières : elles partagent un fichier qui s'écrit d'un bloc
-        assert_eq!(read, Some(all_five_chosen()));
+        assert_eq!(read, Some(all_six_chosen()));
     }
 
     #[test]
@@ -125,6 +131,11 @@ mod tests {
                 width: SidebarWidth::from(320),
                 collapsed: true,
             },
+            panel: BottomPanel {
+                height: PanelHeight::from(210),
+                open: false,
+                view: PanelView::Graph,
+            },
         };
 
         // When
@@ -138,10 +149,12 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            vec!["density", "font", "font_size", "mode", "sidebar"]
+            vec!["density", "font", "font_size", "mode", "panel", "sidebar"]
         );
         assert_eq!(object["sidebar"]["width"], serde_json::json!(320));
         assert_eq!(object["sidebar"]["collapsed"], serde_json::json!(true));
+        assert_eq!(object["panel"]["height"], serde_json::json!(210));
+        assert_eq!(object["panel"]["view"], serde_json::json!("graph"));
     }
 
     #[test]
@@ -220,6 +233,7 @@ mod tests {
                 width: SidebarWidth::from(260),
                 collapsed: true,
             },
+            panel: BottomPanel::default(),
         };
 
         // When

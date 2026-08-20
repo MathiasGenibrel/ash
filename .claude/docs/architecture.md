@@ -33,12 +33,22 @@ src/
   features/
     terminal/            xterm.js, pile de terminaux, ligne de statut
     sidebar/             dépôts, worktrees, agents, subagents
+    panel/               la surface du panneau bas : hauteur, repli, barre
+                         d'onglets — jamais de terminal      — spec §4.3 / ADR-0003
     git/                 popup de branches, graphe, merge, fiche
     settings/            la fenêtre de réglages
   shared/
     ipc/                 le contrat Rust ↔ TypeScript
     agent-state/         la présentation des cinq états — sidebar et ligne de statut
 ```
+
+**`features/panel/` est une surface, pas une vue.** Elle porte la hauteur réglable, le
+repli et la barre d'onglets du panneau bas ; elle ne sait **rien** de git. Ce que les
+quatre vues montreront — graphe, worktrees, conflits, fiche de branche — vit dans
+`features/git/`, et se pose dans le `body` que le panneau expose. Le partage est le même
+qu'entre `app/` et une feature : celui qui tient la place ne connaît pas celui qui
+l'occupe. Les deux règles d'ADR-0003 y sont tenues par construction — le panneau
+n'instancie aucune vue de terminal, et rien de ce qu'il contient n'appelle `focus()`.
 
 À l'intérieur d'une feature :
 
