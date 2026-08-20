@@ -86,13 +86,24 @@ mod fakes;
 
 pub use attribution::{Attribution, Attributions};
 pub use error::GitError;
-pub use git_cli::{
-    CommitRecord, GraphLog, StatusReader, SystemGit, MAX_GRAPH_WINDOW, STATUS_TIMEOUT,
-};
+pub use git_cli::{CommitRecord, GraphLog, StatusReader, SystemGit, STATUS_TIMEOUT};
+// Du graphe, l'extérieur ne voit que **le chemin de production** — [`CommitGraphReader`], que
+// `lib.rs` assemble — et de quoi refaire un dessin sur un vrai dépôt, ce que
+// `tests/commit_graph_real_repository.rs` est seul à faire : un test d'intégration ne peut
+// atteindre que l'API publique, et la chaîne qu'il vérifie (le processus `git`, la lecture de
+// sa sortie, les couloirs) n'a pas d'autre porte.
+//
+// Ce qui n'est **pas** exporté ne manque à personne, et c'est voulu : `MAX_LANES`,
+// `INACTIVE_AFTER`, `DEFAULT_WINDOW`, `MAX_GRAPH_WINDOW` sont des choix de produit que cette
+// feature applique elle-même, et `CommitGraph` / `CommitRow` sont la forme de la réponse d'une
+// commande Tauri — l'écran les connaît par le contrat, jamais une autre feature Rust. Publier
+// une seconde porte vers les couloirs reviendrait à laisser une autre feature les recalculer,
+// c'est-à-dire à rouvrir ce qu'ADR-0009 ferme.
+//
 // `graph::FoldedBranch` reste privée : `history` en expose une jumelle sérialisable, et deux
 // types du même nom dans la même API publique n'apprendraient rien à personne.
-pub use graph::{lay_out, GraphCommit, Layout, Link, INACTIVE_AFTER, MAX_LANES};
-pub use history::{CommitGraph, CommitGraphReader, CommitRow, DEFAULT_WINDOW};
+pub use graph::{lay_out, GraphCommit, Layout, Link};
+pub use history::CommitGraphReader;
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,
     WorktreeMetadata,

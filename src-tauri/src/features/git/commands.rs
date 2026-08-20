@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::git_cli::SystemGit;
-use super::history::{CommitGraph, CommitGraphReader};
+use super::history::{CommitGraph, CommitGraphReader, DEFAULT_WINDOW};
 use super::metadata::WorktreeMetadata;
 use super::metadata_watch::{Listeners, MetadataWatch};
 use super::prompt::compose_conflict_prompt;
@@ -108,6 +108,13 @@ pub async fn git_conflict_prompt<R: Runtime>(
 /// pourquoi le graphe grandit par une fenêtre et non par des pages. Le backend la borne — une
 /// webview ne décide pas de faire lire dix ans d'histoire d'un coup.
 ///
+/// Elle est **facultative**, et son absence est le cas normal : un graphe qui s'ouvre ne
+/// demande pas une taille, il demande *le graphe*, et la première fenêtre est
+/// [`DEFAULT_WINDOW`] — un choix de produit, du côté qui lance le processus. L'écran ne nomme
+/// un nombre qu'en **élargissant**, à partir de la fenêtre que la réponse précédente lui a
+/// annoncée. Sans ça, la valeur de départ vivrait des deux côtés de la frontière, et c'est
+/// celle du TypeScript qui gagnerait — l'écran demande, le backend annonce.
+///
 /// `None` pour un répertoire hors de tout dépôt, ou dont les fichiers de contrôle ne se
 /// lisent pas : c'est le même cas nominal que `git_metadata`, et il se rend pareil — le
 /// panneau dit qu'il n'a rien à montrer.
@@ -118,7 +125,7 @@ pub async fn git_conflict_prompt<R: Runtime>(
 pub async fn git_commit_graph<R: Runtime>(
     app: AppHandle<R>,
     worktree_root: String,
-    window: usize,
+    window: Option<usize>,
 ) -> Option<CommitGraph> {
     let reader = app.state::<Arc<CommitGraphReader>>();
     // Le dépôt **commun** : c'est la clé du journal, et deux worktrees d'un même projet
@@ -128,7 +135,7 @@ pub async fn git_commit_graph<R: Runtime>(
     Some(reader.window(
         &located.worktree.root,
         &common_dir.to_string_lossy(),
-        window,
+        window.unwrap_or(DEFAULT_WINDOW),
     ))
 }
 
