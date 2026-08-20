@@ -123,8 +123,13 @@ export class TabBuilder {
      * Deux nombres, comme ce qui traverse : le pourcentage se calcule à l'affichage. Un
      * onglet dont l'outil est muet n'appelle simplement pas cette méthode — il n'y a pas de
      * « jauge vide » à décrire.
+     *
+     * `null` en second argument décrit l'autre absence, celle qui n'efface pas la mesure :
+     * aucune source ne nomme de modèle reconnu, donc aucune fenêtre. La valeur par défaut,
+     * elle, reste un modèle **nommé** — 200 k est ce que déclare un `sonnet`, et non ce
+     * qu'Ash suppose faute de mieux.
      */
-    consuming(usedTokens: number, windowTokens = 200_000): this {
+    consuming(usedTokens: number, windowTokens: number | null = 200_000): this {
         this.usage = { usedTokens, windowTokens };
         return this;
     }

@@ -115,11 +115,12 @@ pub use state::{AgentState, AgentStatus};
 pub use subagents::{Subagent, SUBAGENT_LINGER};
 pub use supervisor::{Presence, Supervisor, TabAgents};
 // `UsageSupport` ne sort pas : c'est une question que le cœur pose à un adaptateur, et le
-// seul qui la pose est le superviseur. `DEFAULT_CONTEXT_WINDOW` non plus, et pour une raison
-// plus forte : la fenêtre voyage **avec** la mesure (`SessionUsage::window_tokens`), donc
-// personne au-dehors n'a de dénominateur à aller chercher. L'exporter inviterait à recalculer
-// un pourcentage à côté de la mesure, c'est-à-dire à faire diverger les deux le jour où la
-// fenêtre cessera d'être une supposition. Ce qui traverse la frontière est la mesure, et le
-// port qui va la chercher — que le composition root doit pouvoir brancher.
-pub use usage::{FileTranscripts, SessionUsage, Transcripts};
+// seul qui la pose est le superviseur. Aucune **fenêtre** ne sort non plus, et pour une
+// raison plus forte : elle voyage avec la mesure (`SessionUsage::window_tokens`), donc
+// personne au-dehors n'a de dénominateur à aller chercher. Il y avait ici une constante
+// exportable, `DEFAULT_CONTEXT_WINDOW` ; elle n'existe plus, parce qu'une fenêtre par défaut
+// est précisément ce qui a fait lire `ctx 28%` à une conversation qui en occupait 6 %. Ce qui
+// traverse la frontière est la mesure, et les **deux ports** qui vont la chercher — que le
+// composition root doit pouvoir brancher.
+pub use usage::{FileTranscripts, SessionUsage, SystemToolConfig, ToolConfig, Transcripts};
 pub use wire::{socket_path, EventFrame};

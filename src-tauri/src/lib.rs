@@ -69,7 +69,7 @@ use std::sync::{Arc, OnceLock};
 use features::agents::{
     Adapter, ClaudeCodeAdapter, EventFrame, EventSink, FileNotificationStore, FileTranscripts,
     GenericAdapter, Notice, NotificationPreferences, NotificationStore, Notifier, Presence,
-    Supervisor, TabAgents, Transcripts, SUBAGENT_LINGER,
+    Supervisor, SystemToolConfig, TabAgents, ToolConfig, Transcripts, SUBAGENT_LINGER,
 };
 use features::card::{AgentWork as CardWork, Cards, FileModeStore, SystemCardFiles, WorkRecord};
 use features::git::{
@@ -791,6 +791,11 @@ pub fn run() -> tauri::Result<()> {
         // n'a lieu qu'à l'arrivée d'un hook portant un `transcript_path` — jamais à une passe
         // de sonde.
         Arc::new(FileTranscripts) as Arc<dyn Transcripts>,
+        // Par où la fenêtre de contexte se lit : la configuration de l'outil, qui nomme le
+        // modèle. Même rythme que la ligne au-dessus — à l'arrivée d'un hook, et pas
+        // ailleurs — et **rien d'autre que de la lecture** (ADR-0006) : aucun fichier écrit,
+        // aucune autorisation macOS, aucun appel réseau.
+        Arc::new(SystemToolConfig) as Arc<dyn ToolConfig>,
     ));
 
     // L'apparence — le thème et la taille de police du terminal — est relue **avant** la

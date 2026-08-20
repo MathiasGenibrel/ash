@@ -18,27 +18,49 @@
 //! testable sans fichier ; [`Transcripts`] porte l'effet, avec son implémentation système et
 //! sa doublure.
 
+//!
+//! ## La fenêtre n'est plus supposée — elle est lue
+//!
+//! Il y avait ici une constante, `DEFAULT_CONTEXT_WINDOW = 200_000`, et son commentaire
+//! annonçait déjà la panne : « une session de 1 M lira donc un pourcentage cinq fois trop
+//! haut ». Elle disait vrai — la ligne de statut écrivait `ctx 28%` sur une conversation que
+//! `/context` mesurait à 6 %, et croisait les deux seuils de couleur à 14 % et 18 % de place
+//! réellement occupée.
+//!
+//! L'hypothèse qui l'avait fait naître, elle, reste **exacte** : le transcript nomme le
+//! modèle (`"model":"claude-opus-5"`) sans jamais dire s'il tourne en 200 k ou en 1 M, et
+//! aucun hook ne le dit non plus. Ce n'est donc pas là qu'il fallait chercher. Ce que le
+//! transcript ne dit pas, la **configuration de l'outil** le dit — `"model": "opus[1m]"` — et
+//! la lire est de la lecture au sens d'
+//! [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) : aucun fichier
+//! écrit, aucune autorisation macOS, aucun scan de disque, aucun appel réseau.
+//!
+//! Trois règles en découlent, et elles gouvernent tout ce module :
+//!
+//! 1. **La table modèle → fenêtre appartient à l'adaptateur**
+//!    ([`Adapter::context_window`]) : c'est lui, et lui seul, qui sait ce qu'`opus[1m]` veut
+//!    dire. Un outil qui répond [`UsageSupport::None`] n'a ni table ni jauge.
+//! 2. **Où le modèle est nommé appartient aussi à l'adaptateur**
+//!    ([`Adapter::model_sources`]), et l'**ouverture** des fichiers à la feature
+//!    ([`ToolConfig`]) — le partage exact d'`Instrumentation` et de [`Transcripts`].
+//! 3. **Rien de reconnu ne vaut rien.** [`SessionUsage::window_tokens`] est une `Option`, et
+//!    c'est elle qui rend « je ne sais pas » représentable. Sans elle, l'absence retomberait
+//!    sur un défaut supposé, c'est-à-dire exactement sur le bug qu'on vient de corriger.
+//!
+//! ### Ce que cette lecture ne saura jamais
+//!
+//! **Un `/model` tapé en cours de session.** Claude Code n'en dit rien — ni dans le
+//! transcript, ni sur le `stdin` d'un hook — et la configuration continue alors d'annoncer le
+//! modèle du démarrage. C'est une limite documentée, pas un défaut à corriger : la
+//! configuration est le meilleur signal qu'ADR-0006 et ADR-0007 autorisent, et lui en
+//! inventer un autre serait retomber dans la devinette.
+
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::adapter::Adapter;
-
-/// La fenêtre de contexte qu'Ash suppose, faute que quiconque la lui dise.
-///
-/// **C'est une limite connue, pas une mesure.** Le transcript de Claude Code écrit bien le
-/// modèle (`"model":"claude-opus-5"`), mais sans le suffixe qui distingue une session de
-/// 1 M de tokens d'une session de 200 k — et le `stdin` d'un hook ne porte de `model` que
-/// sur `SessionStart`, sans garantie de présence. Aucune des deux sources qu'ADR-0007
-/// autorise ne dit donc la taille de la fenêtre.
-///
-/// Ce qui est mesuré exactement, c'est le **numérateur** : les tokens réellement consommés,
-/// que le transcript écrit à chaque tour. Le dénominateur est cette constante, et une
-/// session de 1 M lira donc un pourcentage cinq fois trop haut. Le jour où une source
-/// fiable existera — un réglage, ou un champ que l'outil se met à écrire — c'est la seule
-/// ligne à changer.
-pub const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
 /// Ce qu'Ash lit de la **fin** d'un transcript, et pas un octet de plus.
 ///
@@ -71,10 +93,110 @@ pub struct SessionUsage {
     /// pas de 2⁵³.
     #[cfg_attr(test, ts(type = "number"))]
     pub used_tokens: u64,
-    /// La fenêtre dans laquelle ces tokens tiennent — voir [`DEFAULT_CONTEXT_WINDOW`] pour
-    /// ce que cette valeur sait, et ce qu'elle suppose.
-    #[cfg_attr(test, ts(type = "number"))]
-    pub window_tokens: u64,
+    /// La fenêtre dans laquelle ces tokens tiennent — **quand on la connaît**.
+    ///
+    /// `None` veut dire « aucune source ne nomme de modèle reconnu », et c'est une réponse à
+    /// part entière : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`),
+    /// sans barre et sans couleur de seuil. C'est le seul champ de tout le contrat dont
+    /// l'absence a coûté un bug — un dénominateur supposé à 200 000 faisait lire `ctx 28%`
+    /// sur une conversation qui occupait 6 % de sa fenêtre.
+    ///
+    /// Le numérateur, lui, **reste** : il est exact, et l'effacer avec le dénominateur serait
+    /// perdre ce qu'Ash sait vraiment.
+    #[cfg_attr(test, ts(type = "number | null"))]
+    pub window_tokens: Option<u64>,
+}
+
+/// Où un outil peut nommer le modèle avec lequel il tourne.
+///
+/// **C'est une adresse, jamais un contenu** : l'adaptateur la décrit, la feature la lit. Le
+/// même partage que pour [`super::adapter::Instrumentation`], qui dit ce qu'il faut écrire
+/// sans jamais écrire, et pour [`Transcripts`], qui ouvre ce que l'adaptateur sait ensuite
+/// lire. Un adaptateur reste ainsi `Send + Sync` et sans effet de bord, donc testable sans
+/// qu'aucun `cargo test` n'aille voir le vrai `~/.claude` de qui le lance.
+///
+/// Les deux variantes couvrent les deux formes qu'une configuration prend réellement : une
+/// variable d'environnement, dont la valeur *est* l'identifiant, et un fichier JSON, dont une
+/// clé le porte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelSource {
+    /// Une variable d'environnement — sa valeur est l'identifiant du modèle, telle quelle.
+    Variable(String),
+    /// Un fichier JSON, dont une clé de premier niveau nomme le modèle.
+    ///
+    /// La clé est portée par la variante plutôt que supposée : `model` est le mot de Claude
+    /// Code, pas une convention du cœur, et le cœur n'a pas à le connaître pour descendre
+    /// jusqu'à lui.
+    JsonKey { path: PathBuf, key: String },
+}
+
+impl ModelSource {
+    pub fn variable(name: impl Into<String>) -> Self {
+        Self::Variable(name.into())
+    }
+
+    pub fn json_key(path: impl Into<PathBuf>, key: impl Into<String>) -> Self {
+        Self::JsonKey {
+            path: path.into(),
+            key: key.into(),
+        }
+    }
+}
+
+/// Au-delà, un fichier de configuration n'en est plus un.
+///
+/// Même raisonnement que [`TRANSCRIPT_TAIL_BYTES`], et il compte pour la même raison : ce
+/// chemin est parcouru à chaque hook, et un fichier de configuration qui aurait grossi — ou
+/// qu'on aurait fait pointer sur autre chose — ne doit pas faire lire un mégaoctet dans le
+/// tour d'un agent. Un `settings.json` réel pèse quelques centaines d'octets.
+pub const MAX_CONFIG_BYTES: u64 = 64 * 1024;
+
+/// Par où Ash lit la configuration d'un outil — et **rien qu'elle**.
+///
+/// Un trait pour la raison habituelle du dépôt : lire l'environnement et le disque sont des
+/// effets système, et sans port, aucun scénario ne pourrait décrire un utilisateur dont le
+/// `~/.claude/settings.json` porte `opus[1m]` sans toucher au foyer de qui lance les tests.
+///
+/// **Trois lectures, et aucune écriture.** C'est ce qui fait tenir la promesse d'ADR-0006 :
+/// reconnaître est de la lecture. Rien ici n'ouvre de dialogue macOS, ne crée de fichier, ni
+/// ne sort sur le réseau.
+pub trait ToolConfig: Send + Sync {
+    /// La valeur d'une variable d'environnement, ou rien.
+    fn variable(&self, name: &str) -> Option<String>;
+
+    /// Le contenu d'un fichier de configuration, borné à [`MAX_CONFIG_BYTES`], ou rien.
+    ///
+    /// `None` couvre toute la gamme des absences — fichier inexistant, droits refusés,
+    /// dossier illisible. Aucune n'est une erreur : c'est une source qui ne dit rien, et la
+    /// suivante a son tour.
+    fn read(&self, path: &Path) -> Option<String>;
+
+    /// Le dossier personnel, ou `None` si l'environnement n'en désigne aucun.
+    ///
+    /// Ici et pas dans l'adaptateur : `~` est une convention de shell, pas un dossier, et
+    /// la résoudre est déjà toucher au monde.
+    fn home(&self) -> Option<PathBuf>;
+}
+
+/// Le vrai lecteur : celui qui touche l'environnement et le disque.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemToolConfig;
+
+impl ToolConfig for SystemToolConfig {
+    fn variable(&self, name: &str) -> Option<String> {
+        std::env::var_os(name)?.into_string().ok()
+    }
+
+    fn read(&self, path: &Path) -> Option<String> {
+        let file = File::open(path).ok()?;
+        let mut text = String::new();
+        file.take(MAX_CONFIG_BYTES).read_to_string(&mut text).ok()?;
+        Some(text)
+    }
+
+    fn home(&self) -> Option<PathBuf> {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
 }
 
 /// Un outil dit-il la place qu'il consomme ?
@@ -163,7 +285,9 @@ fn after_first_line(text: &str) -> &str {
 pub(super) fn measure(
     adapters: &[Arc<dyn Adapter>],
     transcripts: &dyn Transcripts,
+    config: &dyn ToolConfig,
     transcript_path: Option<&str>,
+    cwd: Option<&Path>,
 ) -> Option<SessionUsage> {
     let path = transcript_path?;
 
@@ -176,7 +300,58 @@ pub(super) fn measure(
     readers.peek()?;
 
     let tail = transcripts.tail(Path::new(path))?;
-    readers.find_map(|adapter| adapter.read_usage(&tail))
+
+    // L'adaptateur qui a **mesuré** est celui qu'on interroge sur la fenêtre, et pas un autre :
+    // le numérateur et le dénominateur d'un même pourcentage ne peuvent pas venir de deux
+    // outils différents.
+    let (adapter, used_tokens) = readers.find_map(|adapter| {
+        adapter
+            .read_used_tokens(&tail)
+            .map(|used| (adapter.as_ref(), used))
+    })?;
+
+    Some(SessionUsage {
+        used_tokens,
+        window_tokens: window_of(adapter, config, cwd),
+    })
+}
+
+/// La fenêtre du modèle que la configuration de l'outil nomme, ou rien.
+///
+/// **Le premier qui nomme répond**, du plus spécifique au moins spécifique — c'est l'ordre
+/// que l'adaptateur a posé dans [`Adapter::model_sources`], et il reproduit celui de l'outil
+/// lui-même. Une source qui nomme un modèle que l'adaptateur ne reconnaît pas **arrête** la
+/// recherche : elle a répondu, et retomber sur la source suivante rendrait la fenêtre d'une
+/// configuration que l'utilisateur a explicitement remplacée.
+///
+/// `None` quand rien ne nomme de modèle, et quand le modèle nommé n'est reconnu par personne.
+/// Les deux se lisent pareil à l'écran, et c'est voulu : dans les deux cas, Ash ne sait pas.
+fn window_of(adapter: &dyn Adapter, config: &dyn ToolConfig, cwd: Option<&Path>) -> Option<u64> {
+    let home = config.home();
+    adapter
+        .model_sources(cwd, home.as_deref())
+        .iter()
+        .find_map(|source| model_named_by(source, config))
+        .and_then(|model| adapter.context_window(&model))
+}
+
+/// Le modèle qu'une source nomme, s'il y en a un.
+///
+/// La seule moitié qui touche au monde, et la raison pour laquelle [`ModelSource`] est une
+/// donnée : ce que l'adaptateur a décrit, la feature l'ouvre — un fichier absent, vide, qui
+/// n'est pas du JSON, ou dont la clé est autre chose qu'une chaîne, ne nomme simplement rien.
+fn model_named_by(source: &ModelSource, config: &dyn ToolConfig) -> Option<String> {
+    let named = match source {
+        ModelSource::Variable(name) => config.variable(name)?,
+        ModelSource::JsonKey { path, key } => {
+            let text = config.read(path)?;
+            let object: serde_json::Value = serde_json::from_str(&text).ok()?;
+            object.get(key)?.as_str()?.to_owned()
+        }
+    };
+
+    let named = named.trim();
+    (!named.is_empty()).then(|| named.to_owned())
 }
 
 #[cfg(test)]
@@ -222,6 +397,88 @@ mod tests {
 
     const TRANSCRIPT: &str = "/Users/x/.claude/projects/ash/session.jsonl";
 
+    /// Le foyer de l'utilisateur du scénario — **jamais** celui de qui lance les tests.
+    const HOME: &str = "/Users/x";
+
+    /// Le dossier où l'agent tourne, tel que le `cwd` d'un hook le nomme.
+    const CWD: &str = "/dev/ash";
+
+    /// Le même, sous la forme que [`measure`] attend.
+    fn cwd() -> Option<&'static Path> {
+        Some(Path::new(CWD))
+    }
+
+    /// La configuration d'un outil que le scénario décrit, et qui **compte** ses lectures.
+    ///
+    /// Le compteur sert la même promesse que celui de [`CountingTranscripts`] : un onglet
+    /// servi par un adaptateur muet ne doit ouvrir aucun fichier, et une absence d'ouverture
+    /// ne se lit dans aucune valeur de retour.
+    #[derive(Debug, Default)]
+    struct CountingConfig {
+        home: Option<std::path::PathBuf>,
+        variables: std::collections::HashMap<String, String>,
+        files: Mutex<std::collections::HashMap<std::path::PathBuf, String>>,
+        reads: AtomicUsize,
+    }
+
+    impl CountingConfig {
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::SeqCst)
+        }
+
+        #[must_use]
+        fn declaring(self, path: &str, model: &str) -> Self {
+            self.files.lock().unwrap().insert(
+                std::path::PathBuf::from(path),
+                format!(r#"{{"model":"{model}"}}"#),
+            );
+            self
+        }
+
+        #[must_use]
+        fn with_variable(mut self, name: &str, value: &str) -> Self {
+            self.variables.insert(name.to_owned(), value.to_owned());
+            self
+        }
+    }
+
+    impl ToolConfig for CountingConfig {
+        fn variable(&self, name: &str) -> Option<String> {
+            self.variables.get(name).cloned()
+        }
+
+        fn read(&self, path: &Path) -> Option<String> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.files.lock().unwrap().get(path).cloned()
+        }
+
+        fn home(&self) -> Option<std::path::PathBuf> {
+            self.home.clone()
+        }
+    }
+
+    /// Un utilisateur dont un seul fichier nomme un modèle.
+    fn configured(path: &str, model: &str) -> CountingConfig {
+        let path = path.replace('~', HOME);
+        CountingConfig {
+            home: Some(std::path::PathBuf::from(HOME)),
+            ..CountingConfig::default()
+        }
+        .declaring(&path, model)
+    }
+
+    /// La mesure telle que le superviseur la demande, avec les vrais adaptateurs.
+    fn measured_with(config: &CountingConfig, tail: &str) -> Option<SessionUsage> {
+        let transcripts = CountingTranscripts::holding(TRANSCRIPT, tail);
+        measure(
+            &claude_code(),
+            &transcripts,
+            config,
+            Some(TRANSCRIPT),
+            cwd(),
+        )
+    }
+
     /// Une queue qu'un adaptateur sachant lire le format de Claude Code comprendrait.
     const A_TURN: &str = r#"{"type":"assistant","message":{"usage":{"input_tokens":900}}}"#;
 
@@ -243,13 +500,15 @@ mod tests {
         let transcripts = CountingTranscripts::holding(TRANSCRIPT, A_TURN);
 
         // When
-        let measured = measure(&adapters, &transcripts, Some(TRANSCRIPT));
+        let config = CountingConfig::default();
+        let measured = measure(&adapters, &transcripts, &config, Some(TRANSCRIPT), cwd());
 
         // Then — pas de mesure, et surtout **pas d'ouverture** : `UsageSupport::None` promet
         // aussi de ne rien coûter, et un onglet servi par `generic` ne paye pas une
-        // entrée-sortie par hook.
+        // entrée-sortie par hook. Ni pour le transcript, ni pour la configuration : la
+        // fenêtre ne sert qu'à une jauge qu'il a déclaré ne pas avoir.
         assert_eq!(measured, None);
-        assert_eq!(transcripts.reads(), 0);
+        assert_eq!((transcripts.reads(), config.reads()), (0, 0));
     }
 
     #[test]
@@ -259,7 +518,13 @@ mod tests {
         let transcripts = CountingTranscripts::holding(TRANSCRIPT, A_TURN);
 
         // When
-        let measured = measure(&claude_code(), &transcripts, None);
+        let measured = measure(
+            &claude_code(),
+            &transcripts,
+            &CountingConfig::default(),
+            None,
+            cwd(),
+        );
 
         // Then
         assert_eq!(measured, None);
@@ -273,17 +538,161 @@ mod tests {
         let transcripts = CountingTranscripts::holding(TRANSCRIPT, A_TURN);
 
         // When
-        let measured = measure(&claude_code(), &transcripts, Some(TRANSCRIPT));
+        let measured = measure(
+            &claude_code(),
+            &transcripts,
+            &configured("~/.claude/settings.json", "sonnet"),
+            Some(TRANSCRIPT),
+            cwd(),
+        );
 
         // Then
         assert_eq!(
             measured,
             Some(SessionUsage {
                 used_tokens: 900,
-                window_tokens: DEFAULT_CONTEXT_WINDOW,
+                window_tokens: Some(200_000),
             })
         );
         assert_eq!(transcripts.reads(), 1);
+    }
+
+    /// Une queue qui déclare exactement 57 200 tokens — le chiffre du ticket.
+    const FIFTY_SEVEN_THOUSAND: &str =
+        r#"{"type":"assistant","message":{"usage":{"input_tokens":57200}}}"#;
+
+    #[test]
+    fn given_a_home_settings_naming_a_million_token_model_when_the_tab_is_measured_then_the_window_is_a_million(
+    ) {
+        // Given — le scénario exact du ticket : `~/.claude/settings.json` porte
+        // `"model": "opus[1m]"`, et la session tourne donc dans une fenêtre d'un million. Le
+        // transcript, lui, n'écrit que `claude-opus-5` : il ne dira jamais lequel des deux.
+        let config = configured("~/.claude/settings.json", "opus[1m]");
+
+        // When
+        let measured = measured_with(&config, FIFTY_SEVEN_THOUSAND);
+
+        // Then — 57 200 / 1 000 000, soit les 6 % que `/context` affiche dans cette session.
+        // Le même transcript lu avec l'ancien dénominateur supposé en annonçait 29.
+        assert_eq!(
+            measured,
+            Some(SessionUsage {
+                used_tokens: 57_200,
+                window_tokens: Some(1_000_000),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_repository_that_names_its_own_model_when_the_tab_is_measured_then_it_beats_the_home_settings(
+    ) {
+        // Given — l'utilisateur tourne en `opus[1m]` partout, sauf dans ce dépôt-ci, dont le
+        // `settings.local.json` déclare `sonnet`. Le fichier le plus proche du travail est
+        // celui qui décrit le travail.
+        let config = configured("~/.claude/settings.json", "opus[1m]")
+            .declaring("/dev/ash/.claude/settings.local.json", "sonnet");
+
+        // When
+        let measured = measured_with(&config, FIFTY_SEVEN_THOUSAND);
+
+        // Then
+        assert_eq!(
+            measured.and_then(|usage| usage.window_tokens),
+            Some(200_000)
+        );
+    }
+
+    #[test]
+    fn given_the_model_variable_in_the_environment_when_the_tab_is_measured_then_it_beats_every_file(
+    ) {
+        // Given — les trois couches à la fois, chacune disant autre chose. L'ordre n'est pas
+        // une préférence d'Ash : c'est celui de Claude Code, et la variable l'emporte.
+        let config = configured("~/.claude/settings.json", "sonnet")
+            .declaring("/dev/ash/.claude/settings.json", "sonnet")
+            .declaring("/dev/ash/.claude/settings.local.json", "sonnet")
+            .with_variable("ANTHROPIC_MODEL", "claude-opus-5[1m]");
+
+        // When
+        let measured = measured_with(&config, FIFTY_SEVEN_THOUSAND);
+
+        // Then — et la forme longue de l'identifiant porte le suffixe aussi bien que l'alias
+        // court : les deux existent en vrai dans les fichiers des utilisateurs.
+        assert_eq!(
+            measured.and_then(|usage| usage.window_tokens),
+            Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn given_no_source_naming_a_recognized_model_when_the_tab_is_measured_then_the_window_is_unknown_and_the_measure_stays(
+    ) {
+        // Given — un utilisateur qui n'a jamais posé de `model` nulle part, ce qui est le cas
+        // par défaut. C'est **le** scénario que l'ancien `DEFAULT_CONTEXT_WINDOW` traitait en
+        // supposant 200 000, et qui faisait mentir la jauge d'un facteur cinq.
+        let config = CountingConfig {
+            home: Some(std::path::PathBuf::from(HOME)),
+            ..CountingConfig::default()
+        };
+
+        // When
+        let measured = measured_with(&config, FIFTY_SEVEN_THOUSAND);
+
+        // Then — pas de dénominateur, donc pas de pourcentage ; mais le numérateur reste, et
+        // l'écran lira `ctx 57k`. L'effacer serait perdre ce qu'Ash sait vraiment.
+        assert_eq!(
+            measured,
+            Some(SessionUsage {
+                used_tokens: 57_200,
+                window_tokens: None,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_repository_that_names_a_model_ash_does_not_know_when_the_tab_is_measured_then_the_search_stops_there(
+    ) {
+        // Given — le dépôt déclare un modèle qu'aucune table ne reconnaît, et le foyer un
+        // `opus[1m]` parfaitement lisible. Retomber sur le foyer rendrait la fenêtre d'une
+        // configuration que l'utilisateur a **explicitement** remplacée : la source la plus
+        // spécifique a parlé, et ce qu'elle dit, Ash ne le comprend pas.
+        let config = configured("~/.claude/settings.json", "opus[1m]")
+            .declaring("/dev/ash/.claude/settings.json", "un-modèle-maison");
+
+        // When
+        let measured = measured_with(&config, FIFTY_SEVEN_THOUSAND);
+
+        // Then — aucun pourcentage plutôt qu'un pourcentage calculé sur la mauvaise fenêtre.
+        assert_eq!(
+            measured.map(|usage| (usage.used_tokens, usage.window_tokens)),
+            Some((57_200, None))
+        );
+    }
+
+    #[test]
+    fn given_a_hook_that_does_not_say_where_it_ran_when_the_tab_is_measured_then_only_the_home_settings_answer(
+    ) {
+        // Given — une trame sans `cwd` : un outil qui ne l'écrit pas, ou une trame dépouillée
+        // par la borne du fil. Les deux couches du dépôt n'ont alors pas de chemin, et c'est
+        // une dégradation honnête — pas une supposition.
+        let config = configured("~/.claude/settings.json", "opus[1m]")
+            .declaring("/dev/ash/.claude/settings.json", "sonnet");
+        let transcripts = CountingTranscripts::holding(TRANSCRIPT, FIFTY_SEVEN_THOUSAND);
+
+        // When
+        let measured = measure(
+            &claude_code(),
+            &transcripts,
+            &config,
+            Some(TRANSCRIPT),
+            None,
+        );
+
+        // Then — le foyer répond, et le `sonnet` du dépôt n'a même pas été ouvert.
+        assert_eq!(
+            measured.and_then(|usage| usage.window_tokens),
+            Some(1_000_000)
+        );
+        assert_eq!(config.reads(), 1);
     }
 
     /// Un transcript sur le disque, dans un dossier que le test emporte avec lui.

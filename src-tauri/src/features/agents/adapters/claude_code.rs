@@ -4,7 +4,7 @@ use crate::features::agents::adapter::{
     hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
-use crate::features::agents::usage::{SessionUsage, UsageSupport, DEFAULT_CONTEXT_WINDOW};
+use crate::features::agents::usage::{ModelSource, UsageSupport};
 
 /// La version du bloc que cet adaptateur compose.
 ///
@@ -75,6 +75,47 @@ const HOOKS: [(&str, AgentState); 5] = [
 /// `Stop`, et il n'a aucun chemin vers l'état de l'onglet. Il ne se lit que par
 /// [`Adapter::child_event`].
 const CHILD_HOOK: (&str, &str) = ("SubagentStop", "subagent-stop");
+
+/// La variable d'environnement qui l'emporte sur toute la configuration de Claude Code.
+const MODEL_VARIABLE: &str = "ANTHROPIC_MODEL";
+
+/// La clé sous laquelle un `settings.json` de Claude Code nomme le modèle.
+const MODEL_KEY: &str = "model";
+
+/// Les deux fichiers du **dépôt**, du plus privé au plus partagé.
+///
+/// `settings.local.json` n'est pas versionné : c'est là que se posent les choix propres à une
+/// machine, et il l'emporte donc sur le `settings.json` que l'équipe partage. L'ordre de ce
+/// tableau *est* cette priorité.
+const PROJECT_SETTINGS: [&str; 2] = [".claude/settings.local.json", ".claude/settings.json"];
+
+/// Le fichier du **foyer**, consulté en dernier.
+const HOME_SETTINGS: &str = ".claude/settings.json";
+
+/// Le suffixe qui fait passer une session à un million de tokens.
+///
+/// Il se porte sur un alias court (`opus[1m]`) comme sur un identifiant complet
+/// (`claude-opus-5[1m]`), et c'est **la seule chose** qui distingue les deux fenêtres :
+/// le transcript, lui, écrit `claude-opus-5` dans les deux cas.
+const LONG_CONTEXT_SUFFIX: &str = "[1m]";
+
+/// La fenêtre d'une session portant [`LONG_CONTEXT_SUFFIX`].
+const LONG_CONTEXT_WINDOW: u64 = 1_000_000;
+
+/// La fenêtre d'un modèle reconnu qui ne porte pas ce suffixe.
+///
+/// **C'est la valeur d'un modèle nommé, et plus un défaut universel.** C'est toute la
+/// différence avec le `DEFAULT_CONTEXT_WINDOW` qu'elle remplace : elle ne s'applique qu'à un
+/// identifiant qu'on a reconnu, et un identifiant inconnu n'y retombe pas.
+const STANDARD_CONTEXT_WINDOW: u64 = 200_000;
+
+/// Les familles de modèles dont Claude Code connaît la fenêtre.
+///
+/// Cherchées **dans** l'identifiant, jamais comparées à lui : les identifiants réels sont
+/// datés (`claude-sonnet-4-5-20250929`), et une table d'égalités serait périmée à la
+/// prochaine version — c'est le raisonnement de l'amendement du 2026-08-18 à ADR-0006, où le
+/// nom du binaire de Claude Code est celui de sa version.
+const KNOWN_FAMILIES: [&str; 3] = ["opus", "sonnet", "haiku"];
 
 /// Le seul hook qui exige un sélecteur d'outils, et la valeur qui les prend tous.
 ///
@@ -248,16 +289,72 @@ impl Adapter for ClaudeCodeAdapter {
     /// Une ligne qu'on ne sait pas lire est **sautée**, pas fatale : la queue commence au
     /// milieu du fichier, elle porte des `attachment` et des `user` qui n'ont pas d'usage, et
     /// un format qui gagne un champ ne doit pas éteindre la jauge.
-    fn read_usage(&self, transcript_tail: &str) -> Option<SessionUsage> {
-        let used = transcript_tail
+    fn read_used_tokens(&self, transcript_tail: &str) -> Option<u64> {
+        transcript_tail
             .lines()
             .rev()
-            .find_map(|line| tokens_of(line.trim()))?;
+            .find_map(|line| tokens_of(line.trim()))
+    }
 
-        Some(SessionUsage {
-            used_tokens: used,
-            window_tokens: DEFAULT_CONTEXT_WINDOW,
-        })
+    /// Les quatre endroits où Claude Code nomme son modèle, dans **son** ordre de priorité.
+    ///
+    /// C'est celui de l'outil, pas une préférence d'Ash : la variable d'environnement
+    /// l'emporte sur tout, les réglages locaux du dépôt sur les réglages partagés du dépôt, et
+    /// le dépôt sur le foyer. Un utilisateur qui a posé `"model": "sonnet"` dans le
+    /// `.claude/settings.json` d'un projet a dit quelque chose de plus précis que son
+    /// `~/.claude/settings.json`, et la jauge doit le suivre.
+    ///
+    /// Le `cwd` vient de la trame du hook, où il voyage comme **donnée** et jamais comme
+    /// corrélation (`wire.rs`). Sans lui, les deux couches du dépôt n'ont pas de chemin, et
+    /// seules la variable et le foyer restent — ce qui est une dégradation honnête, pas une
+    /// supposition.
+    fn model_sources(&self, cwd: Option<&Path>, home: Option<&Path>) -> Vec<ModelSource> {
+        let mut sources = vec![ModelSource::variable(MODEL_VARIABLE)];
+
+        if let Some(cwd) = cwd {
+            for file in PROJECT_SETTINGS {
+                sources.push(ModelSource::json_key(cwd.join(file), MODEL_KEY));
+            }
+        }
+        if let Some(home) = home {
+            sources.push(ModelSource::json_key(home.join(HOME_SETTINGS), MODEL_KEY));
+        }
+
+        sources
+    }
+
+    /// Ce qu'un identifiant de modèle dit de la taille de la fenêtre — **et rien quand il ne
+    /// dit rien**.
+    ///
+    /// Deux questions, dans cet ordre : le suffixe, puis la famille.
+    ///
+    /// - Le suffixe `[1m]` est ce qui distingue une session d'un million de tokens, et il se
+    ///   porte aussi bien sur un alias court (`opus[1m]`) que sur un identifiant complet
+    ///   (`claude-opus-5[1m]`). Les deux formes existent réellement dans les fichiers des
+    ///   utilisateurs, donc la reconnaissance porte sur le **suffixe**, jamais sur la liste
+    ///   des identifiants qui pourraient le porter.
+    /// - La famille est cherchée **dans** l'identifiant plutôt que comparée à lui, pour la
+    ///   raison qui a déjà tranché ADR-0006 : les identifiants réels sont datés
+    ///   (`claude-sonnet-4-5-20250929`), et une table d'égalités serait périmée à la
+    ///   prochaine version.
+    ///
+    /// Tout le reste — `default`, un alias interne, un identifiant d'un autre fournisseur, une
+    /// faute de frappe — vaut `None`. C'est la règle qui remplace `DEFAULT_CONTEXT_WINDOW`, et
+    /// elle est le cœur de la correction : **rien de reconnu ne vaut rien**.
+    fn context_window(&self, model: &str) -> Option<u64> {
+        let model = model.trim().to_ascii_lowercase();
+        let (family, long) = model
+            .strip_suffix(LONG_CONTEXT_SUFFIX)
+            .map_or((model.as_str(), false), |family| (family, true));
+
+        KNOWN_FAMILIES
+            .iter()
+            .any(|known| family.contains(known))
+            .then_some(if long {
+                LONG_CONTEXT_WINDOW
+            } else {
+                STANDARD_CONTEXT_WINDOW
+            })
     }
 }
 
@@ -559,12 +656,11 @@ mod tests {
         let adapter = adapter();
 
         // When
-        let usage = adapter.read_usage(OWN_TRANSCRIPT).unwrap();
+        let used = adapter.read_used_tokens(OWN_TRANSCRIPT);
 
         // Then — 2 + 2196 + 143801 + 274. Ne lire qu'`input_tokens` afficherait une
         // conversation vide sur une session pleine aux trois quarts.
-        assert_eq!(usage.used_tokens, 146_273);
-        assert_eq!(usage.window_tokens, DEFAULT_CONTEXT_WINDOW);
+        assert_eq!(used, Some(146_273));
     }
 
     #[test]
@@ -576,12 +672,10 @@ mod tests {
         let later = r#"{"type":"assistant","message":{"usage":{"input_tokens":900}}}"#;
 
         // When
-        let usage = adapter
-            .read_usage(&format!("{earlier}\n{later}\n"))
-            .unwrap();
+        let used = adapter.read_used_tokens(&format!("{earlier}\n{later}\n"));
 
         // Then
-        assert_eq!(usage.used_tokens, 900);
+        assert_eq!(used, Some(900));
     }
 
     #[test]
@@ -593,10 +687,10 @@ mod tests {
         let tail = r#"{"type":"user","message":{"role":"user","content":"encore"}}"#;
 
         // When
-        let usage = adapter.read_usage(tail);
+        let used = adapter.read_used_tokens(tail);
 
         // Then — une absence de mesure, pas un zéro : l'onglet gardera ce qu'il savait.
-        assert_eq!(usage, None);
+        assert_eq!(used, None);
     }
 
     #[test]
@@ -608,9 +702,70 @@ mod tests {
         let tail = r#"{"type":"assistant","message":{"usage":{"input_tokens":0}}}"#;
 
         // When
-        let usage = adapter.read_usage(tail);
+        let used = adapter.read_used_tokens(tail);
 
         // Then
-        assert_eq!(usage, None);
+        assert_eq!(used, None);
+    }
+
+    #[test]
+    fn given_a_model_carrying_the_long_context_suffix_when_its_window_is_asked_then_it_is_a_million(
+    ) {
+        // Given — les deux formes qui existent réellement dans les fichiers des utilisateurs :
+        // l'alias court, et l'identifiant complet. Le transcript, lui, écrit `claude-opus-5`
+        // dans les deux cas — c'est bien la configuration, et elle seule, qui distingue.
+        let adapter = adapter();
+        let declared = ["opus[1m]", "claude-opus-5[1m]", "sonnet[1m]", "OPUS[1M]"];
+
+        // When
+        let windows: Vec<Option<u64>> = declared
+            .iter()
+            .map(|model| adapter.context_window(model))
+            .collect();
+
+        // Then
+        assert_eq!(windows, vec![Some(1_000_000); 4]);
+    }
+
+    #[test]
+    fn given_a_recognized_model_without_the_suffix_when_its_window_is_asked_then_it_is_two_hundred_thousand(
+    ) {
+        // Given — les identifiants réels sont **datés**, donc la famille est cherchée dans
+        // l'identifiant et non comparée à lui : une table d'égalités serait périmée à la
+        // prochaine version, exactement comme la table de noms de binaires d'ADR-0006.
+        let adapter = adapter();
+        let declared = ["opus", "sonnet", "haiku", "claude-sonnet-4-5-20250929"];
+
+        // When
+        let windows: Vec<Option<u64>> = declared
+            .iter()
+            .map(|model| adapter.context_window(model))
+            .collect();
+
+        // Then
+        assert_eq!(windows, vec![Some(200_000); 4]);
+    }
+
+    #[test]
+    fn given_the_four_places_claude_code_names_its_model_when_they_are_listed_then_the_repository_comes_before_the_home(
+    ) {
+        // Given — l'ordre **est** la règle, et il est celui de l'outil : la variable, puis les
+        // réglages locaux du dépôt, puis ses réglages partagés, puis le foyer.
+        let adapter = adapter();
+
+        // When
+        let sources =
+            adapter.model_sources(Some(Path::new("/dev/ash")), Some(Path::new("/Users/x")));
+
+        // Then
+        assert_eq!(
+            sources,
+            vec![
+                ModelSource::variable("ANTHROPIC_MODEL"),
+                ModelSource::json_key("/dev/ash/.claude/settings.local.json", "model"),
+                ModelSource::json_key("/dev/ash/.claude/settings.json", "model"),
+                ModelSource::json_key("/Users/x/.claude/settings.json", "model"),
+            ]
+        );
     }
 }
