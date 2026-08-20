@@ -78,11 +78,16 @@ impl CommitJournal {
         // Du plus ancien au plus récent : le journal se lit dans l'ordre où les commits sont
         // nés, et c'est ce qui donne son sens au « la plus récente gagne » de la résolution.
         let born = self.commits.recent(worktree_root);
+        // **Une observation par mouvement de `HEAD`**, et non une par commit. Ce que le
+        // journal enregistre est ce qu'Ash a vu à l'instant où `HEAD` a bougé ; relire les
+        // onglets entre deux lignes d'une même rafale ferait dépendre l'attribution de la
+        // durée d'un `git log`, et un `rebase` de dix commits pourrait en attribuer trois à
+        // l'agent qui les a écrits et sept à celui qui a pris l'avant-plan entre-temps.
+        let tabs = self.tabs.snapshot();
         for commit in born.iter().rev() {
             if !self.observed(commit) || already_known(&known, commit) {
                 continue;
             }
-            let tabs = self.tabs.snapshot();
             let Some(author) = author_of(worktree_root, &tabs) else {
                 // Aucun agent reconnu : git a déjà un nom d'auteur pour ce commit, et Ash
                 // n'a rien à ajouter (ADR-0014).
