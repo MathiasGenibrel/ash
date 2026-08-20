@@ -125,6 +125,24 @@ impl CommitJournal {
         attribution_of(&entries, commit).cloned()
     }
 
+    /// Ce qu'Ash sait de **toute une page** de commits — ce que la colonne `by` demande.
+    ///
+    /// La réponse est alignée sur la demande : une entrée par commit, dans le même ordre,
+    /// `None` pour ceux qu'Ash n'a pas vus naître.
+    ///
+    /// Elle existe parce que [`Self::attribution`] relit le fichier du dépôt à **chaque**
+    /// appel : un graphe de deux cents lignes ferait deux cents lectures du même fichier.
+    /// Ce n'est pas un cache — il faudrait alors décider ce qui l'invalide, dans un journal
+    /// append-only qui grossit sous les pieds de qui le lit —, c'est la même question posée
+    /// une fois pour toutes. Une lecture, une résolution par commit.
+    pub fn attributions(&self, repo: &str, commits: &[CommitRecord]) -> Vec<Option<Entry>> {
+        let entries = Entry::read_all(&self.store.read(&file_name(repo)));
+        commits
+            .iter()
+            .map(|commit| attribution_of(&entries, commit).cloned())
+            .collect()
+    }
+
     /// Ce que le journal pèse aujourd'hui.
     pub fn summary(&self) -> JournalSummary {
         let files = self.store.files();
@@ -331,6 +349,37 @@ mod tests {
             .map(|entry| entry.subject)
             .collect();
         assert_eq!(subjects, vec!["un", "deux", "trois"]);
+    }
+
+    #[test]
+    fn given_a_page_of_commits_when_their_agents_are_asked_for_at_once_then_the_answer_lines_up_with_the_question(
+    ) {
+        // Given — la colonne `by` du graphe (#27) demande une page entière, et il lui faut
+        // pouvoir poser la réponse en face de la ligne qui l'a demandée. Un seul commit sur
+        // trois a été observé ; les deux autres afficheront leur auteur git.
+        let world = JournalBuilder::new();
+        let journal = world.build();
+        world.commits.set(vec![fresh("8f3a1c2", "feat: onglets")]);
+        world.head_moved(&journal);
+
+        // When
+        let found = journal.attributions(
+            REPO,
+            &[
+                fresh("inconnu", "fix: à la main"),
+                fresh("8f3a1c2", "feat: onglets"),
+                fresh("autre", "chore: rien"),
+            ],
+        );
+
+        // Then
+        assert_eq!(found.len(), 3);
+        assert!(found[0].is_none());
+        assert_eq!(
+            found[1].as_ref().map(|entry| entry.agent.as_str()),
+            Some("claude")
+        );
+        assert!(found[2].is_none());
     }
 
     #[test]
