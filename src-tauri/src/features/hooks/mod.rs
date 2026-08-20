@@ -1,4 +1,16 @@
-//! L'écriture chez l'utilisateur, et son seul propriétaire dans le code.
+//! L'écriture chez l'utilisateur, dans un `settings.json` — et son seul propriétaire.
+//!
+//! **Depuis #31, ce n'est plus le seul endroit du produit qui écrive chez l'utilisateur :**
+//! [`crate::features::card`] écrit la fiche de branche (ADR-0013). Les deux features
+//! appliquent la même règle — « Ash n'écrit que ce qui lui appartient, et sait le
+//! reconnaître ; sauvegarde, jamais silencieux » — et **le régime n'est pourtant pas
+//! partagé**, délibérément : la garantie ne tient pas dans l'ordre des gestes, elle tient
+//! dans le type que le port accepte. Ici c'est un [`Document`], qui ne se compose que
+//! d'entrées portant `# ash:hook v` ; là-bas un `CardDocument`, qui ne se compose que d'un
+//! bloc remplacé, ajouté, ou d'un fichier neuf. Un port commun aurait pour seul dénominateur
+//! un `write(path, &str)`, et les deux garanties redeviendraient de la prudence d'appelant.
+//! Ce qui est partagé est ce qui ne porte la règle d'aucune des deux :
+//! [`crate::shared::text_diff`].
 //!
 //! C'est le premier endroit où Ash touche à un fichier qui ne lui appartient pas
 //! ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), spec §10). Toute la feature
@@ -10,7 +22,7 @@
 //! | un seul classement de l'état d'un fichier, pour agir **et** pour l'afficher | [`presence`] |
 //! | rien n'est modifié hors de ce qui est à Ash | [`document`] — le fichier est du texte, jamais un arbre relu, et le port n'accepte qu'un [`Document`] |
 //! | `.bak` **avant** l'écriture, et jamais écrasé | [`install`] |
-//! | le diff de ce qu'Ash écrirait, montré avant toute écriture | [`presence`], [`diff`] |
+//! | le diff de ce qu'Ash écrirait, montré avant toute écriture | [`presence`], [`crate::shared::text_diff`] |
 //! | désinstallation qui ne laisse rien, à l'octet près | [`merge`], [`install`] |
 //! | ce qu'un retrait emporterait, dit **avant** de le poser | [`removal`] |
 //!
@@ -46,7 +58,6 @@
 //! `settings` traverse cette frontière par le port `HookBlocks`, que la composition root
 //! relie ici en traduisant un identifiant d'adaptateur en instrumentation.
 
-mod diff;
 mod document;
 mod error;
 mod install;

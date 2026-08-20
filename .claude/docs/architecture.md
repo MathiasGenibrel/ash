@@ -22,6 +22,8 @@ src-tauri/src/
       adapters/          claude-code, codex, generic
     git/                 refs, worktrees, graphe, état de rebase   — ADR-0011/12
     journal/             attribution commit → agent → prompt       — ADR-0014
+    card/                la fiche de branche : le bloc `ash:log`, sa sauvegarde,
+                         ses refus, et le mode local              — ADR-0013
     hooks/               les entrées marquées d'Ash dans les settings.json, leur pose
                          et leur retrait — à l'octet près              — spec §10
     theme/               l'apparence de la fenêtre — mode clair / sombre /

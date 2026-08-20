@@ -15,6 +15,10 @@
  */
 
 import type { AgentState as RustAgentState } from "./generated/AgentState";
+import type { BranchCard as RustBranchCard } from "./generated/BranchCard";
+import type { CardLog as RustCardLog } from "./generated/CardLog";
+import type { CardMode as RustCardMode } from "./generated/CardMode";
+import type { LogState as RustLogState } from "./generated/LogState";
 import type { ActionOffer as RustActionOffer } from "./generated/ActionOffer";
 import type { ActionOutcome as RustActionOutcome } from "./generated/ActionOutcome";
 import type { Branch as RustBranch } from "./generated/Branch";
@@ -56,6 +60,10 @@ import type {
     ActionOffer,
     ActionOutcome,
     AgentState,
+    BranchCard,
+    CardLog,
+    CardLogState,
+    CardMode,
     Branch,
     BranchAction,
     BranchGroup,
@@ -174,6 +182,18 @@ export type StoppedOperationStillMirrorsRust = Assert<
  * compile plus tant que la fenêtre n'a pas dit ce qu'elle en montre à l'utilisateur.
  */
 export type ComposeOutcomeStillMirrorsRust = Assert<Mirrors<RustComposeOutcome, ComposeOutcome>>;
+
+/**
+ * La fiche de branche d'ADR-0013, et l'état de la seule zone qu'Ash y écrit.
+ *
+ * Un neuvième état de bloc ajouté en Rust — un nouveau refus — ne compile plus tant que la
+ * fenêtre n'a pas dit ce qu'elle en montre. C'est exactement ce qu'on veut d'un dispositif
+ * dont chaque valeur signifie « Ash ne touche pas au fichier, et voici pourquoi ».
+ */
+export type CardModeStillMirrorsRust = Assert<Mirrors<RustCardMode, CardMode>>;
+export type CardLogStateStillMirrorsRust = Assert<Mirrors<RustLogState, CardLogState>>;
+export type CardLogStillMirrorsRust = Assert<Mirrors<RustCardLog, CardLog>>;
+export type BranchCardStillMirrorsRust = Assert<Mirrors<RustBranchCard, BranchCard>>;
 
 /**
  * Le tableau des worktrees (spec §7.3).

@@ -1,10 +1,9 @@
 /**
- * API publique de la feature git côté fenêtre : **la popup de branches** (spec §7.1) et
- * **le tableau des worktrees** (spec §7.3).
+ * API publique de la feature git côté fenêtre : **la popup de branches** (spec §7.1), **le tableau
+ * des worktrees** (spec §7.3) et **la fiche de branche** (spec §7.5).
  *
- * Le dossier portera aussi le graphe (#27), l'onglet de merge (#30) et la fiche de branche
- * (#31), écrits en parallèle. Ce fichier est leur point de rencontre, et le seul que `app/`
- * importe — jamais `controller`, `popup`, `bridge` ni `worktree-table`.
+ * Le dossier portera aussi le graphe (#27) et l'onglet de merge (#30), écrits en parallèle. Ce fichier est leur point de rencontre, et le seul que `app/`
+ * importe — jamais `controller`, `popup`, `bridge`, `worktree-table`, `card` ni `markdown`.
  *
  * **Cette feature ne détient aucun état d'agent ni aucun état git**
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : elle demande, elle
@@ -61,3 +60,6 @@ export {
     visibleRows,
     type BranchRow,
 } from "./branch-list";
+
+export { mountBranchCard, view as branchCardView, type BranchCardPorts, type BranchCardView } from "./card";
+export { markdown, progressOf, readCard, type CardContent, type Meta, type TaskProgress } from "./markdown";

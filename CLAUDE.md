@@ -287,14 +287,17 @@ src-tauri/src/
     shortcuts/         ✓ les liaisons, leur magasin, les combinaisons
                          réservées — **le menu en dérive**           — spec §4.4
     journal/           ✓ attribution commit → agent → prompt        — ADR-0014
-  shared/              ✓ réellement transverse, et justifié (l'horloge)
+    card/              ✓ la fiche de branche : le bloc `ash:log`, sa
+                         sauvegarde, ses refus, le mode local        — ADR-0013
+  shared/              ✓ réellement transverse, et justifié (l'horloge, le diff)
 src/
   app/                 ✓ composition root, tokens des thèmes, menu
   features/
     terminal/          ✓ xterm.js, ligne de statut
     sidebar/           ✓ dépôts, worktrees, onglets, lignes filles
     settings/          ✓ la fenêtre de réglages
-    git/                 popup de branches, graphe, merge, fiche
+    git/               ✓ la fiche de branche ; popup de branches, graphe et
+                         merge restent à écrire
   shared/
     ipc/               ✓ le contrat Rust ↔ TypeScript, et ses builders
     agent-state/       ✓ présentation des cinq états, partagée par
