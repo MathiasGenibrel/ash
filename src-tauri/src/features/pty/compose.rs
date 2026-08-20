@@ -6,7 +6,9 @@
 //! jamais `⏎`. Écrire des octets dans un PTY était déjà possible ; ce qui manquait, c'est
 //! la règle. Elle tient ici, et elle se teste sans le moindre PTY.
 //!
-//! Trois refus et un report, dans cet ordre :
+//! Trois refus et un report, dans cet ordre. Tous sont tranchés par
+//! [`ComposeDesk::arbitrate`] — **sauf le troisième**, que le registre traite avant même
+//! d'arriver ici, parce que lui seul sait quels onglets existent :
 //!
 //! 1. **aucun outil reconnu dans l'avant-plan** — l'ADR parle de « passer le travail à
 //!    l'agent qui tourne déjà là ». Un shell à son invite n'est pas ça, et le texte y
