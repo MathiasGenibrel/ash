@@ -234,8 +234,8 @@ describe("le tableau des worktrees", () => {
     });
 
     it("Given a plan asked on one worktree, when another row is drawn, then it does not show that plan", () => {
-        // Given — la fiche appartient à la ligne dont on a demandé la suppression, et à elle
-        // seule : deux worktrees d'un même dépôt se ressemblent assez pour qu'une fiche posée
+        // Given — la fiche de suppression appartient à la ligne dont on l'a demandée, et à
+        // elle seule : deux worktrees d'un même dépôt se ressemblent assez pour qu'une fiche posée
         // sur la mauvaise ligne se lise comme la bonne.
         const rows = [RowBuilder.create().at("/dev/ash", "ash").build()];
         const plan: WorktreeRemoval = {

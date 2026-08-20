@@ -278,8 +278,13 @@ function card(line: WorktreeRow, actions: WorktreeTableActions): UiChild[] {
  *
  * Il n'y a pas de bouton qui supprime, et il n'y en aura pas ici : la commande est rendue
  * comme du texte, à copier dans un terminal, exactement comme les sorties de secours d'un
- * rebase arrêté (ADR-0015). Ce que la fiche énonce vient du backend, qui l'a relu au moment
- * du geste.
+ * rebase arrêté (ADR-0015). Ce que la fiche de suppression énonce vient du backend, qui l'a
+ * relu au moment du geste.
+ *
+ * **`fiche` a deux sens dans ce fichier, et aucun ne se dit tout court** : la *fiche de
+ * branche* est le `.ash/worktree.md` d'ADR-0013, que #31 apportera et que la colonne `card`
+ * ne fait que renvoyer ; la *fiche de suppression* est celle-ci, l'énoncé de ce qu'un geste
+ * destructeur emporterait — la même forme que la fiche de purge du journal.
  */
 function removalNotice(plan: WorktreeRemoval, actions: WorktreeTableActions): UiChild {
     const said = column(

@@ -103,8 +103,9 @@ export function mountWorktreeTable(ports: WorktreeTablePorts): WorktreeTable {
                 .list()
                 .then((fresh) => {
                     rows = fresh;
-                    // La fiche ouverte ne survit pas à une relecture : ce qu'elle énonçait
-                    // décrivait le worktree tel qu'il était il y a un instant, et une phrase
+                    // La fiche **de suppression** ouverte ne survit pas à une relecture : ce
+                    // qu'elle énonçait décrivait le worktree tel qu'il était il y a un
+                    // instant, et une phrase
                     // périmée juste avant un geste destructeur est pire que pas de phrase.
                     showing = null;
                     draw();
