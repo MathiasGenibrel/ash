@@ -128,7 +128,8 @@ impl ThemeState {
         .map(|appearance| appearance.panel)
     }
 
-    /// Demande une vue — `⌘⌃G`, `⌘⌃W`, `⌘⌃M`, `⌘⌃I`, ou le clic sur une entrée de la barre.
+    /// Demande une vue — `⌘⌃G`, `⌘⌃W`, `⌘⌃I`, ou le clic sur une entrée de la barre. La vue
+    /// `conflicts` n'a pas de raccourci : `⌘⌃M` ouvre l'**onglet** de merge, pas cette vue.
     ///
     /// **La même vue redemandée referme le panneau**, et c'est la règle qui fait de ces
     /// gestes des bascules : `⌘⌃G` ouvre le graphe, `⌘⌃G` de nouveau rend la hauteur au

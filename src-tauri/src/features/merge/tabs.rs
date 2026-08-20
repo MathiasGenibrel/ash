@@ -77,7 +77,7 @@ impl MergeTabs {
     /// Un worktree n'a qu'une opération arrêtée à la fois : deux onglets de merge dessus
     /// montreraient le même index sous deux compteurs qui se contrediraient dès le premier
     /// hunk tranché. Rendre l'onglet existant est aussi ce qui rend `⌘⌃M` idempotent, sans
-    /// que #32 ait à s'en soucier.
+    /// que le menu ait à s'en soucier (#32).
     pub fn open(&self, worktree_root: &Path, tab_id: TabId) -> TabId {
         let Ok(mut tabs) = self.tabs.lock() else {
             return tab_id;

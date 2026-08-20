@@ -42,8 +42,9 @@ export const tauriPause: AgentPause = {
 /**
  * Ce qui est arrêté dans un worktree — la lecture de #29, telle quelle.
  *
- * `null` est le cas courant : rien n'est en cours. C'est aussi ce qui dira à `⌘⌃M` (#32)
- * qu'il n'est pas actif.
+ * `null` est le cas courant : rien n'est en cours. La même réponse décide de `⌘⌃M`, mais
+ * elle est lue **en Rust** (`MergeSurface::reachable`, #32) : l'entrée de menu s'éteint sans
+ * que cette fenêtre ait à demander quoi que ce soit.
  */
 export const stoppedOperation = (worktreeRoot: string): Promise<StoppedOperation | null> =>
     invoke<StoppedOperation | null>("git_stopped_operation", { worktreeRoot });

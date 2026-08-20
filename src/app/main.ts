@@ -8,7 +8,7 @@ import {
     stoppedOperation,
 } from "@/features/git";
 import { createMergeSurface, mergeBridge } from "@/features/merge";
-import { mountBottomPanel, type BottomPanelState } from "@/features/panel";
+import { mountBottomPanel, type BottomPanelState, type PanelView } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { BranchCard, SidebarRows } from "@/shared/ipc";
@@ -30,6 +30,7 @@ import {
     onShortcutsChanged,
     shortcutKeys,
     shortcutOwner,
+    worktreeInView,
     type MenuAction,
 } from "./menu";
 import { onSelectTab } from "./select-tab";
@@ -350,8 +351,8 @@ function mount(
      *
      * Elle est posée au minimum, et elle est partagée : #29 y mettra l'écran complet des
      * conflits. Ce qu'elle fait ici tient en deux câbles — relire ce qui est arrêté dans le
-     * worktree courant, et ouvrir l'onglet de merge quand on le demande. `⌘⌃M` (#32) fera
-     * exactement le second, sur la même commande.
+     * worktree courant, et ouvrir l'onglet de merge quand on le demande. `⌘⌃M` (#32) fait
+     * exactement le second, par le même `openMergeTab` et donc la même commande.
      *
      * C'est la **cinquième** surface du corps du panneau, et elle s'y attache comme les
      * quatre autres — par `ownPanelBody`, sur sa propre boîte. Peindre directement dans
@@ -366,6 +367,29 @@ function mount(
     const conflicts = document.createElement("div");
     conflicts.className = "ash-panel-conflicts";
     let shownConflicts: string | null = null;
+
+    /**
+     * Ouvre l'onglet de merge du worktree courant — **les deux routes de la spec §7.4**.
+     *
+     * Le bouton `resolve in ash` de la vue des conflits (#30) et `⌘⌃M` (#32) passent par
+     * ici, et par la même commande : l'ouverture est idempotente côté backend — un worktree
+     * n'a qu'une opération arrêtée, donc une seconde demande rend l'onglet déjà ouvert.
+     *
+     * L'entrée de menu est éteinte quand rien n'est arrêté, mais le refus reste attendu :
+     * le worktree a pu redevenir tranquille entre l'affichage et le geste. Il redessine
+     * alors la vue plutôt que d'ouvrir un onglet vide.
+     */
+    const openMergeTab = (): Promise<void> => {
+        const root = here;
+        if (root === null) return Promise.resolve();
+        return mergeBridge
+            .open(root)
+            .then((tabId) => terminals.adoptTab(tabId))
+            .catch(() => {
+                drawConflicts(true);
+            });
+    };
+
     const drawConflicts = (force = false): void => {
         const state = bottomPanel.current;
         const shows = state.open && state.view === "conflicts";
@@ -379,15 +403,7 @@ function mount(
         shownConflicts = root;
 
         const open = (): void => {
-            if (root === null) return;
-            void mergeBridge
-                .open(root)
-                .then((tabId) => terminals.adoptTab(tabId))
-                // Rien n'est arrêté, ou le worktree a disparu : le panneau se redessine et
-                // le dit. Ouvrir un onglet vide serait pire que ne rien ouvrir.
-                .catch(() => {
-                    drawConflicts(true);
-                });
+            void openMergeTab();
         };
 
         if (root === null) {
@@ -402,6 +418,12 @@ function mount(
     terminals.onActiveTab((active) => {
         const worktree = active?.tab.location?.worktreeRoot ?? null;
         here = worktree;
+        // Le menu natif apprend le worktree qu'on regarde, et **lui seul en tire quelque
+        // chose** : l'entrée « Resolve Conflicts » et son `⌘⌃M` ne sont actifs que pendant
+        // un rebase ou un merge arrêté (spec §4.4). La fenêtre nomme, le backend décide
+        // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)). Un échec ne laisse
+        // aucune moitié d'état — l'entrée reste où elle était.
+        worktreeInView(worktree).catch(() => undefined);
         titleBar.setTitle(windowTitle(active, appName));
         // La vue des conflits suit elle aussi le worktree, et elle passe **avant** les deux
         // autres : celle de la fiche rend la main quand le worktree n'a pas changé.
@@ -438,8 +460,8 @@ function mount(
     });
 
     // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
-    // c'est ce qui laisse un seul détenteur à l'ouverture, et ce qui fera que le clic sur un
-    // onglet et le raccourci de #32 ne pourront pas se contredire.
+    // c'est ce qui laisse un seul détenteur à l'ouverture, et ce qui fait que le clic sur une
+    // entrée de la barre et `⌘⌃G` / `⌘⌃W` / `⌘⌃I` (#32) ne peuvent pas se contredire.
     //
     // C'est aussi cette annonce qui décide **quand** chaque vue relit : une vue fermée n'a
     // rien à demander au backend, et une vue qui s'ouvre doit dire la vérité de l'instant.
@@ -503,8 +525,25 @@ function mount(
     // Le premier onglet part de `~`, faute d'onglet actif dont reprendre le répertoire.
     terminals.openTab("home").catch(fail);
 
+    // Les cinq surfaces git, telles que le menu les atteint (spec §4.4, #32). Elles sont
+    // passées à `dispatch` plutôt que fermées dessus pour la même raison que les onglets :
+    // la table des actions se lit en un endroit, et chaque câble y est nommé.
+    //
+    // Trois d'entre elles ne font que **demander une vue** au backend : c'est lui qui décide
+    // que la même vue redemandée referme le panneau, donc `⌘⌃G` bascule le graphe sans que
+    // cette fenêtre n'ait à savoir ce qui est ouvert (`features::theme::show_panel_view`).
+    const git: GitSurfaces = {
+        toggleBranches: () => {
+            branches.toggle();
+        },
+        showView: (view) => {
+            bottomPanel.showView(view);
+        },
+        openMerge: openMergeTab,
+    };
+
     const play = (action: MenuAction): void => {
-        dispatch(terminals, sidebarColumn, action).catch(fail);
+        dispatch(terminals, sidebarColumn, git, action).catch(fail);
     };
 
     onMenuAction(play).catch(fail);
@@ -537,9 +576,26 @@ function mount(
     onShortcutsChanged(showNewTabShortcut).catch(fail);
 }
 
+/**
+ * Ce que le composition root sait faire des cinq gestes git du menu.
+ *
+ * Un enregistrement de câbles, et rien d'autre : aucune des trois features concernées — la
+ * popup de branches, le panneau bas, l'onglet de merge — ne connaît le menu, et le menu n'en
+ * connaît aucune. Elles se rencontrent ici, comme la sidebar et la feature terminal.
+ */
+interface GitSurfaces {
+    /** `⌘⌃B` — la popup s'ouvre et se referme sur le même geste (spec §7.1). */
+    toggleBranches(): void;
+    /** `⌘⌃G`, `⌘⌃W`, `⌘⌃I` — la vue du panneau bas, dont le backend fait une bascule. */
+    showView(view: PanelView): void;
+    /** `⌘⌃M` — l'onglet de merge du worktree courant, ou rien s'il n'y a rien à résoudre. */
+    openMerge(): Promise<void>;
+}
+
 function dispatch(
     terminals: Terminals,
     sidebarColumn: SidebarColumnBinding,
+    git: GitSurfaces,
     action: MenuAction,
 ): Promise<void> {
     switch (action.kind) {
@@ -565,6 +621,24 @@ function dispatch(
             // fois pour toutes dans `mount`.
             sidebarColumn.toggle();
             return Promise.resolve();
+        case "toggle-branches":
+            git.toggleBranches();
+            return Promise.resolve();
+        // Les trois vues **partent au backend** et reviennent par son annonce, comme le repli
+        // de la colonne : c'est là que vit la règle « la même vue redemandée referme le
+        // panneau », et c'est ce qui empêche un raccourci et un clic sur la barre du panneau
+        // de se contredire ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+        case "toggle-graph":
+            git.showView("graph");
+            return Promise.resolve();
+        case "toggle-worktrees":
+            git.showView("worktrees");
+            return Promise.resolve();
+        case "toggle-branch-card":
+            git.showView("branch");
+            return Promise.resolve();
+        case "open-merge":
+            return git.openMerge();
     }
 }
 

@@ -210,8 +210,9 @@ pub fn set_bottom_panel_height<R: Runtime>(
     announce_panel(&app, state.set_panel_height(PanelHeight::from(height)));
 }
 
-/// Demande une vue au panneau — le clic sur une entrée de sa barre, et demain `⌘⌃G`,
-/// `⌘⌃W`, `⌘⌃M`, `⌘⌃I` (spec §4.4, issue #32).
+/// Demande une vue au panneau — le clic sur une entrée de sa barre, ou `⌘⌃G`, `⌘⌃W` et
+/// `⌘⌃I` (spec §4.4, issue #32). La vue `conflicts` n'a pas de raccourci : `⌘⌃M` ouvre
+/// l'**onglet** de merge (`merge_open`), pas cette vue-ci.
 ///
 /// La webview demande une **vue**, pas un état : c'est le backend qui décide que redemander
 /// celle qui est déjà montrée referme le panneau. Deux surfaces ne peuvent donc pas se
