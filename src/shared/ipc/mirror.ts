@@ -36,6 +36,12 @@ import type { TreeStatus as RustTreeStatus } from "./generated/TreeStatus";
 import type { Upstream as RustUpstream } from "./generated/Upstream";
 import type { WorktreeMetadata as RustWorktreeMetadata } from "./generated/WorktreeMetadata";
 import type { SidebarRows as RustSidebarRows } from "./generated/SidebarRows";
+import type { LastWork as RustLastWork } from "./generated/LastWork";
+import type { WorktreeRemoval as RustWorktreeRemoval } from "./generated/WorktreeRemoval";
+import type { RepoLine as RustRepoLine } from "./generated/RepoLine";
+import type { WorkSource as RustWorkSource } from "./generated/WorkSource";
+import type { WorktreeAgent as RustWorktreeAgent } from "./generated/WorktreeAgent";
+import type { WorktreeRow as RustWorktreeRow } from "./generated/WorktreeRow";
 import type {
     AgentState,
     ComposeOutcome,
@@ -55,8 +61,14 @@ import type {
     TabInfo,
     TabLocation,
     SidebarRows,
+    LastWork,
+    WorktreeRemoval,
+    WorkSource,
+    WorktreeAgent,
     WorktreeMetadata,
     WorktreeMetadataChanged,
+    WorktreeRepo,
+    WorktreeRow,
 } from "./index";
 import type { Assert, Mirrors } from "./mirroring";
 
@@ -124,3 +136,29 @@ export type StoppedOperationStillMirrorsRust = Assert<
  * compile plus tant que la fenêtre n'a pas dit ce qu'elle en montre à l'utilisateur.
  */
 export type ComposeOutcomeStillMirrorsRust = Assert<Mirrors<RustComposeOutcome, ComposeOutcome>>;
+
+/**
+ * Le tableau des worktrees (spec §7.3).
+ *
+ * `WorktreeRepo` est confronté au `RepoLine` du backend **et** doit rester la même forme que
+ * [`RepoRef`] : c'est par cette clé que la fiche de branche (#31) parlera du même dépôt que
+ * la colonne de gauche. Le jour où l'une des deux bougerait, l'une de ces deux lignes
+ * cesserait de compiler.
+ */
+export type WorktreeRepoStillMirrorsRust = Assert<Mirrors<RustRepoLine, WorktreeRepo>>;
+export type WorktreeRepoStillMatchesRepoRef = Assert<Mirrors<RepoRef, WorktreeRepo>>;
+export type WorktreeAgentStillMirrorsRust = Assert<Mirrors<RustWorktreeAgent, WorktreeAgent>>;
+/**
+ * Les deux sources de `last worked by`. Une troisième ajoutée en Rust ne compile plus tant
+ * que la fenêtre n'a pas dit ce qu'elle en montre — et cette colonne n'affirme que ce qu'Ash
+ * a observé (ADR-0014).
+ */
+export type WorkSourceStillMirrorsRust = Assert<Mirrors<RustWorkSource, WorkSource>>;
+export type LastWorkStillMirrorsRust = Assert<Mirrors<RustLastWork, LastWork>>;
+export type WorktreeRowStillMirrorsRust = Assert<Mirrors<RustWorktreeRow, WorktreeRow>>;
+/**
+ * La fiche de suppression. `carries` et `command` sont du **texte à montrer** : le jour où le
+ * backend y mettrait une action, cette ligne cesserait de compiler avant que l'écran ne se
+ * mette à supprimer quoi que ce soit (ADR-0015).
+ */
+export type WorktreeRemovalStillMirrorsRust = Assert<Mirrors<RustWorktreeRemoval, WorktreeRemoval>>;

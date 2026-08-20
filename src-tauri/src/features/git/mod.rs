@@ -46,6 +46,12 @@
 //! | `FileWatcher` (`watcher.rs`) | `watcher.rs` | `fakes.rs` |
 //! | `Clock`, `Scheduler` (`shared/time.rs`) | `shared/time.rs` | `fakes.rs` |
 //! | `StatusReader` (`git_cli.rs`) | `git_cli.rs` | `fakes.rs` |
+//! | `TabPresence`, `WorkHistory`, `WorktreeFacts` (`table.rs`) | `lib.rs`, `metadata_watch.rs` | `table.rs` |
+//!
+//! Les trois derniers sont ceux du **tableau des worktrees** (spec §7.3) : la feature y pose
+//! deux questions qu'elle ne sait pas trancher — qui travaille dans ce worktree, et qui y a
+//! travaillé en dernier —, et c'est le composition root qui les branche sur `pty` et
+//! `journal`. Voir [`table`].
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
@@ -61,6 +67,7 @@ mod ports;
 mod prompt;
 mod stopped;
 mod system_fs;
+mod table;
 mod targets;
 mod test_command;
 mod throttle;
@@ -87,5 +94,9 @@ pub use ports::{Entry, FileSystem};
 pub use prompt::{compose_conflict_prompt, PromptSubject};
 pub use stopped::{read_stopped, StoppedCommit, StoppedOperation};
 pub use system_fs::SystemFileSystem;
+pub use table::{
+    InhabitingTab, LastWork, RepoLine, TabPresence, WorkHistory, WorkSource, Worked, WorktreeAgent,
+    WorktreeFacts, WorktreeRemoval, WorktreeRow, WorktreeTable, STALE_AFTER,
+};
 pub use test_command::detect_test_command;
 pub use worktree::{resolve_worktree, Repo, Worktree, WorktreeLocation};

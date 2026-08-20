@@ -39,6 +39,32 @@ pub struct Entry {
     /// L'onglet où il tournait. Ce n'est pas décoratif : c'est ce qui permettra de
     /// retrouver la conversation, le jour où le prompt aura une source.
     pub tab_id: String,
+    /// La racine du worktree où le commit est né, quand on la connaissait.
+    ///
+    /// ADR-0014 ne la nomme pas : elle n'a rien à voir avec l'attribution d'un commit, qui
+    /// se fait par `sha` puis par (`author_date`, `subject`) et jamais par un chemin. Elle
+    /// est ici parce qu'une **autre** question a besoin d'une réponse honnête — « qui a
+    /// travaillé dans ce worktree en dernier ? », la colonne `last worked by` du tableau
+    /// des worktrees (spec §7.3) — et que le journal est le seul endroit du produit où une
+    /// observation d'agent survit à la fermeture de son onglet
+    /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md) interdit d'en
+    /// persister une autre).
+    ///
+    /// `Option` et `#[serde(default)]` : les lignes écrites avant ce champ restent
+    /// lisibles, et elles ne répondent pour **aucun** worktree — on ne sait pas où elles
+    /// sont nées, et on ne le devine pas.
+    #[serde(default)]
+    pub worktree: Option<String>,
+    /// La date d'auteur en millisecondes — la même que [`Self::author_date`], comparable
+    /// sans analyser une chaîne.
+    ///
+    /// Elle double le champ ISO au lieu de le remplacer, et les deux ont chacun leur usage :
+    /// `author_date` est la moitié de la clé de repli d'ADR-0014, et doit rester **telle que
+    /// git l'écrit** ; celle-ci se soustrait d'une horloge, ce que la règle des trois jours
+    /// du `stale` (spec §5.4) demande. Reformater l'une pour obtenir l'autre à la lecture
+    /// serait une occasion de ne plus reconnaître ce qu'on a soi-même écrit.
+    #[serde(default)]
+    pub authored_at: Option<UnixMillis>,
     #[serde(default)]
     pub session_started: Option<UnixMillis>,
     #[serde(default)]
@@ -128,11 +154,16 @@ mod tests {
     use crate::features::journal::fakes::EntryBuilder;
 
     #[test]
-    fn given_an_observed_commit_when_it_is_written_then_the_line_carries_the_eight_fields_of_the_adr(
+    fn given_an_observed_commit_when_it_is_written_then_the_line_carries_the_fields_the_product_decided(
     ) {
         // Given — la forme de la ligne est un contrat avec la version d'Ash de demain, et
         // avec l'utilisateur qui ouvrira le fichier. Ce test tombe le jour où un champ
-        // change de nom, disparaît, ou en amène un neuvième sans qu'on l'ait décidé.
+        // change de nom, disparaît, ou en amène un de plus sans qu'on l'ait décidé.
+        //
+        // Les huit premiers sont ceux d'ADR-0014. `worktree` et `authored_at` ont été
+        // ajoutés pour la colonne `last worked by` du tableau des worktrees (spec §7.3) :
+        // ils ne participent pas à l'attribution, et les lignes écrites avant eux restent
+        // lisibles — voir leur documentation plus haut.
         let entry = EntryBuilder::new().build();
 
         // When
@@ -153,12 +184,14 @@ mod tests {
             vec![
                 "agent",
                 "author_date",
+                "authored_at",
                 "prompt",
                 "repo",
                 "session_started",
                 "sha",
                 "subject",
                 "tab_id",
+                "worktree",
             ]
         );
     }
