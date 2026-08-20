@@ -128,7 +128,7 @@ impl WatchTargets {
         changed == self.worktrees_dir || changed.parent() == Some(self.worktrees_dir.as_path())
     }
 
-    /// Ce changement peut-il être la **naissance d'un commit** ?
+    /// Ce changement est-il un **mouvement de `HEAD`** ?
     ///
     /// Le journal d'attribution d'
     /// [ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md) demande de
@@ -145,7 +145,7 @@ impl WatchTargets {
     /// **Le reflog n'est pas dans [`Self::concerns`]**, et il n'a pas à y entrer : il ne
     /// change rien de ce que la ligne de statut affiche. Le test qui l'exclut est plus vieux
     /// que ce journal, et il reste vrai.
-    pub fn concerns_commits(&self, changed: &Path) -> bool {
+    pub fn concerns_head_moves(&self, changed: &Path) -> bool {
         // Le reflog du worktree, dans **son** dossier git : un worktree lié a le sien, et
         // c'est bien celui-là qu'il faut lire — `HEAD` y est propre à lui (ADR-0012).
         relative(&self.git_dir, changed) == Some(Path::new("logs/HEAD"))
@@ -269,9 +269,9 @@ mod tests {
         let plain = TargetsBuilder::plain();
 
         // When / Then
-        assert!(linked.concerns_commits(Path::new("/dev/ash/.git/worktrees/sidebar/logs/HEAD")));
-        assert!(plain.concerns_commits(Path::new("/dev/ash/.git/logs/HEAD")));
-        assert!(!linked.concerns_commits(Path::new("/dev/ash/.git/logs/HEAD")));
+        assert!(linked.concerns_head_moves(Path::new("/dev/ash/.git/worktrees/sidebar/logs/HEAD")));
+        assert!(plain.concerns_head_moves(Path::new("/dev/ash/.git/logs/HEAD")));
+        assert!(!linked.concerns_head_moves(Path::new("/dev/ash/.git/logs/HEAD")));
     }
 
     #[test]
@@ -282,9 +282,9 @@ mod tests {
         let targets = TargetsBuilder::plain();
 
         // When / Then
-        assert!(!targets.concerns_commits(Path::new("/dev/ash/.git/logs/HEAD.lock")));
-        assert!(!targets.concerns_commits(Path::new("/dev/ash/.git/logs/refs/heads/main")));
-        assert!(!targets.concerns_commits(Path::new("/dev/ash/.git/HEAD")));
+        assert!(!targets.concerns_head_moves(Path::new("/dev/ash/.git/logs/HEAD.lock")));
+        assert!(!targets.concerns_head_moves(Path::new("/dev/ash/.git/logs/refs/heads/main")));
+        assert!(!targets.concerns_head_moves(Path::new("/dev/ash/.git/HEAD")));
     }
 
     #[test]

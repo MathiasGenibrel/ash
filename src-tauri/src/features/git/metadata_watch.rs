@@ -56,11 +56,15 @@ pub struct Listeners {
     pub announce: Announce,
     /// La forme d'un dépôt a changé — voir [`Relocate`].
     pub relocate: Relocate,
-    /// Le `HEAD` d'un worktree a bougé — voir [`Committed`].
-    pub committed: Committed,
+    /// Le `HEAD` d'un worktree a bougé — voir [`HeadMoved`].
+    pub head_moved: HeadMoved,
 }
 
-/// Ce qu'on appelle quand le `HEAD` d'un worktree surveillé a bougé : un commit a pu naître.
+/// Ce qu'on appelle quand le `HEAD` d'un worktree surveillé a bougé.
+///
+/// Le nom dit exactement ce que la surveillance sait : `HEAD` a bougé. **Pas** qu'un commit
+/// est né — un `checkout`, un `reset`, un `pull` écrivent le même reflog, et seul celui qui
+/// lira les commits saura faire la différence.
 ///
 /// Troisième sortie, distincte des deux autres et pour les mêmes raisons qu'elles sont
 /// distinctes entre elles. Elle ne passe **pas** par la limitation de débit : un état affiché
@@ -71,7 +75,7 @@ pub struct Listeners {
 /// du worktree, où lire les commits, et le dossier git **commun**, qui identifie le dépôt —
 /// deux worktrees d'un même projet écrivent dans le même journal. Cette feature-ci ne sait
 /// pas ce qu'est un journal, et ne le saura pas : elle dit qu'un `HEAD` a bougé.
-pub type Committed = Arc<dyn Fn(&Path, &Path) + Send + Sync>;
+pub type HeadMoved = Arc<dyn Fn(&Path, &Path) + Send + Sync>;
 
 /// Un worktree observé.
 struct Watched {
@@ -275,7 +279,7 @@ impl MetadataWatch {
     /// L'état du worktree se relit — au débit près. Sa **forme**, elle, ne se relit pas :
     /// elle se signale, et à quelqu'un d'autre.
     fn on_change(self: &Arc<Self>, root: &Path, changed: &Path) {
-        let (concerns, shape, commits) = match self.followed.lock() {
+        let (concerns, shape, head_moved) = match self.followed.lock() {
             Ok(followed) => followed
                 .watched
                 .get(root)
@@ -285,7 +289,7 @@ impl MetadataWatch {
                         entry.targets.concerns_layout(changed),
                         entry
                             .targets
-                            .concerns_commits(changed)
+                            .concerns_head_moves(changed)
                             .then(|| entry.common_dir.clone()),
                     )
                 }),
@@ -297,8 +301,8 @@ impl MetadataWatch {
         if shape {
             (self.listeners.relocate)();
         }
-        if let Some(common_dir) = commits {
-            (self.listeners.committed)(root, &common_dir);
+        if let Some(common_dir) = head_moved {
+            (self.listeners.head_moved)(root, &common_dir);
         }
         if concerns {
             self.request(root);
@@ -420,7 +424,7 @@ impl MetadataWatch {
 mod tests {
     use super::*;
     use crate::features::git::fakes::{
-        ControlledTime, RecordedAnnounces, RecordedCommits, RecordedRelocations, WatchedTree,
+        ControlledTime, RecordedAnnounces, RecordedHeadMoves, RecordedRelocations, WatchedTree,
     };
     use crate::features::git::metadata::{Head, Upstream};
 
@@ -434,7 +438,7 @@ mod tests {
         time: Arc<ControlledTime>,
         announces: Arc<RecordedAnnounces>,
         relocations: Arc<RecordedRelocations>,
-        commits: Arc<RecordedCommits>,
+        head_moves: Arc<RecordedHeadMoves>,
     }
 
     impl WatchBuilder {
@@ -448,7 +452,7 @@ mod tests {
                 time: ControlledTime::new(),
                 announces: RecordedAnnounces::new(),
                 relocations: RecordedRelocations::new(),
-                commits: RecordedCommits::new(),
+                head_moves: RecordedHeadMoves::new(),
             }
         }
 
@@ -463,7 +467,7 @@ mod tests {
                 Listeners {
                     announce: self.announces.announce(),
                     relocate: self.relocations.relocate(),
-                    committed: self.commits.committed(),
+                    head_moved: self.head_moves.head_moved(),
                 },
             )
         }
@@ -726,7 +730,7 @@ mod tests {
         // Then — le signal nomme où lire les commits **et** sous quelle identité de dépôt
         // les ranger : deux worktrees d'un même projet partagent un journal
         assert_eq!(
-            world.commits.moves(),
+            world.head_moves.moves(),
             vec![("/dev/ash".to_owned(), "/dev/ash/.git".to_owned())]
         );
         // Et le reflog ne fait toujours pas relire les métadonnées : un commit ne change ni
@@ -752,7 +756,7 @@ mod tests {
         }
 
         // Then
-        assert_eq!(world.commits.moves().len(), 10);
+        assert_eq!(world.head_moves.moves().len(), 10);
     }
 
     #[test]
