@@ -8,8 +8,15 @@
 //! ne ferme rien.
 //!
 //! La table est **embarquée**, et c'est un choix : macOS n'expose aucune API pour demander
-//! « qui a cette combinaison ». Les quatre premières viennent de la spec §4.4 et de la
-//! planche `3j`, la cinquième du terminal lui-même.
+//! « qui a cette combinaison ». Les quatre entrées viennent de la spec §4.4 et de la
+//! planche `3j` ; elles sont toutes prises par macOS.
+//!
+//! **Elle en a porté une cinquième, `⌘K`, et c'était faux** (issue #159). On l'y avait
+//! écrite comme « avalée par le terminal », alors que `⌘` n'atteint aucun PTY : le
+//! modificateur Command n'a aucune représentation dans l'encodage d'entrée d'un terminal,
+//! contrairement à `Ctrl`, qui produit un caractère de contrôle, et à `Alt`/`Meta`, qui
+//! préfixe par `ESC`. `⌘K` est désormais le défaut de `Clear Scrollback`
+//! (`src-tauri/src/menu.rs`), et l'annoncer comme inefficace aurait contredit le menu.
 
 use super::combination::Combination;
 
@@ -22,6 +29,12 @@ use super::combination::Combination;
 #[serde(rename_all = "kebab-case")]
 pub enum ReservedBy {
     Macos,
+    /// **Aucune combinaison ne porte ce cas aujourd'hui**, et la variante reste : elle
+    /// décrit ce qu'un accélérateur que le menu ne tient **pas** peut subir. Une
+    /// combinaison que `muda` ne sait pas écrire descend jusqu'à la webview
+    /// (`src/app/shortcuts.ts`, le cas de `⌃⇥`), et là, le terminal au premier plan peut
+    /// la consommer avant Ash. C'est une réponse d'une autre forme que « macOS la prend
+    /// toujours », et l'écran l'écrit autrement.
     Terminal,
 }
 
@@ -63,11 +76,6 @@ const RESERVED: &[(&str, ReservedBy, &str)] = &[
         "Cmd+Alt+Escape",
         ReservedBy::Macos,
         "is reserved by macOS (force quit) — ash will never receive it",
-    ),
-    (
-        "Cmd+KeyK",
-        ReservedBy::Terminal,
-        "swallowed by the terminal — never reaches ash",
     ),
 ];
 
@@ -120,16 +128,16 @@ mod tests {
     }
 
     #[test]
-    fn given_the_combination_the_terminal_intercepts_when_it_is_read_then_it_is_told_apart_from_the_ones_macos_takes(
-    ) {
-        // Given / When — `⌘K` : le terminal a ses propres raccourcis et les intercepte
-        // avant Ash quand on est dans le shell. Ce n'est pas la même chose qu'une touche
-        // que macOS prend toujours, donc ça ne se dit pas de la même façon
-        let swallowed = reservation(&Combination::parse("Cmd+KeyK").unwrap()).unwrap();
+    fn given_cmd_k_when_it_is_read_then_nothing_is_announced_because_command_reaches_no_pty() {
+        // Given / When — la table l'a annoncée comme « avalée par le terminal » jusqu'à
+        // #159. C'était faux : `⌘` n'a aucune représentation dans l'encodage d'entrée d'un
+        // terminal, donc aucun shell ne l'a jamais reçue. La touche est depuis le défaut de
+        // `Clear Scrollback`, et un avertissement ici ferait dire à la fenêtre de réglages
+        // qu'un raccourci que le menu affiche est sans effet
+        let announced = reservation(&Combination::parse("Cmd+KeyK").unwrap());
 
         // Then
-        assert_eq!(swallowed.by, ReservedBy::Terminal);
-        assert!(swallowed.note.contains("swallowed by the terminal"));
+        assert_eq!(announced, None);
     }
 
     #[test]
