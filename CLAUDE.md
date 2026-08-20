@@ -98,9 +98,17 @@ composé). L'invariant « une combinaison, une action » a **une seule lecture e
 écriture**, et les cinq chemins y passent — capture, effacement, retour au défaut, `reset
 all`, relecture d'un fichier édité à la main.
 
-`⌘K` n'est sur **aucune** entrée de menu, et c'est délibéré : un accélérateur de menu est
-consommé par `performKeyEquivalent:` avant d'atteindre la webview, donc le poser reviendrait à
-le retirer au shell. Il n'y a pas de moyen terme.
+**`⌘K` efface le scrollback de l'onglet courant**, comme dans les autres terminaux de macOS,
+et c'est le défaut porté par l'entrée de menu `Clear Scrollback`. Il ne l'a pas toujours été :
+la combinaison a été laissée vide de #132 à #159 au motif qu'un accélérateur de menu est
+consommé par `performKeyEquivalent:` avant d'atteindre la webview, donc que la poser
+« reviendrait à la retirer au shell ». La première moitié est vraie ; la seconde était fausse.
+`⌘` n'atteint **jamais** un PTY — le modificateur Command n'a aucune représentation dans
+l'encodage d'entrée d'un terminal, là où `Ctrl` produit un caractère de contrôle et
+`Alt`/`Meta` préfixe par `ESC`. Ce que le shell garde, c'est `⌃K`, une autre combinaison
+qu'Ash ne déclare nulle part. La règle utile est donc : **ce qui porte `Cmd` ne retire rien à
+personne** — c'est aussi ce qui rend déclarables les cinq raccourcis git `⌘⌃` —, et la
+question ne se poserait que pour un défaut portant `Ctrl` seul.
 
 **La fenêtre de réglages choisit le thème sur un aperçu, pas sur trois boutons** (spec §9) :
 trois tuiles de 150 px, chacune une miniature redessinée de la sidebar avec ses **cinq**

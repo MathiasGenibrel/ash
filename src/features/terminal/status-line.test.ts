@@ -248,8 +248,8 @@ describe("le rappel de droite", () => {
         // Given / When
         const line = showing(undefined, undefined, true);
 
-        // Then — `⌘K` appartient au shell depuis #132, et aucune palette n'existe : annoncer
-        // une touche qui ne fait rien est pire qu'un coin vide.
+        // Then — aucune palette de commandes n'existe, et `⌘K` efface le scrollback depuis
+        // #159 : annoncer `⌘K commands` promettrait une surface qui n'est pas là.
         expect(line.hint).toBeNull();
     });
 });
