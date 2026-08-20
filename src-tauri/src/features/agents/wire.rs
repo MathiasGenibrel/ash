@@ -53,7 +53,7 @@ pub const MAX_CHILD_KEY_BYTES: usize = 256;
 /// Il est borné ici pour la même raison que les clés d'enfant : que la trame ne puisse pas
 /// déborder [`MAX_FRAME_BYTES`] à cause de lui, donc que le repli silencieux
 /// d'`ash-event` ne puisse pas se déclencher pour cette raison-là.
-pub const MAX_TRANSCRIPT_PATH_BYTES: usize = 1024;
+pub const MAX_PATH_BYTES: usize = 1024;
 
 /// Ce qu'un hook envoie à Ash, tel qu'il passe sur le fil.
 ///
@@ -266,11 +266,11 @@ fn named(value: Option<&str>) -> Option<String> {
 ///
 /// Le pendant de [`named`] pour les deux clés de chemin — le transcript et le `cwd` —, et
 /// appelé des **deux** côtés du fil pour la même raison : ce qui est vide ne désigne rien, et
-/// ce qui dépasse [`MAX_TRANSCRIPT_PATH_BYTES`] n'est plus un chemin.
+/// ce qui dépasse [`MAX_PATH_BYTES`] n'est plus un chemin.
 fn path(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
-        .filter(|value| !value.is_empty() && value.len() <= MAX_TRANSCRIPT_PATH_BYTES)
+        .filter(|value| !value.is_empty() && value.len() <= MAX_PATH_BYTES)
         .map(str::to_owned)
 }
 

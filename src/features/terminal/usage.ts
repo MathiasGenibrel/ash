@@ -70,24 +70,31 @@ export const SHOWN_IN_STATUS_BAR: Readonly<Record<QuotaKind, boolean>> = {
 /**
  * Ce que la conversation occupe de sa fenêtre — la jauge, et le mot qui la double.
  *
- * **Les trois champs tombent ensemble.** `percent` et `level` valent `null` exactement quand
- * la fenêtre est inconnue, et le libellé bascule alors sur la mesure brute (`ctx 57k`). Il n'y
- * a donc pas d'état où une barre serait peinte sans pourcentage, ni l'inverse : c'est ce qui
- * rend impossible de repeindre un seuil sur un rapport qu'on n'a pas.
+ * **Le pourcentage et le palier ne sont pas deux champs, mais un seul** : sans dénominateur,
+ * aucun des deux ne veut dire quoi que ce soit, et les porter à plat obligerait chaque
+ * appelant à vérifier deux fois la même absence — donc à pouvoir se tromper une fois sur
+ * deux. [`share`](ContextGauge.share) à `null` est l'unique façon de dire « Ash sait combien,
+ * mais pas sur combien », et il n'existe aucun état où une barre se peindrait sans son
+ * pourcentage, ni un seuil sans son rapport.
  */
 export interface ContextGauge {
-    /**
-     * Entre `0` et `100`, arrondi : la **même** valeur pour la largeur et pour le libellé.
-     *
-     * `null` quand la fenêtre est inconnue — aucune source ne nomme de modèle reconnu. Rien
-     * n'est alors mis en rapport, et c'est la correction du bug qui faisait lire `ctx 28%` à
-     * une conversation occupant 6 % de sa fenêtre.
-     */
-    readonly percent: number | null;
     /** `ctx 41%` quand la fenêtre est connue, `ctx 57k` sinon. */
     readonly label: string;
-    /** `null` avec `percent` : sans dénominateur, aucun seuil ne veut dire quoi que ce soit. */
-    readonly level: ContextLevel | null;
+    /**
+     * La part de la fenêtre que la conversation occupe, ou `null` quand la fenêtre est
+     * inconnue — aucune source ne nomme de modèle reconnu.
+     *
+     * C'est la correction du bug qui faisait lire `ctx 28%` à une conversation occupant 6 %
+     * de sa fenêtre : un dénominateur absent se dit, il ne se suppose pas.
+     */
+    readonly share: ContextShare | null;
+}
+
+/** Le rapport d'une conversation à sa fenêtre, quand cette fenêtre est connue. */
+export interface ContextShare {
+    /** Entre `0` et `100`, arrondi : la **même** valeur pour la largeur et pour le libellé. */
+    readonly percent: number;
+    readonly level: ContextLevel;
 }
 
 /**
@@ -163,15 +170,21 @@ export function composeContextGauge(usage: SessionUsage | null): ContextGauge | 
 
     const window = usage.windowTokens;
     if (window === null || window <= 0) {
-        return { percent: null, label: `ctx ${abbreviate(usage.usedTokens)}`, level: null };
+        return { label: `ctx ${abbreviate(usage.usedTokens)}`, share: null };
     }
 
     const percent = clamp((usage.usedTokens / window) * 100);
     return {
-        percent,
         label: `ctx ${String(percent)}%`,
-        level:
-            percent >= COMPACTING_AT ? "compacting" : percent >= LOADED_AT ? "loaded" : "fresh",
+        share: {
+            percent,
+            level:
+                percent >= COMPACTING_AT
+                    ? "compacting"
+                    : percent >= LOADED_AT
+                      ? "loaded"
+                      : "fresh",
+        },
     };
 }
 
@@ -380,29 +393,25 @@ export class UsageSegments {
         // La **barre** ne sort que s'il y a un rapport à montrer ; le **libellé** sort dès
         // qu'il y a une mesure. C'est toute la différence entre « Ash ne sait rien » et « Ash
         // sait combien, mais pas sur combien » — et le seul endroit où elle se voit.
-        this.gauge.hidden = gauge === null || gauge.percent === null;
+        const share = gauge?.share ?? null;
+        this.gauge.hidden = share === null;
         this.label.hidden = gauge === null;
         this.shownGauge = gauge !== null;
         this.fold();
 
-        if (gauge === null) {
-            // Le palier part avec la jauge : le laisser sur le groupe garderait un `compacting`
-            // qui ne décrit plus rien, et que la première règle posée sur une pastille lirait.
+        if (gauge !== null) write(this.label, gauge.label);
+
+        if (share === null) {
+            // Le palier part avec le rapport — qu'il n'y ait rien du tout, ou une mesure sans
+            // dénominateur. Le laisser sur le groupe garderait un `compacting` qui ne décrit
+            // plus rien, que la première règle posée sur une pastille lirait, et qui
+            // annoncerait un compactage sur un chiffre qu'Ash n'a pas.
             delete this.element.dataset["context"];
             return;
         }
 
-        write(this.label, gauge.label);
-
-        if (gauge.percent === null || gauge.level === null) {
-            // Une mesure sans rapport : le mot reste, le palier part. Peindre une couleur de
-            // seuil ici reviendrait à annoncer un compactage sur un chiffre qu'Ash n'a pas.
-            delete this.element.dataset["context"];
-            return;
-        }
-
-        this.element.dataset["context"] = gauge.level;
-        const width = `${String(gauge.percent)}%`;
+        this.element.dataset["context"] = share.level;
+        const width = `${String(share.percent)}%`;
         if (this.fill.style.width !== width) this.fill.style.width = width;
     }
 
