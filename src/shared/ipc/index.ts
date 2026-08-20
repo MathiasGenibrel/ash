@@ -155,6 +155,15 @@ export interface TabInfo {
      */
     subagents: Subagent[];
     location: TabLocation | null;
+    /**
+     * Le groupe en avant-plan de cet onglet est **arrêté** — `SIGSTOP`
+     * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+     *
+     * Ce n'est pas un sixième état : un état vient d'un hook (ADR-0007), et un processus
+     * arrêté n'en émet aucun. Sans ce champ, un agent mis en pause paraîtrait `working` pour
+     * toujours, et personne ne saurait qu'il attend un `SIGCONT`.
+     */
+    paused: boolean;
 }
 
 /**
@@ -348,4 +357,270 @@ export type PinnedWorktree = TabLocation;
 export interface SidebarRows {
     pinned: PinnedWorktree[];
     collapsed: string[];
+}
+
+/**
+ * Où vit la fiche de branche
+ * ([ADR-0013](../../../docs/adr/0013-fiche-de-branche-dans-le-depot.md)).
+ *
+ * `repo` est le cas nominal — `.ash/worktree.md`, versionné, qui voyage avec la branche et
+ * qu'un agent qui la reprend peut lire. `local` est le repli quand l'équipe ne veut pas du
+ * fichier dans le dépôt : la fiche vit alors dans `~/.ash/worktrees/`, et **perd son unique
+ * avantage**. Ash ne force ni l'un ni l'autre, et n'écrit jamais dans un `.gitignore`.
+ */
+export type CardMode = "repo" | "local";
+
+/**
+ * Ce que le bloc `<!-- ash:log -->` porte, et ce qu'Ash a le droit d'en faire.
+ *
+ * Cinq des huit valeurs sont des **refus**, et c'est le sujet de la fiche : Ash n'écrit que
+ * ce qui lui appartient, et sait le reconnaître. `edited-by-hand` et `conflicted` sont les
+ * deux que la spec §10 et ADR-0013 nomment ; `unterminated` et `duplicated` sont ce qu'une
+ * fusion laisse derrière elle. Dans les cinq cas, le fichier n'est pas touché.
+ */
+export type CardLogState =
+    | "current"
+    | "stale"
+    | "no-card"
+    | "no-block"
+    | "edited-by-hand"
+    | "conflicted"
+    | "unterminated"
+    | "duplicated";
+
+/**
+ * L'état de la zone d'Ash dans la fiche, **calculé une seule fois** côté Rust.
+ *
+ * `writable` n'est pas déduit de `state` par l'écran, et c'est délibéré : agir et afficher
+ * doivent lire la même décision, sans quoi un bouton allumé pourrait proposer une écriture
+ * que le backend refusera — c'est la leçon de `hooks::presence`.
+ */
+export interface CardLog {
+    state: CardLogState;
+    /** La table telle qu'elle irait dans le bloc. */
+    table: string;
+    /** Le fichier tel qu'il est face au fichier tel qu'Ash le laisserait (spec §10). */
+    diff: string;
+    /** Ce qui se passe, ou ce qui ne se passera pas, en une phrase. */
+    note: string;
+    writable: boolean;
+}
+
+/**
+ * La fiche de branche d'un worktree (spec §7.5).
+ *
+ * `source` est du markdown **brut**, et c'est le seul endroit du contrat où du texte non
+ * interprété traverse : ADR-0013 exige que le rendu n'invente aucune syntaxe, donc l'écran
+ * met en forme ce que n'importe quel éditeur afficherait déjà. Rien ici n'est du HTML, et
+ * rien n'est posé par `innerHTML`.
+ */
+export interface BranchCard {
+    /** La racine du worktree — la même clé que celle des onglets (`TabLocation`). */
+    worktreeRoot: string;
+    path: string;
+    /** Où la fiche irait dans l'autre mode — ce que l'interrupteur promet. */
+    otherPath: string;
+    mode: CardMode;
+    /** `.ash` est gitignoré : la fiche ne partira pas avec la branche. */
+    ignoredByTheRepo: boolean;
+    exists: boolean;
+    source: string;
+    log: CardLog;
+}
+
+/**
+ * Un agent qui tourne **en ce moment** dans un worktree — la colonne `agents now` du
+ * tableau (spec §7.3).
+ *
+ * C'est l'une des deux colonnes que `git worktree list` ne donne pas : elle vient des
+ * onglets, dont le backend connaît le `cwd` résolu et l'outil en avant-plan (ADR-0005,
+ * ADR-0006). Un onglet où tourne un shell ou un `vim` n'y est pas.
+ */
+export interface WorktreeAgent {
+    /** De quoi y aller d'un clic — et rien de plus : rien ne sélectionne sans un geste (ADR-0010). */
+    tabId: TabId;
+    /** Le nom de l'outil — `claude`, `codex`. */
+    command: string;
+    state: AgentState;
+    /** Quand il est **entré** dans cet état. Une date absolue, comme `TabInfo.stateSince`. */
+    since: number;
+}
+
+/**
+ * D'où vient ce que `last worked by` affirme.
+ *
+ * Les deux ne promettent pas la même chose, et l'écran le dit : `tab` est une observation
+ * d'à l'instant — l'agent est là, ou vient d'y être —, `commit` une observation qui a
+ * survécu à la fermeture de son onglet, parce que le journal d'attribution l'a gardée
+ * ([ADR-0014](../../../docs/adr/0014-attribution-locale-des-commits.md)).
+ */
+export type WorkSource = "tab" | "commit";
+
+/**
+ * Qui a travaillé dans ce worktree en dernier — la seconde colonne que `git worktree list`
+ * ne donne pas.
+ *
+ * `null` veut dire **« Ash ne sait pas »**, jamais « personne » : un agent qui a travaillé
+ * une nuit sans rien valider, et dont l'onglet est fermé, n'a laissé aucune trace qu'Ash ait
+ * le droit d'invoquer. La colonne se tait alors, et c'est la lettre d'ADR-0014.
+ */
+export interface LastWork {
+    agent: string;
+    at: number;
+    source: WorkSource;
+}
+
+/** Le dépôt sous lequel une ligne du tableau se range — la même clé que [`RepoRef`]. */
+export interface WorktreeRepo {
+    id: string;
+    name: string;
+}
+
+/**
+ * Une ligne du tableau des worktrees (spec §7.3).
+ *
+ * Rien ici n'est calculé par la fenêtre : les deux colonnes du milieu croisent les onglets,
+ * le journal et l'état git, et c'est le backend qui les compose
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface WorktreeRow {
+    /** La même clé que `TabLocation.worktreeRoot` et que l'event `ash://git-metadata`. */
+    worktreeRoot: string;
+    worktreeName: string;
+    repo: WorktreeRepo | null;
+    /** `null` quand rien ne s'est laissé lire — un `.git` cassé, un dépôt disparu. */
+    metadata: WorktreeMetadata | null;
+    agentsNow: WorktreeAgent[];
+    /**
+     * `done · waiting for your review` — l'état que la spec §7.3 nomme le plus utile du
+     * tableau.
+     *
+     * Il n'y a **pas** de seconde notion de « vu » : un `done` ne survit à sa lecture que
+     * trente secondes, et elles ne partent qu'au premier focus de la fenêtre (spec §6.4).
+     * Un onglet encore `done` est donc un onglet que personne n'a regardé.
+     */
+    awaitingReview: boolean;
+    lastWorkedBy: LastWork | null;
+    /**
+     * Sans agent depuis plus de trois jours **et** des fichiers modifiés (spec §5.4).
+     *
+     * **Ash le signale, il ne le supprime jamais.** Le mot ne sort que sur une observation
+     * datée : un worktree qu'Ash n'a jamais vu habité n'est pas signalé pour autant.
+     */
+    stale: boolean;
+    /** Le worktree principal du dépôt : celui que `git worktree remove` refuse. */
+    main: boolean;
+}
+
+/**
+ * Ce qu'une suppression de worktree emporterait — énoncé **avant** qu'elle n'ait lieu
+ * (spec §5.4).
+ *
+ * Ash ne supprime rien : `command` est du **texte à montrer**, comme les `escapes` d'un
+ * rebase arrêté ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+ * `carries` vide veut dire qu'il n'y a rien à perdre — et il porte au contraire une ligne
+ * qui l'avoue quand `git status` n'a pas répondu.
+ */
+export interface WorktreeRemoval {
+    worktreeRoot: string;
+    worktreeName: string;
+    carries: string[];
+    refused: string | null;
+    command: string;
+}
+
+/**
+ * La popup de branches (spec §7.1) — miroir de `src-tauri/src/features/git/branches.rs` et
+ * de `branch_actions.rs`.
+ *
+ * Rien ici n'est calculé côté TypeScript : le groupement, l'ordre, le worktree qui détient
+ * chaque branche et les agents en danger viennent tous du backend
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Ce que la webview fait de
+ * ces formes — filtrer, sélectionner, écrire une phrase — est dans `features/git/`.
+ */
+
+/** De quel côté de la frontière vit une branche. */
+export type BranchKind = "local" | "remote";
+
+/** Le worktree qui détient une branche, quand ce n'est pas celui d'où l'on regarde. */
+export interface BranchWorktree {
+    root: string;
+    /** Le dernier segment du chemin — `ash-sidebar`. */
+    name: string;
+}
+
+/** Une branche, telle que la popup la montre. */
+export interface Branch {
+    /** `feat/popup` pour une locale, `origin/feat/popup` pour une distante. */
+    name: string;
+    kind: BranchKind;
+    /** L'objet court de la pointe — `a1b2c3d`. */
+    tip: string;
+    /** La date du commit de pointe, en **secondes** Unix. Le backend ne met rien en forme. */
+    committedAt: number;
+    /**
+     * `null` sur une branche libre.
+     *
+     * C'est la colonne de droite de la spec §7.1, et le seul endroit d'où elle vient : la
+     * webview ne sait pas quels worktrees existent.
+     */
+    worktree: BranchWorktree | null;
+}
+
+/** Les quatre groupes de la spec §7.1, dans l'ordre où ils s'affichent. */
+export type BranchGroup = "current" | "recent" | "local" | "remote";
+
+export interface BranchSection {
+    group: BranchGroup;
+    branches: Branch[];
+}
+
+/** Un agent qui écrit dans un worktree — **nommé**, pas compté. */
+export interface BusyAgent {
+    /** L'onglet qui le porte : c'est par lui que la pause le retrouve. */
+    tabId: string;
+    /** Le nom de l'outil, tel que la sidebar l'affiche — `claude`. */
+    name: string;
+    state: AgentState;
+    /** Son groupe en avant-plan est déjà arrêté. */
+    paused: boolean;
+}
+
+/** Tout ce que la popup montre, en une seule réponse — donc vrai au même instant. */
+export interface BranchOverview {
+    worktreeRoot: string;
+    /** `null` quand ce worktree ne détient aucune branche. */
+    current: string | null;
+    /** Les groupes **non vides**, dans l'ordre. */
+    sections: BranchSection[];
+    /** Les agents qu'un geste sur l'arbre dérangerait. Vide dans le cas courant. */
+    agentsAtRisk: BusyAgent[];
+}
+
+/** Les trois verbes que `⌘⏎` propose. Une union fermée, comme l'énumération Rust. */
+export type BranchAction = "checkout" | "rebase" | "merge";
+
+/** Ce qu'une action propose — son libellé à deux côtés, et sa raison de refus. */
+export interface ActionOffer {
+    action: BranchAction;
+    /**
+     * Toujours présent, refus compris : un bouton éteint reste visible **avec sa raison**.
+     *
+     * Composé côté Rust, et pas ici : le message d'échec est fabriqué du côté qui reçoit la
+     * sortie de git, et deux compositions séparées nommeraient deux choses pour un geste.
+     */
+    label: string;
+    /** `null` quand l'action est permise. */
+    refused: string | null;
+    /** Elle touche l'arbre de travail, donc elle dérange un agent qui y écrit. */
+    touchesTree: boolean;
+}
+
+/** Ce qu'une action a fait, ou n'a pas fait. */
+export interface ActionOutcome {
+    /** Les deux côtés, encore — y compris quand `success` est faux (spec §7.1). */
+    label: string;
+    success: boolean;
+    /** Ce que git a dit, tel quel. */
+    output: string;
 }

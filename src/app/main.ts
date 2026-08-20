@@ -1,9 +1,14 @@
 import "./styles.css";
-import { mountCommitGraph } from "@/features/git";
-import { mountBottomPanel } from "@/features/panel";
+import {
+    mountBranchCard,
+    mountBranches,
+    mountCommitGraph,
+    mountWorktreeTable,
+} from "@/features/git";
+import { mountBottomPanel, type BottomPanelState } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
-import type { SidebarRows } from "@/shared/ipc";
+import type { BranchCard, SidebarRows } from "@/shared/ipc";
 import {
     mountTerminals,
     type FontFamilySignal,
@@ -31,7 +36,9 @@ import { windowTitle } from "./window-title";
 import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
 import { followBottomPanel, type BottomPanelBinding } from "./bottom-panel";
+import { followBranchCard, type BranchCardBinding } from "./branch-card";
 import { readCommitGraph } from "./commit-graph";
+import { listWorktrees, worktreeRemoval } from "./worktrees";
 
 /**
  * Composition root du frontend.
@@ -52,6 +59,7 @@ function mount(
     sidebarRows: SidebarRowsBinding,
     sidebarColumn: SidebarColumnBinding,
     bottomPanel: BottomPanelBinding,
+    branchCard: BranchCardBinding,
     appName: string,
 ): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
@@ -180,6 +188,64 @@ function mount(
     // Le nom traverse en paramètre plutôt que d'être relu à chaque titre : il est constant
     // pour toute la session, et le relire à chaque changement d'onglet ferait un
     // aller-retour Tauri par `cd`.
+    /**
+     * Qui possède le corps du panneau.
+     *
+     * Trois vues s'y posent — le graphe, le tableau des worktrees, la fiche de branche — et le
+     * corps est **une seule boîte**. La règle est donc écrite une fois ici, plutôt que trois
+     * fois dans trois `syncX()` : une vue s'attache quand le panneau est ouvert sur *sa* vue,
+     * et se retire sinon. Aucune ne remplace le contenu du corps — remplacer, c'est décrocher
+     * la vue d'à côté et la laisser croire qu'elle est encore là.
+     *
+     * Rend `true` au moment où la vue **arrive**, ce qui n'est pas la même chose qu'être
+     * montrée : une vue déjà en place ne relit pas.
+     */
+    const ownPanelBody = (element: HTMLElement, mine: boolean): boolean => {
+        const held = element.parentElement === panel.body;
+        if (mine === held) return false;
+        if (mine) panel.body.append(element);
+        else element.remove();
+        return mine;
+    };
+
+    // La fiche de branche (#31) se pose dans le **corps** du panneau, sur la vue `branch`.
+    // Les deux features ne se connaissent pas : le panneau expose une boîte dont il garantit
+    // la hauteur, la fiche est une vue qui n'en sait rien, et elles se rencontrent ici — comme
+    // la sidebar et la feature terminal.
+    //
+    // Rien ne la pousse : une fiche est un fichier, relu **quand on la regarde**. Les deux
+    // moments sont l'ouverture de la vue et le changement d'onglet actif, parce que la fiche
+    // suit le worktree de l'onglet ([ADR-0012](../../docs/adr/0012-worktree-unite-de-travail.md)).
+    const card = mountBranchCard({
+        writeLog: () => {
+            void showCard(branchCard.writeLog(cardWorktree ?? ""));
+        },
+        place: (local) => {
+            void showCard(branchCard.place(cardWorktree ?? "", local));
+        },
+    });
+
+    let cardWorktree: string | null = null;
+    let cardShown = false;
+
+    const showCard = async (asked: Promise<BranchCard | null>): Promise<void> => {
+        const shown = cardWorktree;
+        const answer = await asked;
+        // La réponse d'un worktree qu'on ne regarde plus est **jetée** : deux `cd` rapprochés
+        // rendraient sinon la fiche du premier par-dessus celle du second.
+        if (shown === cardWorktree) card.render(answer);
+    };
+
+    const drawCard = (): void => {
+        card.element.hidden = !cardShown;
+        if (!cardShown) return;
+        if (cardWorktree === null) {
+            card.render(null);
+            return;
+        }
+        void showCard(branchCard.read(cardWorktree));
+    };
+
     const titleBar = createTitleBar(windowTitle(null, appName));
 
     // Le graphe de commits (#27, spec §7.2) se pose dans le corps du panneau, qui est une
@@ -205,35 +271,107 @@ function mount(
      * interdit à la boucle de sonde.
      */
     const syncGraph = (): void => {
-        if (!graphShown) {
-            graph.element.remove();
-            return;
-        }
-        const arriving = !graph.element.isConnected;
-        if (arriving) panel.body.append(graph.element);
-        // `show` ne relit que si le worktree a changé ; la vue qui s'ouvre, elle, relit
+        // `show` ne relit que si le worktree a changé ; la vue qui **arrive**, elle, relit
         // toujours — le `HEAD` a pu bouger pendant qu'elle était cachée.
+        const arriving = ownPanelBody(graph.element, graphShown);
+        if (!graphShown) return;
         graph.show(graphRoot);
         if (arriving) graph.refresh();
     };
 
+    // La popup de branches (spec §7.1), reliée ici comme la sidebar et la bande de titre : la
+    // feature terminal ne connaît pas `features/git`, et `features/git` ne connaît ni les
+    // onglets ni la ligne de statut. Ce qui les relie tient en quatre câbles — où l'on est,
+    // où s'ancrer, à qui rendre les doigts, et qui prévenir quand le dépôt a bougé.
+    //
+    // Le worktree courant est relu **à chaque ouverture** et non capturé : l'onglet actif
+    // change, et une popup qui garderait la racine de son premier montage parlerait d'un
+    // autre dépôt que celui affiché.
+    let here: string | null = null;
+    const branches = mountBranches(root, {
+        worktreeRoot: () => here,
+        anchor: () => terminals.branchAnchor(),
+        // Les doigts reviennent au terminal en se refermant : rien dans Ash ne garde le
+        // clavier après un geste (ADR-0010).
+        restoreFocus: () => {
+            host.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+        },
+        // Un checkout réussi change la branche du worktree. La surveillance de `.git`
+        // d'ADR-0011 le verra d'elle-même ; ce câble ne fait que redessiner ce qui est déjà
+        // en main, sans rien redemander à personne.
+        onRepositoryChanged: drawSidebar,
+    });
+    terminals.onBranchesRequested(() => {
+        branches.toggle();
+    });
+
     terminals.onActiveTab((active) => {
+        const worktree = active?.tab.location?.worktreeRoot ?? null;
+        here = worktree;
         titleBar.setTitle(windowTitle(active, appName));
-        graphRoot = active?.tab.location?.worktreeRoot ?? null;
+        // Le graphe suit le worktree de l'onglet actif — et il le suit **avant** la fiche,
+        // qui rend la main quand le worktree n'a pas changé.
+        graphRoot = worktree;
         syncGraph();
+        if (worktree === cardWorktree) return;
+        cardWorktree = worktree;
+        drawCard();
+    });
+
+    // Le tableau des worktrees (spec §7.3) se pose dans le corps du panneau, et ne connaît ni
+    // Tauri ni les autres features : il reçoit ce qu'il sait demander. Les deux colonnes qui
+    // font l'écran — `agents now` et `last worked by` — sont composées par le backend
+    // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)) ; ici, il n'y a que des
+    // câbles.
+    const worktrees = mountWorktreeTable({
+        list: listWorktrees,
+        removal: worktreeRemoval,
+        // Le clic sur un agent va à son onglet — un geste de l'utilisateur, comme sur une
+        // ligne de la sidebar (ADR-0010). Un onglet qui n'existe plus ne change rien.
+        selectTab: (tabId) => void terminals.selectTab(tabId),
+        openTabIn: (worktreeRoot) => void terminals.openTab({ directory: worktreeRoot }),
+        // **Le point de jonction avec la fiche de branche (#31)** : le tableau demande la
+        // fiche, et tout ce que la fenêtre sait en faire aujourd'hui est montrer la vue qui
+        // la portera. Le jour où elle existera, c'est ici — et seulement ici — qu'on lui
+        // passera le worktree et sa branche.
+        showCard: () => {
+            bottomPanel.showView("branch");
+        },
+        now: () => Date.now(),
     });
 
     // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
     // c'est ce qui laisse un seul détenteur à l'ouverture, et ce qui fera que le clic sur un
     // onglet et le raccourci de #32 ne pourront pas se contredire.
-    bottomPanel.subscribe((next) => {
-        panel.setPanel(next);
+    //
+    // C'est aussi cette annonce qui décide **quand** chaque vue relit : une vue fermée n'a
+    // rien à demander au backend, et une vue qui s'ouvre doit dire la vérité de l'instant.
+    const showPanelBody = (next: BottomPanelState): void => {
+        // Le graphe (#27, spec §7.2).
         graphShown = next.open && next.view === "graph";
         syncGraph();
+
+        // Le tableau des worktrees (#28, spec §7.3).
+        const showsTable = next.open && next.view === "worktrees";
+        ownPanelBody(worktrees.element, showsTable);
+        if (showsTable) worktrees.refresh();
+
+        // La fiche de branche (#31, spec §7.5). Elle ne relit que sur un **changement** :
+        // lire une fiche est lire un fichier, et le panneau qu'on redimensionne n'en change
+        // pas le contenu.
+        const showsCard = next.open && next.view === "branch";
+        const changed = showsCard !== cardShown;
+        cardShown = showsCard;
+        ownPanelBody(card.element, showsCard);
+        if (changed) drawCard();
+    };
+
+    bottomPanel.subscribe((next) => {
+        panel.setPanel(next);
+        showPanelBody(next);
     });
     panel.setPanel(bottomPanel.current);
-    graphShown = bottomPanel.current.open && bottomPanel.current.view === "graph";
-    syncGraph();
+    showPanelBody(bottomPanel.current);
 
     layout.append(sidebar.element, sidebar.separator, host);
     root.append(titleBar.element, layout);
@@ -394,6 +532,10 @@ sidebarColumn.ready.catch(() => undefined);
 const bottomPanel = followBottomPanel();
 bottomPanel.ready.catch(() => undefined);
 
+// La fiche de branche, elle, n'a rien à raccorder : elle n'a pas d'event, et se lit quand on
+// la regarde. Le binding n'est qu'un nom de commande par geste (ADR-0013).
+const branchCard = followBranchCard();
+
 // La police du terminal et la densité de la sidebar suivent le même chemin que les trois
 // au-dessus : elles sont détenues par le backend, demandées ici, et posées quand il répond.
 // Toutes deux se règlent dans la fenêtre de réglages (spec §9), qui est un **autre document** :
@@ -462,6 +604,7 @@ void document.fonts.ready.finally(() => {
                 sidebarRows,
                 sidebarColumn,
                 bottomPanel,
+                branchCard,
                 name,
             );
         });
