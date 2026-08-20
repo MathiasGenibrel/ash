@@ -322,6 +322,9 @@ src-tauri/src/
     shortcuts/         ✓ les liaisons, leur magasin, les combinaisons
                          réservées — **le menu en dérive**           — spec §4.4
     journal/           ✓ attribution commit → agent → prompt        — ADR-0014
+    links/             ✓ ouvrir ce qu'un terminal a imprimé : liste blanche
+                         de schémas, existence, `open -R` — **la troisième
+                         frontière de sécurité**                     — spec §4.2
     card/              ✓ la fiche de branche : le bloc `ash:log`, sa
                          sauvegarde, ses refus, le mode local        — ADR-0013
     merge/             ✓ le déroulé d'un merge : ses conflits, ses fichiers,
@@ -362,6 +365,13 @@ lisent comme celle de `git_cli.rs` : `token.rs`, pour le second binaire externe 
 (`/usr/bin/security`, `argv` constant), et `api.rs`, pour l'unique URL du dépôt. Si tu ajoutes
 un appel réseau, repose les quatre questions pour lui — et note qu'il n'y a **pas** de client
 HTTP générique à réutiliser, c'est délibéré.
+
+`features/links/` est la **troisième frontière de sécurité**, et la plus exposée : ce qu'elle
+ouvre vient d'un mot que la sortie d'un PTY a peint, donc d'un texte hostile. Deux fichiers
+portent la réponse — `target.rs`, qui décide (liste blanche `http`/`https`, existence sur
+disque, résolution du relatif depuis le `cwd` de l'onglet), et `opener.rs`, qui lance
+`/usr/bin/open` avec `-R` et un `--`. Un chemin est **révélé**, jamais exécuté. Si tu ajoutes
+un point d'ouverture, repose les questions de ces deux fichiers pour lui.
 
 Détail et justification : [`.claude/docs/architecture.md`](./.claude/docs/architecture.md).
 

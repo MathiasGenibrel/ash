@@ -6,6 +6,8 @@ import "@xterm/xterm/css/xterm.css";
 import { DeadKeyRepair } from "./dead-keys";
 import { applyKeyAction, resolveKeyAction, type ActionSurface } from "./key-actions";
 import { resolveKeyBinding } from "./key-bindings";
+import { LONGEST_LINE } from "./link-scan";
+import { TerminalLinks, type LinkContext, type LinkLine } from "./links";
 import type {
     FontFamilySignal,
     FontSizeSignal,
@@ -75,6 +77,15 @@ export class XtermView implements TerminalView {
      * du `keydown` de l'autre.
      */
     private readonly deadKeys = new DeadKeyRepair();
+    /**
+     * Les liens de cet onglet — une instance par vue, comme la recherche.
+     *
+     * Par onglet et non par fenêtre, parce que ce qu'un lien signifie dépend du `cwd` de
+     * son onglet : `src/main.rs` n'est pas le même fichier d'un onglet à l'autre.
+     */
+    private readonly links: TerminalLinks;
+    /** De quoi défaire ce qui a été branché à la main — voir `dispose`. */
+    private readonly unlink: (() => void)[] = [];
     private disposed = false;
 
     /**
@@ -88,6 +99,7 @@ export class XtermView implements TerminalView {
         theme: ThemeSignal,
         fontSize: FontSizeSignal,
         fontFamily: FontFamilySignal,
+        links: LinkContext,
     ) {
         this.pane = document.createElement("div");
         this.pane.className = "terminal-pane";
@@ -265,6 +277,15 @@ export class XtermView implements TerminalView {
             true,
         );
 
+        // Après `open` : le fournisseur a besoin du tampon, et le suivi de `Cmd` de la
+        // surface. Voir `links.ts` pour la répartition des rôles avec le backend.
+        this.links = new TerminalLinks({
+            bridge: links.bridge,
+            cwd: () => links.cwd(),
+            lines: (bufferLineNumber) => this.logicalLine(bufferLineNumber),
+        });
+        this.watchLinks();
+
         this.term.loadAddon(this.fit);
         this.refit();
         this.loadWebgl();
@@ -315,6 +336,9 @@ export class XtermView implements TerminalView {
 
     dispose(): void {
         this.disposed = true;
+        for (const undo of this.unlink) undo();
+        this.unlink.length = 0;
+        this.links.dispose();
         this.unfollowTheme();
         this.unfollowFontSize();
         this.unfollowFontFamily();
@@ -418,6 +442,97 @@ export class XtermView implements TerminalView {
         const { width, height } = this.pane.getBoundingClientRect();
         if (width < 1 || height < 1) return;
         this.fit.fit();
+    }
+
+    /**
+     * Branche les liens : le fournisseur, l'état de `Cmd`, et le clic qu'une TUI ne doit
+     * pas recevoir.
+     *
+     * ## `Cmd` se suit sur la fenêtre, pas sur le terminal
+     *
+     * Un `keyup` n'arrive au terminal que s'il a le focus, et les deux moments qui doivent
+     * éteindre un lien sont précisément ceux où il ne l'a pas forcément : le relâchement de
+     * `Cmd` la souris immobile, et le `Cmd+Tab` qui emmène la fenêtre ailleurs — dont le
+     * `keyup` ne revient jamais, puisque la touche est relâchée dans une autre application.
+     * D'où l'écoute sur `window`, et le `blur` à côté des deux autres.
+     *
+     * ## Le clic qu'on retient, et celui qu'on laisse passer
+     *
+     * Sous `vim` ou `htop`, xterm.js traduit les clics en rapports de souris pour
+     * l'application. Ce chemin-là est branché sur l'élément `.xterm` ; le repérage des
+     * liens, lui, est branché sur `.xterm-screen`, qui est **dedans**. Une écoute posée sur
+     * l'écran, en phase de remontée, passe donc après celle des liens et avant celle des
+     * rapports : `stopPropagation` y retient le clic sans priver le lien du sien.
+     *
+     * Et il n'est retenu que quand il y a quelque chose à ouvrir — `Cmd` tenu **et** un lien
+     * reconnu sous la souris. Sans `Cmd`, la TUI reçoit ses événements comme aujourd'hui.
+     *
+     * Vérifié sur `@xterm/xterm` 6.0.0, et à relire en montant de version : ces deux
+     * éléments et l'ordre de leurs écoutes sont internes à xterm.js. Le défaut, s'il
+     * changeait, serait un `Cmd`+clic qui ouvre le lien **et** déplace le curseur de `vim` ;
+     * `bun test` n'a ni WKWebView ni souris pour le voir venir.
+     */
+    private watchLinks(): void {
+        const provider = this.term.registerLinkProvider(this.links.provider);
+        this.unlink.push(() => {
+            provider.dispose();
+        });
+
+        const follow = (event: KeyboardEvent): void => {
+            this.links.setCmdHeld(event.metaKey);
+        };
+        const release = (): void => {
+            this.links.setCmdHeld(false);
+        };
+        window.addEventListener("keydown", follow);
+        window.addEventListener("keyup", follow);
+        window.addEventListener("blur", release);
+        this.unlink.push(() => {
+            window.removeEventListener("keydown", follow);
+            window.removeEventListener("keyup", follow);
+            window.removeEventListener("blur", release);
+        });
+
+        const screen = this.term.element?.querySelector(".xterm-screen");
+        if (screen === null || screen === undefined) return;
+        const claim = (event: Event): void => {
+            if (this.links.claimsTheClick) event.stopPropagation();
+        };
+        screen.addEventListener("mousedown", claim);
+        this.unlink.push(() => {
+            screen.removeEventListener("mousedown", claim);
+        });
+    }
+
+    /**
+     * La ligne **logique** qui passe par une rangée : ses replis défaits, prête à découper.
+     *
+     * Sans ce recollage, une URL coupée en deux par le bord de la fenêtre donnerait deux
+     * moitiés dont aucune n'est un lien. `translateToString(false)` — donc sans élaguer les
+     * blancs de fin — parce que c'est ce qui garde une rangée large d'exactement `cols`
+     * caractères, et donc l'index d'un mot convertible en colonne (voir `rangeOf` dans
+     * `links.ts`).
+     *
+     * **L'approximation assumée** : un caractère double largeur — un idéogramme, un emoji —
+     * occupe deux cellules mais un seul caractère de la chaîne. Un chemin qui en contient
+     * décale son soulignement d'autant. Le lien reste juste, seul son trait glisse.
+     */
+    private logicalLine(bufferLineNumber: number): LinkLine | null {
+        const buffer = this.term.buffer.active;
+        let start = bufferLineNumber - 1;
+        if (start < 0 || start >= buffer.length) return null;
+        while (start > 0 && buffer.getLine(start)?.isWrapped === true) start -= 1;
+
+        let text = "";
+        let row = start;
+        while (row < buffer.length && text.length < LONGEST_LINE) {
+            const line = buffer.getLine(row);
+            if (line === undefined) break;
+            if (row > start && !line.isWrapped) break;
+            text += line.translateToString(false);
+            row += 1;
+        }
+        return { text, startRow: start + 1, cols: this.term.cols };
     }
 
     private loadWebgl(): void {
