@@ -1,4 +1,5 @@
 import "./styles.css";
+import { mountBranches } from "@/features/git";
 import { mountBottomPanel } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
@@ -179,7 +180,35 @@ function mount(
     // pour toute la session, et le relire à chaque changement d'onglet ferait un
     // aller-retour Tauri par `cd`.
     const titleBar = createTitleBar(windowTitle(null, appName));
+
+    // La popup de branches (spec §7.1), reliée ici comme la sidebar et la bande de titre : la
+    // feature terminal ne connaît pas `features/git`, et `features/git` ne connaît ni les
+    // onglets ni la ligne de statut. Ce qui les relie tient en quatre câbles — où l'on est,
+    // où s'ancrer, à qui rendre les doigts, et qui prévenir quand le dépôt a bougé.
+    //
+    // Le worktree courant est relu **à chaque ouverture** et non capturé : l'onglet actif
+    // change, et une popup qui garderait la racine de son premier montage parlerait d'un
+    // autre dépôt que celui affiché.
+    let here: string | null = null;
+    const branches = mountBranches(root, {
+        worktreeRoot: () => here,
+        anchor: () => terminals.branchAnchor(),
+        // Les doigts reviennent au terminal en se refermant : rien dans Ash ne garde le
+        // clavier après un geste (ADR-0010).
+        restoreFocus: () => {
+            host.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+        },
+        // Un checkout réussi change la branche du worktree. La surveillance de `.git`
+        // d'ADR-0011 le verra d'elle-même ; ce câble ne fait que redessiner ce qui est déjà
+        // en main, sans rien redemander à personne.
+        onRepositoryChanged: drawSidebar,
+    });
+    terminals.onBranchesRequested(() => {
+        branches.toggle();
+    });
+
     terminals.onActiveTab((active) => {
+        here = active?.tab.location?.worktreeRoot ?? null;
         titleBar.setTitle(windowTitle(active, appName));
     });
 
