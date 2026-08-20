@@ -132,7 +132,8 @@ pub use branches::{
 };
 pub use error::GitError;
 pub use git_cli::{
-    BranchReader, CommitRecord, GraphLog, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
+    BranchReader, CommitRecord, Completed, GraphLog, StatusReader, SystemGit, TreeWriter,
+    STATUS_TIMEOUT,
 };
 // Du graphe, l'extérieur ne voit que **le chemin de production** — [`CommitGraphReader`], que
 // `lib.rs` assemble — et de quoi refaire un dessin sur un vrai dépôt, ce que

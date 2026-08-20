@@ -1,4 +1,5 @@
-import type { GitHead, TabInfo, WorktreeMetadata } from "@/shared/ipc";
+import { isShell } from "@/shared/ipc";
+import type { GitHead, Tab, WorktreeMetadata } from "@/shared/ipc";
 
 /**
  * Comment on **nomme** le contexte d'un onglet — son lieu, et sa branche.
@@ -34,8 +35,12 @@ import type { GitHead, TabInfo, WorktreeMetadata } from "@/shared/ipc";
  * Toujours un mot : un onglet a un répertoire avant d'avoir un dépôt, et un lieu vide ferait
  * clignoter ce qui l'affiche à chaque `cd`.
  */
-export function locationLabel(tab: TabInfo): string {
-    return tab.location?.repo?.name ?? tab.location?.worktreeName ?? basename(tab.cwd);
+export function locationLabel(tab: Tab): string {
+    // Le dernier repli diffère selon le genre, et il ne peut pas ne pas différer : un shell
+    // a un répertoire courant, une surface d'outil a la racine du worktree qu'elle traite.
+    // Les deux sont un chemin, et c'est tout ce dont cette règle a besoin.
+    const path = isShell(tab) ? tab.cwd : tab.worktreeRoot;
+    return tab.location?.repo?.name ?? tab.location?.worktreeName ?? basename(path);
 }
 
 /**

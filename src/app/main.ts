@@ -4,16 +4,22 @@ import {
     mountBranches,
     mountCommitGraph,
     mountWorktreeTable,
+    paintConflicts,
+    stoppedOperation,
 } from "@/features/git";
+import { createMergeSurface, mergeBridge } from "@/features/merge";
 import { mountBottomPanel, type BottomPanelState } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { BranchCard, SidebarRows } from "@/shared/ipc";
 import {
+    agentTabIn,
     mountTerminals,
+    tauriPtyBridge,
+    writePromptInTab,
     type FontFamilySignal,
     type TabId,
-    type TabInfo,
+    type Tab,
     type Terminals,
 } from "@/features/terminal";
 import { loadAppName } from "./app-name";
@@ -104,7 +110,41 @@ function mount(
         areaHeight: () => host.getBoundingClientRect().height,
     });
 
-    const terminals = mountTerminals(host, theme, fontSize, fontFamily, panel.element);
+    // Les onglets vivants, retenus ici parce que **deux** surfaces en ont besoin : la
+    // colonne de gauche, qui les range, et l'onglet de merge, qui cherche l'agent à qui
+    // passer le reste de ses conflits. Un seul abonnement, une seule vérité (ADR-0009).
+    let tabs: readonly Tab[] = [];
+
+    const terminals: Terminals = mountTerminals(
+        host,
+        theme,
+        fontSize,
+        fontFamily,
+        panel.element,
+        // La surface d'un onglet qui n'est pas un shell (ADR-0003). C'est **ici** que les
+        // deux features se rencontrent : la feature terminal ne connaît pas `features/merge`,
+        // et `features/merge` ne connaît ni les onglets de shell ni le pupitre de composition.
+        (tab) =>
+            tab.kind === "merge"
+                ? createMergeSurface(tab, {
+                      bridge: mergeBridge,
+                      // À qui passer le reste des conflits — la règle appartient à la
+                      // feature terminal, qui détient les onglets et le pupitre de
+                      // composition. Le composition root ne fait que lui donner la liste
+                      // qu'il tient (ADR-0009).
+                      agentTab: (worktreeRoot) => agentTabIn(tabs, worktreeRoot),
+                      // Le **même** chemin d'écriture que la vue `conflicts` du panneau bas :
+                      // sélectionner l'onglet, puis composer, jamais envoyer (ADR-0015).
+                      writePrompt: async (prompt, tabId) =>
+                          (
+                              await writePromptInTab(prompt, tabId, {
+                                  pty: tauriPtyBridge,
+                                  selectTab: (target) => void terminals.selectTab(target),
+                              })
+                          )?.message ?? null,
+                  })
+                : null,
+    );
 
     // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
     // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
@@ -151,7 +191,6 @@ function mount(
     // La colonne se dessine sur deux sources — les onglets que la sonde pousse, et l'état
     // gardé d'une session à l'autre —, donc les deux dernières valeurs se retiennent ici : un
     // avis n'apporte jamais que sa moitié.
-    let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
     let kept: SidebarRows = sidebarRows.changes.current;
 
@@ -191,9 +230,10 @@ function mount(
     /**
      * Qui possède le corps du panneau.
      *
-     * Trois vues s'y posent — le graphe, le tableau des worktrees, la fiche de branche — et le
-     * corps est **une seule boîte**. La règle est donc écrite une fois ici, plutôt que trois
-     * fois dans trois `syncX()` : une vue s'attache quand le panneau est ouvert sur *sa* vue,
+     * Quatre vues s'y posent — le graphe, le tableau des worktrees, la fiche de branche, la
+     * vue des conflits — et le corps est **une seule boîte**. La règle est donc écrite une
+     * fois ici, plutôt que quatre fois dans quatre `syncX()` : une vue s'attache quand le
+     * panneau est ouvert sur *sa* vue,
      * et se retire sinon. Aucune ne remplace le contenu du corps — remplacer, c'est décrocher
      * la vue d'à côté et la laisser croire qu'elle est encore là.
      *
@@ -305,10 +345,67 @@ function mount(
         branches.toggle();
     });
 
+    /**
+     * La vue `conflicts` du panneau bas — **la porte d'entrée de l'onglet de merge** (#30).
+     *
+     * Elle est posée au minimum, et elle est partagée : #29 y mettra l'écran complet des
+     * conflits. Ce qu'elle fait ici tient en deux câbles — relire ce qui est arrêté dans le
+     * worktree courant, et ouvrir l'onglet de merge quand on le demande. `⌘⌃M` (#32) fera
+     * exactement le second, sur la même commande.
+     *
+     * C'est la **cinquième** surface du corps du panneau, et elle s'y attache comme les
+     * quatre autres — par `ownPanelBody`, sur sa propre boîte. Peindre directement dans
+     * `panel.body` remplacerait le contenu du corps, donc décrocherait le graphe, le tableau
+     * et la fiche : c'est exactement le bug que le helper est venu fermer.
+     *
+     * Sa règle de relecture lui reste propre : elle a une **mémoire** — le worktree déjà
+     * montré —, parce que relire, c'est demander l'opération arrêtée au backend. Le panneau
+     * qu'on redimensionne n'en change rien ; l'arrivée de la vue et le `cd` de l'utilisateur,
+     * si.
+     */
+    const conflicts = document.createElement("div");
+    conflicts.className = "ash-panel-conflicts";
+    let shownConflicts: string | null = null;
+    const drawConflicts = (force = false): void => {
+        const state = bottomPanel.current;
+        const shows = state.open && state.view === "conflicts";
+        const arriving = ownPanelBody(conflicts, shows);
+        if (!shows) {
+            shownConflicts = null;
+            return;
+        }
+        const root = here;
+        if (!force && !arriving && root === shownConflicts) return;
+        shownConflicts = root;
+
+        const open = (): void => {
+            if (root === null) return;
+            void mergeBridge
+                .open(root)
+                .then((tabId) => terminals.adoptTab(tabId))
+                // Rien n'est arrêté, ou le worktree a disparu : le panneau se redessine et
+                // le dit. Ouvrir un onglet vide serait pire que ne rien ouvrir.
+                .catch(() => {
+                    drawConflicts(true);
+                });
+        };
+
+        if (root === null) {
+            paintConflicts(conflicts, null, { resolveInAsh: open });
+            return;
+        }
+        void stoppedOperation(root).then((stopped) => {
+            paintConflicts(conflicts, stopped, { resolveInAsh: open });
+        });
+    };
+
     terminals.onActiveTab((active) => {
         const worktree = active?.tab.location?.worktreeRoot ?? null;
         here = worktree;
         titleBar.setTitle(windowTitle(active, appName));
+        // La vue des conflits suit elle aussi le worktree, et elle passe **avant** les deux
+        // autres : celle de la fiche rend la main quand le worktree n'a pas changé.
+        drawConflicts();
         // Le graphe suit le worktree de l'onglet actif — et il le suit **avant** la fiche,
         // qui rend la main quand le worktree n'a pas changé.
         graphRoot = worktree;
@@ -364,6 +461,12 @@ function mount(
         cardShown = showsCard;
         ownPanelBody(card.element, showsCard);
         if (changed) drawCard();
+
+        // La vue des conflits (#30, spec §7.4). Elle prend et rend le corps par la même
+        // porte que les trois autres ; ce qu'elle garde en propre est **quand** elle relit,
+        // et elle le lit sur `bottomPanel.current` — que le binding pose avant d'appeler
+        // ses abonnés, donc la même valeur que `next`.
+        drawConflicts();
     };
 
     bottomPanel.subscribe((next) => {

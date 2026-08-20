@@ -1,4 +1,13 @@
-import type { PtyBridge, TabId, TabInfo, TerminalViewFactory } from "./ports";
+import { isShell } from "./ports";
+import type {
+    PtyBridge,
+    ShellTab,
+    Tab,
+    TabId,
+    TerminalViewFactory,
+    ToolSurface,
+    ToolSurfaceFactory,
+} from "./ports";
 import { TerminalSession } from "./session";
 import {
     activeTab,
@@ -22,7 +31,16 @@ import {
 export interface WorkbenchPorts {
     bridge: PtyBridge;
     createView: TerminalViewFactory;
-    confirmClose: (tab: TabInfo) => Promise<boolean>;
+    /**
+     * Fabrique la surface d'un onglet qui n'est pas un shell — l'onglet de merge (#30).
+     *
+     * Injectée depuis le composition root : l'atelier ne connaît pas `features/merge`, et
+     * `features/merge` ne connaît pas les onglets. Absente, un onglet de merge annoncé par
+     * le backend reste dans la liste, sans surface — ce qui est ce qu'on veut d'une webview
+     * en retard d'un genre sur son backend.
+     */
+    createSurface?: ToolSurfaceFactory;
+    confirmClose: (tab: ShellTab) => Promise<boolean>;
     /** Appelé après chaque changement : la ligne de statut et la sidebar écoutent. */
     onRender: (state: TabsState) => void;
 }
@@ -52,6 +70,15 @@ export type Origin = "current-worktree" | "home" | { readonly directory: string 
 export class TerminalWorkbench {
     private state: TabsState = noTabs;
     private readonly panes = new Map<TabId, TerminalSession>();
+    /**
+     * Les surfaces d'outil, dans la même pile que les terminaux et sous la même règle : une
+     * seule visible à la fois ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)).
+     *
+     * Elles ne portent **aucun PTY** : rien ici ne leur écrit, ne les redimensionne, ni ne
+     * les acquitte. C'est ce que la séparation des deux registres côté Rust rend
+     * structurel — un identifiant d'onglet de merge n'entre jamais dans `panes`.
+     */
+    private readonly surfaces = new Map<TabId, ToolSurface>();
     private queue: Promise<void> = Promise.resolve();
 
     constructor(private readonly ports: WorkbenchPorts) {
@@ -75,12 +102,17 @@ export class TerminalWorkbench {
             // qu'il avait à sa dernière ouverture d'onglet : le `cwd` bouge à chaque `cd`
             // et vit dans le backend, donc on le lui redemande maintenant
             // ([ADR-0005](../../../docs/adr/0005-sonde-cwd-libproc.md)).
-            let from: TabInfo | null = null;
+            let from: Tab | null = null;
             if (origin === "current-worktree") {
                 await this.reload();
                 from = activeTab(this.state);
             }
-            const cwd = typeof origin === "object" ? origin.directory : (from?.cwd ?? null);
+            // Depuis un onglet de merge, « le worktree courant » est celui dont il résout le
+            // conflit : il n'a pas de `cwd` — aucun processus n'y tourne —, mais il sait
+            // parfaitement où il est.
+            const inherited =
+                from === null ? null : isShell(from) ? from.cwd : from.worktreeRoot;
+            const cwd = typeof origin === "object" ? origin.directory : inherited;
 
             // Le shell peut sortir avant même que `start` ait rendu la main — un `cwd`
             // qui n'existe plus, un `~/.zshrc` qui appelle `exit`. La session est donc
@@ -150,8 +182,24 @@ export class TerminalWorkbench {
     closeTab(tabId: TabId): Promise<void> {
         return this.serialize(async () => {
             const tab = this.state.tabs.find((candidate) => candidate.tabId === tabId);
+            if (tab === undefined) return;
+
+            // Une surface d'outil se ferme **sans question** : il n'y a rien dedans qui
+            // puisse être perdu. Pour l'onglet de merge, c'est un critère du ticket —
+            // l'état vit dans l'index git, pas dans Ash (spec §7.4).
+            if (!isShell(tab)) {
+                const surface = this.surfaces.get(tabId);
+                if (surface === undefined) return;
+                await surface.close();
+                this.surfaces.delete(tabId);
+                surface.element.remove();
+                await this.reload();
+                this.render();
+                return;
+            }
+
             const session = this.panes.get(tabId);
-            if (tab === undefined || session === undefined) return;
+            if (session === undefined) return;
 
             if (await this.ports.bridge.hasForegroundProcess(tabId)) {
                 if (!(await this.ports.confirmClose(tab))) return;
@@ -159,6 +207,21 @@ export class TerminalWorkbench {
 
             await session.close();
             this.panes.delete(tabId);
+            await this.reload();
+            this.render();
+        });
+    }
+
+    /**
+     * Relit la liste d'onglets au backend, et redessine.
+     *
+     * Le chemin par lequel un onglet **ouvert ailleurs** apparaît : l'onglet de merge (#30)
+     * naît d'un geste dans le panneau des conflits, pas d'un `⌘T`. L'atelier ne tient pas la
+     * liste — il la relit ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) —,
+     * donc « quelque chose a changé côté backend » n'a qu'une réponse : redemander.
+     */
+    refresh(): Promise<void> {
+        return this.serialize(async () => {
             await this.reload();
             this.render();
         });
@@ -197,7 +260,7 @@ export class TerminalWorkbench {
      * autant — c'est le backend qui détient le `cwd`, et la relecture suivante rendra la
      * même valeur.
      */
-    private applyChanges(changed: readonly TabInfo[]): void {
+    private applyChanges(changed: readonly ShellTab[]): void {
         const updated = withUpdates(this.state, changed);
         if (updated === this.state) return;
         this.state = updated;
@@ -218,6 +281,7 @@ export class TerminalWorkbench {
     }
 
     private render(): void {
+        this.adoptSurfaces();
         // Un seul terminal visible ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)).
         // Les autres sont masqués, pas démontés : leur shell tourne, leur sortie arrive,
         // et leur acquittement continue — sans quoi ils se figeraient au bout de huit
@@ -225,7 +289,35 @@ export class TerminalWorkbench {
         for (const [tabId, session] of this.panes) {
             session.setVisible(tabId === this.state.activeTabId);
         }
+        for (const [tabId, surface] of this.surfaces) {
+            surface.setVisible(tabId === this.state.activeTabId);
+        }
         this.ports.onRender(this.state);
+    }
+
+    /**
+     * Donne une surface aux onglets qui n'en ont pas encore, et retire celles des onglets
+     * partis.
+     *
+     * C'est ici que le second genre d'onglet devient visible, et nulle part ailleurs : la
+     * liste vient du backend, et l'atelier n'ouvre jamais une surface de sa propre
+     * initiative ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    private adoptSurfaces(): void {
+        const factory = this.ports.createSurface;
+        for (const tab of this.state.tabs) {
+            if (isShell(tab) || this.surfaces.has(tab.tabId)) continue;
+            const surface = factory?.(tab) ?? null;
+            if (surface !== null) this.surfaces.set(tab.tabId, surface);
+        }
+
+        for (const [tabId, surface] of this.surfaces) {
+            if (this.state.tabs.some((tab) => tab.tabId === tabId)) continue;
+            // L'onglet a disparu de la liste du backend — fermé ailleurs. La surface part
+            // avec lui, sans qu'on redemande au backend d'oublier ce qu'il a déjà oublié.
+            this.surfaces.delete(tabId);
+            surface.element.remove();
+        }
     }
 
     /**

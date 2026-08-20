@@ -113,7 +113,9 @@ export function visibleStates(
 
 function railStates(group: SidebarGroup): AgentState[] {
     const plan = planRailEntry(group);
-    return [plan.badge, ...plan.children.map((tab) => tab.state)];
+    // Les surfaces d'outil n'ont pas d'état : elles ne comptent pas dans ce que le rail
+    // replié promet de montrer.
+    return [plan.badge, ...plan.children.flatMap((tab) => (tab.state === null ? [] : [tab.state]))];
 }
 
 function groupStates(group: SidebarGroup): AgentState[] {

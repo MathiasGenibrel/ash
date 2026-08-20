@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
-import { TabBuilder } from "@/shared/ipc/builders";
-import type { TabInfo } from "./ports";
+import { MergeTabBuilder, TabBuilder } from "@/shared/ipc/builders";
+import { isShell } from "./ports";
+import type { ShellTab } from "./ports";
 import {
     activeTab,
     adopt,
@@ -45,7 +46,7 @@ class TabsBuilder {
 }
 
 /** Un onglet tel que le backend le décrit — cwd, programme, état, localisation. */
-const tab = (tabId: string, cwd = `/dev/${tabId}`): TabInfo =>
+const tab = (tabId: string, cwd = `/dev/${tabId}`): ShellTab =>
     TabBuilder.create().named(tabId).inFlatWorktree(cwd).build();
 const order = (state: TabsState): string[] => state.tabs.map((each) => each.tabId);
 
@@ -225,7 +226,10 @@ describe("les onglets que la sonde annonce", () => {
         const moved = withUpdates(state, [tab("A", "/tmp")]);
 
         // Then — un `cd` change un répertoire, pas l'ordre ni la sélection
-        expect(moved.tabs.map((each) => each.cwd)).toEqual(["/tmp", "/dev/B"]);
+        expect(moved.tabs.map((each) => (isShell(each) ? each.cwd : null))).toEqual([
+            "/tmp",
+            "/dev/B",
+        ]);
         expect(order(moved)).toEqual(["A", "B"]);
         expect(moved.activeTabId).toBe("A");
     });
@@ -252,5 +256,47 @@ describe("les onglets que la sonde annonce", () => {
 
         // Then — l'état est rendu tel quel : rien à réafficher
         expect(applied).toBe(state);
+    });
+});
+
+describe("les deux genres d'onglet", () => {
+    it("Given a merge tab among shells, when the frontend numbers them, then it is an ordinary tab of the list", () => {
+        // Given — ADR-0003 : « un onglet est soit un terminal, soit une surface d'outil ».
+        // La sélection et `⌘1..9` ne font aucune différence entre les deux : un onglet est
+        // un onglet, et c'est ce qu'on peut *lire* dessus qui diffère.
+        const merge = MergeTabBuilder.create().id("M").build();
+
+        // When
+        const state = adopt(noTabs, [tab("A"), merge, tab("B")]);
+
+        // Then
+        expect(order(state)).toEqual(["A", "M", "B"]);
+        expect(activeTab(selectAt(state, 2))?.tabId).toBe("M");
+        expect(activeTab(cycle(select(state, "M"), 1))?.tabId).toBe("B");
+    });
+
+    it("Given a merge tab, when a probe pass announces the shells, then it is left exactly as it was", () => {
+        // Given — la boucle de sonde ne parle que des PTY : un onglet de merge n'en a pas,
+        // et rien de ce qu'elle annonce ne peut le décrire
+        const merge = MergeTabBuilder.create().id("M").build();
+        const state = adopt(noTabs, [tab("A"), merge]);
+
+        // When
+        const after = withUpdates(state, [tab("A", "/tmp")]);
+
+        // Then
+        expect(after.tabs[1]).toBe(merge);
+    });
+
+    it("Given only a merge tab, when the active one closes, then the selection lands on it rather than nowhere", () => {
+        // Given — le repli de sélection ne connaît pas les genres non plus
+        const merge = MergeTabBuilder.create().id("M").build();
+        const state = select(adopt(noTabs, [tab("A"), merge]), "A");
+
+        // When
+        const after = adopt(state, [merge]);
+
+        // Then
+        expect(after.activeTabId).toBe("M");
     });
 });

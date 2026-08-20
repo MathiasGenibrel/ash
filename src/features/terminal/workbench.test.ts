@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ComposeOutcome } from "@/shared/ipc";
-import { TabBuilder } from "@/shared/ipc/builders";
+import { MergeTabBuilder, TabBuilder } from "@/shared/ipc/builders";
+import { isShell } from "./ports";
 import type {
     PtyBridge,
     PtyFrame,
+    ShellTab,
+    Tab,
     TabId,
-    TabInfo,
     TerminalSize,
     TerminalView,
 } from "./ports";
@@ -29,9 +31,9 @@ class FakeBackend implements PtyBridge {
     /** Les onglets dont l'avant-plan est tenu par autre chose que le shell. */
     readonly running = new Set<TabId>();
 
-    private order: TabInfo[] = [];
+    private order: Tab[] = [];
     private frames = new Map<TabId, (frame: PtyFrame) => void>();
-    private watchers: ((changed: TabInfo[]) => void)[] = [];
+    private watchers: ((changed: ShellTab[]) => void)[] = [];
     private next = 1;
 
     open(_size: TerminalSize, cwd: string | null, onFrame: (frame: PtyFrame) => void) {
@@ -62,13 +64,13 @@ class FakeBackend implements PtyBridge {
         this.forget(tabId);
         return Promise.resolve();
     }
-    tabs() {
+    tabs(): Promise<Tab[]> {
         return Promise.resolve([...this.order]);
     }
     hasForegroundProcess(tabId: TabId) {
         return Promise.resolve(this.running.has(tabId));
     }
-    onTabsChanged(handler: (changed: TabInfo[]) => void) {
+    onTabsChanged(handler: (changed: ShellTab[]) => void) {
         this.watchers.push(handler);
         return Promise.resolve(() => {
             this.watchers = this.watchers.filter((watcher) => watcher !== handler);
@@ -85,9 +87,22 @@ class FakeBackend implements PtyBridge {
         );
     }
 
+    /**
+     * Le backend annonce la liste entière — dont, depuis #30, des onglets **sans PTY**.
+     *
+     * C'est ainsi qu'un onglet de merge arrive dans l'atelier : par la liste, comme tout le
+     * reste. Rien dans la webview ne l'ouvre de sa propre initiative (ADR-0009).
+     */
+    adopt(tabs: readonly Tab[]): void {
+        this.order = [...tabs];
+    }
+
     /** Une passe de la boucle de sonde du backend annonce ce qui a bougé. */
     probe(): void {
-        const changed = this.order.map((tab) => ({ ...tab }));
+        // La boucle de sonde ne parle que des PTY : un onglet de merge n'en a pas.
+        const changed = this.order
+            .filter((tab): tab is ShellTab => isShell(tab))
+            .map((tab) => ({ ...tab }));
         for (const watcher of this.watchers) watcher(changed);
     }
 
@@ -108,7 +123,7 @@ class FakeBackend implements PtyBridge {
 }
 
 /** Un onglet tel que le registre Rust le décrirait : situé, avec son avant-plan. */
-function describe_tab(tabId: TabId, cwd: string): TabInfo {
+function describe_tab(tabId: TabId, cwd: string): ShellTab {
     return TabBuilder.create().named(tabId).inFlatWorktree(cwd).build();
 }
 
@@ -144,16 +159,43 @@ class FakeView implements TerminalView {
     }
 }
 
+/**
+ * Une surface d'outil de test — ce que l'onglet de merge est du point de vue de l'atelier.
+ *
+ * Elle ne porte **aucun PTY** : rien ne lui écrit, rien ne l'acquitte, rien ne la
+ * redimensionne. C'est exactement ce que l'atelier a le droit d'en faire.
+ */
+class FakeSurface {
+    readonly element = { remove: () => undefined } as unknown as HTMLElement;
+    visible = false;
+    closed = 0;
+
+    setVisible(visible: boolean): void {
+        this.visible = visible;
+    }
+    close(): Promise<void> {
+        this.closed += 1;
+        return Promise.resolve();
+    }
+}
+
 /** Le banc : un atelier, son backend, ses surfaces, et la réponse aux confirmations. */
 function bench(options: { confirm?: boolean } = {}) {
     const backend = new FakeBackend();
     const views: FakeView[] = [];
-    const asked: TabInfo[] = [];
+    const asked: ShellTab[] = [];
     /** Ce que la barre d'onglets a reçu à afficher, dans l'ordre. */
     const rendered: TabsState[] = [];
 
+    const surfaces: FakeSurface[] = [];
+
     const workbench = new TerminalWorkbench({
         bridge: backend,
+        createSurface: () => {
+            const surface = new FakeSurface();
+            surfaces.push(surface);
+            return surface;
+        },
         createView: () => {
             const view = new FakeView();
             views.push(view);
@@ -171,6 +213,7 @@ function bench(options: { confirm?: boolean } = {}) {
     return {
         backend,
         views,
+        surfaces,
         asked,
         rendered,
         workbench,
@@ -272,8 +315,12 @@ describe("le répertoire courant d'un onglet", () => {
         app.backend.probe();
 
         // Then
-        expect(app.workbench.tabs.tabs.map((tab) => tab.cwd)).toEqual(["/tmp"]);
-        expect(app.rendered.slice(before).at(-1)?.tabs.map((tab) => tab.cwd)).toEqual(["/tmp"]);
+        expect(app.workbench.tabs.tabs.map((tab) => (isShell(tab) ? tab.cwd : null))).toEqual([
+            "/tmp",
+        ]);
+        expect(
+            app.rendered.slice(before).at(-1)?.tabs.map((tab) => (isShell(tab) ? tab.cwd : null)),
+        ).toEqual(["/tmp"]);
     });
 
     it("Given a tab that has not moved, when a probe pass announces its unchanged directory, then the tab bar is not re-rendered", async () => {
@@ -429,5 +476,61 @@ describe("Cmd+K", () => {
 
         // Then — ni exception, ni surface inventée pour recevoir l'effacement
         expect(app.views).toEqual([]);
+    });
+});
+
+describe("un onglet qui n'est pas un terminal", () => {
+    it("Given a merge tab announced by the backend, when the workbench renders, then it gets a surface and no PTY is opened for it", async () => {
+        // Given — ADR-0003 : « un onglet de merge n'a pas de PTY du tout ». La séparation
+        // des deux registres côté Rust le rend structurel ; ce test-ci vérifie que la
+        // webview ne le rattrape pas en ouvrant un terminal.
+        const app = bench();
+        app.backend.adopt([MergeTabBuilder.create().id("M").build()]);
+
+        // When
+        await app.workbench.refresh();
+        await app.workbench.select("M");
+
+        // Then
+        expect(app.surfaces).toHaveLength(1);
+        expect(app.surfaces[0]?.visible).toBe(true);
+        expect(app.views).toHaveLength(0);
+        expect(app.backend.killed).toEqual([]);
+    });
+
+    it("Given a merge tab and a shell, when the merge tab is selected, then the terminal is hidden without being torn down", async () => {
+        // Given — un seul onglet visible à la fois, quel que soit son genre (ADR-0003)
+        const app = bench();
+        await app.workbench.openTab("home");
+        app.backend.adopt([
+            ...app.workbench.tabs.tabs.filter((tab) => tab.kind === "shell"),
+            MergeTabBuilder.create().id("M").build(),
+        ]);
+
+        // When
+        await app.workbench.refresh();
+        await app.workbench.select("M");
+
+        // Then
+        expect(app.visible()).toBe(0);
+        expect(app.views[0]?.disposed).toBe(false);
+        expect(app.surfaces[0]?.visible).toBe(true);
+    });
+
+    it("Given a merge tab, when it is closed, then nothing is asked and nothing is lost", async () => {
+        // Given — le critère : « fermer l'onglet ne perd rien : l'état vit dans l'index
+        // git, pas dans Ash ». Il n'y a donc rien à confirmer.
+        const app = bench({ confirm: false });
+        app.backend.running.add("M");
+        app.backend.adopt([MergeTabBuilder.create().id("M").build()]);
+        await app.workbench.refresh();
+        await app.workbench.select("M");
+
+        // When
+        await app.workbench.closeTab("M");
+
+        // Then
+        expect(app.asked).toEqual([]);
+        expect(app.surfaces[0]?.closed).toBe(1);
     });
 });
