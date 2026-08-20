@@ -33,12 +33,24 @@ src/
   features/
     terminal/            xterm.js, pile de terminaux, ligne de statut
     sidebar/             dépôts, worktrees, agents, subagents
+    panel/               la surface du panneau bas : hauteur, repli, barre
+                         d'onglets — jamais de terminal      — spec §4.3 / ADR-0003
     git/                 popup de branches, graphe, merge, fiche
     settings/            la fenêtre de réglages
   shared/
     ipc/                 le contrat Rust ↔ TypeScript
     agent-state/         la présentation des cinq états — sidebar et ligne de statut
+    resizable-edge/      la géométrie d'un bord qu'on règle au glissement — la
+                         colonne de gauche et le panneau bas
 ```
+
+**`features/panel/` est une surface, pas une vue.** Elle porte la hauteur réglable, le
+repli et la barre d'onglets du panneau bas ; elle ne sait **rien** de git. Ce que les
+quatre vues montreront — graphe, worktrees, conflits, fiche de branche — vit dans
+`features/git/`, et se pose dans le `body` que le panneau expose. Le partage est le même
+qu'entre `app/` et une feature : celui qui tient la place ne connaît pas celui qui
+l'occupe. Les deux règles d'ADR-0003 y sont tenues par construction — le panneau
+n'instancie aucune vue de terminal, et rien de ce qu'il contient n'appelle `focus()`.
 
 À l'intérieur d'une feature :
 
@@ -178,6 +190,15 @@ porte aucune règle propre à l'une d'elles. Préfère des noms de rôle (`share
 
 Quand `shared/` grossit, c'est en général le signe qu'une feature n'a pas été nommée.
 Cherche la capacité manquante avant d'ajouter un fichier de plus.
+
+**`shared/resizable-edge` est le cas qui passe l'examen.** Deux surfaces se règlent au
+glissement d'un bord — la colonne de gauche par son bord droit (#129), le panneau bas par
+son bord haut (#24) —, et la mesure y avait été écrite deux fois : deux bornes relatives,
+deux clamps, deux écarts de saisie, deux poignées bornées, deux pourcentages pour
+`aria-valuenow`. Ce qui est parti là-bas est de la **géométrie**, sans un mot du domaine.
+Ce qui est resté chez chaque feature est tout ce qui la distingue : ses fractions, son axe,
+son pas de clavier, et la règle qui dit ce que relâcher sous le plancher veut dire — replier
+une colonne, ou rendre sa hauteur au terminal.
 
 ## Injection de dépendances
 

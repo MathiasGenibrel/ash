@@ -16,6 +16,15 @@
  * reprend sa taille.
  */
 
+import {
+    clampedSize,
+    edgeBounds,
+    grabOffset as edgeGrabOffset,
+    handleOffset as edgeHandleOffset,
+    sizePercent,
+    type EdgeBounds,
+} from "@/shared/resizable-edge";
+
 /** La largeur et le repli, tels que le backend les annonce. */
 export interface SidebarColumnState {
     /** En pixels, dépliée. Elle ne change pas quand la colonne se replie. */
@@ -65,10 +74,17 @@ export const DEFAULT_SIDEBAR_WIDTH = 240;
 /** Ce qu'il reste de la colonne une fois repliée : le rail des écrans de design. */
 export const RAIL_WIDTH = 46;
 
+/**
+ * Les deux bornes de la colonne, sur l'échelle que `shared/resizable-edge` attend.
+ *
+ * Les fractions restent **ici** — ce sont les siennes ; c'est la géométrie qui les applique
+ * qui est partagée avec le panneau bas, réglé de la même façon par son bord haut.
+ */
+const WIDTH_BOUNDS: EdgeBounds = { min: MIN_WIDTH_FRACTION, max: MAX_WIDTH_FRACTION };
+
 /** Les deux bornes en pixels, pour la fenêtre du moment. */
 function bounds(windowWidth: number): { min: number; max: number } {
-    const usable = Math.max(1, windowWidth);
-    return { min: usable * MIN_WIDTH_FRACTION, max: usable * MAX_WIDTH_FRACTION };
+    return edgeBounds(windowWidth, WIDTH_BOUNDS);
 }
 
 /**
@@ -79,8 +95,7 @@ function bounds(windowWidth: number): { min: number; max: number } {
  * sur le disque.
  */
 export function appliedWidth(width: number, windowWidth: number): number {
-    const { min, max } = bounds(windowWidth);
-    return Math.round(Math.min(Math.max(width, min), max));
+    return clampedSize(width, windowWidth, WIDTH_BOUNDS);
 }
 
 /** Ce qu'un glissement en cours donne : ce qu'on montre, et ce qu'on ferait en relâchant. */
@@ -98,7 +113,7 @@ export interface DragOutcome {
  * pixels plus loin. L'écart va donc de −7 à +8, et il est **retenu pour tout le geste**.
  */
 export function grabOffset(pointerX: number, zoneLeft: number): number {
-    return pointerX - (zoneLeft + GRAB_OVERHANG);
+    return edgeGrabOffset(pointerX, zoneLeft, GRAB_OVERHANG);
 }
 
 /**
@@ -131,9 +146,7 @@ export function dragOutcome(pointerX: number, windowWidth: number, grab = 0): Dr
  * borne à [`HANDLE_MARGIN`] des deux extrémités pour ne pas déborder de la colonne.
  */
 export function handleOffset(pointerY: number, edgeTop: number, edgeHeight: number): number {
-    const floor = HANDLE_MARGIN;
-    const ceiling = Math.max(floor, edgeHeight - HANDLE_MARGIN);
-    return Math.min(Math.max(pointerY - edgeTop, floor), ceiling);
+    return edgeHandleOffset(pointerY, edgeTop, edgeHeight, HANDLE_MARGIN);
 }
 
 /** Ce qu'une frappe sur le séparateur demande, ou `null` — et `null` veut dire « laisse passer ». */
@@ -170,5 +183,5 @@ export function resizeByKey(
  * et la seule échelle qui ait un sens ici est celle des bornes — 10 à 80.
  */
 export function widthPercent(width: number, windowWidth: number): number {
-    return Math.round((appliedWidth(width, windowWidth) / Math.max(1, windowWidth)) * 100);
+    return sizePercent(width, windowWidth, WIDTH_BOUNDS);
 }

@@ -131,6 +131,7 @@ export function mountTerminals(
     theme: ThemeSignal,
     fontSize: FontSizeSignal,
     fontFamily: FontFamilySignal,
+    below?: HTMLElement,
 ): Terminals {
     host.classList.add("terminal-workbench");
 
@@ -230,7 +231,19 @@ export function mountTerminals(
     });
 
     drawStatus();
-    host.append(stack, status.element);
+    // Trois rangées quand `below` est là, deux sinon : les terminaux, ce qui leur prend de la
+    // hauteur, puis la ligne de statut. La feature ne sait pas ce qu'est `below` — c'est le
+    // panneau bas (spec §4.3), que le composition root lui passe —, elle sait seulement qu'il
+    // se pose **entre** les deux et que le terminal se réduit d'autant. C'est ce qui referme
+    // la boucle : la pile rétrécit, son `ResizeObserver` refait la grille, et le PTY reçoit
+    // son `SIGWINCH` par le seul chemin de redimensionnement qui existe (`xterm-view.ts`).
+    //
+    // Un slot, et pas un import : la feature terminal n'a pas à connaître une surface qui
+    // n'est pas un terminal, et le panneau n'a pas à savoir dans quelle mise en page il est
+    // posé. **Rien de ce qui descend ici ne porte de PTY**
+    // ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)) : cette feature est la
+    // seule à en ouvrir, et elle ne les met que dans `stack`.
+    host.append(...(below === undefined ? [stack, status.element] : [stack, below, status.element]));
 
     return {
         openTab: (origin) => workbench.openTab(origin),

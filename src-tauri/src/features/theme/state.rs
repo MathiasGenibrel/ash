@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::appearance::Appearance;
+use super::bottom_panel::{BottomPanel, PanelHeight, PanelView};
 use super::density::SidebarDensity;
 use super::font::TerminalFont;
 use super::font_size::{FontSize, FontStep};
@@ -106,6 +107,63 @@ impl ThemeState {
         let collapsed = !self.locked().sidebar.collapsed;
         self.set_sidebar_collapsed(collapsed)
             .unwrap_or_else(|| self.sidebar_column())
+    }
+
+    pub fn bottom_panel(&self) -> BottomPanel {
+        self.locked().panel
+    }
+
+    /// Retient la hauteur que la webview vient de régler au glissement, et **ouvre** le
+    /// panneau.
+    ///
+    /// Les deux d'un coup, comme pour la colonne de gauche : on ne redimensionne pas un
+    /// panneau fermé, donc une hauteur qui arrive dit aussi qu'il est ouvert. Rend le panneau
+    /// si quelque chose a bougé — un glissement qui se termine là où il a commencé n'a rien à
+    /// annoncer, et chaque annonce refait la grille du terminal visible.
+    pub fn set_panel_height(&self, height: PanelHeight) -> Option<BottomPanel> {
+        self.change(|appearance| {
+            appearance.panel.height = height;
+            appearance.panel.open = true;
+        })
+        .map(|appearance| appearance.panel)
+    }
+
+    /// Demande une vue — `⌘⌃G`, `⌘⌃W`, `⌘⌃M`, `⌘⌃I`, ou le clic sur une entrée de la barre.
+    ///
+    /// **La même vue redemandée referme le panneau**, et c'est la règle qui fait de ces
+    /// gestes des bascules : `⌘⌃G` ouvre le graphe, `⌘⌃G` de nouveau rend la hauteur au
+    /// terminal. Une autre vue, elle, remplace celle qui est montrée sans jamais refermer —
+    /// personne ne demande `worktrees` pour se retrouver devant un terminal.
+    ///
+    /// La règle est **ici**, sous le verrou, et pas dans la webview qui l'a demandée : elle
+    /// se lit sur l'état courant, et une webview qui l'appliquerait elle-même en deviendrait
+    /// le second détenteur ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+    /// C'est aussi ce qui empêche deux surfaces — un raccourci et un clic — de se contredire.
+    ///
+    /// La hauteur n'est **jamais** touchée : c'est ce qui fait qu'un panneau rouvert retrouve
+    /// celle qu'il avait.
+    pub fn show_panel_view(&self, view: PanelView) -> Option<BottomPanel> {
+        let showing = {
+            let panel = self.locked().panel;
+            panel.open && panel.view == view
+        };
+        self.change(|appearance| {
+            if showing {
+                appearance.panel.open = false;
+            } else {
+                appearance.panel.view = view;
+                appearance.panel.open = true;
+            }
+        })
+        .map(|appearance| appearance.panel)
+    }
+
+    /// Referme le panneau — il **rend sa hauteur au terminal**
+    /// ([ADR-0003](../../../../docs/adr/0003-zone-terminal-unique.md)), et la garde pour la
+    /// prochaine ouverture.
+    pub fn close_panel(&self) -> Option<BottomPanel> {
+        self.change(|appearance| appearance.panel.open = false)
+            .map(|appearance| appearance.panel)
     }
 
     /// Retient une police de terminal. Rend `true` si quelque chose a changé.
@@ -346,6 +404,108 @@ mod tests {
         // Then — sans ça, chaque relâchement réécrirait le fichier et referait la grille de
         // tous les terminaux ouverts
         assert_eq!(announced, None);
+    }
+
+    #[test]
+    fn given_the_panel_showing_the_graph_when_the_graph_is_asked_for_again_then_it_closes_and_keeps_its_height(
+    ) {
+        // Given — `⌘⌃G` a ouvert le graphe, sur une hauteur que l'utilisateur a réglée
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.set_panel_height(PanelHeight::from(300));
+
+        // When — `⌘⌃G` de nouveau
+        let announced = state.show_panel_view(PanelView::Graph);
+
+        // Then — le panneau rend sa hauteur au terminal (ADR-0003) sans l'oublier
+        assert_eq!(
+            announced,
+            Some(BottomPanel {
+                height: PanelHeight::from(300),
+                open: false,
+                view: PanelView::Graph,
+            })
+        );
+    }
+
+    #[test]
+    fn given_the_panel_showing_the_graph_when_another_view_is_asked_for_then_it_switches_without_closing(
+    ) {
+        // Given — personne ne demande `worktrees` pour se retrouver devant un terminal
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.show_panel_view(PanelView::Graph);
+
+        // When
+        let announced = state.show_panel_view(PanelView::Worktrees);
+
+        // Then
+        assert_eq!(
+            announced.map(|panel| (panel.open, panel.view)),
+            Some((true, PanelView::Worktrees))
+        );
+    }
+
+    #[test]
+    fn given_a_closed_panel_when_the_view_it_last_showed_is_asked_for_then_it_opens_on_it() {
+        // Given — refermé sur `worktrees` : c'est là qu'il doit rouvrir, pas sur le défaut
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.show_panel_view(PanelView::Worktrees);
+        state.close_panel();
+
+        // When
+        let announced = state.show_panel_view(PanelView::Worktrees);
+
+        // Then — sans ça, la bascule refermerait un panneau déjà fermé et rien ne s'ouvrirait
+        assert_eq!(
+            announced.map(|panel| (panel.open, panel.view)),
+            Some((true, PanelView::Worktrees))
+        );
+    }
+
+    #[test]
+    fn given_a_panel_the_user_has_resized_when_ash_starts_again_then_it_opens_at_that_height() {
+        // Given — la hauteur suit le chemin du thème : même fichier, même relecture
+        let store = Arc::new(FakeStore::default());
+        let state = ThemeState::restore(Arc::clone(&store) as Arc<dyn ThemeStore>);
+        state.set_panel_height(PanelHeight::from(340));
+        state.show_panel_view(PanelView::Conflicts);
+
+        // When — la session suivante
+        let next = ThemeState::restore(store as Arc<dyn ThemeStore>);
+
+        // Then — les trois faces d'un même geste, gardées ensemble
+        assert_eq!(
+            next.bottom_panel(),
+            BottomPanel {
+                height: PanelHeight::from(340),
+                open: true,
+                view: PanelView::Conflicts,
+            }
+        );
+    }
+
+    #[test]
+    fn given_a_drag_that_ends_where_it_started_when_the_panel_height_is_announced_then_nothing_is_emitted(
+    ) {
+        // Given — attraper le bord, bouger, revenir : le geste le plus courant après une
+        // hésitation
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+        state.set_panel_height(PanelHeight::from(260));
+
+        // When
+        let announced = state.set_panel_height(PanelHeight::from(260));
+
+        // Then — sans ça, chaque relâchement réécrirait le fichier et referait la grille du
+        // terminal visible, donc un `SIGWINCH` gratuit sous la TUI qui y tourne
+        assert_eq!(announced, None);
+    }
+
+    #[test]
+    fn given_an_already_closed_panel_when_it_is_closed_again_then_nothing_is_announced() {
+        // Given — `Échap` sur un panneau déjà fermé, ou une webview qui répète son geste
+        let state = ThemeState::restore(Arc::new(FakeStore::default()));
+
+        // When / Then
+        assert_eq!(state.close_panel(), None);
     }
 
     #[test]

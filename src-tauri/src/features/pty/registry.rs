@@ -64,6 +64,16 @@ struct Tab {
     id: TabId,
     session: Box<dyn PtySession>,
     credits: Arc<Credits>,
+    /// La grille que le PTY porte **en ce moment**, en colonnes et en lignes.
+    ///
+    /// Retenue pour ne pas la reposer : redimensionner un PTY poste un `SIGWINCH` au groupe
+    /// en avant-plan, et une TUI plein écran s'y redessine entièrement
+    /// ([ADR-0003](../../../../docs/adr/0003-zone-terminal-unique.md), reformulation du
+    /// 2026-08-10). C'est le dernier filtre avant le signal, et c'est ici qu'il doit être :
+    /// le panneau bas (spec §4.3) donne au terminal une **seconde** raison de changer de
+    /// boîte, en plus de la fenêtre et de la colonne de gauche, et rien ne garantit que
+    /// trois sources indépendantes n'annoncent pas la même grille l'une après l'autre.
+    grid: (u16, u16),
     /// Répertoire de départ du shell, retenu à l'ouverture.
     ///
     /// Ce n'est plus ce que l'onglet montre : c'est le repli quand la sonde ne sait pas
@@ -264,6 +274,7 @@ impl PtyRegistry {
             id: tab_id.clone(),
             session,
             credits: Arc::clone(&credits),
+            grid: (spec.cols, spec.rows),
             start_dir: spec.cwd.clone(),
             shell_name: shell_name(&spec),
             watch,
@@ -375,8 +386,19 @@ impl PtyRegistry {
         self.with_tab(tab_id, |tab| tab.session.write(bytes))
     }
 
+    /// Pose une grille sur le PTY d'un onglet — et **seulement si c'en est une autre**.
+    ///
+    /// Voir [`Tab::grid`] : ce qui est en jeu n'est pas le coût de l'appel, c'est le
+    /// `SIGWINCH` qu'il poste.
     pub fn resize(&self, tab_id: &str, cols: u16, rows: u16) -> Result<(), PtyError> {
-        self.with_tab(tab_id, |tab| tab.session.resize(cols, rows))
+        self.with_tab(tab_id, |tab| {
+            if tab.grid == (cols, rows) {
+                return Ok(());
+            }
+            tab.session.resize(cols, rows)?;
+            tab.grid = (cols, rows);
+            Ok(())
+        })
     }
 
     /// La webview a fini d'écrire un morceau : le lecteur peut en émettre un de plus.
@@ -660,6 +682,42 @@ mod tests {
         let env = env.lock().unwrap().clone();
         assert!(env.contains(&("TERM".to_owned(), "xterm-256color".to_owned())));
         assert!(env.contains(&("COLORTERM".to_owned(), "truecolor".to_owned())));
+    }
+
+    #[test]
+    fn given_a_pty_already_on_a_grid_when_the_same_grid_is_announced_then_no_sigwinch_is_posted() {
+        // Given — un onglet ouvert en 80×24, et une TUI plein écran qui y tourne. Le panneau
+        // bas (spec §4.3) donne au terminal une seconde raison de changer de boîte, en plus
+        // de la fenêtre et de la colonne : trois sources indépendantes peuvent annoncer la
+        // même grille l'une après l'autre.
+        let spawner = FakeSpawner::default();
+        let resized = Arc::clone(&spawner.resized);
+        let registry = registry(spawner);
+        let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
+
+        // When — le panneau s'ouvre puis se referme sans franchir une ligne entière
+        registry.resize(&opened.tab_id, 80, 24).unwrap();
+
+        // Then — redimensionner poste un `SIGWINCH`, et une TUI s'y redessine entièrement
+        // (ADR-0003, reformulation du 2026-08-10)
+        assert!(resized.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn given_a_pty_when_the_grid_really_changes_then_it_is_posted_once_and_the_new_one_is_kept() {
+        // Given
+        let spawner = FakeSpawner::default();
+        let resized = Arc::clone(&spawner.resized);
+        let registry = registry(spawner);
+        let opened = registry.open(spec(), "01J0TAB".to_owned()).unwrap();
+
+        // When — le panneau prend six lignes au terminal, puis les lui rend
+        registry.resize(&opened.tab_id, 80, 18).unwrap();
+        registry.resize(&opened.tab_id, 80, 18).unwrap();
+        registry.resize(&opened.tab_id, 80, 24).unwrap();
+
+        // Then — une grille par changement, et le filtre ne fige pas la grille au passage
+        assert_eq!(*resized.lock().unwrap(), vec![(80, 18), (80, 24)]);
     }
 
     #[test]
