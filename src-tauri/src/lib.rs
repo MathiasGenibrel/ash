@@ -70,8 +70,9 @@ use features::agents::{
 };
 use features::card::{AgentWork as CardWork, Cards, FileModeStore, SystemCardFiles, WorkRecord};
 use features::git::{
-    resolve_worktree, BusyAgent, Entry, FileSystem, InhabitingTab, SystemFileSystem, SystemGit,
-    TabPresence, WorkHistory, Worked, WorkingAgents, WorktreeTable,
+    resolve_worktree, Attribution, Attributions, BusyAgent, CommitGraphReader, Entry, FileSystem,
+    GraphLog, InhabitingTab, SystemFileSystem, SystemGit, TabPresence, WorkHistory, Worked,
+    WorkingAgents, WorktreeTable,
 };
 use features::journal::{
     CommitJournal, CommitLog as JournalCommits, CommitRecord, FileJournalStore, JournalStore,
@@ -479,6 +480,35 @@ impl JournalCommits for GitCommits {
     }
 }
 
+/// Relie le port du graphe au journal d'attribution — **la colonne `by`** (spec §7.2).
+///
+/// C'est le troisième branchement du même genre, et il boucle la paire : `features/journal`
+/// demande des commits à `features/git` par son port `CommitLog`, `features/git` demande des
+/// agents à `features/journal` par son port `Attributions`. Les deux features restent sans
+/// dépendance l'une envers l'autre — chacune possède la question qu'elle pose —, et le seul
+/// endroit qui connaît les deux est celui qui les assemble.
+///
+/// Il n'y a aucune décision ici : la résolution en deux temps d'ADR-0014 vit dans
+/// `journal/resolve.rs`, où elle se prouve, et le choix du mot affiché dans
+/// `git/history.rs`, où il se prouve aussi.
+struct JournalAttributions(Arc<CommitJournal>);
+
+impl Attributions for JournalAttributions {
+    fn of(&self, repo: &str, commits: &[CommitRecord]) -> Vec<Option<Attribution>> {
+        self.0
+            .attributions(repo, commits)
+            .into_iter()
+            .map(|entry| {
+                entry.map(|entry| Attribution {
+                    agent: entry.agent,
+                    tab_id: entry.tab_id,
+                    prompt: entry.prompt,
+                })
+            })
+            .collect()
+    }
+}
+
 /// Relie la fenêtre de réglages à l'écriture des hooks, en traduisant un **identifiant**
 /// d'adaptateur en instrumentation.
 ///
@@ -737,6 +767,15 @@ pub fn run() -> tauri::Result<()> {
         &shared::time::SystemClock,
     );
 
+    // Le lecteur du graphe (#27, spec §7.2). Il naît ici parce que c'est ici que ses trois
+    // ports se rencontrent : le seul endroit du dépôt où `git` est lancé, le journal
+    // d'attribution, et l'horloge dont la règle des 30 jours a besoin.
+    let commit_graph = Arc::new(CommitGraphReader::new(
+        Arc::new(SystemGit::default()) as Arc<dyn GraphLog>,
+        Arc::new(JournalAttributions(Arc::clone(&journal))),
+        Arc::new(shared::time::SystemClock),
+    ));
+
     // La fiche de branche d'ADR-0013. Elle ne connaît ni git, ni le journal, ni les
     // onglets : elle demande où elle vit, ce que le bloc porte, et qui a écrit dans ce
     // worktree — et c'est ici que les trois questions trouvent leurs répondants.
@@ -756,6 +795,7 @@ pub fn run() -> tauri::Result<()> {
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         .manage(Arc::clone(&journal))
+        .manage(Arc::clone(&commit_graph))
         .manage(Arc::clone(&cards))
         .manage(Arc::clone(&git) as Arc<dyn features::git::BranchReader>)
         .manage(Arc::clone(&git) as Arc<dyn features::git::TreeWriter>)
@@ -790,6 +830,7 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_pause,
             features::pty::commands::pty_resume,
             features::git::commands::git_metadata,
+            features::git::commands::git_commit_graph,
             features::journal::commands::journal_summary,
             features::journal::commands::journal_purge,
             features::card::commands::branch_card,

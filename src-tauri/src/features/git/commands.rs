@@ -1,8 +1,14 @@
-//! La surface de la feature vers le frontend : une commande, un event.
+//! La surface de la feature vers le frontend : neuf commandes, un event.
 //!
-//! Le frontend ne connaît de `git` que ces deux noms et les types qui traversent. Il
+//! Le frontend ne connaît de `git` que ces dix noms et les types qui traversent. Il
 //! **rend** l'état ; c'est ici qu'on le lui pousse
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+//!
+//! Huit d'entre elles **lisent**, et rien d'autre — pas même le graphe, qui dessine
+//! pourtant toute l'histoire de l'arbre. La neuvième, [`git_branch_action`], est la seule
+//! qui **touche l'arbre**, et elle ne part jamais sans un geste explicite qui a nommé ses
+//! deux côtés : c'est cette différence de consentement qui décide de ce que `git_cli`
+//! neutralise, et de ce qu'il assume de laisser passer.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use super::branch_actions::{ActionOffer, ActionOutcome, BranchAction};
 use super::branches::{overview, BranchOverview};
 use super::git_cli::{BranchReader, SystemGit, TreeWriter};
+use super::history::{CommitGraph, CommitGraphReader, DEFAULT_WINDOW};
 use super::metadata::WorktreeMetadata;
 use super::metadata_watch::{Listeners, MetadataWatch};
 use super::prompt::compose_conflict_prompt;
@@ -21,6 +28,7 @@ use super::table::{WorktreeRemoval, WorktreeRow, WorktreeTable};
 use super::throttle::MIN_INTERVAL;
 use super::watcher::SystemWatcher;
 use super::working_agents::WorkingAgents;
+use super::worktree::resolve_worktree;
 use crate::shared::time::{SystemClock, ThreadScheduler};
 
 /// Nom de l'event qui porte l'état git d'un worktree.
@@ -99,6 +107,43 @@ pub async fn git_conflict_prompt<R: Runtime>(
     let watch = app.state::<Arc<MetadataWatch>>();
     let stopped = watch.stopped(Path::new(&worktree_root))?;
     Some(compose_conflict_prompt(&stopped.prompt_subject()))
+}
+
+/// Le graphe de commits d'un worktree, colonne `by` comprise (spec §7.2).
+///
+/// `window` est le nombre de lignes demandées **depuis le sommet** : voir `graph.rs` pour
+/// pourquoi le graphe grandit par une fenêtre et non par des pages. Le backend la borne — une
+/// webview ne décide pas de faire lire dix ans d'histoire d'un coup.
+///
+/// Elle est **facultative**, et son absence est le cas normal : un graphe qui s'ouvre ne
+/// demande pas une taille, il demande *le graphe*, et la première fenêtre est
+/// [`DEFAULT_WINDOW`] — un choix de produit, du côté qui lance le processus. L'écran ne nomme
+/// un nombre qu'en **élargissant**, à partir de la fenêtre que la réponse précédente lui a
+/// annoncée. Sans ça, la valeur de départ vivrait des deux côtés de la frontière, et c'est
+/// celle du TypeScript qui gagnerait — l'écran demande, le backend annonce.
+///
+/// `None` pour un répertoire hors de tout dépôt, ou dont les fichiers de contrôle ne se
+/// lisent pas : c'est le même cas nominal que `git_metadata`, et il se rend pareil — le
+/// panneau dit qu'il n'a rien à montrer.
+///
+/// **`async` pour la même raison que [`git_metadata`]** : la réponse lance un processus
+/// `git`, qui n'a rien à faire sur le fil qui dessine la fenêtre.
+#[tauri::command]
+pub async fn git_commit_graph<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+    window: Option<usize>,
+) -> Option<CommitGraph> {
+    let reader = app.state::<Arc<CommitGraphReader>>();
+    // Le dépôt **commun** : c'est la clé du journal, et deux worktrees d'un même projet
+    // partagent donc leur attribution comme ils partagent leurs commits (ADR-0012).
+    let located = resolve_worktree(&SystemFileSystem, Path::new(&worktree_root)).ok()?;
+    let (_, common_dir) = located.git_dirs()?;
+    Some(reader.window(
+        &located.worktree.root,
+        &common_dir.to_string_lossy(),
+        window.unwrap_or(DEFAULT_WINDOW),
+    ))
 }
 
 /// Le tableau des worktrees (spec §7.3).
