@@ -4,6 +4,7 @@ use crate::features::agents::adapter::{
     hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
+use crate::features::agents::usage::{SessionUsage, UsageSupport, DEFAULT_CONTEXT_WINDOW};
 
 /// La version du bloc que cet adaptateur compose.
 ///
@@ -221,6 +222,70 @@ impl Adapter for ClaudeCodeAdapter {
     fn subagents(&self) -> SubagentSupport {
         SubagentSupport::Reported
     }
+
+    /// Claude Code tient un transcript, et c'est de là que vient la jauge.
+    ///
+    /// Rien n'est installé pour l'obtenir : le `stdin` de **chaque** hook porte déjà
+    /// `transcript_path`, et le fichier existe que Ash le lise ou non. Déclarer la capacité
+    /// ne coûte donc aucune écriture chez l'utilisateur, et n'incrémente pas
+    /// [`BLOCK_VERSION`] — le bloc du `settings.json` est identique à celui d'avant.
+    fn usage(&self) -> UsageSupport {
+        UsageSupport::Transcript
+    }
+
+    /// Le dernier tour d'assistant de la queue, et ce qu'il dit de la place occupée.
+    ///
+    /// **La lecture part de la fin.** Le transcript est un journal : chaque tour y ajoute
+    /// une ligne, et seule la dernière décrit l'état courant de la conversation. Remonter
+    /// depuis la fin s'arrête donc au premier tour trouvé, au lieu de parcourir une
+    /// conversation entière pour ne garder que son dernier élément.
+    ///
+    /// Les quatre compteurs s'**additionnent**, et c'est ce qui rend la mesure juste après un
+    /// cache : Claude Code range les tokens déjà envoyés sous `cache_read_input_tokens` dès
+    /// que le préfixe est mis en cache, si bien que `input_tokens` tombe à deux ou trois. Ne
+    /// lire que `input_tokens` afficherait une conversation vide sur une session pleine.
+    ///
+    /// Une ligne qu'on ne sait pas lire est **sautée**, pas fatale : la queue commence au
+    /// milieu du fichier, elle porte des `attachment` et des `user` qui n'ont pas d'usage, et
+    /// un format qui gagne un champ ne doit pas éteindre la jauge.
+    fn read_usage(&self, transcript_tail: &str) -> Option<SessionUsage> {
+        let used = transcript_tail
+            .lines()
+            .rev()
+            .find_map(|line| tokens_of(line.trim()))?;
+
+        Some(SessionUsage {
+            used_tokens: used,
+            window_tokens: DEFAULT_CONTEXT_WINDOW,
+        })
+    }
+}
+
+/// Les tokens qu'une ligne de transcript déclare, si c'est un tour qui en déclare.
+///
+/// Séparée de [`Adapter::read_usage`] parce que c'est la seule moitié qui connaît la forme
+/// du JSON de Claude Code — l'autre ne fait que choisir *quelle* ligne lire.
+fn tokens_of(line: &str) -> Option<u64> {
+    let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+    let usage = entry.get("message")?.get("usage")?;
+
+    // `as_u64().unwrap_or(0)` sur chacun, et pas un `?` : un compteur absent vaut zéro, et
+    // exiger les quatre ferait perdre toute la mesure le jour où l'un d'eux disparaît.
+    let counted = |field: &str| {
+        usage
+            .get(field)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+
+    let total = counted("input_tokens")
+        + counted("cache_creation_input_tokens")
+        + counted("cache_read_input_tokens")
+        + counted("output_tokens");
+
+    // Un objet `usage` présent mais entièrement vide ne mesure rien — le lire comme « zéro
+    // token » ferait retomber la jauge à vide au milieu d'une conversation.
+    (total > 0).then_some(total)
 }
 
 impl ClaudeCodeAdapter {
@@ -302,6 +367,21 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// Une queue de transcript telle que Claude Code l'écrit, réduite à trois lignes.
+    ///
+    /// Les valeurs sont celles d'un vrai fichier : un `input_tokens` à 2 parce que le
+    /// préfixe est en cache, et l'essentiel de la conversation sous
+    /// `cache_read_input_tokens`. C'est ce couple qui rend le test utile — une
+    /// implémentation qui ne lirait que `input_tokens` passerait avec un chiffre absurde.
+    const OWN_TRANSCRIPT: &str = concat!(
+        r#"{"type":"user","message":{"role":"user","content":"vas-y"}}"#,
+        "\n",
+        r#"{"type":"attachment","attachment":{"type":"file"}}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":2,"cache_creation_input_tokens":2196,"cache_read_input_tokens":143801,"output_tokens":274}}}"#,
+        "\n",
+    );
+
     /// Les événements que ces entrées feront réellement remonter — la forme canonique de la
     /// spec §6.3, pas les noms de hooks de Claude Code.
     fn own_events() -> Vec<RawEvent> {
@@ -319,7 +399,7 @@ mod tests {
         let adapter = adapter();
 
         // When
-        let report = check_adapter_contract(&adapter, &own_events());
+        let report = check_adapter_contract(&adapter, &own_events(), Some(OWN_TRANSCRIPT));
 
         // Then
         assert!(report.is_satisfied(), "violations :\n{report}");
@@ -469,5 +549,68 @@ mod tests {
 
         // Then
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn given_a_transcript_whose_prefix_is_cached_when_the_adapter_reads_it_then_it_counts_the_cache_too(
+    ) {
+        // Given — le cas normal après le premier tour : `input_tokens` tombe à deux ou
+        // trois, et la conversation entière vit sous `cache_read_input_tokens`.
+        let adapter = adapter();
+
+        // When
+        let usage = adapter.read_usage(OWN_TRANSCRIPT).unwrap();
+
+        // Then — 2 + 2196 + 143801 + 274. Ne lire qu'`input_tokens` afficherait une
+        // conversation vide sur une session pleine aux trois quarts.
+        assert_eq!(usage.used_tokens, 146_273);
+        assert_eq!(usage.window_tokens, DEFAULT_CONTEXT_WINDOW);
+    }
+
+    #[test]
+    fn given_two_assistant_turns_when_the_adapter_reads_them_then_the_last_one_wins() {
+        // Given — le transcript est un journal : le tour précédent est toujours là, et il
+        // décrit une conversation plus petite qu'elle ne l'est.
+        let adapter = adapter();
+        let earlier = r#"{"type":"assistant","message":{"usage":{"input_tokens":10}}}"#;
+        let later = r#"{"type":"assistant","message":{"usage":{"input_tokens":900}}}"#;
+
+        // When
+        let usage = adapter
+            .read_usage(&format!("{earlier}\n{later}\n"))
+            .unwrap();
+
+        // Then
+        assert_eq!(usage.used_tokens, 900);
+    }
+
+    #[test]
+    fn given_a_tail_without_a_single_assistant_turn_when_the_adapter_reads_it_then_it_measures_nothing(
+    ) {
+        // Given — une queue qui n'attrape que des messages d'utilisateur, ce qui arrive
+        // quand le dernier tour a produit de gros résultats d'outil.
+        let adapter = adapter();
+        let tail = r#"{"type":"user","message":{"role":"user","content":"encore"}}"#;
+
+        // When
+        let usage = adapter.read_usage(tail);
+
+        // Then — une absence de mesure, pas un zéro : l'onglet gardera ce qu'il savait.
+        assert_eq!(usage, None);
+    }
+
+    #[test]
+    fn given_a_usage_object_with_every_counter_at_zero_when_the_adapter_reads_it_then_it_measures_nothing(
+    ) {
+        // Given — un tour qui déclare `usage` sans rien dedans. Le lire comme « zéro token »
+        // ferait retomber la jauge à vide au milieu d'une conversation.
+        let adapter = adapter();
+        let tail = r#"{"type":"assistant","message":{"usage":{"input_tokens":0}}}"#;
+
+        // When
+        let usage = adapter.read_usage(tail);
+
+        // Then
+        assert_eq!(usage, None);
     }
 }

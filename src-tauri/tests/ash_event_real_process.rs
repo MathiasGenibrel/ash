@@ -146,6 +146,35 @@ fn given_a_hook_fired_inside_a_subagent_when_it_runs_then_the_child_reaches_ash_
 }
 
 #[test]
+fn given_a_hook_of_the_main_agent_when_it_runs_then_the_transcript_path_reaches_ash_untouched() {
+    // Given — l'objet réel d'un hook de l'agent principal : pas de sous-agent, et le chemin
+    // du transcript que Claude Code écrit sur **chaque** événement. C'est le seul chemin par
+    // lequel la jauge de contexte apprend où lire.
+    let ash = listening();
+    let payload = br#"{"session_id":"abc","hook_event_name":"Stop",
+                       "transcript_path":"/Users/x/.claude/projects/ash/session.jsonl"}"#;
+
+    // When
+    let mut hook = ash_event(&ash.path, Stdio::piped());
+    hook.stdin
+        .take()
+        .expect("l'entrée standard doit être ouverte")
+        .write_all(payload)
+        .expect("l'objet du hook doit s'écrire");
+
+    // Then — le chemin traverse tel quel, et **rien n'a été ouvert** : le hook transporte une
+    // adresse, il ne lit pas le disque dans le tour d'un agent.
+    assert_eq!(
+        ash.received(),
+        Some(
+            EventFrame::new("waiting", "01J0TAB")
+                .with_transcript(Some("/Users/x/.claude/projects/ash/session.jsonl"))
+        )
+    );
+    assert!(hook.wait().expect("le hook doit se terminer").success());
+}
+
+#[test]
 fn given_a_hook_whose_standard_input_is_promised_and_never_written_when_it_runs_then_it_still_declares_its_state(
 ) {
     // Given — le cas qui coûterait le plus cher : un tube ouvert que personne n'écrit et que

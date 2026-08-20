@@ -14,6 +14,7 @@ use std::path::{Component, Path};
 
 use super::adapter::{hook_mark, Adapter, RawEvent, SubagentSupport};
 use super::state::AgentState;
+use super::usage::{SessionUsage, UsageSupport, DEFAULT_CONTEXT_WINDOW};
 
 /// Les invariants du contrat, un par un.
 ///
@@ -40,6 +41,11 @@ pub(crate) enum Invariant {
     InstrumentationEntriesNameWhereTheyGo,
     InstrumentationVersionStartsAtOne,
     InstrumentationIsPerConfigDir,
+    NoUsageWithoutUsageSupport,
+    UsageSupportReadsItsOwnTranscript,
+    ReadUsageIsDeterministic,
+    UsageWindowIsNotZero,
+    UsageSurvivesALineItCannotRead,
 }
 
 impl Invariant {
@@ -82,6 +88,30 @@ impl Invariant {
             Self::NoWorkingNorWaitingWithoutInstrumentation => {
                 "un adaptateur sans instrumentation ne doit rendre ni `working` ni \
                  `waiting` : ces deux états n'ont d'autre producteur que les hooks (ADR-0007)"
+            }
+            Self::NoUsageWithoutUsageSupport => {
+                "un adaptateur qui répond `UsageSupport::None` ne doit jamais rendre de \
+                 mesure : le cœur n'afficherait alors une jauge pour un outil qui a déclaré \
+                 n'en avoir pas, et un chiffre inventé est pire qu'une barre absente"
+            }
+            Self::UsageSupportReadsItsOwnTranscript => {
+                "un adaptateur qui répond `UsageSupport::Transcript` doit savoir lire son \
+                 propre transcript : sans ça, il promet au cœur une jauge qui restera vide, \
+                 ce que rien ne distingue d'un outil qui n'a rien à montrer"
+            }
+            Self::ReadUsageIsDeterministic => {
+                "read_usage() doit être déterministe : un adaptateur ne retient rien, et une \
+                 mesure qui varie à texte égal ferait clignoter la barre sans qu'aucun token \
+                 ait été consommé"
+            }
+            Self::UsageWindowIsNotZero => {
+                "une mesure doit porter une fenêtre non nulle : c'est le dénominateur du \
+                 pourcentage affiché, et zéro ne se divise pas"
+            }
+            Self::UsageSurvivesALineItCannotRead => {
+                "read_usage() doit sauter une ligne illisible au lieu de s'y arrêter : la \
+                 queue d'un transcript commence au milieu du fichier, et elle porte des \
+                 lignes qui ne décrivent aucun tour"
             }
             Self::InstrumentationIsACapability => {
                 "instrumentation() doit décrire une capacité de l'outil, pas dépendre du \
@@ -196,14 +226,41 @@ fn tempting_events() -> Vec<RawEvent> {
     .collect()
 }
 
+/// Les textes qu'un adaptateur pourrait être tenté de lire « au cas où ».
+///
+/// Ils sont donnés à **toutes** les implémentations, y compris à celles dont ce n'est pas le
+/// format : c'est ce qui rend vérifiable qu'un adaptateur ayant déclaré `UsageSupport::None`
+/// ne se met pas à lire le transcript d'un autre outil en attendant que le sien existe.
+///
+/// Le dernier est un vrai tour de Claude Code, réduit à ce qui compte. Il est ici **pour
+/// tout le monde** : c'est précisément celui qu'un adaptateur tiers n'a pas le droit de
+/// comprendre.
+fn tempting_transcripts() -> Vec<&'static str> {
+    vec![
+        "",
+        "\n\n",
+        "pas du json du tout",
+        // Une ligne coupée en deux par le saut en début de queue : c'est le cas normal, pas
+        // un cas limite.
+        "ache_read_input_tokens\":143801}}\n",
+        r#"{"type":"user","message":{"role":"user","content":"bonjour"}}"#,
+        r#"{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":2,"cache_creation_input_tokens":2196,"cache_read_input_tokens":143801,"output_tokens":274}}}"#,
+    ]
+}
+
 /// Vérifie les invariants que toute implémentation d'[`Adapter`] doit tenir.
 ///
 /// `own_events` est le vocabulaire propre de l'outil — les événements que son
 /// instrumentation fera réellement remonter. Il est vide pour un adaptateur qui
 /// n'instrumente rien.
+///
+/// `own_transcript` est une queue de transcript **réelle** de l'outil, telle qu'Ash la lui
+/// présentera. `None` pour un adaptateur qui n'en tient pas — c'est alors la déclaration
+/// qu'il n'y a rien à lire, et le contrat vérifie qu'il ne lit effectivement rien.
 pub(crate) fn check_adapter_contract(
     adapter: &dyn Adapter,
     own_events: &[RawEvent],
+    own_transcript: Option<&str>,
 ) -> ContractReport {
     let mut report = ContractReport::default();
 
@@ -215,8 +272,60 @@ pub(crate) fn check_adapter_contract(
         .collect();
     check_interpretation(adapter, &corpus, &mut report);
     check_instrumentation(adapter, &mut report);
+    check_usage(adapter, own_transcript, &mut report);
 
     report
+}
+
+/// Ce que la capacité d'usage doit garantir avant qu'une jauge n'atteigne la barre d'état.
+fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut ContractReport) {
+    let declares = adapter.usage() != UsageSupport::None;
+
+    // L'adaptateur voit son propre format **et** ceux des autres : le premier prouve qu'il
+    // tient sa promesse, les seconds qu'il ne déborde pas dessus.
+    let corpus: Vec<&str> = tempting_transcripts()
+        .into_iter()
+        .chain(own_transcript)
+        .collect();
+
+    for text in &corpus {
+        let measured = adapter.read_usage(text);
+
+        report.require(
+            measured == adapter.read_usage(text),
+            Invariant::ReadUsageIsDeterministic,
+        );
+
+        report.require(
+            declares || measured.is_none(),
+            Invariant::NoUsageWithoutUsageSupport,
+        );
+
+        report.require(
+            measured.is_none_or(|usage| usage.window_tokens > 0),
+            Invariant::UsageWindowIsNotZero,
+        );
+    }
+
+    let Some(own) = own_transcript else {
+        // Rien à promettre, donc rien de plus à vérifier : l'absence de queue propre *est*
+        // la déclaration qu'il n'y a rien à lire.
+        return;
+    };
+
+    report.require(
+        !declares || adapter.read_usage(own).is_some(),
+        Invariant::UsageSupportReadsItsOwnTranscript,
+    );
+
+    // La même queue, précédée de tout ce que l'adaptateur ne sait pas lire. Une
+    // implémentation qui s'arrête à la première ligne inconnue échoue ici, et c'est le
+    // scénario réel : la queue commence au milieu du fichier.
+    let noisy = format!("{}\n{own}", tempting_transcripts().join("\n"));
+    report.require(
+        adapter.read_usage(&noisy) == adapter.read_usage(own),
+        Invariant::UsageSurvivesALineItCannotRead,
+    );
 }
 
 /// L'identifiant est une clé : il indexe la configuration reconnue (ADR-0006) et
@@ -371,6 +480,8 @@ mod tests {
         always: Option<AgentState>,
         child_verb: Option<String>,
         reports_subagents: bool,
+        declares_usage: bool,
+        measures_anything: bool,
     }
 
     impl AdapterBuilder {
@@ -406,6 +517,19 @@ mod tests {
             self
         }
 
+        /// L'outil déclare tenir un transcript, sans qu'on lui demande d'y lire quoi que ce
+        /// soit — la promesse creuse que le contrat doit attraper.
+        fn declaring_usage(mut self) -> Self {
+            self.declares_usage = true;
+            self
+        }
+
+        /// L'adaptateur rend une mesure sur **n'importe quel** texte, y compris vide.
+        fn measuring_anything(mut self) -> Self {
+            self.measures_anything = true;
+            self
+        }
+
         fn build(self) -> FakeAdapter {
             FakeAdapter {
                 id: self.id.unwrap_or_else(|| "fake".to_owned()),
@@ -413,6 +537,8 @@ mod tests {
                 always: self.always,
                 child_verb: self.child_verb,
                 reports_subagents: self.reports_subagents,
+                declares_usage: self.declares_usage,
+                measures_anything: self.measures_anything,
             }
         }
     }
@@ -423,6 +549,8 @@ mod tests {
         always: Option<AgentState>,
         child_verb: Option<String>,
         reports_subagents: bool,
+        declares_usage: bool,
+        measures_anything: bool,
     }
 
     impl Adapter for FakeAdapter {
@@ -456,6 +584,21 @@ mod tests {
                 SubagentSupport::None
             }
         }
+
+        fn usage(&self) -> UsageSupport {
+            if self.declares_usage {
+                UsageSupport::Transcript
+            } else {
+                UsageSupport::None
+            }
+        }
+
+        fn read_usage(&self, _transcript_tail: &str) -> Option<SessionUsage> {
+            self.measures_anything.then_some(SessionUsage {
+                used_tokens: 1,
+                window_tokens: DEFAULT_CONTEXT_WINDOW,
+            })
+        }
     }
 
     #[test]
@@ -468,7 +611,7 @@ mod tests {
             .build();
 
         // When
-        let report = check_adapter_contract(&guesser, &[]);
+        let report = check_adapter_contract(&guesser, &[], None);
 
         // Then
         assert!(
@@ -489,7 +632,7 @@ mod tests {
             .build();
 
         // When
-        let report = check_adapter_contract(&confused, &[]);
+        let report = check_adapter_contract(&confused, &[], None);
 
         // Then
         assert!(
@@ -509,7 +652,7 @@ mod tests {
             .build();
 
         // When
-        let report = check_adapter_contract(&hardcoded, &[]);
+        let report = check_adapter_contract(&hardcoded, &[], None);
 
         // Then — il sort du dossier donné, et il écrit au même endroit pour tous les comptes
         assert_eq!(
@@ -536,7 +679,7 @@ mod tests {
             .build();
 
         // When
-        let report = check_adapter_contract(&confused, &[]);
+        let report = check_adapter_contract(&confused, &[], None);
 
         // Then
         assert!(
@@ -560,7 +703,7 @@ mod tests {
             .build();
 
         // When
-        let report = check_adapter_contract(&inconsistent, &[]);
+        let report = check_adapter_contract(&inconsistent, &[], None);
 
         // Then
         assert!(
@@ -585,7 +728,7 @@ mod tests {
             .build();
 
         // When
-        let report = check_adapter_contract(&boastful, &[]);
+        let report = check_adapter_contract(&boastful, &[], None);
 
         // Then
         assert!(
@@ -597,12 +740,64 @@ mod tests {
     }
 
     #[test]
+    fn given_an_adapter_that_measures_usage_without_declaring_it_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — la faute que le critère de cette tranche nomme mot pour mot : un
+        // adaptateur qui répond `UsageSupport::None` et rend quand même une mesure. Le cœur
+        // afficherait alors une jauge pour un outil qui a déclaré n'en avoir pas, et le
+        // chiffre serait inventé — pire qu'une barre absente.
+        let sneaky = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .measuring_anything()
+            .build();
+
+        // When
+        let report = check_adapter_contract(&sneaky, &[], None);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::NoUsageWithoutUsageSupport),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_that_declares_a_transcript_it_cannot_read_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — la faute inverse, et la plus facile à commettre : on passe `usage()` à
+        // `Transcript` en préparant une tranche, et `read_usage` ne sait encore rien lire.
+        // L'onglet promet une jauge que rien ne remplira, et rien ne distingue à l'écran une
+        // mesure absente d'un outil qui n'en a pas.
+        let boastful = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .declaring_usage()
+            .build();
+
+        // When — sa « propre » queue lui est présentée, et il n'en tire rien.
+        let report = check_adapter_contract(
+            &boastful,
+            &[],
+            Some(r#"{"type":"assistant","message":{"usage":{"input_tokens":900}}}"#),
+        );
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::UsageSupportReadsItsOwnTranscript),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
     fn given_an_adapter_whose_id_is_not_a_slug_when_checked_then_the_contract_rejects_it() {
         // Given — un identifiant qui finira dans `~/.ash/config.toml` et dans le journal
         let shouted = AdapterBuilder::new().id("Claude Code").build();
 
         // When
-        let report = check_adapter_contract(&shouted, &[]);
+        let report = check_adapter_contract(&shouted, &[], None);
 
         // Then
         assert!(

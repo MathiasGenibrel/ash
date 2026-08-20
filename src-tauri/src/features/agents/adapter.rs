@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::state::AgentState;
+use super::usage::{SessionUsage, UsageSupport};
 
 /// Le marqueur qu'Ash pose dans **chacune** de ses entrées, suivi de sa version.
 ///
@@ -151,12 +152,18 @@ pub enum SubagentSupport {
 /// L'intégration d'un outil de code, derrière un trait
 /// ([ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md)).
 ///
-/// Les cinq méthodes correspondent aux cinq endroits où `claude`, `codex`, `kimi` et
-/// `opencode` divergent réellement : leur nom, le mécanisme et l'emplacement de leur
-/// instrumentation, leur vocabulaire d'états, le verbe par lequel un **enfant** annonce sa
-/// fin, et l'existence de sous-tâches. Rien d'autre ne franchit la frontière : le cœur ne
-/// connaît que [`AgentState`], et un adaptateur n'a aucun moyen de lui faire connaître un
-/// sixième mot.
+/// Les méthodes correspondent aux endroits où `claude`, `codex`, `kimi` et `opencode`
+/// divergent réellement : leur nom, le mécanisme et l'emplacement de leur instrumentation,
+/// leur vocabulaire d'états, le verbe par lequel un **enfant** annonce sa fin, l'existence de
+/// sous-tâches, et ce qu'ils savent dire de la place qu'ils consomment. Rien d'autre ne
+/// franchit la frontière : le cœur ne connaît que [`AgentState`], et un adaptateur n'a aucun
+/// moyen de lui faire connaître un sixième mot.
+///
+/// **Deux des capacités sont optionnelles, et elles se déclarent avant de se décrire** —
+/// [`Adapter::subagents`] et [`Adapter::usage`]. C'est ce qui permet au cœur de ne rien
+/// afficher plutôt que d'afficher un vide : un outil qui n'a pas de sous-tâches n'a pas de
+/// lignes filles, et un outil qui ne tient pas de transcript n'a pas de jauge — pas une
+/// jauge à zéro.
 ///
 /// **Le vocabulaire des états et celui des enfants sont deux méthodes**, et pas une avec un
 /// cas de plus : c'est la forme que l'amendement du 2026-08-13 à ADR-0007 exige, pour
@@ -204,4 +211,31 @@ pub trait Adapter: Send + Sync {
 
     /// L'outil expose-t-il des sous-tâches ?
     fn subagents(&self) -> SubagentSupport;
+
+    /// L'outil dit-il la place qu'il consomme dans sa fenêtre de contexte ?
+    ///
+    /// La quatrième capacité optionnelle du trait, et la deuxième à se déclarer avant d'être
+    /// décrite — comme [`Self::subagents`], et pour la même raison : le cœur a besoin de
+    /// savoir s'il **peut** afficher une jauge avant de savoir ce qu'elle vaudrait. Un outil
+    /// qui répond [`UsageSupport::None`] n'a pas d'usage du tout, et rien dans la barre
+    /// n'ira suggérer qu'il en manque un.
+    fn usage(&self) -> UsageSupport;
+
+    /// Ce que la fin d'un transcript dit de la place consommée, ou rien.
+    ///
+    /// **L'adaptateur interprète, il ne lit pas le disque.** C'est le même partage que pour
+    /// [`Self::instrumentation`], qui décrit ce qu'il faut écrire sans jamais écrire : le
+    /// format d'un transcript est ce que seul l'outil connaît, et l'ouverture d'un fichier
+    /// est un effet système que la feature possède ([`super::usage::Transcripts`]). Un
+    /// adaptateur qui ouvrirait lui-même le fichier ferait exister une deuxième façon de
+    /// lire chez l'utilisateur, donc une deuxième façon de se tromper.
+    ///
+    /// Ce qu'il reçoit est une **queue**, pas le fichier : elle peut commencer n'importe où,
+    /// et une implémentation doit donc tolérer des lignes qu'elle ne comprend pas plutôt que
+    /// de s'arrêter à la première.
+    ///
+    /// `None` est la réponse normale — une queue sans tour d'assistant, un format qui a
+    /// changé, un fichier encore vide. Ce n'est pas une erreur : l'onglet garde ce qu'il
+    /// savait déjà.
+    fn read_usage(&self, transcript_tail: &str) -> Option<SessionUsage>;
 }

@@ -43,6 +43,18 @@ pub const MAX_FRAME_BYTES: usize = 8 * 1024;
 /// d'outil, `agent_type` le nom d'un sous-agent — `code-reviewer`, `dev-integration`.
 pub const MAX_CHILD_KEY_BYTES: usize = 256;
 
+/// Au-delà, un chemin de transcript n'en est plus un.
+///
+/// Même raisonnement que [`MAX_CHILD_KEY_BYTES`], et même conduite : un chemin plus long est
+/// **écarté**, jamais tronqué — un chemin coupé désignerait un autre fichier, ou aucun, et
+/// Ash l'ouvrirait. 1024 octets sont la limite d'un chemin sur macOS (`PATH_MAX`), donc tout
+/// chemin qui existe réellement passe.
+///
+/// Il est borné ici pour la même raison que les clés d'enfant : que la trame ne puisse pas
+/// déborder [`MAX_FRAME_BYTES`] à cause de lui, donc que le repli silencieux
+/// d'`ash-event` ne puisse pas se déclencher pour cette raison-là.
+pub const MAX_TRANSCRIPT_PATH_BYTES: usize = 1024;
+
 /// Ce qu'un hook envoie à Ash, tel qu'il passe sur le fil.
 ///
 /// Une ligne de JSON par événement, terminée par `\n` : le cadrage est le retour à la
@@ -84,6 +96,20 @@ pub struct EventFrame {
     /// il ne le traduit pas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_type: Option<String>,
+    /// Le transcript de la conversation, quand l'outil en tient un et le nomme.
+    ///
+    /// **C'est un chemin, jamais un contenu.** La trame est un format de transport, et faire
+    /// lire un fichier à `ash-event` mettrait une lecture de disque sur le chemin d'un hook,
+    /// c'est-à-dire dans le tour d'un agent. Ce qui traverse est donc l'adresse ; c'est
+    /// `features/agents` qui décide s'il y a lieu de la lire, et son adaptateur qui sait ce
+    /// qu'on y trouve (`usage.rs`).
+    ///
+    /// **Facultatif, et sans conséquence sur l'état** : il ne se traduit en rien qu'
+    /// [`AgentState`](crate::features::agents::AgentState) connaisse. Une trame sans lui est
+    /// valide — c'est le cas de toutes celles qu'Ash a reçues avant cette tranche, et de
+    /// celles de tout outil qui n'écrit pas de transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
 }
 
 /// Ce qui peut clocher dans une ligne reçue.
@@ -114,7 +140,18 @@ impl EventFrame {
             kind: kind.into(),
             agent_id: None,
             agent_type: None,
+            transcript_path: None,
         }
+    }
+
+    /// La même trame, en nommant le transcript que l'outil a désigné.
+    ///
+    /// Un chemin vide, blanc ou démesuré vaut « pas de transcript » : Ash n'ouvre que ce
+    /// qu'on lui a réellement nommé.
+    #[must_use]
+    pub fn with_transcript(mut self, path: Option<&str>) -> Self {
+        self.transcript_path = transcript(path);
+        self
     }
 
     /// La même trame, en nommant l'enfant qui l'a produite.
@@ -132,12 +169,16 @@ impl EventFrame {
     /// La même trame, dépouillée de ce qui n'est pas l'état déclaré.
     ///
     /// C'est le repli quand la trame déborde [`MAX_FRAME_BYTES`] : l'état d'un onglet est
-    /// ce qu'un hook existe pour transporter, et un `agent_type` démesuré ne doit pas
-    /// l'emporter avec lui dans le fossé (voir `bin/ash-event.rs`).
+    /// ce qu'un hook existe pour transporter, et ni un `agent_type` démesuré ni un chemin de
+    /// transcript ne doivent l'emporter avec eux dans le fossé (voir `bin/ash-event.rs`).
+    ///
+    /// Ce qu'on perd en dépouillant est une ligne fille et une jauge ; ce qu'on perdrait en
+    /// laissant la trame déborder est l'état lui-même.
     #[must_use]
-    pub fn without_subagent(mut self) -> Self {
+    pub fn without_extras(mut self) -> Self {
         self.agent_id = None;
         self.agent_type = None;
+        self.transcript_path = None;
         self
     }
 
@@ -172,6 +213,7 @@ impl EventFrame {
         // lecteur ait à se demander si `Some("")` désigne quelqu'un.
         frame.agent_id = named(frame.agent_id.as_deref());
         frame.agent_type = named(frame.agent_type.as_deref());
+        frame.transcript_path = transcript(frame.transcript_path.as_deref());
         Ok(frame)
     }
 }
@@ -185,6 +227,18 @@ fn named(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty() && value.len() <= MAX_CHILD_KEY_BYTES)
+        .map(str::to_owned)
+}
+
+/// Un chemin de transcript qui désigne réellement un fichier possible, ou rien.
+///
+/// Le pendant de [`named`] pour la troisième clé facultative, et appelé des **deux** côtés
+/// du fil pour la même raison : ce qui est vide ne désigne rien, et ce qui dépasse
+/// [`MAX_TRANSCRIPT_PATH_BYTES`] n'est plus un chemin.
+fn transcript(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= MAX_TRANSCRIPT_PATH_BYTES)
         .map(str::to_owned)
 }
 
