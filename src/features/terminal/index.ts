@@ -7,7 +7,7 @@
 
 import "./terminal.css";
 
-import type { WorktreeMetadata } from "@/shared/ipc";
+import type { AccountUsage, WorktreeMetadata } from "@/shared/ipc";
 import type {
     FontFamilySignal,
     FontSizeSignal,
@@ -21,6 +21,8 @@ import { tauriGit } from "./git-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
 import { tauriPty } from "./pty-bridge";
 import { StatusLine, composeStatusLine } from "./status-line";
+import { composeQuotas } from "./usage";
+import { tauriUsage } from "./usage-bridge";
 import { activeTab, noTabs, type Step, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
@@ -219,6 +221,16 @@ export function mountTerminals(
     });
     let shown: TabsState = noTabs;
     let sidebarCollapsed = false;
+    /**
+     * Les deux quotas du compte, tels que le backend les a annoncés — **pas** un état que la
+     * webview tiendrait.
+     *
+     * Ils sont ici et non dans le modèle de la ligne parce qu'ils ne parlent d'aucun onglet :
+     * le seul chemin qui les change est l'event, et un changement d'onglet ne peut donc rien
+     * leur faire. `null` des deux côtés est le départ, et c'est aussi ce que le backend rend
+     * quand il ne sait rien (ADR-0016, condition 3) : dans les deux cas, on n'affiche rien.
+     */
+    let account: AccountUsage = { session: null, weekly: null };
 
     /**
      * L'onglet actif et l'état git de son worktree, lus au même instant.
@@ -235,9 +247,17 @@ export function mountTerminals(
     // Déclaration de fonction, et non `const` : le cache l'appelle depuis un rappel posé
     // dans son constructeur, donc avant la fin de ce bloc.
     function drawStatus(): void {
+        const now = Date.now();
         const seen = currentActive();
         const known = seen?.metadata ?? null;
-        status.render(composeStatusLine(shown, known, sidebarCollapsed, Date.now()));
+        // Les deux rythmes de la ligne, composés côte à côte sur le **même** `now` : à
+        // gauche ce qui parle de l'onglet, à droite ce qui parle du compte. Deux composeurs
+        // purs, deux entrées de la ligne — et aucun chemin par lequel un changement d'onglet
+        // pourrait atteindre les quotas.
+        status.render(composeStatusLine(shown, known, sidebarCollapsed, now));
+        // Le décompte des deux quotas — `resets in 2h14` — avance comme la durée d'état :
+        // au battement, à partir d'une date absolue, sans rien redemander à personne.
+        status.showQuotas(composeQuotas(account, now));
         announceActive(seen);
     }
 
@@ -281,6 +301,24 @@ export function mountTerminals(
     // Posé **après** le cache, et non avant : `drawStatus` le lit, et un battement qui
     // partirait pendant l'assemblage tomberait sur une liaison pas encore initialisée.
     setInterval(drawStatus, 1000);
+
+    /**
+     * Les deux quotas du compte (spec §4.2, ADR-0016).
+     *
+     * Le couple du thème : on **lit une fois** en s'affichant — sans quoi la ligne resterait
+     * muette jusqu'au prochain cycle du fil de fond, qui peut être long —, puis c'est l'event
+     * qui tient à jour. La webview ne redemande jamais : elle n'a aucun moyen de faire partir
+     * un appel réseau, et c'est une condition d'ADR-0016, pas une économie.
+     *
+     * Les deux échecs se taisent, et c'est la même règle que les valeurs elles-mêmes : un
+     * quota qu'on n'a pas ne s'affiche pas, et rien ne dit pourquoi.
+     */
+    const takeAccountUsage = (usage: AccountUsage): void => {
+        account = usage;
+        drawStatus();
+    };
+    void tauriUsage.snapshot().then(takeAccountUsage, () => undefined);
+    void tauriUsage.onAccountUsage(takeAccountUsage).catch(() => undefined);
 
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,
