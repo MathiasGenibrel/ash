@@ -1,0 +1,143 @@
+/**
+ * Le tableau des worktrees (spec §7.3), dans le corps du panneau bas.
+ *
+ * Il n'y a ici aucune couleur écrite : tout vient des tokens des deux palettes
+ * (`app/styles.css`), comme pour la sidebar et la ligne de statut. Les cinq états d'agent, en
+ * particulier, sont peints par `.ash-glyph` et ses classes — la même source que la colonne de
+ * gauche.
+ */
+
+.git-worktrees-host {
+    height: 100%;
+    overflow: auto;
+}
+
+.git-worktrees {
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    min-width: 100%;
+}
+
+.git-worktrees-head,
+.git-worktrees-row {
+    display: grid;
+    /* Les six colonnes de la spec §7.3. Les deux du milieu sont les plus larges : ce sont
+       elles que cet écran existe pour montrer. */
+    grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(90px, 0.6fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 10px;
+}
+
+.git-worktrees-head {
+    position: sticky;
+    top: 0;
+    background: var(--ash-bg);
+    color: var(--ash-fg-muted);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--ash-rule);
+    z-index: 1;
+}
+
+.git-worktree {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--ash-rule);
+}
+
+.git-worktree.is-awaiting-review {
+    /* Le seul filet de l'écran : un travail fini que personne n'a regardé est ce que la
+       spec §7.3 appelle l'état le plus utile du tableau. */
+    box-shadow: inset 2px 0 0 var(--ash-accent);
+}
+
+.git-worktrees-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.git-worktrees-repo {
+    color: var(--ash-fg-muted);
+}
+
+.git-worktrees-stale {
+    color: var(--ash-fg-muted);
+    border: 1px solid var(--ash-rule);
+    border-radius: 3px;
+    padding: 0 4px;
+}
+
+.git-worktrees-unknown {
+    color: var(--ash-fg-muted);
+}
+
+.git-worktrees-agent-line {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.git-worktrees-agent,
+.git-worktrees-card,
+.git-worktrees-open,
+.git-worktrees-remove,
+.git-worktrees-removal-close {
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    padding: 0 4px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.git-worktrees-card,
+.git-worktrees-open,
+.git-worktrees-remove {
+    color: var(--ash-fg-muted);
+}
+
+.git-worktrees-card:hover,
+.git-worktrees-open:hover,
+.git-worktrees-remove:hover,
+.git-worktrees-agent:hover {
+    color: var(--ash-fg);
+    text-decoration: underline;
+}
+
+.git-worktrees-remove[disabled] {
+    cursor: default;
+    opacity: 0.5;
+    text-decoration: none;
+}
+
+.git-worktrees-removal {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 10px 8px 10px;
+    background: var(--ash-bg-sidebar);
+}
+
+.git-worktrees-removal-title {
+    color: var(--ash-fg);
+}
+
+.git-worktrees-removal-line,
+.git-worktrees-removal-refused {
+    color: var(--ash-fg-muted);
+}
+
+.git-worktrees-removal-command {
+    /* Du texte à copier, pas un bouton : ash ne lance pas cette commande (ADR-0015). */
+    user-select: text;
+    color: var(--ash-fg);
+}

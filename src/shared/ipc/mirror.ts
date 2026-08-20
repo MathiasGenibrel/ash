@@ -15,6 +15,10 @@
  */
 
 import type { AgentState as RustAgentState } from "./generated/AgentState";
+import type { BranchCard as RustBranchCard } from "./generated/BranchCard";
+import type { CardLog as RustCardLog } from "./generated/CardLog";
+import type { CardMode as RustCardMode } from "./generated/CardMode";
+import type { LogState as RustLogState } from "./generated/LogState";
 import type { ActionOffer as RustActionOffer } from "./generated/ActionOffer";
 import type { ActionOutcome as RustActionOutcome } from "./generated/ActionOutcome";
 import type { Branch as RustBranch } from "./generated/Branch";
@@ -55,10 +59,20 @@ import type { MergeView as RustMergeView } from "./generated/MergeView";
 import type { SideLabel as RustSideLabel } from "./generated/SideLabel";
 import type { StoppedView as RustStoppedView } from "./generated/StoppedView";
 import type { Tab as RustTab } from "./generated/Tab";
+import type { LastWork as RustLastWork } from "./generated/LastWork";
+import type { WorktreeRemoval as RustWorktreeRemoval } from "./generated/WorktreeRemoval";
+import type { RepoLine as RustRepoLine } from "./generated/RepoLine";
+import type { WorkSource as RustWorkSource } from "./generated/WorkSource";
+import type { WorktreeAgent as RustWorktreeAgent } from "./generated/WorktreeAgent";
+import type { WorktreeRow as RustWorktreeRow } from "./generated/WorktreeRow";
 import type {
     ActionOffer,
     ActionOutcome,
     AgentState,
+    BranchCard,
+    CardLog,
+    CardLogState,
+    CardMode,
     Branch,
     BranchAction,
     BranchGroup,
@@ -93,8 +107,14 @@ import type {
     TabInfo,
     TabLocation,
     SidebarRows,
+    LastWork,
+    WorktreeRemoval,
+    WorkSource,
+    WorktreeAgent,
     WorktreeMetadata,
     WorktreeMetadataChanged,
+    WorktreeRepo,
+    WorktreeRow,
 } from "./index";
 import type { Assert, Mirrors } from "./mirroring";
 
@@ -201,3 +221,41 @@ export type MergeTabStillMirrorsRust = Assert<
     Mirrors<RustMergeTab, Omit<MergeTab, "kind">>
 >;
 export type TabStillMirrorsRust = Assert<Mirrors<RustTab, Tab>>;
+
+/**
+ * La fiche de branche d'ADR-0013, et l'état de la seule zone qu'Ash y écrit.
+ *
+ * Un neuvième état de bloc ajouté en Rust — un nouveau refus — ne compile plus tant que la
+ * fenêtre n'a pas dit ce qu'elle en montre. C'est exactement ce qu'on veut d'un dispositif
+ * dont chaque valeur signifie « Ash ne touche pas au fichier, et voici pourquoi ».
+ */
+export type CardModeStillMirrorsRust = Assert<Mirrors<RustCardMode, CardMode>>;
+export type CardLogStateStillMirrorsRust = Assert<Mirrors<RustLogState, CardLogState>>;
+export type CardLogStillMirrorsRust = Assert<Mirrors<RustCardLog, CardLog>>;
+export type BranchCardStillMirrorsRust = Assert<Mirrors<RustBranchCard, BranchCard>>;
+
+/**
+ * Le tableau des worktrees (spec §7.3).
+ *
+ * `WorktreeRepo` est confronté au `RepoLine` du backend **et** doit rester la même forme que
+ * [`RepoRef`] : c'est par cette clé que la fiche de branche (#31) parlera du même dépôt que
+ * la colonne de gauche. Le jour où l'une des deux bougerait, l'une de ces deux lignes
+ * cesserait de compiler.
+ */
+export type WorktreeRepoStillMirrorsRust = Assert<Mirrors<RustRepoLine, WorktreeRepo>>;
+export type WorktreeRepoStillMatchesRepoRef = Assert<Mirrors<RepoRef, WorktreeRepo>>;
+export type WorktreeAgentStillMirrorsRust = Assert<Mirrors<RustWorktreeAgent, WorktreeAgent>>;
+/**
+ * Les deux sources de `last worked by`. Une troisième ajoutée en Rust ne compile plus tant
+ * que la fenêtre n'a pas dit ce qu'elle en montre — et cette colonne n'affirme que ce qu'Ash
+ * a observé (ADR-0014).
+ */
+export type WorkSourceStillMirrorsRust = Assert<Mirrors<RustWorkSource, WorkSource>>;
+export type LastWorkStillMirrorsRust = Assert<Mirrors<RustLastWork, LastWork>>;
+export type WorktreeRowStillMirrorsRust = Assert<Mirrors<RustWorktreeRow, WorktreeRow>>;
+/**
+ * La fiche de suppression. `carries` et `command` sont du **texte à montrer** : le jour où le
+ * backend y mettrait une action, cette ligne cesserait de compiler avant que l'écran ne se
+ * mette à supprimer quoi que ce soit (ADR-0015).
+ */
+export type WorktreeRemovalStillMirrorsRust = Assert<Mirrors<RustWorktreeRemoval, WorktreeRemoval>>;

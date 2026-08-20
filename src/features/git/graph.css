@@ -1,0 +1,217 @@
+/*
+ * Le graphe de commits, posé dans le corps du panneau bas.
+ *
+ * Les tokens sont ceux d'`app/styles.css` : la couleur d'un écran est du thème, jamais d'une
+ * feature. La seule valeur écrite en dur ici est la hauteur d'une ligne — et elle est écrite
+ * **deux fois**, ici et dans `graph-view.ts`, parce que le dessin des couloirs est un `<svg>`
+ * dont les coordonnées sont des pixels. `ROW_HEIGHT` porte le commentaire qui les relie.
+ *
+ * Aucune `font-family` : `app/styles.css` pose JetBrains Mono sur `:root`, et tout l'écran en
+ * hérite. Un `sha` n'a donc pas à redemander une monospace — il en est déjà une.
+ */
+
+.git-graph-host {
+    height: 100%;
+    overflow: auto;
+}
+
+.git-graph {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 4px 0 10px;
+    font-size: 11px;
+}
+
+.git-graph.is-empty {
+    padding: 12px 14px;
+}
+
+.git-graph-rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.git-graph-row {
+    display: grid;
+    grid-template-columns: auto 62px minmax(0, 1fr) 120px 82px;
+    align-items: center;
+    gap: 8px;
+    height: 22px;
+    padding: 0 12px;
+    cursor: default;
+    white-space: nowrap;
+}
+
+.git-graph-row:hover {
+    background: color-mix(in srgb, var(--ash-fg) 6%, transparent);
+}
+
+.git-graph-row.is-selected {
+    background: var(--ash-bg-selected);
+}
+
+/*
+ * Le dessin déborde d'une demi-ligne vers le bas : c'est ce qui laisse chaque ligne se
+ * peindre seule tout en rejoignant le point d'en dessous. Les lignes suivantes sont peintes
+ * après, donc leur point recouvre le trait — ce qui est l'ordre voulu.
+ */
+.git-graph-lanes {
+    overflow: visible;
+    color: var(--ash-border-strong);
+}
+
+.git-graph-dot {
+    color: var(--ash-fg-dim);
+}
+
+/* Un commit qu'Ash a vu naître : le point est plein d'accent, pas seulement le mot. */
+.git-graph-dot.is-attributed {
+    color: var(--ash-accent);
+}
+
+.git-graph-sha {
+    color: var(--ash-fg-dim);
+}
+
+.git-graph-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.git-graph-subject {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ash-fg);
+}
+
+.git-graph-ref {
+    flex: none;
+    font-size: 9.5px;
+    padding: 0 5px;
+    border-radius: 8px;
+    border: 1px solid var(--ash-border-soft);
+    color: var(--ash-fg-dim);
+}
+
+/*
+ * La colonne `by` — la raison d'être de l'écran (spec §7.2).
+ *
+ * Un nom d'agent qu'Ash a **observé** est en accent ; un nom d'auteur git reste en gris. Les
+ * deux restent distinguables sans la couleur : le second est en italique. C'est la même
+ * exigence que celle des cinq états — la forme porte l'information, la couleur la double.
+ */
+.git-graph-by {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ash-accent);
+}
+
+.git-graph-by[data-attributed="git"] {
+    color: var(--ash-fg-dim);
+    font-style: italic;
+}
+
+.git-graph-day {
+    color: var(--ash-fg-dim);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/*
+ * La bannière du repli et le bouton « voir plus loin ».
+ *
+ * `shared/ui` ne peint rien — ses classes sont posées nues, et c'est la feuille de la feature
+ * qui les habille. Les deux règles sont donc ici, et pas dans `app/styles.css` : ce panneau
+ * est le seul écran qui les emploie.
+ */
+.git-graph-folded {
+    margin: 8px 12px 0;
+    padding: 6px 10px;
+    border: 1px solid var(--ash-border-soft);
+    border-radius: 4px;
+    color: var(--ash-fg-meta);
+    font-size: 10.5px;
+    white-space: normal;
+}
+
+.git-graph-more {
+    align-self: flex-start;
+    margin: 8px 12px 0;
+    padding: 3px 10px;
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--ash-fg-meta);
+    font-size: 10.5px;
+    cursor: default;
+}
+
+.git-graph-more:hover {
+    color: var(--ash-fg);
+    border-color: var(--ash-border-strong);
+}
+
+/*
+ * L'état vide : un onglet hors dépôt, ou un dépôt sans commit. Les deux sont nominaux, et le
+ * panneau doit se lire comme « rien à montrer », jamais comme une panne.
+ */
+.git-graph.is-empty .ui-empty-title {
+    color: var(--ash-fg-meta);
+    font-size: 11px;
+}
+
+.git-graph.is-empty .ui-empty-prose {
+    margin-top: 4px;
+    color: var(--ash-fg-dim);
+    font-size: 10.5px;
+}
+
+/*
+ * Le panneau de détail : ce que le graphe garde d'un commit, et le prompt qui l'a produit
+ * (ADR-0014). Il se pose sous la liste plutôt qu'à côté : le panneau bas est large et court,
+ * et une colonne de droite y aurait deux lignes de haut.
+ */
+.git-graph-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 10px 12px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--ash-border-soft);
+    border-radius: 6px;
+    background: var(--ash-bg-sidebar);
+    white-space: normal;
+}
+
+.git-graph-detail-subject {
+    color: var(--ash-fg);
+}
+
+.git-graph-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.git-graph-detail-meta,
+.git-graph-detail-note {
+    color: var(--ash-fg-dim);
+}
+
+.git-graph-detail-by {
+    color: var(--ash-accent);
+}
+
+/* Le prompt tel qu'il a été tapé : ses retours à la ligne sont de l'information. */
+.git-graph-detail-prompt {
+    margin: 0;
+    padding: 8px;
+    border-radius: 4px;
+    background: var(--ash-bg);
+    font-size: 10.5px;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}

@@ -26,6 +26,8 @@ src-tauri/src/
     merge/               l'onglet de merge : hunks, côtés nommés, `continue` —
                          **le premier onglet sans PTY**    — spec §7.4 / ADR-0003
     journal/             attribution commit → agent → prompt       — ADR-0014
+    card/                la fiche de branche : le bloc `ash:log`, sa sauvegarde,
+                         ses refus, et le mode local              — ADR-0013
     hooks/               les entrées marquées d'Ash dans les settings.json, leur pose
                          et leur retrait — à l'octet près              — spec §10
     theme/               l'apparence de la fenêtre — mode clair / sombre /
