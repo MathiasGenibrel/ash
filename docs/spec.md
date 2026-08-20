@@ -658,8 +658,20 @@ règle vaut pour les `settings.json` comme pour `<!-- ash:log -->`.
 | **J1 — Terminal** | Tauri + portable-pty + xterm.js, onglets, `Cmd+T`/`Cmd+Shift+T`/`Cmd+1..9`/`Ctrl+Tab`, sidebar groupée par dépôt et worktree, sonde cwd | Ash remplace le terminal quotidien de l'utilisateur. Aucun état d'agent. |
 | **J2 — États** | Socket + `ash-event` + trait `Adapter` + adaptateur `claude-code` + installation des hooks + écran de réglages « Outils » | `working` / `waiting` / `done` fiables sur `claude` et `claude-perso` |
 | **J3 — Attention** | Notifications macOS, subagents, compteur agrégé, remontée d'état | Un agent en `waiting` est vu en < 10 s même hors d'Ash |
-| **J4 — Ouverture** | Épinglage, second adaptateur (codex ou kimi), désinstallation propre, reste des réglages | Un deuxième outil supporté sans toucher au cœur |
+| **J4 — Ouverture** | Épinglage, désinstallation propre, reste des réglages, colonne redimensionnable | **Atteint le 2026-08-20**, amendé : voir ci-dessous |
 | **J5 — Git** | Panneau bas, popup de branches, graphe + journal d'attribution, tableau des worktrees, onglet de merge, fiche de branche | Un rebase en conflit se traite sans quitter Ash, et l'historique dit quel agent a écrit quoi |
+
+**Amendement du 2026-08-20 — le critère de sortie de J4 a changé en cours de route.**
+Il disait « un deuxième outil supporté sans toucher au cœur », et c'est l'adaptateur `codex`
+(#21) qui le portait. L'enquête a été menée et son verdict est écrit
+([`spike codex`](./spikes/codex-adapter.md)) : **le trait `Adapter` suffit tel quel**, un
+adaptateur ne toucherait aucune ligne du cœur, et ADR-0008 tient. Mais l'implémentation a été
+**sortie du jalon** — c'est un *must have* dont le moment n'est pas venu. J4 ferme donc sur ce
+qu'il a livré, et la démonstration du critère reste à faire le jour où #21 sera repris.
+
+Ce que J4 a livré, et qui n'était pas au programme d'origine : la **colonne redimensionnable**
+par son bord (#129), et les **raccourcis réglables** — la source de vérité des liaisons est
+passée du menu natif à un magasin persistant, dont le menu **dérive** (#22).
 
 J5 pèse à lui seul autant que J1 à J4 réunis. Il vient **après** que la supervision
 soit fiable : c'est elle qui donne sa valeur à la colonne `by` et à l'avertissement de
