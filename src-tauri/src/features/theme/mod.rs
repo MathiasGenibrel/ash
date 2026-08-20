@@ -50,6 +50,15 @@
 //! dépendent d'un viewport que seule la webview connaît, et vivent dans
 //! `src/features/sidebar/resize.ts`.
 //!
+//! **Le panneau bas est ici pour la même raison**, et il ajoute une sixième préférence au
+//! fichier : sa hauteur, son ouverture, et la vue qu'il montre (spec §4.3). Ce n'est pas de
+//! l'état de session — la hauteur se règle comme une largeur de colonne, elle survit à la
+//! fermeture, et elle décide de la place qu'a le terminal. La feature ne sait **rien** de ce
+//! que les vues montreront : elle nomme des surfaces, et git n'entre pas ici. Ce qui n'est
+//! pas ici, comme pour la colonne, ce sont ses **bornes** — de 15 % à 70 % de la zone
+//! terminal, elles dépendent d'une mise en page que seule la webview connaît, et vivent dans
+//! `src/features/panel/layout.ts`.
+//!
 //! **L'effet système de la feature**, avec ses deux adaptateurs :
 //!
 //! | Port | Système | Tests |
@@ -62,6 +71,7 @@
 pub mod commands;
 
 mod appearance;
+mod bottom_panel;
 mod density;
 mod error;
 mod font;
@@ -72,6 +82,7 @@ mod sidebar_column;
 mod state;
 mod store;
 
+pub use bottom_panel::{BottomPanel, PanelHeight, PanelView};
 pub use density::SidebarDensity;
 pub use error::ThemeError;
 pub use font::{FontCatalog, SystemFontCatalog, TerminalFont};
