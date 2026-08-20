@@ -8,7 +8,11 @@
 //! - les **métadonnées** d'un worktree — branche et opération en cours — tenues à jour par
 //!   **surveillance de fichiers**, jamais par sondage (spec §5.3) ;
 //! - ce qu'une opération **arrêtée** dit d'elle-même ([`stopped`]), et le **texte** qu'on
-//!   en tire pour l'agent ([`prompt`], spec §7.4).
+//!   en tire pour l'agent ([`prompt`], spec §7.4) ;
+//! - le **graphe de commits** et sa colonne `by` ([`graph`], [`history`], spec §7.2) : les
+//!   couloirs sont une fonction pure, et le nom de l'agent vient du journal d'ADR-0014 par le
+//!   port [`Attributions`], que cette feature possède parce que c'est elle qui pose la
+//!   question.
 //!
 //! # Pourquoi la rédaction du prompt vit ici
 //!
@@ -47,6 +51,8 @@
 //! | `Clock`, `Scheduler` (`shared/time.rs`) | `shared/time.rs` | `fakes.rs` |
 //! | `StatusReader` (`git_cli.rs`) | `git_cli.rs` | `fakes.rs` |
 //! | `BranchReader`, `TreeWriter` (`git_cli.rs`) | `git_cli.rs` | `branch_actions.rs` |
+//! | `GraphLog` (`git_cli.rs`) | `git_cli.rs` | `history.rs` |
+//! | `Attributions` (`attribution.rs`) | `lib.rs`, sur `CommitJournal` | `history.rs` |
 //! | `WorkingAgents` (`working_agents.rs`) | `lib.rs` | `branches.rs` |
 //! | `TabPresence`, `WorkHistory`, `WorktreeFacts` (`table.rs`) | `lib.rs`, `metadata_watch.rs` | `table.rs` |
 //!
@@ -78,15 +84,23 @@
 //! adaptateur. Ce que ça gagne n'est pas d'avoir un port de moins : c'est que la règle
 //! `at_risk`, qui vit ici et qui a ses tests ici, cesse d'être **appliquée** dans le
 //! composition root, où rien ne la regarde.
+//!
+//! `Attributions` répond à la même règle que les précédents : le graphe doit dire **qui** a
+//! écrit un commit, et cette réponse est dans le journal d'ADR-0014 — que `git` ne connaît
+//! pas. La question est posée ici, donc le port vit ici, et c'est `lib.rs` qui le branche sur
+//! `CommitJournal`.
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
 pub mod commands;
 
+mod attribution;
 mod branch_actions;
 mod branches;
 mod control;
 mod error;
 mod git_cli;
+mod graph;
+mod history;
 mod metadata;
 mod metadata_watch;
 mod porcelain;
@@ -110,6 +124,7 @@ mod fake_fs;
 #[cfg(test)]
 mod fakes;
 
+pub use attribution::{Attribution, Attributions};
 pub use branch_actions::{ActionOffer, ActionOutcome, BranchAction};
 pub use branches::{
     overview as branch_overview, Branch, BranchGroup, BranchKind, BranchOverview, BranchSection,
@@ -117,8 +132,25 @@ pub use branches::{
 };
 pub use error::GitError;
 pub use git_cli::{
-    BranchReader, CommitRecord, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
+    BranchReader, CommitRecord, GraphLog, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
 };
+// Du graphe, l'extérieur ne voit que **le chemin de production** — [`CommitGraphReader`], que
+// `lib.rs` assemble — et de quoi refaire un dessin sur un vrai dépôt, ce que
+// `tests/commit_graph_real_repository.rs` est seul à faire : un test d'intégration ne peut
+// atteindre que l'API publique, et la chaîne qu'il vérifie (le processus `git`, la lecture de
+// sa sortie, les couloirs) n'a pas d'autre porte.
+//
+// Ce qui n'est **pas** exporté ne manque à personne, et c'est voulu : `MAX_LANES`,
+// `INACTIVE_AFTER`, `DEFAULT_WINDOW`, `MAX_GRAPH_WINDOW` sont des choix de produit que cette
+// feature applique elle-même, et `CommitGraph` / `CommitRow` sont la forme de la réponse d'une
+// commande Tauri — l'écran les connaît par le contrat, jamais une autre feature Rust. Publier
+// une seconde porte vers les couloirs reviendrait à laisser une autre feature les recalculer,
+// c'est-à-dire à rouvrir ce qu'ADR-0009 ferme.
+//
+// `graph::FoldedBranch` reste privée : `history` en expose une jumelle sérialisable, et deux
+// types du même nom dans la même API publique n'apprendraient rien à personne.
+pub use graph::{lay_out, GraphCommit, Layout, Link};
+pub use history::CommitGraphReader;
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,
     WorktreeMetadata,

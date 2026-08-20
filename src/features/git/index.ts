@@ -1,15 +1,26 @@
 /**
- * API publique de la feature git côté fenêtre : **la popup de branches** (spec §7.1), **le tableau
- * des worktrees** (spec §7.3) et **la fiche de branche** (spec §7.5).
+ * API publique de la feature git côté fenêtre : **la popup de branches** (spec §7.1), **le
+ * graphe de commits** (spec §7.2), **le tableau des worktrees** (spec §7.3) et **la fiche de
+ * branche** (spec §7.5).
  *
- * Le dossier portera aussi le graphe (#27) et l'onglet de merge (#30), écrits en parallèle. Ce fichier est leur point de rencontre, et le seul que `app/`
- * importe — jamais `controller`, `popup`, `bridge`, `worktree-table`, `card` ni `markdown`.
+ * Le dossier portera aussi l'onglet de merge (#30). Ce fichier est le point de rencontre des
+ * quatre vues, et le seul que `app/` importe — jamais `controller`, `popup`, `bridge`,
+ * `graph`, `worktree-table`, `card` ni `markdown`.
  *
  * **Cette feature ne détient aucun état d'agent ni aucun état git**
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : elle demande, elle
- * rend, et elle repose ses questions au backend à chaque ouverture. Ce qu'elle tient en
- * propre est ce que le backend n'a pas — le filtre en cours et la ligne sélectionnée.
+ * rend, et elle repose ses questions au backend à chaque ouverture. Les couloirs du graphe,
+ * sa colonne `by` et le repli des branches inactives sont décidés en Rust. Ce qu'elle tient
+ * en propre est ce que le backend n'a pas — le filtre en cours, la ligne sélectionnée, la
+ * ligne dont le détail est ouvert, la fenêtre déjà demandée.
+ *
+ * **Une seule de ses vues lance une action git** : la popup de branches, sur un geste
+ * explicite. Le graphe, le tableau et la fiche **lisent**.
  */
+
+export type { CommitGraph, CommitRow, FoldedBranch, GraphLink } from "./contract";
+export { mountCommitGraph, type CommitGraphPanel, type CommitGraphPorts } from "./graph";
+export { WINDOW_STEP } from "./graph-view";
 
 export {
     mountWorktreeTable,

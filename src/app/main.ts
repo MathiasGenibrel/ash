@@ -1,5 +1,10 @@
 import "./styles.css";
-import { mountBranchCard, mountBranches, mountWorktreeTable } from "@/features/git";
+import {
+    mountBranchCard,
+    mountBranches,
+    mountCommitGraph,
+    mountWorktreeTable,
+} from "@/features/git";
 import { mountBottomPanel, type BottomPanelState } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
@@ -32,6 +37,7 @@ import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
 import { followBottomPanel, type BottomPanelBinding } from "./bottom-panel";
 import { followBranchCard, type BranchCardBinding } from "./branch-card";
+import { readCommitGraph } from "./commit-graph";
 import { listWorktrees, worktreeRemoval } from "./worktrees";
 
 /**
@@ -182,6 +188,26 @@ function mount(
     // Le nom traverse en paramètre plutôt que d'être relu à chaque titre : il est constant
     // pour toute la session, et le relire à chaque changement d'onglet ferait un
     // aller-retour Tauri par `cd`.
+    /**
+     * Qui possède le corps du panneau.
+     *
+     * Trois vues s'y posent — le graphe, le tableau des worktrees, la fiche de branche — et le
+     * corps est **une seule boîte**. La règle est donc écrite une fois ici, plutôt que trois
+     * fois dans trois `syncX()` : une vue s'attache quand le panneau est ouvert sur *sa* vue,
+     * et se retire sinon. Aucune ne remplace le contenu du corps — remplacer, c'est décrocher
+     * la vue d'à côté et la laisser croire qu'elle est encore là.
+     *
+     * Rend `true` au moment où la vue **arrive**, ce qui n'est pas la même chose qu'être
+     * montrée : une vue déjà en place ne relit pas.
+     */
+    const ownPanelBody = (element: HTMLElement, mine: boolean): boolean => {
+        const held = element.parentElement === panel.body;
+        if (mine === held) return false;
+        if (mine) panel.body.append(element);
+        else element.remove();
+        return mine;
+    };
+
     // La fiche de branche (#31) se pose dans le **corps** du panneau, sur la vue `branch`.
     // Les deux features ne se connaissent pas : le panneau expose une boîte dont il garantit
     // la hauteur, la fiche est une vue qui n'en sait rien, et elles se rencontrent ici — comme
@@ -198,7 +224,6 @@ function mount(
             void showCard(branchCard.place(cardWorktree ?? "", local));
         },
     });
-    panel.body.append(card.element);
 
     let cardWorktree: string | null = null;
     let cardShown = false;
@@ -222,6 +247,37 @@ function mount(
     };
 
     const titleBar = createTitleBar(windowTitle(null, appName));
+
+    // Le graphe de commits (#27, spec §7.2) se pose dans le corps du panneau, qui est une
+    // boîte vide que le panneau expose sans rien savoir de git. Les deux features ne se
+    // connaissent donc pas plus que la sidebar et la feature terminal : elles se rencontrent
+    // ici, et nulle part ailleurs.
+    //
+    // Il **lit**, et rien d'autre : aucun verbe git ne part de cet écran.
+    const graph = mountCommitGraph({ read: readCommitGraph });
+    // Le worktree regardé est celui de l'onglet actif : c'est la même clé que celle par
+    // laquelle la sidebar range les onglets et par laquelle le backend résout un dépôt
+    // ([ADR-0012](../../docs/adr/0012-worktree-unite-de-travail.md)). Le graphe ne la calcule
+    // pas — le backend a déjà situé l'onglet.
+    let graphRoot: string | null = null;
+    let graphShown = false;
+
+    /**
+     * Ce que le graphe regarde, et quand il relit.
+     *
+     * Une seule règle, et elle tient à un processus : **on ne lance un `git log` que pour un
+     * écran qu'on regarde**. Un graphe relu à chaque changement d'onglet, panneau fermé,
+     * ferait partir un processus par `cd` de l'utilisateur — exactement ce qu'ADR-0011
+     * interdit à la boucle de sonde.
+     */
+    const syncGraph = (): void => {
+        // `show` ne relit que si le worktree a changé ; la vue qui **arrive**, elle, relit
+        // toujours — le `HEAD` a pu bouger pendant qu'elle était cachée.
+        const arriving = ownPanelBody(graph.element, graphShown);
+        if (!graphShown) return;
+        graph.show(graphRoot);
+        if (arriving) graph.refresh();
+    };
 
     // La popup de branches (spec §7.1), reliée ici comme la sidebar et la bande de titre : la
     // feature terminal ne connaît pas `features/git`, et `features/git` ne connaît ni les
@@ -250,9 +306,13 @@ function mount(
     });
 
     terminals.onActiveTab((active) => {
-        here = active?.tab.location?.worktreeRoot ?? null;
-        titleBar.setTitle(windowTitle(active, appName));
         const worktree = active?.tab.location?.worktreeRoot ?? null;
+        here = worktree;
+        titleBar.setTitle(windowTitle(active, appName));
+        // Le graphe suit le worktree de l'onglet actif — et il le suit **avant** la fiche,
+        // qui rend la main quand le worktree n'a pas changé.
+        graphRoot = worktree;
+        syncGraph();
         if (worktree === cardWorktree) return;
         cardWorktree = worktree;
         drawCard();
@@ -284,28 +344,30 @@ function mount(
     // c'est ce qui laisse un seul détenteur à l'ouverture, et ce qui fera que le clic sur un
     // onglet et le raccourci de #32 ne pourront pas se contredire.
     //
-    // C'est aussi cette annonce qui décide **quand** le tableau se relit : une vue fermée n'a
+    // C'est aussi cette annonce qui décide **quand** chaque vue relit : une vue fermée n'a
     // rien à demander au backend, et une vue qui s'ouvre doit dire la vérité de l'instant.
-    // Les quatre vues du panneau partageront ce corps ; celle-ci retire ce qu'elle y a posé
-    // dès qu'une autre est montrée.
     const showPanelBody = (next: BottomPanelState): void => {
-        const mine = next.open && next.view === "worktrees";
-        if (mine) {
-            if (worktrees.element.parentElement !== panel.body) {
-                panel.body.replaceChildren(worktrees.element);
-            }
-            worktrees.refresh();
-        } else if (worktrees.element.parentElement === panel.body) {
-            worktrees.element.remove();
-        }
+        // Le graphe (#27, spec §7.2).
+        graphShown = next.open && next.view === "graph";
+        syncGraph();
+
+        // Le tableau des worktrees (#28, spec §7.3).
+        const showsTable = next.open && next.view === "worktrees";
+        ownPanelBody(worktrees.element, showsTable);
+        if (showsTable) worktrees.refresh();
+
+        // La fiche de branche (#31, spec §7.5). Elle ne relit que sur un **changement** :
+        // lire une fiche est lire un fichier, et le panneau qu'on redimensionne n'en change
+        // pas le contenu.
+        const showsCard = next.open && next.view === "branch";
+        const changed = showsCard !== cardShown;
+        cardShown = showsCard;
+        ownPanelBody(card.element, showsCard);
+        if (changed) drawCard();
     };
 
     bottomPanel.subscribe((next) => {
         panel.setPanel(next);
-        const showing = next.open && next.view === "branch";
-        const changed = showing !== cardShown;
-        cardShown = showing;
-        if (changed) drawCard();
         showPanelBody(next);
     });
     panel.setPanel(bottomPanel.current);
