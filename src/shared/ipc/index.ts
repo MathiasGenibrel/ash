@@ -107,6 +107,21 @@ export interface RecognizedAgent {
 }
 
 /**
+ * La place qu'une conversation occupe dans sa fenêtre de contexte.
+ *
+ * **Deux nombres, et pas un pourcentage** : le calcul est un fait d'affichage, et le garder
+ * ici laisse l'écran libre de dire `128k / 200k` plutôt qu'un `73 %`.
+ *
+ * `windowTokens` est une **supposition**, et c'est une limite connue : le transcript nomme le
+ * modèle sans dire si la session est de 200 k ou de 1 M, et aucun hook ne le dit non plus.
+ * `usedTokens`, lui, est exact.
+ */
+export interface SessionUsage {
+    usedTokens: number;
+    windowTokens: number;
+}
+
+/**
  * Un onglet, tel que le backend le décrit.
  *
  * `cwd` est le répertoire **courant** : la sonde d'ADR-0005 le suit à travers les `cd`, et
@@ -156,6 +171,22 @@ export interface TabInfo {
      * sous-tâches, sans que rien ne suggère qu'il en manque.
      */
     subagents: Subagent[];
+    /**
+     * La place que la conversation de cet onglet occupe dans sa fenêtre de contexte, ou
+     * `null`.
+     *
+     * `null` couvre trois cas que rien ne doit distinguer à l'écran : l'outil ne tient pas de
+     * transcript, aucun hook n'en a encore nommé un, ou la mesure n'a rien donné. Dans les
+     * trois, **on n'affiche rien** — pas de jauge à zéro, pas de `ctx —`. Un outil muet ne
+     * doit rien coûter à l'affichage, et rien ne doit suggérer qu'il manque une mesure.
+     *
+     * Elle voyage comme `stateSince` : une donnée absolue, envoyée au changement. Le backend
+     * ne relit le transcript qu'à l'arrivée d'un hook — jamais à une passe de sonde — donc
+     * elle ne fait pas repartir `ash://tab-changed`.
+     *
+     * Ce n'est **pas** un état : un contexte plein ne rend pas un onglet `error`.
+     */
+    usage: SessionUsage | null;
     location: TabLocation | null;
     /**
      * Le groupe en avant-plan de cet onglet est **arrêté** — `SIGSTOP`

@@ -148,6 +148,7 @@ mod tests {
             state: AgentState::Idle,
             state_since: 0,
             subagents: Vec::new(),
+            usage: None,
             location: None,
             paused: false,
         }

@@ -43,6 +43,7 @@ import type { ComposeOutcome as RustComposeOutcome } from "./generated/ComposeOu
 import type { Status as RustStatus } from "./generated/Status";
 import type { StoppedCommit as RustStoppedCommit } from "./generated/StoppedCommit";
 import type { StoppedOperation as RustStoppedOperation } from "./generated/StoppedOperation";
+import type { SessionUsage as RustSessionUsage } from "./generated/SessionUsage";
 import type { Subagent as RustSubagent } from "./generated/Subagent";
 import type { TabInfo as RustTabInfo } from "./generated/TabInfo";
 import type { TabLocation as RustTabLocation } from "./generated/TabLocation";
@@ -94,6 +95,7 @@ import type {
     RepoRef,
     StoppedCommit,
     StoppedOperation,
+    SessionUsage,
     Subagent,
     ConflictFile,
     MergeHunk,
@@ -147,6 +149,7 @@ export type SidebarRowsStillMirrorsRust = Assert<Mirrors<RustSidebarRows, Sideba
 
 export type TabLocationStillMirrorsRust = Assert<Mirrors<RustTabLocation, TabLocation>>;
 export type SubagentStillMirrorsRust = Assert<Mirrors<RustSubagent, Subagent>>;
+export type SessionUsageStillMirrorsRust = Assert<Mirrors<RustSessionUsage, SessionUsage>>;
 export type TabInfoStillMirrorsRust = Assert<Mirrors<RustTabInfo, TabInfo>>;
 
 export type GitHeadStillMirrorsRust = Assert<Mirrors<RustHead, GitHead>>;

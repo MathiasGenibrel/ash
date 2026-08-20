@@ -42,6 +42,7 @@
 //! | `EventSink` (`socket.rs`) | `HookEvents` (`lib.rs`) | `FakeSink` (`socket.rs`) |
 //! | `Notifier` (`notify.rs`) | `AppNotifier` (`lib.rs`) | `FakeNotifier` (`fakes.rs`) |
 //! | `NotificationStore` (`preferences.rs`) | `FileNotificationStore` (idem) | `FakeNotificationStore` (`fakes.rs`) |
+//! | `Transcripts` (`usage.rs`) | `FileTranscripts` (idem) | `FakeTranscripts` (`fakes.rs`) |
 //!
 //! Le premier n'est **pas** le socket : celui-ci est l'effet que la feature exerce
 //! elle-même, et ses tests l'exercent pour de vrai. Ce que `EventSink` abstrait, c'est la
@@ -61,6 +62,14 @@
 //! écrire dans le `$HOME` de qui le lance. **Le filtre est consulté sur le chemin qui poste**,
 //! par [`Supervisor`] : une bannière ne sort que quand Ash est en arrière-plan, donc rien de
 //! ce que la fenêtre pourrait filtrer n'arriverait à temps.
+//!
+//! Le quatrième est le plus récent, et le seul à ne rien décider : il **lit la fin d'un
+//! fichier** que l'outil tient déjà — le transcript d'une conversation, dont l'adaptateur
+//! sait tirer la place consommée (`usage.rs`). Il est un port pour la raison habituelle, et
+//! pour une de plus : ce qu'un transcript réel contient dépend de la version de l'outil
+//! installée sur la machine qui lance les tests, et une suite ne doit pas en dépendre. La
+//! mesure qu'il rapporte n'est **pas** un état, et n'a aucun chemin vers
+//! [`AgentState`] — un contexte plein ne rend pas un onglet `error`.
 
 mod adapter;
 mod adapters;
@@ -80,6 +89,7 @@ mod socket;
 mod state;
 mod subagents;
 mod supervisor;
+mod usage;
 mod wire;
 
 pub use adapter::{
@@ -104,4 +114,12 @@ pub use state::{AgentState, AgentStatus};
 // réglage que l'assemblage pose.
 pub use subagents::{Subagent, SUBAGENT_LINGER};
 pub use supervisor::{Presence, Supervisor, TabAgents};
+// `UsageSupport` ne sort pas : c'est une question que le cœur pose à un adaptateur, et le
+// seul qui la pose est le superviseur. `DEFAULT_CONTEXT_WINDOW` non plus, et pour une raison
+// plus forte : la fenêtre voyage **avec** la mesure (`SessionUsage::window_tokens`), donc
+// personne au-dehors n'a de dénominateur à aller chercher. L'exporter inviterait à recalculer
+// un pourcentage à côté de la mesure, c'est-à-dire à faire diverger les deux le jour où la
+// fenêtre cessera d'être une supposition. Ce qui traverse la frontière est la mesure, et le
+// port qui va la chercher — que le composition root doit pouvoir brancher.
+pub use usage::{FileTranscripts, SessionUsage, Transcripts};
 pub use wire::{socket_path, EventFrame};

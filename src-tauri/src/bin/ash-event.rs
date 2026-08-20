@@ -83,7 +83,7 @@ fn main() {
     // L'entrée standard est lue **après** les arguments, et jamais avant : une invocation
     // mal formée est un défaut d'Ash, et elle doit le dire tout de suite plutôt qu'après
     // avoir attendu un objet qu'elle n'utilisera pas.
-    let invocation = invocation.enriched_with(subagent());
+    let invocation = invocation.enriched_with(payload());
 
     // À partir d'ici, plus rien n'a le droit d'échouer bruyamment.
     post(&invocation);
@@ -97,31 +97,46 @@ struct Invocation {
 }
 
 impl Invocation {
-    /// La même invocation, en nommant l'enfant si l'outil en a nommé un.
-    fn enriched_with(mut self, subagent: Option<Subagent>) -> Self {
-        let Some(subagent) = subagent else {
+    /// La même invocation, enrichie de ce que l'outil a dit sur son entrée standard.
+    fn enriched_with(mut self, payload: Option<HookPayload>) -> Self {
+        let Some(payload) = payload else {
             return self;
         };
         self.frame = self
             .frame
-            .with_subagent(subagent.agent_id.as_deref(), subagent.agent_type.as_deref());
+            .with_subagent(payload.agent_id.as_deref(), payload.agent_type.as_deref())
+            .with_transcript(payload.transcript_path.as_deref());
         self
     }
 }
 
-/// L'enfant que l'outil a nommé sur l'entrée standard, s'il y en a un.
+/// Ce qu'on retient de ce que l'outil a écrit sur l'entrée standard.
 ///
 /// Les champs inconnus de l'objet sont ignorés : on ne lit ici que ce qu'ADR-0007 autorise
-/// à transporter, et un hook en dit bien davantage — le `cwd`, la session, le transcript.
+/// à transporter, et un hook en dit bien davantage — le `cwd`, la session, le mode de
+/// permission.
+///
+/// **Trois clés, et aucune n'est un état.** Les deux premières nomment l'enfant qui a produit
+/// l'événement (amendement du 2026-08-13) ; la troisième nomme le fichier où l'outil écrit sa
+/// conversation. Aucune ne se traduit en l'un des cinq mots : l'état déclaré vient de la
+/// ligne de commande, et de nulle part ailleurs.
 #[derive(Debug, Default, PartialEq, Eq, serde::Deserialize)]
-struct Subagent {
+struct HookPayload {
     #[serde(default)]
     agent_id: Option<String>,
     #[serde(default)]
     agent_type: Option<String>,
+    /// Où l'outil écrit la conversation — présent sur **tous** les événements de Claude Code.
+    ///
+    /// `ash-event` ne l'ouvre pas, et ne doit jamais l'ouvrir : ce serait une lecture de
+    /// disque sur le chemin d'un hook, donc dans le tour d'un agent, pour une mesure que
+    /// personne n'attend à cette milliseconde. Il transporte le chemin ; Ash lira quand il
+    /// voudra.
+    #[serde(default)]
+    transcript_path: Option<String>,
 }
 
-/// L'enfant lu sur l'entrée standard — et rien du tout au moindre doute.
+/// Ce que l'entrée standard porte — et rien du tout au moindre doute.
 ///
 /// **Ce chemin ne peut pas bloquer, et c'est sa seule vraie contrainte** ; trois cas, trois
 /// conduites :
@@ -138,17 +153,17 @@ struct Subagent {
 /// Une entrée illisible, tronquée ou qui n'est pas du JSON tombe dans le même `None` : ce
 /// n'est pas une erreur, c'est une absence d'information. L'état déclaré, lui, part dans
 /// tous les cas.
-fn subagent() -> Option<Subagent> {
-    subagent_of(&read_stdin()?)
+fn payload() -> Option<HookPayload> {
+    payload_of(&read_stdin()?)
 }
 
-/// L'enfant que porte un objet de hook, si cet objet en nomme un.
+/// Ce qu'un objet de hook porte d'utile, s'il porte quoi que ce soit.
 ///
 /// Séparée de la lecture parce que c'est la seule moitié qui décide quelque chose : ce qui
 /// entre est du texte, et ce qui sort est ce qu'ADR-0007 autorise à transporter.
-fn subagent_of(payload: &str) -> Option<Subagent> {
-    let subagent: Subagent = serde_json::from_str(payload).ok()?;
-    (subagent != Subagent::default()).then_some(subagent)
+fn payload_of(written: &str) -> Option<HookPayload> {
+    let payload: HookPayload = serde_json::from_str(written).ok()?;
+    (payload != HookPayload::default()).then_some(payload)
 }
 
 fn read_stdin() -> Option<String> {
@@ -245,22 +260,24 @@ fn post(invocation: &Invocation) {
     let _ = stream.flush();
 }
 
-/// La ligne à écrire, quitte à **abandonner l'enfant** pour tenir dans la trame.
+/// La ligne à écrire, quitte à **abandonner tout ce qui n'est pas l'état** pour tenir dans
+/// la trame.
 ///
 /// La borne du fil (`wire::MAX_FRAME_BYTES`, 8 Kio) est une frontière de sécurité du
 /// serveur : au-delà, la ligne est refusée sans être accumulée, donc l'état déclaré serait
-/// perdu. L'état est la seule chose qu'un hook existe pour transporter : la clé d'enfant
-/// tombe donc la première, et la trame repart sans elle.
+/// perdu. L'état est la seule chose qu'un hook existe pour transporter : les clés d'enfant et
+/// le chemin du transcript tombent donc les premiers, et la trame repart sans eux.
 ///
 /// **Ce repli est silencieux, et c'est pourquoi il ne doit plus pouvoir se déclencher pour
 /// une clé d'enfant** : une ligne fille qui disparaîtrait ici ne laisserait aucune trace.
-/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES`, qui écarte une clé démesurée **là où elle
-/// entre**, bien avant que la trame ne puisse déborder à cause d'elle. Ce qui reste ici ne
+/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES` et de `wire::MAX_TRANSCRIPT_PATH_BYTES`, qui
+/// écartent une valeur démesurée **là où elle entre**, bien avant que la trame ne puisse
+/// déborder à cause d'elle. Ce qui reste ici ne
 /// couvre plus qu'un `<état>` ou un `--tab` absurdes, que le bloc d'Ash n'écrit pas.
 fn line_of(frame: &EventFrame) -> Option<String> {
     frame
         .to_line()
-        .or_else(|_| frame.clone().without_subagent().to_line())
+        .or_else(|_| frame.clone().without_extras().to_line())
         .ok()
 }
 
@@ -327,40 +344,80 @@ mod tests {
         let written = hook_payload(r#","agent_id":"agent-7","agent_type":"code-reviewer""#);
 
         // When
-        let child = subagent_of(&written);
+        let read = payload_of(&written);
 
-        // Then
+        // Then — les trois clés d'un coup : l'enfant, et le transcript que **tout** hook
+        // porte, y compris celui-ci.
         assert_eq!(
-            child,
-            Some(Subagent {
+            read,
+            Some(HookPayload {
                 agent_id: Some("agent-7".to_owned()),
                 agent_type: Some("code-reviewer".to_owned()),
+                transcript_path: Some("/tmp/t.jsonl".to_owned()),
             })
         );
     }
 
     #[test]
-    fn given_a_standard_input_that_names_no_child_when_it_is_read_then_the_event_stays_what_it_was()
-    {
-        // Given — les quatre entrées que l'on rencontrera vraiment : le hook de l'agent
-        // principal, une entrée vide, un flux coupé au milieu, et quelque chose qui n'est
-        // pas du JSON. Aucune n'est une erreur : ce sont des absences d'information, et
-        // l'état déclaré doit partir dans les quatre cas.
+    fn given_a_hook_of_the_main_agent_when_its_payload_is_read_then_the_transcript_travels_without_a_child(
+    ) {
+        // Given — l'écrasante majorité des hooks : aucun sous-agent, et un transcript. Avant
+        // cette tranche, cette entrée-là ne portait rien du tout et `payload_of` rendait
+        // `None` ; désormais elle porte la seule clé dont la jauge a besoin.
+        let written = hook_payload("");
+
+        // When
+        let read = payload_of(&written);
+
+        // Then
+        assert_eq!(
+            read,
+            Some(HookPayload {
+                agent_id: None,
+                agent_type: None,
+                transcript_path: Some("/tmp/t.jsonl".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_standard_input_that_carries_nothing_we_read_when_it_is_read_then_the_event_stays_what_it_was(
+    ) {
+        // Given — les trois entrées que l'on rencontrera vraiment sans rien à en tirer : une
+        // entrée vide, un flux coupé au milieu, et quelque chose qui n'est pas du JSON.
+        // Aucune n'est une erreur : ce sont des absences d'information, et l'état déclaré
+        // doit partir dans les trois cas.
         let entrances = [
-            hook_payload(""),
             String::new(),
             r#"{"session_id":"abc","agent_i"#.to_owned(),
             "Erreur : jq introuvable\n".to_owned(),
         ];
 
         // When
-        let children: Vec<Option<Subagent>> = entrances
+        let read: Vec<Option<HookPayload>> = entrances
             .iter()
-            .map(|written| subagent_of(written))
+            .map(|written| payload_of(written))
             .collect();
 
         // Then
-        assert_eq!(children, vec![None, None, None, None]);
+        assert_eq!(read, vec![None, None, None]);
+    }
+
+    #[test]
+    fn given_a_transcript_path_longer_than_any_real_path_when_it_is_posted_then_the_state_still_leaves_and_the_path_is_dropped(
+    ) {
+        // Given — la borne du fil est une frontière de sécurité, pas un réglage. Un chemin
+        // absurde ne doit pas emporter l'état dans le fossé, et il ne doit pas non plus être
+        // tronqué : un chemin coupé désignerait un autre fichier, qu'Ash ouvrirait.
+        let frame = EventFrame::new("waiting", "01J0TAB")
+            .with_transcript(Some(&format!("/tmp/{}.jsonl", "z".repeat(16 * 1024))));
+
+        // When
+        let line = line_of(&frame);
+
+        // Then — l'état part, sans jauge et sans repli silencieux : la borne a écarté le
+        // chemin là où il entrait.
+        assert_eq!(line, EventFrame::new("waiting", "01J0TAB").to_line().ok());
     }
 
     #[test]

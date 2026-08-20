@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::features::agents::{AgentState, Presence, ProgramIdentity, RecognizedAgent, Subagent};
+use crate::features::agents::{
+    AgentState, Presence, ProgramIdentity, RecognizedAgent, SessionUsage, Subagent,
+};
 use crate::shared::time::UnixMillis;
 
 use super::agent_states::AgentStates;
@@ -230,6 +232,25 @@ pub struct TabInfo {
     /// durée vivante ferait changer cette fiche à chaque seconde, et l'event ponctuel
     /// deviendrait un flux.
     pub subagents: Vec<Subagent>,
+    /// La place que la conversation de cet onglet occupe dans sa fenêtre de contexte.
+    ///
+    /// `None` dans l'écrasante majorité des cas, et **`None` pour toujours** chez un outil
+    /// qui ne tient pas de transcript : l'adaptateur `generic` déclare `UsageSupport::None`,
+    /// donc aucun onglet servi par lui ne portera jamais ce champ. C'est ce qui permet à
+    /// l'écran de ne rien afficher plutôt que d'afficher un vide — pas de jauge à zéro, pas
+    /// de `ctx —` (voir `features::agents::SessionUsage`).
+    ///
+    /// **Elle ne fait pas repartir l'event, et c'est la même mécanique que
+    /// [`Self::state_since`]** : la fiche est comparée entière pour décider d'émettre (voir
+    /// [`Self::changes`]), et cette valeur ne change qu'à l'arrivée d'un hook portant un
+    /// transcript — jamais à une passe de sonde. Le superviseur ne relit rien toutes les
+    /// 300 ms : il rend la dernière mesure lue, à l'octet près identique tant que l'agent
+    /// n'a pas reparlé, donc `ash://tab-changed` ne part pas plus souvent qu'avant.
+    ///
+    /// Ce n'est **pas** un état d'agent, et rien ici n'a de chemin vers [`AgentState`] : un
+    /// contexte plein ne rend pas un onglet `error`
+    /// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+    pub usage: Option<SessionUsage>,
     /// Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
     /// n'a pas pu être situé.
     pub location: Option<TabLocation>,
@@ -704,6 +725,7 @@ impl PtyRegistry {
             state: agents.status.state,
             state_since: agents.status.since,
             subagents: agents.subagents,
+            usage: agents.usage,
             paused,
         }
     }
@@ -1629,6 +1651,13 @@ mod tests {
         // puisqu'elle porte une seconde date. Le `working · 15m22s` d'une ligne fille se
         // calcule à l'affichage, exactement comme celui de l'onglet.
         agents.declare_subagent("explore", AgentState::Working, 0);
+        // Et sa jauge de contexte : elle ne se relit qu'à l'arrivée d'un hook, jamais à une
+        // passe de sonde. Une mesure qui se rafraîchirait toutes les 300 ms serait le même
+        // piège que la durée, et il coûterait en plus une lecture de disque par passe.
+        agents.declare_usage(SessionUsage {
+            used_tokens: 146_273,
+            window_tokens: 200_000,
+        });
         let discovered = registry.changes().unwrap(); // la passe qui découvre l'onglet
 
         // When — une heure de boucle, et rien d'autre que le temps qui passe
@@ -1644,9 +1673,16 @@ mod tests {
         assert_eq!(
             discovered
                 .iter()
-                .map(|tab| (tab.state_since, tab.subagents.len()))
+                .map(|tab| (tab.state_since, tab.subagents.len(), tab.usage))
                 .collect::<Vec<_>>(),
-            vec![(0, 1)]
+            vec![(
+                0,
+                1,
+                Some(SessionUsage {
+                    used_tokens: 146_273,
+                    window_tokens: 200_000,
+                })
+            )]
         );
         assert_eq!(announced, vec![]);
     }

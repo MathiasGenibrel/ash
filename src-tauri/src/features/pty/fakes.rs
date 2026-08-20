@@ -20,8 +20,8 @@ use super::recognition::{AgentRecognition, NoRecognition};
 use super::registry::{PtyRegistry, TabId};
 use super::session::{OpenPty, PtySession, PtySpawner, PtySpec, Terminal};
 use crate::features::agents::{
-    AgentState, AgentStatus, Instrumented, Presence, ProgramIdentity, RecognizedAgent, Subagent,
-    TabAgents,
+    AgentState, AgentStatus, Instrumented, Presence, ProgramIdentity, RecognizedAgent,
+    SessionUsage, Subagent, TabAgents,
 };
 use crate::features::probe::{Pid, Probe, ProbeError, ProcessControl, ProcessInfo};
 use crate::shared::time::UnixMillis;
@@ -265,6 +265,9 @@ pub struct FakeAgentStates {
     dated: Mutex<HashMap<TabId, AgentStatus>>,
     /// Les lignes filles que le superviseur rendrait pour chaque onglet (spec §6.5).
     children: Mutex<Vec<Subagent>>,
+    /// La place consommée que le superviseur rendrait — `None` par défaut, comme pour tout
+    /// onglet dont l'outil ne tient pas de transcript.
+    usage: Mutex<Option<SessionUsage>>,
 }
 
 impl FakeAgentStates {
@@ -285,6 +288,15 @@ impl FakeAgentStates {
             state,
             since,
         });
+    }
+
+    /// L'outil de chaque onglet dit occuper cette place dans sa fenêtre de contexte.
+    ///
+    /// Une **valeur** et non une lecture : la doublure ne relit rien, exactement comme le
+    /// vrai superviseur, qui rend à chaque passe de sonde la dernière mesure qu'un hook lui a
+    /// apportée.
+    pub fn declare_usage(&self, usage: SessionUsage) {
+        *self.usage.lock().unwrap() = Some(usage);
     }
 
     /// Le temps passe, et rien d'autre ne se produit.
@@ -311,6 +323,7 @@ impl AgentStates for FakeAgentStates {
         TabAgents {
             status,
             subagents: self.children.lock().unwrap().clone(),
+            usage: *self.usage.lock().unwrap(),
         }
     }
 
