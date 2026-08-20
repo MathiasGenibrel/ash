@@ -212,7 +212,7 @@ pub fn build<R: Runtime>(
     // applicatif, et le seul endroit où un utilisateur va le chercher. Il est écrit
     // `Cmd+Comma` parce que l'analyseur d'accélérateurs de Tauri lit des **noms** de
     // touches, pas des caractères — voir [`descriptor`], où il est déclaré.
-    let settings_item = item(app, Action::OpenSettings, bindings, true)?;
+    let settings_item = item(app, Action::OpenSettings, bindings)?;
 
     // Le menu applicatif porte le nom du binaire courant, pas un littéral : en debug il dit
     // « Ash-dev », et c'est souvent le seul endroit où l'on voit d'un coup d'œil laquelle
@@ -258,9 +258,9 @@ pub fn build<R: Runtime>(
     // n'a pas de seconde fenêtre de terminal à ouvrir, donc `Cmd+N` ne fait plus rien
     // plutôt que de rester un doublon : deux conventions pour le même geste, c'est celle
     // qu'on ne connaît pas qui gagne.
-    let new_tab = item(app, Action::NewTab, bindings, true)?;
-    let new_home_tab = item(app, Action::NewHomeTab, bindings, true)?;
-    let close_tab = item(app, Action::CloseTab, bindings, true)?;
+    let new_tab = item(app, Action::NewTab, bindings)?;
+    let new_home_tab = item(app, Action::NewHomeTab, bindings)?;
+    let close_tab = item(app, Action::CloseTab, bindings)?;
 
     // `Ctrl+Tab` / `Ctrl+Shift+Tab` : la convention des navigateurs et d'iTerm2 pour
     // circuler, là où `Cmd+1`…`Cmd+9` s'arrête à neuf et ne dit rien du « suivant ».
@@ -271,15 +271,15 @@ pub fn build<R: Runtime>(
     // `src/app/shortcuts.ts`. Les garder déclarés fait aussi que le jour où `muda`
     // corrigera son équivalent clavier, le chemin natif reprendra la main tout seul, sans
     // double déclenchement : un accélérateur capté par AppKit n'atteint jamais la webview.
-    let next_tab = item(app, Action::NextTab, bindings, true)?;
-    let previous_tab = item(app, Action::PreviousTab, bindings, true)?;
-    let clear = item(app, Action::ClearScrollback, bindings, true)?;
+    let next_tab = item(app, Action::NextTab, bindings)?;
+    let previous_tab = item(app, Action::PreviousTab, bindings)?;
+    let clear = item(app, Action::ClearScrollback, bindings)?;
 
     // Les neuf entrées existent en permanence, même quand il y a moins d'onglets : une
     // action qui ne désigne personne est ignorée côté webview. Les activer et les
     // désactiver au fil des ouvertures ferait vivre l'état des onglets à deux endroits.
     let select: Vec<MenuItem<R>> = (1..=DIRECT_TABS)
-        .map(|position| item(app, Action::SelectTab(position), bindings, true))
+        .map(|position| item(app, Action::SelectTab(position), bindings))
         .collect::<tauri::Result<_>>()?;
 
     let separator = PredefinedMenuItem::separator(app)?;
@@ -305,7 +305,7 @@ pub fn build<R: Runtime>(
     // `Cmd+B` est un raccourci de **fenêtre**, pas d'onglet : il vit dans « View », à côté
     // de ce qui touchera à l'affichage. Comme les autres, il passe par le menu natif pour
     // ne pas partir dans le shell.
-    let toggle_sidebar = item(app, Action::ToggleSidebar, bindings, true)?;
+    let toggle_sidebar = item(app, Action::ToggleSidebar, bindings)?;
     // La taille de police du terminal — `Cmd++`, `Cmd+-`, `Cmd+0`.
     //
     // Dans « View » et non dans « Terminal », parce que c'est un réglage de **toute
@@ -332,7 +332,7 @@ pub fn build<R: Runtime>(
     // sous l'arbre que `muda` construit. À rouvrir si la plainte remonte, pas avant.
     let font_sizes: Vec<MenuItem<R>> = FontStep::ALL
         .into_iter()
-        .map(|step| item(app, Action::ResizeFont(step), bindings, true))
+        .map(|step| item(app, Action::ResizeFont(step), bindings))
         .collect::<tauri::Result<_>>()?;
 
     // Les trois thèmes, en coches exclusives. Ce n'est plus le seul point d'entrée du choix
@@ -386,12 +386,15 @@ pub fn build<R: Runtime>(
     // Elles sont aussi ce qui rend ces gestes atteignables à la souris, comme la spec §4.4
     // l'exige de « toutes ces actions » : sans entrée de menu, `⌘⌃I` serait le seul chemin
     // vers la fiche de branche pour qui ne connaît pas la barre du panneau bas.
-    let branches = item(app, Action::ToggleBranches, bindings, true)?;
-    let graph = item(app, Action::ToggleGraph, bindings, true)?;
-    let worktrees = item(app, Action::ToggleWorktrees, bindings, true)?;
-    // **La seule entrée d'Ash qui naisse peut-être éteinte** — voir [`MergeReach`].
-    let merge = item(app, Action::OpenMerge, bindings, merge_live)?;
-    let branch_card = item(app, Action::ToggleBranchCard, bindings, true)?;
+    let branches = item(app, Action::ToggleBranches, bindings)?;
+    let graph = item(app, Action::ToggleGraph, bindings)?;
+    let worktrees = item(app, Action::ToggleWorktrees, bindings)?;
+    // **La seule entrée d'Ash qui naisse peut-être éteinte** — voir [`MergeReach`]. Elle
+    // s'éteint ici et pas dans [`item`] : quatorze entrées n'ont pas à porter le paramètre
+    // d'une quinzième, et l'exception se lit à l'endroit qui la connaît.
+    let merge = item(app, Action::OpenMerge, bindings)?;
+    merge.set_enabled(merge_live)?;
+    let branch_card = item(app, Action::ToggleBranchCard, bindings)?;
     let git_separator = PredefinedMenuItem::separator(app)?;
     let git = Submenu::with_items(
         app,
@@ -572,26 +575,20 @@ pub fn action_bindings() -> Vec<ActionBinding> {
 
 /// Une entrée de menu : son libellé vient de [`descriptor`], **sa touche des liaisons**.
 ///
-/// `enabled` vaut `true` pour toutes sauf une : « Resolve Conflicts » naît éteinte quand
-/// rien n'est arrêté dans le worktree sous les yeux (voir [`MergeReach`]). Ce n'est pas un
-/// paramètre par généralité — c'est le seul cas, et le nommer ici évite qu'une entrée
-/// s'éteigne ailleurs sans que ce module le sache.
+/// Elle naît allumée, sans exception : la seule entrée d'Ash qui s'éteigne — « Resolve
+/// Conflicts », quand rien n'est arrêté dans le worktree sous les yeux (voir
+/// [`MergeReach`]) — s'éteint chez [`build`], juste après avoir été construite. Le fait est
+/// alors écrit une fois, à l'endroit qui le connaît, plutôt que passé par quatorze appels
+/// qui n'en ont rien à faire.
 fn item<R: Runtime>(
     app: &AppHandle<R>,
     action: Action,
     bindings: &Bindings,
-    enabled: bool,
 ) -> tauri::Result<MenuItem<R>> {
     let shown = descriptor(action);
     let id = action.id();
     let accelerator = bindings.accelerator(&id);
-    MenuItem::with_id(
-        app,
-        id,
-        shown.label.as_ref(),
-        enabled,
-        accelerator.as_deref(),
-    )
+    MenuItem::with_id(app, id, shown.label.as_ref(), true, accelerator.as_deref())
 }
 
 /// Refait le menu applicatif à partir des liaisons en vigueur.
@@ -623,10 +620,7 @@ fn rebuild<R: Runtime>(app: &AppHandle<R>) {
     // Comme les coches de thème : un menu neuf ne sait rien de l'instant, et une entrée
     // « Resolve Conflicts » reposée allumée sur un worktree tranquille annoncerait un `⌘⌃M`
     // sans effet jusqu'au prochain changement d'onglet.
-    let merge_live = app
-        .try_state::<Arc<MergeReach>>()
-        .is_some_and(|reach| reach.live());
-    if let Ok(menu) = build(app, mode, bindings.inner().as_ref(), merge_live) {
+    if let Ok(menu) = build(app, mode, bindings.inner().as_ref(), merge_live(app)) {
         let _ = app.set_menu(menu);
     }
 }
@@ -670,6 +664,21 @@ pub fn worktree_changed<R: Runtime>(app: &AppHandle<R>, worktree_root: &Path) {
     }
     let deferred = app.clone();
     let _ = app.run_on_main_thread(move || settle_merge_entry(&deferred));
+}
+
+/// L'état en vigueur de « Resolve Conflicts » — allumée, ou éteinte.
+///
+/// **Retenu, jamais relu** : les deux appelants reposent un menu (l'un le reconstruit,
+/// l'autre sort d'une capture de combinaison), et aucun des deux n'est un moment où la
+/// question se rouvre. Refaire ici la lecture de `features::merge` donnerait une seconde
+/// réponse là où [`settle_merge_entry`] en a déjà écrit une, et les deux pourraient
+/// diverger le temps d'un rebase.
+///
+/// `false` avant que le composition root n'ait posé le [`MergeReach`] : au démarrage, aucun
+/// onglet n'est encore né, donc rien n'est arrêté sous des yeux qui ne regardent rien.
+fn merge_live<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.try_state::<Arc<MergeReach>>()
+        .is_some_and(|reach| reach.live())
 }
 
 /// Allume ou éteint « Resolve Conflicts » selon ce qui est arrêté là où l'on regarde.
@@ -756,10 +765,7 @@ fn enable_actions<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
         return;
     };
     let merge = Action::OpenMerge.id();
-    let live = enabled
-        && app
-            .try_state::<Arc<MergeReach>>()
-            .is_some_and(|reach| reach.live());
+    let live = enabled && merge_live(app);
     walk(&menu.items().unwrap_or_default(), &mut |item| {
         let id = item.id();
         if Action::from_id(id.as_ref()).is_some() {
