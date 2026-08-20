@@ -18,6 +18,7 @@ import type {
     Appearance,
     FixAction,
     FocusedTool,
+    JournalReport,
     KeyStroke,
     NotificationsReport,
     RemovalPlan,
@@ -129,6 +130,14 @@ export function mountSettings(
     let removal: RemovalStage | null = null;
     /** Ce que le backend dit des notifications macOS, ou `null` tant qu'il n'a rien dit. */
     let notifications: NotificationsReport | null = null;
+    /**
+     * Ce que le backend dit du journal d'attribution, ou `null` tant qu'il n'a rien dit.
+     *
+     * Relu à l'ouverture **et** après chaque purge : c'est le backend qui compte, et un zéro
+     * posé ici d'autorité cacherait un fichier qui aurait résisté
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    let journal: JournalReport | null = null;
     /**
      * Le thème et la taille de police que `features::theme` détient.
      *
@@ -337,6 +346,9 @@ export function mountSettings(
         setNotification: (state, enabled) => {
             void flipNotification(state, enabled);
         },
+        purgeJournal: () => {
+            void purgeJournal();
+        },
         // Les six gestes de la section `shortcuts`. Les deux premiers ouvrent et referment un
         // bloc — c'est de l'affichage ; les quatre autres demandent, et le backend rend
         // l'instantané dont le menu natif vient d'être refait.
@@ -438,6 +450,26 @@ export function mountSettings(
             // Le refus laisse l'annonce à l'écran : c'est elle qui décrit ce qui n'a pas eu
             // lieu, et la refermer ferait disparaître la question avec la réponse.
             failure = error instanceof Error ? error.message : String(error);
+        }
+        draw();
+    }
+
+    /** Relit ce que le journal pèse. Un refus laisse la ligne à ce qu'elle montrait. */
+    async function askJournal(): Promise<void> {
+        try {
+            journal = await ports.journal();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
+    /** Le geste de la spec §10. Un refus laisse la ligne, et son compte, tels quels. */
+    async function purgeJournal(): Promise<void> {
+        try {
+            journal = await ports.purgeJournal();
+        } catch {
+            return;
         }
         draw();
     }
@@ -609,6 +641,7 @@ export function mountSettings(
             conflict,
             removal,
             notifications,
+            journal,
             appearance,
             fonts,
             shortcuts,
@@ -696,6 +729,9 @@ export function mountSettings(
     // La demande de la sidebar se lit **après** la liste : voir [`focusTool`].
     void apply(ports.tools()).then(askFocus);
     void askNotifications();
+    // Le journal est lu au montage comme l'apparence, et non à l'ouverture d'une section :
+    // sa ligne vit sous la liste des outils, qui est la première chose affichée.
+    void askJournal();
     // L'apparence et les raccourcis sont lus au montage et non à l'ouverture de leur section,
     // contrairement à l'autorisation macOS : celle-ci se change dans les Réglages Système
     // pendant qu'Ash tourne, alors que le thème et le menu ne changent que par Ash lui-même —

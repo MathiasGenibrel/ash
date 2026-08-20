@@ -63,9 +63,14 @@ pub async fn git_metadata<R: Runtime>(
 /// `on_relocation` est appelé quand un dépôt surveillé gagne ou perd un worktree lié. Il ne
 /// traverse pas la frontière du frontend : ce n'est pas un état à rendre, c'est un signal
 /// interne vers ce qui garde des résolutions. La feature ne sait pas qui l'écoute.
+/// `on_head_moved` est appelé quand le `HEAD` d'un worktree surveillé bouge — un commit a pu y
+/// naître ([ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md)). Il ne
+/// traverse pas non plus la frontière du frontend, et pour la même raison que
+/// `on_relocation` : la feature dit ce qu'elle a observé, elle ne sait pas qui l'écoute.
 pub fn watch_metadata<R: Runtime>(
     app: AppHandle<R>,
     on_relocation: impl Fn() + Send + Sync + 'static,
+    on_head_moved: impl Fn(&Path, &Path) + Send + Sync + 'static,
 ) -> Arc<MetadataWatch> {
     MetadataWatch::new(
         Arc::new(SystemFileSystem),
@@ -87,6 +92,7 @@ pub fn watch_metadata<R: Runtime>(
                 );
             }),
             relocate: Arc::new(on_relocation),
+            head_moved: Arc::new(on_head_moved),
         },
     )
 }

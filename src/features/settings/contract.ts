@@ -243,6 +243,26 @@ export interface NotificationsReport {
 }
 
 /**
+ * Ce que le journal d'attribution pèse, tel que `features::journal` le dit
+ * ([ADR-0014](../../../docs/adr/0014-attribution-locale-des-commits.md)).
+ *
+ * **Jamais son contenu.** Le fichier porte des prompts ; l'écran en montre le poids,
+ * l'endroit et la promesse — il n'en montre pas une ligne. Les trois phrases viennent du
+ * backend, comme celles des notifications et pour la même raison : celle qui compte est la
+ * promesse de la spec §10, et elle ne doit pas pouvoir diverger d'un écran à l'autre.
+ */
+export interface JournalReport {
+    entries: number;
+    repos: number;
+    /** Ce qu'il pèse, en toutes lettres — et ce qu'une purge emporterait. */
+    summary: string;
+    /** Ce qu'il ne fait pas : ni synchronisation, ni envoi. */
+    note: string;
+    /** Où il vit, mot pour mot. */
+    path: string;
+}
+
+/**
  * Le thème choisi, tel que `features::theme` le détient (spec §9, `[appearance]`).
  *
  * Il est déclaré ici **en plus** de `src/app/theme.ts`, et les deux sont tenus au même type
@@ -553,6 +573,13 @@ export interface SettingsPorts {
      * promettrait le silence à qui continuerait d'être dérangé.
      */
     setNotification(state: AgentState, enabled: boolean): Promise<NotificationsReport>;
+    /** Ce que le journal d'attribution a retenu — **il ne rend aucune ligne du fichier**. */
+    journal(): Promise<JournalReport>;
+    /**
+     * Efface le journal (spec §10, ADR-0014). Rend la fiche **relue après coup** : si un
+     * fichier a résisté, l'écran doit le dire plutôt que d'afficher un zéro d'autorité.
+     */
+    purgeJournal(): Promise<JournalReport>;
     declareTool(draft: ToolDraft): Promise<SettingsSnapshot>;
     forgetTool(command: string): Promise<SettingsSnapshot>;
     /** Change le dossier ou l'adaptateur d'une entrée, et relance la séquence. */
