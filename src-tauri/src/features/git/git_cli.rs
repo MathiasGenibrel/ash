@@ -113,9 +113,21 @@ const HARDENED_LOG_ARGS: [&str; 10] = [
 /// visité ne doit rien pouvoir lancer parce qu'on a regardé son histoire.
 ///
 /// Les mêmes trois commandes qu'un dépôt peut faire lancer à `git log` sont donc neutralisées
-/// à l'identique — `core.fsmonitor`, le pager, `gpg` —, et **aucune option de diff n'est
-/// passée** : c'est ce qui garde les pilotes `textconv` et `diff` hors jeu, puisqu'ils ne
-/// s'exécutent que sur un diff.
+/// — `core.fsmonitor`, le pager, `gpg` —, et **aucune option de diff n'est passée** : c'est ce
+/// qui garde les pilotes `textconv` et `diff` hors jeu, puisqu'ils ne s'exécutent que sur un
+/// diff. Le pager l'est **deux fois** : `--no-pager`, et `core.pager=cat` en `-c`. Les deux ne
+/// font pas double emploi — `--no-pager` ne dépend de rien, tandis que la surcharge en `-c` est
+/// la seule qui réponde au fait que `core.pager` est une commande *lue dans le dépôt visité*.
+/// La seule chose qui l'empêche aujourd'hui de partir est que notre sortie standard est un
+/// tuyau : une propriété de l'appelant, donc pas une protection.
+///
+/// **À la fusion avec `main`, cette liste doit devenir une variante `Invocation::Graph`.**
+/// `main` a sorti le durcissement commun dans un `HARDENED_PREFIX` composé une seule fois, et
+/// pour une raison qui s'est déjà vérifiée : quand chaque verbe portait sa propre copie du
+/// préfixe, `status` avait perdu `core.pager` en route. Une quatrième copie écrite à la main
+/// est précisément ce que cet `enum` existe pour rendre impossible. Ce qui reste alors ici est
+/// le **verbe** — de `"log"` à `"HEAD"` — plus [`GRAPH_FORMAT`] ; le reste vient du préfixe, et
+/// `Invocation::ALL` fait relire la frontière de sécurité à cette invocation-ci gratuitement.
 ///
 /// Ce que cet appel-ci ajoute aux deux autres, et ce que ça coûte :
 ///
@@ -134,12 +146,19 @@ const HARDENED_LOG_ARGS: [&str; 10] = [
 /// Ce qui n'y est **pas**, et ce n'est pas un oubli : `--all`, qui ajouterait les branches
 /// distantes et les notes. Un dépôt cloné en porte des centaines, et le graphe doit d'abord
 /// dire ce que cette machine fabrique.
-const HARDENED_GRAPH_ARGS: [&str; 10] = [
+const HARDENED_GRAPH_ARGS: [&str; 12] = [
     "--no-optional-locks",
     // Le vecteur d'exécution, neutralisé. Ne retire jamais cette ligne.
     "-c",
     "core.fsmonitor=false",
-    // Un pager est une commande, et `pager.log` est une valeur du dépôt.
+    // `core.pager` est une **commande** lue dans le dépôt visité, au même titre que
+    // `core.fsmonitor`. Ce qui l'empêche aujourd'hui de partir n'est pas cette ligne mais le
+    // fait que notre sortie standard est un tuyau — c'est-à-dire une propriété de l'appelant,
+    // pas une décision. On la neutralise donc explicitement.
+    "-c",
+    "core.pager=cat",
+    // Redondant avec `core.pager=cat`, et gardé quand même : c'est la seule des deux
+    // protections qui ne dépende pas de ce que le dépôt a écrit dans sa configuration.
     "--no-pager",
     "log",
     // `gpg` est une commande, et `log.showSignature` peut la réclamer.
@@ -465,6 +484,13 @@ mod tests {
              l'index"
         );
         assert!(neutralised("--no-pager"), "`pager.log` est une commande");
+        assert!(
+            args.windows(2).any(|pair| pair == ["-c", "core.pager=cat"]),
+            "`core.pager` est une commande **lue dans le dépôt visité**. Ce qui l'empêche \
+             de partir sans cette ligne est que notre sortie est un tuyau — une propriété \
+             de l'appelant, pas une protection. `--no-pager` ne la remplace pas : les deux \
+             ferment le même vecteur par deux chemins indépendants."
+        );
         assert!(
             neutralised("--no-show-signature"),
             "`log.showSignature` fait lancer `gpg` sur chaque commit lu"
