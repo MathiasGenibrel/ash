@@ -1,0 +1,174 @@
+/*
+ * La popup de branches (spec §7.1).
+ *
+ * Tout ce qui colore vient des tokens de `app/styles.css` : la feature ne connaît pas les
+ * palettes, elle lit la table que l'application a posée sur le document.
+ */
+
+.branch-popup-overlay {
+    position: fixed;
+    z-index: 40;
+    max-width: 520px;
+    min-width: 320px;
+}
+
+.branch-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: var(--ash-bg-card);
+    border: 1px solid var(--ash-border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+    font-size: 12px;
+    color: var(--ash-fg);
+}
+
+.branch-popup-filter {
+    width: 100%;
+    padding: 4px 6px;
+    background: var(--ash-bg-inset);
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    color: var(--ash-fg);
+    font: inherit;
+}
+
+.branch-popup-list {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Le titre d'un groupe. Il n'existe que si le groupe a survécu au filtre. */
+.branch-popup-group {
+    padding: 6px 6px 2px;
+    color: var(--ash-fg-faint);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.branch-popup-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    cursor: default;
+}
+
+.branch-popup-row.is-selected,
+.branch-popup-row:hover {
+    background: var(--ash-bg-selected);
+}
+
+/*
+ * La colonne de droite : le worktree qui détient la branche. Poussée à droite par le
+ * `margin-left: auto`, et discrète — c'est un repère, pas le nom qu'on lit en premier.
+ */
+.branch-popup-elsewhere {
+    margin-left: auto;
+    color: var(--ash-fg-faint);
+    font-size: 11px;
+}
+
+/* Le second geste d'une ligne, à la souris — le pendant de `⌘⏎` (spec §4.4). */
+.branch-popup-more {
+    background: none;
+    border: none;
+    color: var(--ash-fg-faint);
+    cursor: default;
+    padding: 0 2px;
+}
+
+.branch-popup-row:not(:hover) .branch-popup-more {
+    visibility: hidden;
+}
+
+/*
+ * L'avertissement qui nomme l'agent. Il prend l'accent — la même couleur que `waiting` et
+ * qu'un conflit : ce qui demande une décision.
+ */
+.branch-popup-warning {
+    padding: 6px;
+    border-top: 1px solid var(--ash-border);
+    color: var(--ash-accent);
+    line-height: 1.4;
+}
+
+.branch-popup-empty {
+    padding: 8px 6px;
+    color: var(--ash-fg-faint);
+}
+
+.branch-popup-title {
+    padding: 4px 6px;
+    font-weight: 600;
+}
+
+.branch-popup-action,
+.branch-popup-pause,
+.branch-popup-cancel,
+.branch-popup-back {
+    width: 100%;
+    text-align: left;
+    padding: 5px 6px;
+    background: var(--ash-bg-inset);
+    border: 1px solid var(--ash-border);
+    border-radius: 4px;
+    color: var(--ash-fg);
+    font: inherit;
+}
+
+.branch-popup-actions {
+    display: flex;
+    gap: 6px;
+    padding-top: 6px;
+}
+
+.branch-popup-pauses {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.branch-popup .is-danger {
+    border-color: var(--ash-error);
+    color: var(--ash-error);
+}
+
+.branch-popup-failed {
+    padding: 0 6px;
+    color: var(--ash-error);
+}
+
+.branch-popup-ok {
+    padding: 0 6px;
+    color: var(--ash-fg-faint);
+}
+
+/* Ce que git a dit, tel quel : monospace, et sans reflux qui déformerait un diff. */
+.branch-popup-output {
+    padding: 6px;
+    white-space: pre-wrap;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ash-fg-faint);
+}
+
+/* La branche de la ligne de statut devient un bouton : c'est l'ancre de la popup. */
+.status-branch-anchor {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: default;
+}
+
+.status-branch-anchor:hover {
+    text-decoration: underline;
+}

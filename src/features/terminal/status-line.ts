@@ -49,12 +49,29 @@ export type StatusTone =
     /** Ce qui demande une décision : un conflit, un agent qui attend. */
     | "accent";
 
+/**
+ * Ce qu'un morceau de ligne **ouvre**, quand il ouvre quelque chose.
+ *
+ * Une seule valeur aujourd'hui, et c'est déjà une union : le pied de fenêtre n'est pas un
+ * endroit où l'on pose des gestes au fil de l'eau, et un `boolean` ne dirait pas *lequel*.
+ */
+export type StatusAction = "open-branches";
+
 /** Un morceau de ligne : un mot, sa couleur, et de quoi l'expliquer au survol. */
 export interface StatusChip {
     readonly text: string;
     readonly tone: StatusTone;
     /** L'infobulle, quand le mot est plus court que ce qu'il veut dire. */
     readonly title: string | null;
+    /**
+     * Ce que ce morceau ouvre — absent pour tous sauf un.
+     *
+     * La branche est l'**ancre** de la popup de branches (spec §7.1), et c'est ce qui la
+     * rend atteignable à la souris autant qu'au clavier (spec §4.4). Le champ est optionnel
+     * plutôt que `| null` parce que dix morceaux sur onze n'ouvrent rien : les faire tous
+     * déclarer une absence serait du bruit dans chaque littéral.
+     */
+    readonly action?: StatusAction;
 }
 
 /** L'état d'agent de l'onglet actif — le troisième segment de la ligne. */
@@ -176,6 +193,10 @@ function gitSegment(metadata: WorktreeMetadata | null): readonly StatusChip[] {
             text: branch.label,
             tone: "text",
             title: branch.detachedAt === null ? null : `detached HEAD at ${branch.detachedAt}`,
+            // Le seul morceau de la ligne qui ouvre quelque chose : la popup de branches est
+            // ancrée ici (spec §7.1), et un `HEAD` détaché en est une ancre aussi valable —
+            // on peut vouloir en sortir.
+            action: "open-branches",
         },
     ];
 
@@ -282,15 +303,41 @@ export function elide(path: string, max: number = MAX_CWD): string {
  */
 export class StatusLine {
     readonly element: HTMLElement;
+    /**
+     * Le morceau qui porte la branche, une fois peint — l'ancre de la popup.
+     *
+     * `null` quand la ligne ne montre pas de branche : hors dépôt, ou avant le premier
+     * rendu. Celui qui l'ouvre décide alors où la poser ; ce n'est pas à la ligne de statut
+     * de le savoir.
+     */
+    private anchorElement: HTMLElement | null = null;
 
-    constructor() {
+    /**
+     * `onAction` est un rappel et non un event : la ligne de statut ne connaît pas la popup
+     * de branches, et elle n'a aucune raison de la connaître. C'est le composition root qui
+     * relie les deux, comme il relie déjà la sidebar aux onglets.
+     */
+    constructor(private readonly onAction: (action: StatusAction) => void = () => undefined) {
         this.element = document.createElement("div");
         this.element.className = "terminal-status";
         this.element.setAttribute("role", "status");
     }
 
+    /** Sur quoi la popup de branches doit s'ancrer, si la ligne montre une branche. */
+    get anchor(): HTMLElement | null {
+        return this.anchorElement;
+    }
+
     render(model: StatusLineModel): void {
-        const nodes: Node[] = [chip(model.cwd), rule(), ...joinChips(model.git), rule()];
+        this.anchorElement = null;
+        const paint = (piece: StatusChip): HTMLElement => {
+            if (piece.action === undefined) return chip(piece);
+            const opener = actionChip(piece, piece.action, this.onAction);
+            this.anchorElement = opener;
+            return opener;
+        };
+
+        const nodes: Node[] = [chip(model.cwd), rule(), ...joinChips(model.git, paint), rule()];
 
         if (model.agent.state !== null) nodes.push(agentGlyph(model.agent.state));
         nodes.push(
@@ -304,10 +351,38 @@ export class StatusLine {
 }
 
 /** Les morceaux d'un même segment sont séparés d'une espace, pas d'un `│`. */
-function joinChips(chips: readonly StatusChip[]): Node[] {
+function joinChips(
+    chips: readonly StatusChip[],
+    paint: (piece: StatusChip) => HTMLElement,
+): Node[] {
     return chips.flatMap((piece, index) =>
-        index === 0 ? [chip(piece)] : [document.createTextNode(" "), chip(piece)],
+        index === 0 ? [paint(piece)] : [document.createTextNode(" "), paint(piece)],
     );
+}
+
+/**
+ * Un morceau qui ouvre quelque chose : un vrai `<button>`, pas un `<span>` cliquable.
+ *
+ * C'est ce qui le met sur le chemin de `tab` et dans l'arbre d'accessibilité sans une ligne
+ * de code — la même raison que le socle de composants donne pour ses boutons. Le raccourci
+ * est annoncé par `aria-keyshortcuts` plutôt qu'écrit dans le libellé : la ligne de statut
+ * fait 25 px, et le mot qu'on doit y lire est le nom de la branche.
+ */
+function actionChip(
+    piece: StatusChip,
+    action: StatusAction,
+    onAction: (action: StatusAction) => void,
+): HTMLElement {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = `status-${piece.tone} status-branch-anchor`;
+    element.textContent = piece.text;
+    element.title = piece.title ?? "branch actions";
+    element.setAttribute("aria-keyshortcuts", "Meta+Control+B");
+    element.addEventListener("click", () => {
+        onAction(action);
+    });
+    return element;
 }
 
 function chip(piece: StatusChip): HTMLElement {

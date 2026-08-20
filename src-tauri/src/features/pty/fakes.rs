@@ -23,7 +23,7 @@ use crate::features::agents::{
     AgentState, AgentStatus, Instrumented, Presence, ProgramIdentity, RecognizedAgent, Subagent,
     TabAgents,
 };
-use crate::features::probe::{Pid, Probe, ProbeError, ProcessInfo};
+use crate::features::probe::{Pid, Probe, ProbeError, ProcessControl, ProcessInfo};
 use crate::shared::time::UnixMillis;
 
 /// Le terminal que les faux onglets annoncent. Aucun appel système ne le touche : le
@@ -49,7 +49,7 @@ pub struct FakeProbe {
 }
 
 /// Le pid du programme lancé depuis le shell, quand le scénario en demande un.
-const LAUNCHED: Pid = 200;
+pub const LAUNCHED: Pid = 200;
 
 impl FakeProbe {
     /// Un système qui ne répond rien : ni avant-plan, ni processus.
@@ -350,6 +350,77 @@ impl PtySession for FakeSession {
     }
 }
 
+/// Les signaux qu'on **aurait** postés, dans l'ordre.
+///
+/// Aucun `SIGSTOP` réel ne part d'un test : arrêter le groupe de processus de qui lance
+/// `cargo test` est exactement ce que le trait [`ProcessControl`] existe pour éviter.
+#[derive(Default)]
+pub struct FakeProcessControl {
+    pub posted: Arc<Mutex<Vec<(&'static str, Pid)>>>,
+    /// Quand il est posé, tout signal est refusé — le groupe a disparu entre-temps.
+    pub refuse: Arc<AtomicBool>,
+}
+
+impl FakeProcessControl {
+    /// Les signaux postés, à plat : `[("SIGSTOP", 4213), ("SIGCONT", 4213)]`.
+    pub fn posted(&self) -> Vec<(&'static str, Pid)> {
+        self.posted
+            .lock()
+            .map(|seen| seen.clone())
+            .unwrap_or_default()
+    }
+
+    fn post(&self, signal: &'static str, pgid: Pid) -> Result<(), ProbeError> {
+        if self.refuse.load(Ordering::SeqCst) {
+            return Err(ProbeError::SignalRefused { pgid, errno: 3 });
+        }
+        if let Ok(mut posted) = self.posted.lock() {
+            posted.push((signal, pgid));
+        }
+        Ok(())
+    }
+}
+
+impl ProcessControl for FakeProcessControl {
+    fn pause(&self, pgid: Pid) -> Result<(), ProbeError> {
+        self.post("SIGSTOP", pgid)
+    }
+
+    fn resume(&self, pgid: Pid) -> Result<(), ProbeError> {
+        self.post("SIGCONT", pgid)
+    }
+}
+
+/// Un registre sondable dont on tient les signaux — pour la pause d'ADR-0015.
+pub fn pausable_registry() -> (
+    PtyRegistry,
+    Arc<FakeSpawner>,
+    Arc<FakeProbe>,
+    Arc<FakeProcessControl>,
+) {
+    let spawner = Arc::new(FakeSpawner::observable());
+    let probe = Arc::new(FakeProbe::reporting("/dev/ash"));
+    let control = Arc::new(FakeProcessControl::default());
+    let registry = PtyRegistry::new(
+        Box::new(SharedSpawner(Arc::clone(&spawner))),
+        Arc::clone(&probe) as Arc<dyn Probe>,
+        Arc::new(CountingLocator::default()),
+        Arc::new(NoRecognition),
+        Arc::new(FakeAgentStates::default()),
+        Arc::clone(&control) as Arc<dyn ProcessControl>,
+    );
+    (registry, spawner, probe, control)
+}
+
+/// Le spawner du registre est une `Box` : voici de quoi en garder une poignée à côté.
+struct SharedSpawner(Arc<FakeSpawner>);
+
+impl PtySpawner for SharedSpawner {
+    fn spawn(&self, spec: &PtySpec) -> Result<OpenPty, PtyError> {
+        self.0.spawn(spec)
+    }
+}
+
 #[derive(Default)]
 pub struct FakeSpawner {
     pub killed: Arc<AtomicBool>,
@@ -428,6 +499,7 @@ pub fn registry(spawner: FakeSpawner) -> PtyRegistry {
         Arc::new(CountingLocator::default()),
         Arc::new(NoRecognition),
         Arc::new(FakeAgentStates::default()),
+        Arc::new(FakeProcessControl::default()),
     )
 }
 
@@ -476,6 +548,7 @@ pub fn recognizing_registry(
         Arc::clone(&locator) as Arc<dyn WorktreeLocator>,
         Arc::clone(&recognition) as Arc<dyn AgentRecognition>,
         Arc::clone(&agents) as Arc<dyn AgentStates>,
+        Arc::new(FakeProcessControl::default()),
     );
     (registry, probe, locator, agents, recognition)
 }
