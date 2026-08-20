@@ -10,6 +10,8 @@ import type {
     TestDescription,
     ToolDeclaration,
     ToolDraft,
+    UsageReadability,
+    UsageReport,
     Verification,
     VerificationState,
 } from "./contract";
@@ -122,6 +124,53 @@ export function aNotificationsReport(
         ],
         ...overrides,
     };
+}
+
+/**
+ * La section `usage` telle que le backend la compose (ADR-0016, ADR-0017).
+ *
+ * Le défaut est le cas **nominal** : les appels sont autorisés, et le trousseau a rendu un
+ * jeton. Les phrases et l'adresse sont celles de `features/settings/usage.rs` — un scénario
+ * qui les réécrirait prouverait quelque chose que le backend n'envoie pas.
+ *
+ * Deux surcharges seulement, parce que ce sont les deux seules variations que la section
+ * porte : l'interrupteur, et l'issue de la lecture du trousseau.
+ */
+export class UsageReportBuilder {
+    private polling = true;
+    private token: UsageReadability = "readable";
+    private summary = "ash can read claude code's token";
+
+    /** L'utilisateur a coupé les appels sortants (ADR-0016, condition 3). */
+    withCallsCut(): this {
+        this.polling = false;
+        return this;
+    }
+
+    /** L'une des cinq issues possibles d'une lecture de trousseau, avec sa phrase. */
+    withToken(token: UsageReadability, summary: string): this {
+        this.token = token;
+        this.summary = summary;
+        return this;
+    }
+
+    build(): UsageReport {
+        return {
+            polling: this.polling,
+            token: this.token,
+            summary: this.summary,
+            note: "it is read when ash calls, kept in memory, and never written anywhere. revoke it whenever you like, here:",
+            path: "Keychain Access ▸ login ▸ Claude Code-credentials",
+            endpoint: "https://api.anthropic.com/api/oauth/usage",
+            accounts:
+                "the keychain holds one token. if you sign in with more than one account, the quotas are those of whichever one wrote it last — ash has no way to tell which, and would rather say nothing than name the wrong one.",
+        };
+    }
+}
+
+/** La section `usage` dans son cas nominal. Voir [`UsageReportBuilder`]. */
+export function usageReport(): UsageReportBuilder {
+    return new UsageReportBuilder();
 }
 
 /**

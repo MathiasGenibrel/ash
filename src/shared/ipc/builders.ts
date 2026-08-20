@@ -1,4 +1,5 @@
 import type {
+    AccountUsage,
     AgentState,
     ConflictFile,
     GitHead,
@@ -11,6 +12,7 @@ import type {
     MergeTab,
     RecognizedAgent,
     PinnedWorktree,
+    Quota,
     RepoRef,
     ShellTab,
     Subagent,
@@ -463,4 +465,49 @@ export function conflicted(path: string, hunks = 1): ConflictFile {
 /** Un chemin que git a dû échapper : Ash le liste, le compte, et ne l'ouvre pas. */
 export function unreadableConflict(path: string): ConflictFile {
     return { path, hunks: [], resolved: false, unreadable: true };
+}
+
+/**
+ * Les deux quotas du compte, dans la position de la maquette (vue 5b).
+ *
+ * Défauts **déterministes** : `63 %` et `28 %`, avec deux dates de remise à zéro fixes — un
+ * `Date.now()` dans un défaut ferait dépendre un test de l'heure à laquelle il tourne, et le
+ * ferait tomber une fois par an sur un changement d'heure.
+ *
+ * Chaque quota se retire seul (`.withoutSession()`), parce que c'est exactement le cas que
+ * le backend laisse passer : un compte migré, ou une réponse partielle, n'en porte qu'un.
+ */
+export class AccountUsageBuilder {
+    private session: Quota | null = { percent: 63, resetsAt: 1_787_249_640_000 };
+    private weekly: Quota | null = { percent: 28, resetsAt: 1_787_475_600_000 };
+
+    withSession(percent: number, resetsAt: number | null = 1_787_249_640_000): this {
+        this.session = { percent, resetsAt };
+        return this;
+    }
+
+    withWeekly(percent: number, resetsAt: number | null = 1_787_475_600_000): this {
+        this.weekly = { percent, resetsAt };
+        return this;
+    }
+
+    /** Le quota de session n'existe pas — et rien ne doit suggérer qu'il a échoué. */
+    withoutSession(): this {
+        this.session = null;
+        return this;
+    }
+
+    withoutWeekly(): this {
+        this.weekly = null;
+        return this;
+    }
+
+    build(): AccountUsage {
+        return { session: this.session, weekly: this.weekly };
+    }
+}
+
+/** Ce qu'Ash rend quand il ne sait rien : rien. Voir [`AccountUsage`]. */
+export function noAccountUsage(): AccountUsage {
+    return new AccountUsageBuilder().withoutSession().withoutWeekly().build();
 }

@@ -62,6 +62,49 @@ notify = "=8.2.0"
 objc2 = "0.6.4"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", features = ["NSBundle", "NSString", "NSError"] }
+# Le premier — et pour l'instant le seul — appel réseau d'Ash
+# ([ADR-0016](../docs/adr/0016-ash-sort-sur-le-reseau.md)) : les quotas de session et
+# hebdomadaires de la spec §4.2, qui ne sont dans aucun fichier de la machine.
+#
+# Version 3.4.0, publiée le 2026-08-08 — au-delà du seuil de fraîcheur de dix jours du
+# dépôt. Bloquante et sans runtime asynchrone, ce qui *est* la propriété voulue : l'appel
+# vit sur un fil de fond que personne n'attend (condition 1 de l'ADR).
+#
+# **Les fonctionnalités par défaut sont coupées, et le trio retenu est le seul qui réponde à
+# la lettre à « TLS par le vérificateur de la plateforme, pas un magasin de racines
+# embarqué » :**
+#
+# - `platform-verifier` est la phrase elle-même : `rustls-platform-verifier` demande à macOS
+#   de valider la chaîne. Un poste sous MDM, ou derrière un proxy d'entreprise qui re-signe,
+#   fonctionne sans qu'Ash ait son propre avis sur les autorités de certification.
+# - `rustls-no-provider` plutôt que `rustls` : le second **ajoute** `rustls-webpki-roots`, et
+#   les racines de Mozilla seraient alors compilées dans le binaire. C'est exactement le
+#   magasin embarqué que l'ADR refuse, et une fonctionnalité de Cargo ne se retire pas —
+#   elles s'additionnent. Il faut donc partir de la variante nue.
+# - `_ring` fournit le fournisseur cryptographique que `rustls-no-provider` laisse vide.
+#   Le tiret bas dit qu'`ureq` la tient pour interne, et on l'assume : sans elle, `ureq`
+#   **panique au premier appel** au lieu de ne pas compiler. Le jour où elle disparaîtra,
+#   `cargo` refusera une fonctionnalité inconnue — une panne bruyante au bon moment, et non
+#   une panique dans une jauge. L'alternative serait de dépendre de `rustls` en direct pour
+#   poser le fournisseur à la main : une crate nommée de plus pour la même chose.
+#
+# Ces trois-là ont été retenues **après** avoir essayé `native-tls`, qui *est* pourtant
+# Security.framework sur macOS : `ureq` 3.4.0 ne compile son connecteur que derrière la
+# fonctionnalité `native-tls`, laquelle entraîne `webpki-root-certs`. Le même magasin
+# embarqué, par l'autre porte. C'est `bun run smoke` qui l'a montré, et pas la compilation.
+#
+# `gzip` n'est **pas** repris : la réponse fait quelques centaines d'octets. `json` non plus :
+# `serde_json` est déjà dans l'arbre, et c'est lui qui lit la réponse — voir
+# `features/usage/quota.rs`, dont toute la tolérance est testable parce qu'elle part d'une
+# chaîne.
+#
+# `HTTPS_PROXY` est honoré sans rien demander : la configuration par défaut d'`ureq` lit
+# `ALL_PROXY`, `HTTPS_PROXY` et `https_proxy` de l'environnement.
+ureq = { version = "3.4.0", default-features = false, features = [
+    "rustls-no-provider",
+    "_ring",
+    "platform-verifier",
+] }
 objc2-user-notifications = { version = "0.3.2", features = [
     "UNNotification",
     "UNNotificationContent",

@@ -803,3 +803,51 @@ export type ReadableOnAnyTab = Assert<Mirrors<keyof Tab, "kind" | "tabId" | "loc
  * explicitement un [`ShellTab`] — et celles-là ont un appelant qui a discriminé.
  */
 export type ATabIsNotATabInfo = Assert<Refuses<Tab, TabInfo>>;
+
+/* ------------------------------------------------------------------------------------- *
+ * Les quotas du compte (spec §4.2) — ADR-0016 et ADR-0017.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Un quota : où il en est, et **quand il repart de zéro**.
+ *
+ * `resetsAt` est une date absolue, en millisecondes depuis l'époque Unix — la même forme que
+ * [`TabInfo.stateSince`], et pour la même raison : le `resets in 2h14` de la maquette est un
+ * fait d'affichage, calculé ici. Un décompte transporté ferait repartir
+ * `ash://account-usage` chaque seconde pour animer un compteur, alors que la valeur ne bouge
+ * qu'au rythme du quota.
+ *
+ * `null` veut dire que l'hôte n'a pas donné de date — un compte sans fenêtre de limitation,
+ * une fenêtre qui n'a pas commencé. Le pourcentage passe quand même : n'avoir qu'une des
+ * deux moitiés vaut mieux que n'en avoir aucune.
+ *
+ * **La durée de la fenêtre n'existe nulle part, ni ici ni côté backend.** Les cinq heures de
+ * la maquette ne sont écrites dans aucun code : tout ce dont l'écran a besoin pour dire
+ * `2h14` est `resetsAt`, et une fenêtre qui passerait à quatre heures n'aurait rien à
+ * corriger.
+ */
+export interface Quota {
+    /** Entre `0` et `100`. L'hôte le rend parfois fractionnaire. */
+    percent: number;
+    resetsAt: number | null;
+}
+
+/**
+ * Ce qu'Ash sait de l'usage du **compte** — pas d'un onglet, pas d'un worktree.
+ *
+ * Les deux quotas sont transverses : ils ne dépendent d'aucune sélection, et changer
+ * d'onglet ne les touche pas. C'est pourquoi ils ne voyagent pas dans un [`TabInfo`], mais
+ * dans leur propre event.
+ *
+ * **Les deux champs sont indépendants**, et `null` des deux côtés est ce que « la valeur
+ * disparaît » veut dire ([ADR-0016](../../../docs/adr/0016-ash-sort-sur-le-reseau.md),
+ * condition 3) : jeton absent, jeton refusé, hôte injoignable, ou appels coupés par
+ * l'utilisateur donnent tous la même chose — rien. Ni un zéro, ni un tiret, ni la dernière
+ * valeur connue laissée en place. L'écran n'affiche donc **rien** dans ce cas, et ne signale
+ * pas d'erreur : il n'a aucun moyen de savoir laquelle des quatre raisons s'applique, et
+ * c'est délibéré.
+ */
+export interface AccountUsage {
+    session: Quota | null;
+    weekly: Quota | null;
+}

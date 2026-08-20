@@ -12,6 +12,7 @@ import {
     aJournalReport,
     aTool,
     aVerification,
+    usageReport,
 } from "./builders";
 import { describeToolCount } from "./model";
 import { settingsNav, settingsPanel, type SettingsRendering, type SettingsScene } from "./view";
@@ -36,6 +37,7 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
         removal: null,
         fonts: null,
         notifications: aNotificationsReport(),
+        usage: usageReport().build(),
         journal: aJournalReport(),
         appearance: anAppearance(),
         shortcuts: aShortcutsReport(),

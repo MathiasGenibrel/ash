@@ -6,7 +6,11 @@ import { SETTINGS_SECTIONS, type SettingsSection } from "../sections";
 import { label, para, spacer, tag } from "./atoms";
 
 /**
- * La colonne de gauche : les quatre sections, et le rappel de leur parcours.
+ * La colonne de gauche : les sections, et le rappel de leur parcours.
+ *
+ * Elle les tire de [`SETTINGS_SECTIONS`] plutôt que d'en écrire la liste : c'est ce qui a fait
+ * qu'ajouter `usage` (ADR-0016) n'a rien coûté ici, et qu'aucune section ne peut exister sans
+ * avoir sa ligne dans la colonne.
  *
  * Le compteur de la colonne compte **comme celui de l'en-tête** — les deux montrent le même
  * chiffre au même instant, donc ils le comptent au même endroit (`countProblems`). Il

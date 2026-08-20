@@ -97,6 +97,10 @@ use features::sidebar::{
     FileSidebarStore, PinnedRepo, PinnedWorktree, SidebarState, SidebarStore, WorktreePlaces,
 };
 use features::theme::{FileThemeStore, FontCatalog, SystemFontCatalog, ThemeState, ThemeStore};
+use features::usage::{
+    AccountUsage, AnthropicUsage, Credentials, FileUsageStore, KeychainTokens, TokenSource,
+    UsageApi, UsagePoller, UsagePreferences, UsageSink, UsageStore, ACCOUNT_USAGE_EVENT,
+};
 
 /// Relie le port de `pty` à la résolution de `features::git`.
 ///
@@ -105,6 +109,23 @@ use features::theme::{FileThemeStore, FontCatalog, SystemFontCatalog, ThemeState
 /// règle « un dépôt sans worktree lié s'affiche à plat »
 /// ([ADR-0012](../../docs/adr/0012-worktree-unite-de-travail.md)) est déjà tranchée par
 /// `resolve_worktree`, qui rend alors un worktree sans dépôt.
+/// Relie le port `UsageSink` de `features::usage` à la webview.
+///
+/// C'est ici, et seulement ici, que la feature la plus isolée du crate rencontre Tauri :
+/// elle ne connaît qu'un trait d'une méthode, et n'a aucun moyen d'émettre autre chose que
+/// les deux quotas ([ADR-0016](../../docs/adr/0016-ash-sort-sur-le-reseau.md)).
+///
+/// Échouer à émettre veut dire qu'il n'y a plus de webview à prévenir : rien à rattraper, et
+/// surtout pas de panique sur le fil de fond.
+struct UsageEvents<R: tauri::Runtime>(tauri::AppHandle<R>);
+
+impl<R: tauri::Runtime> UsageSink for UsageEvents<R> {
+    fn publish(&self, usage: AccountUsage) {
+        use tauri::Emitter;
+        let _ = self.0.emit(ACCOUNT_USAGE_EVENT, usage);
+    }
+}
+
 struct GitWorktrees;
 
 impl WorktreeLocator for GitWorktrees {
@@ -880,6 +901,13 @@ pub fn run() -> tauri::Result<()> {
             .unwrap_or_else(|| std::path::PathBuf::from("/")),
     );
 
+    // L'interrupteur d'ADR-0016, relu **avant** la fenêtre : il décide si le fil de fond
+    // sortira sur le réseau, et il ne doit pas y avoir un instant où l'appel part parce que
+    // la préférence n'a pas encore été lue.
+    let usage_preferences = Arc::new(UsagePreferences::restore(
+        Arc::new(FileUsageStore::in_home()) as Arc<dyn UsageStore>,
+    ));
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         // Le localisateur est **partagé** avec la réunion des onglets (`tabs.rs`) : un
@@ -898,6 +926,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&tools))
         .manage(Arc::clone(&sidebar_rows))
         .manage(Arc::clone(&notification_preferences))
+        .manage(Arc::clone(&usage_preferences))
         // Ce que la sidebar demande à la fenêtre de réglages de montrer, tant qu'elle ne
         // l'a pas lu (ADR-0006, ADR-0010).
         .manage(Arc::new(
@@ -1007,6 +1036,9 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::settings_remove_hooks,
             features::settings::commands::settings_removal_plan,
             features::settings::commands::settings_remove_all_hooks,
+            features::settings::commands::settings_usage,
+            features::settings::commands::settings_set_usage_polling,
+            features::usage::commands::usage_snapshot,
             spike::spike_stream,
             spike::spike_ack,
             spike::spike_report
@@ -1055,6 +1087,45 @@ pub fn run() -> tauri::Result<()> {
         use tauri::Manager;
         app.manage(Arc::clone(&banners));
     }
+
+    // Le sondage des quotas (spec §4.2) naît dans le même créneau que la surveillance git,
+    // et pour la même raison : il a besoin du handle pour émettre, et il ne peut pas être
+    // posé depuis `setup`, qui ne tourne qu'au démarrage de `run()`.
+    //
+    // Ce qui s'assemble ici est la réunion des quatre ports de la feature — le trousseau, la
+    // destination réseau, l'horloge, et la webview —, et c'est le seul endroit du crate où
+    // ils se rencontrent. Le fil est **détaché** : la condition 1 d'ADR-0016 dit que
+    // personne ne l'attend, et c'est vrai jusqu'ici — rien de ce qui suit ne le joint.
+    let usage = Arc::new(UsagePoller::new(
+        Arc::new(AnthropicUsage::new()) as Arc<dyn UsageApi>,
+        Credentials::from(Arc::new(KeychainTokens) as Arc<dyn TokenSource>),
+        usage_preferences,
+        Arc::new(shared::time::SystemClock),
+        Arc::new(UsageEvents(app.handle().clone())),
+    ));
+    {
+        use tauri::Manager;
+        app.manage(Arc::clone(&usage));
+    }
+    {
+        // Le **niveau** de départ, lu à la fenêtre plutôt qu'attendu d'elle.
+        //
+        // La condition 2 d'ADR-0016 est un front *et* un niveau, et le front seul ne suffit
+        // pas ici : `RunEvent::Focused` n'annonce qu'un **changement**, donc une fenêtre qui
+        // naîtrait déjà devant n'en émettrait aucun, et le portillon resterait fermé jusqu'au
+        // premier aller-retour vers une autre application. Les quotas ne seraient jamais
+        // demandés d'une session qu'on n'a pas quittée.
+        use tauri::Manager;
+        let in_front = app
+            .get_webview_window("main")
+            .and_then(|window| window.is_focused().ok())
+            .unwrap_or(false);
+        usage.on_window_focus(in_front);
+    }
+    // Le fil, demandé à la feature plutôt que posé ici : c'est elle qui sait qu'un appel ne
+    // part que d'un fil détaché, et c'est ce qui laisse la boucle **privée**. Aucune méthode
+    // publique du poller n'attend le réseau, donc aucune commande ne peut en attendre un.
+    usage.beat_in_background();
 
     // La surveillance git naît **après** `build` et **avant** `run` : elle a besoin du
     // handle de l'application pour émettre, et l'application a besoin d'elle pour répondre
@@ -1183,6 +1254,11 @@ pub fn run() -> tauri::Result<()> {
             // agent qui finit pendant qu'Ash est derrière l'éditeur laisserait sa ligne
             // affichée pour toujours. C'est immédiat et sans disque, donc sur ce fil-ci.
             agents.on_window_focus(focused);
+            // Le **front** de la condition 2 d'ADR-0016 : le sondage des quotas s'éteint en
+            // quittant le premier plan, et un appel est redemandé en y revenant. Rien de
+            // réseau ne part de ce fil-ci — `on_window_focus` ne fait que réveiller celui de
+            // fond, qui rouvre le portillon. Voir `features/usage/poller.rs`.
+            usage.on_window_focus(focused);
 
             if focused {
                 let refreshing = Arc::clone(&git_watch);
@@ -1192,6 +1268,7 @@ pub fn run() -> tauri::Result<()> {
         tauri::RunEvent::Exit => {
             stop.ask();
             git_watch.stop();
+            usage.stop();
             // Le fichier du socket ne part pas avec le processus : le laisser derrière soi
             // est ce qui empêcherait le démarrage suivant de se lier.
             if let Some(events) = events.as_ref() {
