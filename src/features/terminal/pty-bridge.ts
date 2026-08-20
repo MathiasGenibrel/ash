@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import type { ComposeOutcome } from "@/shared/ipc";
 import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize } from "./ports";
 
 /**
@@ -29,6 +30,7 @@ export const tauriPty: PtyBridge = {
     },
 
     write: (tabId, data) => invoke("pty_write", { tabId, data }),
+    compose: (tabId, text) => invoke<ComposeOutcome>("pty_compose", { tabId, text }),
     resize: (tabId, size) => invoke("pty_resize", { tabId, cols: size.cols, rows: size.rows }),
     ack: (tabId) => invoke("pty_ack", { tabId }),
     close: (tabId) => invoke("pty_close", { tabId }),

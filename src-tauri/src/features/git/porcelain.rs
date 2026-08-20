@@ -12,6 +12,15 @@
 
 use super::metadata::{Status, TreeStatus, Upstream};
 
+/// Combien de chemins en conflit on retient au plus.
+///
+/// Le **compte** (`TreeStatus::conflicted`) n'est pas borné, lui : c'est la liste des
+/// chemins qui l'est. Un rebase qui se plante sur un dossier `vendor/` entier peut en
+/// aligner des milliers, et cette liste voyage jusqu'à la webview, puis — pour une partie
+/// d'elle — jusque dans un prompt d'une seule ligne. Cent chemins tiennent déjà bien
+/// au-delà de ce qu'un humain lit ; le compte, lui, reste juste.
+const MAX_CONFLICT_PATHS: usize = 100;
+
 /// Lit la sortie de `git status --porcelain=v2 --branch`.
 ///
 /// Ne peut pas échouer : une ligne qu'on ne reconnaît pas est ignorée. Une sortie vide est
@@ -20,6 +29,7 @@ use super::metadata::{Status, TreeStatus, Upstream};
 pub fn parse_status(output: &str) -> Status {
     let mut tree = TreeStatus::default();
     let mut upstream = None;
+    let mut conflicts = Vec::new();
 
     for line in output.lines() {
         match line.split_once(' ') {
@@ -38,7 +48,14 @@ pub fn parse_status(output: &str) -> Status {
             Some(("?", _)) => tree.added += 1,
             // Un chemin en conflit n'est ni ajouté ni modifié : il attend une décision, et
             // c'est un état à part entière pendant un merge ou un rebase.
-            Some(("u", _)) => tree.conflicted += 1,
+            Some(("u", rest)) => {
+                tree.conflicted += 1;
+                if conflicts.len() < MAX_CONFLICT_PATHS {
+                    if let Some(path) = unmerged_path(rest) {
+                        conflicts.push(path);
+                    }
+                }
+            }
             // `1` = entrée ordinaire, `2` = renommée ou copiée. Les deux portent leur
             // état sur deux caractères : l'index d'abord, l'arbre de travail ensuite.
             Some(("1", rest)) | Some(("2", rest)) => count_change(&mut tree, rest),
@@ -47,7 +64,28 @@ pub fn parse_status(output: &str) -> Status {
         }
     }
 
-    Status { tree, upstream }
+    Status {
+        tree,
+        upstream,
+        conflicts,
+    }
+}
+
+/// Le chemin d'une ligne `u`, laissé **exactement** tel que git l'a écrit.
+///
+/// Le format est fixe : `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>` — neuf
+/// champs, puis le chemin, qui est le reste de la ligne. Un chemin peut contenir des
+/// espaces ; il ne peut donc pas être découpé, seulement sauté jusqu'à lui.
+///
+/// Le chemin n'est **pas** dé-échappé. L'invocation pose `core.quotePath=true`
+/// ([`super::git_cli`]) : un chemin exotique arrive entre guillemets, avec ses octets en
+/// séquences `\303\251`. C'est la forme que git affiche partout ailleurs, celle qu'un
+/// agent relira sans se tromper, et surtout la seule qui garantisse qu'aucun octet de
+/// contrôle ne traverse — un chemin est une donnée du dépôt visité, et ce qui en est fait
+/// finit dans un terminal.
+fn unmerged_path(rest: &str) -> Option<String> {
+    let path = rest.splitn(10, ' ').nth(9)?.trim_end_matches(['\r', '\n']);
+    (!path.is_empty()).then(|| path.to_owned())
 }
 
 /// Range une entrée changée dans l'un des trois comptes.
@@ -142,6 +180,10 @@ mod tests {
         pub const RENAMED: &str = "2 R. N... 100644 100644 100644 61780798228d17af2d34fce4cfbdf35556832472 61780798228d17af2d34fce4cfbdf35556832472 R100 renamed2.txt\trenamed.txt";
         pub const UNMERGED: &str =
             "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc conflict.txt";
+        pub const UNMERGED_WITH_SPACES: &str =
+            "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc docs/my notes.md";
+        pub const UNMERGED_QUOTED: &str =
+            r#"u UU N... 100644 100644 100644 100644 aaaa bbbb cccc "src/caf\303\251.rs""#;
         pub const UNTRACKED_FILE: &str = "? untracked.txt";
         pub const UNTRACKED_DIRECTORY: &str = "? untracked_dir/";
     }
@@ -236,6 +278,62 @@ mod tests {
         assert_eq!(status.tree.conflicted, 1);
         assert_eq!(status.tree.modified, 0);
         assert_eq!(status.tree.added, 0);
+    }
+
+    #[test]
+    fn given_a_stopped_merge_when_reading_the_status_then_it_names_the_conflicting_paths() {
+        // Given — spec §7.4 demande les **chemins**, pas leur nombre : un prompt qui dit
+        // « trois fichiers » fait redemander lesquels
+        let porcelain = PorcelainBuilder::new()
+            .entry(lines::UNMERGED)
+            .entry(lines::UNMERGED_WITH_SPACES)
+            .entry(lines::WORKTREE_MODIFIED);
+
+        // When
+        let status = porcelain.parse();
+
+        // Then — le chemin est le **reste** de la ligne : le découper sur l'espace
+        // couperait `my notes.md` en deux
+        assert_eq!(
+            status.conflicts,
+            vec!["conflict.txt".to_owned(), "docs/my notes.md".to_owned()]
+        );
+        assert_eq!(status.tree.conflicted, 2);
+    }
+
+    #[test]
+    fn given_a_conflicting_path_that_git_had_to_quote_when_reading_then_it_keeps_git_s_own_escaping(
+    ) {
+        // Given — `core.quotePath=true` est posé par l'invocation durcie : git rend un
+        // chemin exotique entre guillemets, octets échappés. Le dé-échapper ferait entrer
+        // des octets d'un dépôt visité dans un texte qui finit dans un terminal.
+        let porcelain = PorcelainBuilder::new().entry(lines::UNMERGED_QUOTED);
+
+        // When
+        let status = porcelain.parse();
+
+        // Then
+        assert_eq!(status.conflicts, vec![r#""src/caf\303\251.rs""#.to_owned()]);
+    }
+
+    #[test]
+    fn given_a_rebase_that_conflicts_on_a_whole_vendored_tree_when_reading_then_the_list_is_bounded_but_the_count_is_not(
+    ) {
+        // Given — la liste traverse la frontière Tauri puis, en partie, un prompt d'une
+        // seule ligne ; le compte, lui, est ce que la ligne de statut affiche
+        let mut porcelain = PorcelainBuilder::new();
+        for index in 0..(MAX_CONFLICT_PATHS + 7) {
+            porcelain = porcelain.entry(&format!(
+                "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc vendor/f{index}.rs"
+            ));
+        }
+
+        // When
+        let status = porcelain.parse();
+
+        // Then
+        assert_eq!(status.conflicts.len(), MAX_CONFLICT_PATHS);
+        assert_eq!(status.tree.conflicted, MAX_CONFLICT_PATHS as u32 + 7);
     }
 
     #[test]
