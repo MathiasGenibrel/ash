@@ -9,12 +9,14 @@
 //! La feature est aussi le point de confinement de l'`unsafe` : tout appel système brut
 //! du crate vit dans [`macos`], derrière des fonctions sûres.
 
+mod control;
 mod error;
 #[cfg(target_os = "macos")]
 mod macos;
 mod port;
 mod watch;
 
+pub use control::ProcessControl;
 pub use error::ProbeError;
 #[cfg(target_os = "macos")]
 pub use macos::SystemProbe;

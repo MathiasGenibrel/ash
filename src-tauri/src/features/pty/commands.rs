@@ -128,6 +128,37 @@ pub fn pty_has_foreground_process(
     registry.has_foreground_process(&tab_id)
 }
 
+/// Met en pause l'agent d'un onglet — `SIGSTOP` sur son groupe en avant-plan.
+///
+/// C'est ce que la confirmation d'un checkout risqué propose (spec §7.1), et **rien
+/// d'autre** que ce que le corollaire d'
+/// [ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md) autorise :
+/// aucune touche n'est écrite dans le PTY, et rien de ce que l'outil affiche n'est
+/// interprété.
+///
+/// Elle ne part jamais toute seule : c'est un geste de l'utilisateur, sur une question qu'on
+/// lui a posée en nommant l'agent.
+#[tauri::command]
+pub fn pty_pause(
+    registry: tauri::State<'_, Arc<PtyRegistry>>,
+    tab_id: String,
+) -> Result<(), PtyError> {
+    registry.pause(&tab_id)
+}
+
+/// Reprend l'agent d'un onglet — `SIGCONT`.
+///
+/// La moitié sans laquelle la pause serait un piège. Elle est atteignable partout où la
+/// pause l'est : un agent arrêté n'émet plus de hook, donc plus d'état, et seule la fiche de
+/// l'onglet (`TabInfo.paused`) dit encore qu'il attend un signal.
+#[tauri::command]
+pub fn pty_resume(
+    registry: tauri::State<'_, Arc<PtyRegistry>>,
+    tab_id: String,
+) -> Result<(), PtyError> {
+    registry.resume(&tab_id)
+}
+
 /// Ferme un onglet et termine son shell.
 #[tauri::command]
 pub fn pty_close(
