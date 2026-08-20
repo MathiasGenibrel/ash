@@ -367,12 +367,12 @@ struct JournalledWork(Arc<CommitJournal>);
 
 impl WorkHistory for JournalledWork {
     fn last_worked(&self, repo: &Path, worktree_root: &Path) -> Option<Worked> {
-        let entry = self
+        let worked = self
             .0
             .last_worked_in(&repo.to_string_lossy(), worktree_root)?;
         Some(Worked {
-            agent: entry.agent,
-            at: entry.authored_at?,
+            agent: worked.agent,
+            at: worked.at,
         })
     }
 }

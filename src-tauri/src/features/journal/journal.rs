@@ -12,6 +12,19 @@ use super::resolve::{already_known, attribution_of};
 use super::store::JournalStore;
 use super::tabs::{author_of, Tabs};
 
+/// Un agent qu'Ash a vu travailler quelque part, et quand — ce que
+/// [`CommitJournal::last_worked_in`] rend.
+///
+/// Deux champs, tous deux certains : c'est ce qui distingue une **observation** d'une ligne
+/// du journal, dont la moitié des champs peut manquer. Un appelant qui reçoit ceci ne peut
+/// pas afficher un nom sans date, ni une date sans nom (ADR-0014).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkedIn {
+    pub agent: String,
+    /// La date d'auteur du commit, en millisecondes murales.
+    pub at: UnixMillis,
+}
+
 /// Ce que le journal pèse — de quoi proposer sa purge en sachant ce qu'elle emporte.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct JournalSummary {
@@ -141,15 +154,30 @@ impl CommitJournal {
     ///
     /// Les lignes écrites avant que le champ `worktree` n'existe ne répondent pour aucun
     /// worktree : leur lieu de naissance n'a pas été observé, et il ne se devine pas.
-    pub fn last_worked_in(&self, repo: &str, worktree_root: &Path) -> Option<Entry> {
+    ///
+    /// Ce qui sort est [`WorkedIn`], et non l'entrée entière : l'appelant demande une
+    /// observation — un nom, une date —, pas une ligne de fichier. Rendre l'`Entry` ferait
+    /// traverser le format persistant, ses deux champs sans source et ses deux dates, à
+    /// quelqu'un qui n'a rien à en faire ; et laisserait à l'adaptateur du composition root
+    /// le soin de décider ce qu'il advient d'une date absente, là où aucun test ne le
+    /// regarde.
+    pub fn last_worked_in(&self, repo: &str, worktree_root: &Path) -> Option<WorkedIn> {
         let here = worktree_root.to_string_lossy();
         Entry::read_all(&self.store.read(&file_name(repo)))
             .into_iter()
             .filter(|entry| entry.worktree.as_deref() == Some(here.as_ref()))
+            // Une ligne sans date n'est pas une observation datable : elle est écartée ici
+            // plutôt que classée avec une date de repli, qui la ferait gagner ou perdre par
+            // accident.
+            .filter_map(|entry| {
+                Some(WorkedIn {
+                    agent: entry.agent,
+                    at: entry.authored_at?,
+                })
+            })
             // La plus récente **observée**, et non la dernière ligne du fichier : un rebase
             // écrit dans l'ordre où il rejoue, pas dans l'ordre où les commits sont nés.
-            .max_by_key(|entry| entry.authored_at.unwrap_or_default())
-            .filter(|entry| entry.authored_at.is_some())
+            .max_by_key(|worked| worked.at)
     }
 
     /// Ce que le journal pèse aujourd'hui.
@@ -276,7 +304,7 @@ mod tests {
         let elsewhere = journal.last_worked_in(REPO, Path::new(WORKTREE));
 
         // Then
-        assert_eq!(here.map(|entry| entry.agent), Some("codex".to_owned()));
+        assert_eq!(here.map(|worked| worked.agent), Some("codex".to_owned()));
         assert_eq!(elsewhere, None);
     }
 
