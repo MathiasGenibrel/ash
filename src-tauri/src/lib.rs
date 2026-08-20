@@ -82,6 +82,7 @@ use features::journal::{
     CommitJournal, CommitLog as JournalCommits, CommitRecord, FileJournalStore, JournalStore,
     TabAgent, Tabs as JournalTabs,
 };
+use features::links::{Files, LaunchServices, Opener, SystemFiles};
 use features::merge::{ConflictFiles, MergeOutcome, MergeSurface, StoppedWorktree, TreeGit};
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
 use features::probe::SystemProbe;
@@ -940,6 +941,11 @@ pub fn run() -> tauri::Result<()> {
         // quelque chose à ouvrir. C'est la seule entrée d'Ash qui s'éteigne — voir
         // `menu::MergeReach` pour les trois formes possibles et celle qui a été retenue.
         .manage(Arc::new(menu::MergeReach::default()))
+        // Les deux ports de `features::links` — la troisième frontière de sécurité du
+        // dépôt (voir son `mod.rs`). Ils sont assemblés ici et nulle part ailleurs : c'est
+        // ce qui fait qu'aucune autre feature n'a de chemin vers `/usr/bin/open`.
+        .manage(Arc::new(SystemFiles) as Arc<dyn Files>)
+        .manage(Arc::new(LaunchServices) as Arc<dyn Opener>)
         .manage(spike::Flow::default())
         .menu({
             let shortcuts = Arc::clone(&shortcuts);
@@ -971,6 +977,8 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_resume,
             features::git::commands::git_metadata,
             features::git::commands::git_commit_graph,
+            features::links::commands::links_openable,
+            features::links::commands::links_open,
             features::journal::commands::journal_summary,
             features::journal::commands::journal_purge,
             features::card::commands::branch_card,
