@@ -20,7 +20,9 @@ use super::git_cli::StatusReader;
 use super::metadata::{read_metadata, WorktreeMetadata};
 use super::porcelain::parse_status;
 use super::ports::FileSystem;
+use super::stopped::{read_stopped, StoppedOperation};
 use super::targets::WatchTargets;
+use super::test_command::detect_test_command;
 use super::throttle::{Decision, Throttle};
 use super::watcher::{FileWatcher, WatchHandle};
 use super::worktree::resolve_worktree;
@@ -210,6 +212,25 @@ impl MetadataWatch {
         }
         let (git_dir, common_dir) = self.dirs_of(root)?;
         self.read(root, &git_dir, &common_dir)
+    }
+
+    /// L'opération arrêtée d'un worktree, quand il y en a une (spec §7.4).
+    ///
+    /// Elle se construit sur les métadonnées **déjà** connues — c'est de là que viennent
+    /// l'opération et les chemins en conflit, sans un `git status` de plus — puis lit les
+    /// fichiers de contrôle que la ligne de statut n'a pas besoin de connaître : le commit
+    /// d'arrêt et `ORIG_HEAD`.
+    ///
+    /// Posée **à la demande**, et non poussée par la surveillance : un panneau de conflits
+    /// fermé n'a pas à faire relire `ORIG_HEAD` à chaque écriture dans `.git`.
+    ///
+    /// Rien n'est écrit, rien n'est exécuté : c'est de la lecture de bout en bout
+    /// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+    pub fn stopped(&self, root: &Path) -> Option<StoppedOperation> {
+        let metadata = self.metadata(root)?;
+        let (git_dir, _) = self.dirs_of_watched(root).or_else(|| self.dirs_of(root))?;
+        let test_command = detect_test_command(self.fs.as_ref(), root);
+        read_stopped(self.fs.as_ref(), &git_dir, &metadata, test_command)
     }
 
     /// Relâche tous les observateurs — l'application quitte.

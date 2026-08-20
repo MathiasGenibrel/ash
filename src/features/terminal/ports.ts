@@ -7,7 +7,14 @@
  * l'application.
  */
 
-import type { TabId, TabInfo, WorktreeMetadata, WorktreeMetadataChanged } from "@/shared/ipc";
+import type {
+    ComposeOutcome,
+    StoppedOperation,
+    TabId,
+    TabInfo,
+    WorktreeMetadata,
+    WorktreeMetadataChanged,
+} from "@/shared/ipc";
 
 /**
  * `TabId` et `TabInfo` sont le contrat partagé avec le backend, pas la propriété de cette
@@ -119,6 +126,16 @@ export interface PtyBridge {
         onFrame: (frame: PtyFrame) => void,
     ): Promise<TabId>;
     write(tabId: TabId, data: string): Promise<void>;
+    /**
+     * Rédige un texte dans l'onglet — **sans l'envoyer**
+     * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+     *
+     * Distincte de [`write`] et pas un raccourci pour elle : `write` transporte une frappe
+     * de l'utilisateur, `compose` demande au backend d'appliquer une **règle** — refuser un
+     * prompt non vide, refuser un onglet sans agent reconnu, attendre la fin d'un tour. La
+     * réponse dit laquelle s'est appliquée, et c'est ce que l'écran doit rendre.
+     */
+    compose(tabId: TabId, text: string): Promise<ComposeOutcome>;
     resize(tabId: TabId, size: TerminalSize): Promise<void>;
     ack(tabId: TabId): Promise<void>;
     close(tabId: TabId): Promise<void>;
@@ -161,4 +178,19 @@ export interface GitBridge {
      * ni ne relit à intervalle régulier.
      */
     onMetadataChanged(handler: (changed: WorktreeMetadataChanged) => void): Promise<Unsubscribe>;
+    /**
+     * L'opération arrêtée d'un worktree, quand il y en a une (spec §7.4).
+     *
+     * `null` est le cas courant — rien n'est en cours. Lire cet état n'écrit rien et
+     * n'exécute rien : `escapes` porte `abort` et `skip` comme du **texte à montrer**.
+     */
+    stoppedOperation(worktreeRoot: string): Promise<StoppedOperation | null>;
+    /**
+     * Le prompt à rédiger dans l'onglet de l'agent pour ce rebase arrêté.
+     *
+     * Composé par le backend — c'est lui qui détient l'état
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — et rendu ici sans
+     * que rien n'ait encore été écrit nulle part.
+     */
+    conflictPrompt(worktreeRoot: string): Promise<string | null>;
 }

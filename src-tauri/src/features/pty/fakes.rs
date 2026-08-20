@@ -456,6 +456,42 @@ pub fn supervised_registry(
     (registry, probe, locator, agents)
 }
 
+/// Un registre et les doublures qu'un scénario d'ADR-0015 pilote.
+///
+/// `written` est ce qui compte : les octets réellement posés dans le PTY sont la seule
+/// preuve de « Ash compose, l'utilisateur envoie » — c'est là, et nulle part ailleurs,
+/// qu'on voit qu'aucun `⏎` n'est parti.
+pub struct Composing {
+    pub registry: PtyRegistry,
+    pub probe: Arc<FakeProbe>,
+    pub agents: Arc<FakeAgentStates>,
+    pub recognition: Arc<FakeRecognition>,
+    pub written: Arc<Mutex<Vec<u8>>>,
+}
+
+/// Un registre sondable dont on garde **ce qui atterrit vraiment dans le PTY**.
+pub fn composing_registry(cwd: &str) -> Composing {
+    let probe = Arc::new(FakeProbe::reporting(cwd));
+    let agents = Arc::new(FakeAgentStates::default());
+    let recognition = Arc::new(FakeRecognition::default());
+    let spawner = FakeSpawner::observable();
+    let written = Arc::clone(&spawner.written);
+    let registry = PtyRegistry::new(
+        Box::new(spawner),
+        Arc::clone(&probe) as Arc<dyn Probe>,
+        Arc::new(CountingLocator::default()) as Arc<dyn WorktreeLocator>,
+        Arc::clone(&recognition) as Arc<dyn AgentRecognition>,
+        Arc::clone(&agents) as Arc<dyn AgentStates>,
+    );
+    Composing {
+        registry,
+        probe,
+        agents,
+        recognition,
+        written,
+    }
+}
+
 /// Idem, plus la reconnaissance des outils — pour ce qui se joue à la frontière d'ADR-0006.
 pub fn recognizing_registry(
     cwd: &str,

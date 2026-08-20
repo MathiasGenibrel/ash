@@ -13,4 +13,13 @@ export type Status = { tree: TreeStatus,
  * La comparaison avec la branche amont. `None` quand la branche n'en suit aucune —
  * une branche locale toute neuve, ou un `HEAD` détaché.
  */
-upstream: Upstream | null, };
+upstream: Upstream | null, 
+/**
+ * Les chemins qui attendent une décision, tels que git les écrit.
+ *
+ * Ils viennent du **même** appel que le reste (spec §7.4 a besoin des chemins, pas
+ * seulement de leur nombre), et c'est ce qui évite un second verbe git : les lignes
+ * `u` de `--porcelain=v2` les portent déjà. La liste est bornée par
+ * [`super::porcelain`] ; `tree.conflicted`, lui, ne l'est pas.
+ */
+conflicts: Array<string>, };
