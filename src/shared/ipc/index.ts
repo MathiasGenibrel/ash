@@ -155,6 +155,15 @@ export interface TabInfo {
      */
     subagents: Subagent[];
     location: TabLocation | null;
+    /**
+     * Le groupe en avant-plan de cet onglet est **arrêté** — `SIGSTOP`
+     * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+     *
+     * Ce n'est pas un sixième état : un état vient d'un hook (ADR-0007), et un processus
+     * arrêté n'en émet aucun. Sans ce champ, un agent mis en pause paraîtrait `working` pour
+     * toujours, et personne ne saurait qu'il attend un `SIGCONT`.
+     */
+    paused: boolean;
 }
 
 /**
@@ -449,4 +458,100 @@ export interface WorktreeRemoval {
     carries: string[];
     refused: string | null;
     command: string;
+}
+
+/**
+ * La popup de branches (spec §7.1) — miroir de `src-tauri/src/features/git/branches.rs` et
+ * de `branch_actions.rs`.
+ *
+ * Rien ici n'est calculé côté TypeScript : le groupement, l'ordre, le worktree qui détient
+ * chaque branche et les agents en danger viennent tous du backend
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)). Ce que la webview fait de
+ * ces formes — filtrer, sélectionner, écrire une phrase — est dans `features/git/`.
+ */
+
+/** De quel côté de la frontière vit une branche. */
+export type BranchKind = "local" | "remote";
+
+/** Le worktree qui détient une branche, quand ce n'est pas celui d'où l'on regarde. */
+export interface BranchWorktree {
+    root: string;
+    /** Le dernier segment du chemin — `ash-sidebar`. */
+    name: string;
+}
+
+/** Une branche, telle que la popup la montre. */
+export interface Branch {
+    /** `feat/popup` pour une locale, `origin/feat/popup` pour une distante. */
+    name: string;
+    kind: BranchKind;
+    /** L'objet court de la pointe — `a1b2c3d`. */
+    tip: string;
+    /** La date du commit de pointe, en **secondes** Unix. Le backend ne met rien en forme. */
+    committedAt: number;
+    /**
+     * `null` sur une branche libre.
+     *
+     * C'est la colonne de droite de la spec §7.1, et le seul endroit d'où elle vient : la
+     * webview ne sait pas quels worktrees existent.
+     */
+    worktree: BranchWorktree | null;
+}
+
+/** Les quatre groupes de la spec §7.1, dans l'ordre où ils s'affichent. */
+export type BranchGroup = "current" | "recent" | "local" | "remote";
+
+export interface BranchSection {
+    group: BranchGroup;
+    branches: Branch[];
+}
+
+/** Un agent qui écrit dans un worktree — **nommé**, pas compté. */
+export interface BusyAgent {
+    /** L'onglet qui le porte : c'est par lui que la pause le retrouve. */
+    tabId: string;
+    /** Le nom de l'outil, tel que la sidebar l'affiche — `claude`. */
+    name: string;
+    state: AgentState;
+    /** Son groupe en avant-plan est déjà arrêté. */
+    paused: boolean;
+}
+
+/** Tout ce que la popup montre, en une seule réponse — donc vrai au même instant. */
+export interface BranchOverview {
+    worktreeRoot: string;
+    /** `null` quand ce worktree ne détient aucune branche. */
+    current: string | null;
+    /** Les groupes **non vides**, dans l'ordre. */
+    sections: BranchSection[];
+    /** Les agents qu'un geste sur l'arbre dérangerait. Vide dans le cas courant. */
+    agentsAtRisk: BusyAgent[];
+}
+
+/** Les trois verbes que `⌘⏎` propose. Une union fermée, comme l'énumération Rust. */
+export type BranchAction = "checkout" | "rebase" | "merge";
+
+/** Ce qu'une action propose — son libellé à deux côtés, et sa raison de refus. */
+export interface ActionOffer {
+    action: BranchAction;
+    /**
+     * Toujours présent, refus compris : un bouton éteint reste visible **avec sa raison**.
+     *
+     * Composé côté Rust, et pas ici : le message d'échec est fabriqué du côté qui reçoit la
+     * sortie de git, et deux compositions séparées nommeraient deux choses pour un geste.
+     */
+    label: string;
+    /** `null` quand l'action est permise. */
+    refused: string | null;
+    /** Elle touche l'arbre de travail, donc elle dérange un agent qui y écrit. */
+    touchesTree: boolean;
+}
+
+/** Ce qu'une action a fait, ou n'a pas fait. */
+export interface ActionOutcome {
+    /** Les deux côtés, encore — y compris quand `success` est faux (spec §7.1). */
+    label: string;
+    success: boolean;
+    /** Ce que git a dit, tel quel. */
+    output: string;
 }

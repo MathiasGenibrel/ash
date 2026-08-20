@@ -10,6 +10,12 @@ pub enum PtyError {
     Spawn(String),
     /// L'onglet demandé n'existe pas, ou n'existe plus.
     UnknownTab(String),
+    /// Il n'y a rien à mettre en pause dans cet onglet.
+    ///
+    /// Un shell à son invite, ou un onglet que le système ne rend pas observable. Ce n'est
+    /// pas une panne : c'est le refus d'arrêter le shell de l'utilisateur, qui rendrait
+    /// l'onglet muet au clavier sans que rien n'en explique la raison.
+    NothingToPause(String),
     /// Écriture, redimensionnement ou terminaison refusés par le système.
     Io(String),
 }
@@ -19,6 +25,10 @@ impl fmt::Display for PtyError {
         match self {
             PtyError::Spawn(why) => write!(f, "impossible de lancer le shell : {why}"),
             PtyError::UnknownTab(id) => write!(f, "onglet inconnu : {id}"),
+            PtyError::NothingToPause(id) => write!(
+                f,
+                "rien ne tourne dans l'onglet {id} : il n'y a rien à mettre en pause"
+            ),
             PtyError::Io(why) => write!(f, "erreur d'entrée-sortie sur le PTY : {why}"),
         }
     }

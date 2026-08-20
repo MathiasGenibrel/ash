@@ -15,6 +15,16 @@
  */
 
 import type { AgentState as RustAgentState } from "./generated/AgentState";
+import type { ActionOffer as RustActionOffer } from "./generated/ActionOffer";
+import type { ActionOutcome as RustActionOutcome } from "./generated/ActionOutcome";
+import type { Branch as RustBranch } from "./generated/Branch";
+import type { BranchAction as RustBranchAction } from "./generated/BranchAction";
+import type { BranchGroup as RustBranchGroup } from "./generated/BranchGroup";
+import type { BranchKind as RustBranchKind } from "./generated/BranchKind";
+import type { BranchOverview as RustBranchOverview } from "./generated/BranchOverview";
+import type { BranchSection as RustBranchSection } from "./generated/BranchSection";
+import type { BranchWorktree as RustBranchWorktree } from "./generated/BranchWorktree";
+import type { BusyAgent as RustBusyAgent } from "./generated/BusyAgent";
 import type { Head as RustHead } from "./generated/Head";
 import type { Instrumented as RustInstrumented } from "./generated/Instrumented";
 import type { MetadataChanged as RustMetadataChanged } from "./generated/MetadataChanged";
@@ -43,7 +53,17 @@ import type { WorkSource as RustWorkSource } from "./generated/WorkSource";
 import type { WorktreeAgent as RustWorktreeAgent } from "./generated/WorktreeAgent";
 import type { WorktreeRow as RustWorktreeRow } from "./generated/WorktreeRow";
 import type {
+    ActionOffer,
+    ActionOutcome,
     AgentState,
+    Branch,
+    BranchAction,
+    BranchGroup,
+    BranchKind,
+    BranchOverview,
+    BranchSection,
+    BranchWorktree,
+    BusyAgent,
     ComposeOutcome,
     Instrumented,
     GitHead,
@@ -118,6 +138,24 @@ export type WorktreeMetadataStillMirrorsRust = Assert<
 export type WorktreeMetadataChangedStillMirrorsRust = Assert<
     Mirrors<RustMetadataChanged, WorktreeMetadataChanged>
 >;
+
+/**
+ * La popup de branches (spec §7.1).
+ *
+ * Les deux assertions qui portent le ticket sont `BranchWorktree` — la colonne qui nomme le
+ * worktree quand la branche vit ailleurs — et `BusyAgent` : un champ perdu là, et
+ * l'avertissement cesserait de **nommer** l'agent pour se contenter de compter.
+ */
+export type BranchKindStillMirrorsRust = Assert<Mirrors<RustBranchKind, BranchKind>>;
+export type BranchWorktreeStillMirrorsRust = Assert<Mirrors<RustBranchWorktree, BranchWorktree>>;
+export type BranchStillMirrorsRust = Assert<Mirrors<RustBranch, Branch>>;
+export type BranchGroupStillMirrorsRust = Assert<Mirrors<RustBranchGroup, BranchGroup>>;
+export type BranchSectionStillMirrorsRust = Assert<Mirrors<RustBranchSection, BranchSection>>;
+export type BusyAgentStillMirrorsRust = Assert<Mirrors<RustBusyAgent, BusyAgent>>;
+export type BranchOverviewStillMirrorsRust = Assert<Mirrors<RustBranchOverview, BranchOverview>>;
+export type BranchActionStillMirrorsRust = Assert<Mirrors<RustBranchAction, BranchAction>>;
+export type ActionOfferStillMirrorsRust = Assert<Mirrors<RustActionOffer, ActionOffer>>;
+export type ActionOutcomeStillMirrorsRust = Assert<Mirrors<RustActionOutcome, ActionOutcome>>;
 
 /**
  * Le rebase arrêté de la spec §7.4, et l'issue d'une composition.

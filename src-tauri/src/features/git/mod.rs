@@ -46,9 +46,16 @@
 //! | `FileWatcher` (`watcher.rs`) | `watcher.rs` | `fakes.rs` |
 //! | `Clock`, `Scheduler` (`shared/time.rs`) | `shared/time.rs` | `fakes.rs` |
 //! | `StatusReader` (`git_cli.rs`) | `git_cli.rs` | `fakes.rs` |
+//! | `BranchReader`, `TreeWriter` (`git_cli.rs`) | `git_cli.rs` | `branch_actions.rs` |
+//! | `WorkingAgents` (`working_agents.rs`) | `lib.rs` | `branches.rs` |
 //! | `TabPresence`, `WorkHistory`, `WorktreeFacts` (`table.rs`) | `lib.rs`, `metadata_watch.rs` | `table.rs` |
 //!
-//! Les trois derniers sont ceux du **tableau des worktrees** (spec §7.3) : la feature y pose
+//! `WorkingAgents` n'est pas un effet système : c'est un **fait** que `git` ne peut pas
+//! connaître — quel agent écrit dans ce worktree. Il est un port pour la même raison que
+//! `pty::AgentStates` : sans lui, `git` importerait `pty`, et l'avertissement de la spec
+//! §7.1 ne se vérifierait qu'en ouvrant un PTY.
+//!
+//! Les trois de `table.rs` sont ceux du **tableau des worktrees** (spec §7.3) : la feature y pose
 //! deux questions qu'elle ne sait pas trancher — qui travaille dans ce worktree, et qui y a
 //! travaillé en dernier —, et c'est le composition root qui les branche sur `pty` et
 //! `journal`. Voir [`table`].
@@ -71,11 +78,12 @@
 //! adaptateur. Ce que ça gagne n'est pas d'avoir un port de moins : c'est que la règle
 //! `at_risk`, qui vit ici et qui a ses tests ici, cesse d'être **appliquée** dans le
 //! composition root, où rien ne la regarde.
-
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
 pub mod commands;
 
+mod branch_actions;
+mod branches;
 mod control;
 mod error;
 mod git_cli;
@@ -91,6 +99,7 @@ mod targets;
 mod test_command;
 mod throttle;
 mod watcher;
+mod working_agents;
 mod worktree;
 
 /// L'arbre en mémoire qui double le port `FileSystem` dans les tests de la feature.
@@ -101,8 +110,15 @@ mod fake_fs;
 #[cfg(test)]
 mod fakes;
 
+pub use branch_actions::{ActionOffer, ActionOutcome, BranchAction};
+pub use branches::{
+    overview as branch_overview, Branch, BranchGroup, BranchKind, BranchOverview, BranchSection,
+    BranchWorktree,
+};
 pub use error::GitError;
-pub use git_cli::{CommitRecord, StatusReader, SystemGit, STATUS_TIMEOUT};
+pub use git_cli::{
+    BranchReader, CommitRecord, StatusReader, SystemGit, TreeWriter, STATUS_TIMEOUT,
+};
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,
     WorktreeMetadata,
@@ -118,4 +134,5 @@ pub use table::{
     WorktreeFacts, WorktreeRemoval, WorktreeRow, WorktreeTable, STALE_AFTER,
 };
 pub use test_command::detect_test_command;
+pub use working_agents::{at_risk, BusyAgent, WorkingAgents};
 pub use worktree::{resolve_worktree, Repo, Worktree, WorktreeLocation};
