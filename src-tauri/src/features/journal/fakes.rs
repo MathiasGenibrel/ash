@@ -152,6 +152,8 @@ impl EntryBuilder {
                 subject: "feat(sidebar): group tabs by worktree".to_owned(),
                 agent: "claude".to_owned(),
                 tab_id: "01J0TAB".to_owned(),
+                worktree: Some("/dev/ash".to_owned()),
+                authored_at: Some(1_755_000_201_000),
                 session_started: None,
                 prompt: None,
             },

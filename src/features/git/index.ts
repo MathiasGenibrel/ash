@@ -1,16 +1,22 @@
 /**
- * API publique de la feature git côté webview — pour l'instant, **la popup de branches**
- * et rien d'autre (spec §7.1).
+ * API publique de la feature git côté fenêtre : **la popup de branches** (spec §7.1) et
+ * **le tableau des worktrees** (spec §7.3).
  *
- * Le dossier est prévu pour porter aussi le graphe, l'onglet de merge et la fiche de
- * branche : ils appartiennent à d'autres tranches, et rien n'est posé d'avance ici. Ce que
- * le reste du frontend importe est ce fichier, jamais `controller`, `popup` ni `bridge`.
+ * Le dossier portera aussi le graphe (#27), l'onglet de merge (#30) et la fiche de branche
+ * (#31), écrits en parallèle. Ce fichier est leur point de rencontre, et le seul que `app/`
+ * importe — jamais `controller`, `popup`, `bridge` ni `worktree-table`.
  *
  * **Cette feature ne détient aucun état d'agent ni aucun état git**
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) : elle demande, elle
  * rend, et elle repose ses questions au backend à chaque ouverture. Ce qu'elle tient en
  * propre est ce que le backend n'a pas — le filtre en cours et la ligne sélectionnée.
  */
+
+export {
+    mountWorktreeTable,
+    type WorktreeTable,
+    type WorktreeTablePorts,
+} from "./worktree-table";
 
 import "./git.css";
 

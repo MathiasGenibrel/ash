@@ -17,6 +17,7 @@ use super::metadata_watch::{Listeners, MetadataWatch};
 use super::prompt::compose_conflict_prompt;
 use super::stopped::StoppedOperation;
 use super::system_fs::SystemFileSystem;
+use super::table::{WorktreeRemoval, WorktreeRow, WorktreeTable};
 use super::throttle::MIN_INTERVAL;
 use super::watcher::SystemWatcher;
 use super::working_agents::WorkingAgents;
@@ -98,6 +99,45 @@ pub async fn git_conflict_prompt<R: Runtime>(
     let watch = app.state::<Arc<MetadataWatch>>();
     let stopped = watch.stopped(Path::new(&worktree_root))?;
     Some(compose_conflict_prompt(&stopped.prompt_subject()))
+}
+
+/// Le tableau des worktrees (spec §7.3).
+///
+/// Ce que la vue `worktrees` du panneau bas affiche, **composé ici** : les deux colonnes du
+/// milieu — `agents now` et `last worked by` — croisent les onglets, le journal
+/// d'attribution et l'état git, et aucune fenêtre n'a le droit de les assembler elle-même
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// **`async` pour la même raison que [`git_metadata`]** : la réponse peut coûter un
+/// `git status` par worktree du dépôt, ce qui n'a rien à faire sur le fil qui dessine la
+/// fenêtre.
+///
+/// Demandée par la fenêtre plutôt que poussée : le tableau est fermé la plupart du temps, et
+/// un event qui repartirait à chaque écriture de `.git` ferait travailler une vue que
+/// personne ne regarde. Ce qui bouge sous les yeux de l'utilisateur — la branche, l'état de
+/// l'arbre — arrive déjà par `ash://git-metadata`.
+#[tauri::command]
+pub async fn git_worktrees<R: Runtime>(app: AppHandle<R>) -> Vec<WorktreeRow> {
+    let table = app.state::<Arc<WorktreeTable>>();
+    table.rows()
+}
+
+/// Ce qu'une suppression de ce worktree emporterait (spec §5.4).
+///
+/// **Elle ne supprime rien.** Ash signale, il ne supprime jamais : la fiche énonce ce qui
+/// partirait — fichiers non validés, agent en cours, opération interrompue — et rend la
+/// commande **comme du texte à montrer**, exactement comme les sorties de secours d'un
+/// rebase arrêté ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+///
+/// Elle est lue **au moment du geste**, et non au moment où le tableau s'est dessiné : ce
+/// qu'elle énonce doit être vrai quand on le lit.
+#[tauri::command]
+pub async fn git_worktree_removal<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+) -> Option<WorktreeRemoval> {
+    let table = app.state::<Arc<WorktreeTable>>();
+    table.removal(Path::new(&worktree_root))
 }
 
 /// Construit la surveillance avec les adaptateurs du système, et la relie à la fenêtre.

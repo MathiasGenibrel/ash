@@ -28,9 +28,26 @@
 //!    laisse un rebase garder l'attribution d'origine, au lieu de tout attribuer à l'agent
 //!    qui a lancé le rebase.
 //!
+//! ## Ce que la ligne porte aujourd'hui : huit champs, et deux de plus
+//!
+//! ADR-0014 nomme les huit champs de l'attribution, et ce sont eux seuls qui l'établissent —
+//! par `sha`, puis par (`author_date`, `subject`). La ligne en porte deux autres depuis le
+//! tableau des worktrees (spec §7.3) : `worktree`, où le commit est né, et `authored_at`, sa
+//! date d'auteur en millisecondes. Ils ne participent à **aucune** résolution : ils
+//! répondent à une autre question — *qui a travaillé ici en dernier ?* — que le journal est
+//! seul à pouvoir tenir, parce qu'il est la seule mémoire d'un agent qui survive à la
+//! fermeture de son onglet (ADR-0009 interdit d'en persister une autre). Les deux sont
+//! facultatifs et `#[serde(default)]` : une ligne écrite avant eux reste attribuable, et ne
+//! répond pour aucun worktree. Leur justification tient dans [`Entry`] ; ce qu'ils rendent
+//! sort par [`CommitJournal::last_worked_in`], sous la forme d'une observation à deux champs
+//! certains ([`WorkedIn`]) plutôt que de la ligne entière.
+//!
+//! Le test de contrat de la ligne les tient tous les dix, par leurs noms : c'est lui qui
+//! tombe le jour où un onzième arrive sans qu'on l'ait décidé.
+//!
 //! ## Deux champs sans source, et c'est la même
 //!
-//! ADR-0014 nomme huit champs. Six ont une source certaine, qui est la **sonde** — d'où le
+//! Des huit d'ADR-0014, six ont une source certaine, qui est la **sonde** — d'où le
 //! fait que l'attribution marche pour tous les outils, `generic` compris
 //! ([ADR-0008](../../../../docs/adr/0008-abstraction-adapter.md)). Les deux autres,
 //! `session_started` et `prompt`, n'en ont **aucune aujourd'hui**, et ce n'est pas la même
@@ -84,6 +101,6 @@ mod tabs;
 pub use commits::{CommitLog, CommitRecord};
 pub use entry::Entry;
 pub use error::JournalError;
-pub use journal::{CommitJournal, JournalSummary};
+pub use journal::{CommitJournal, JournalSummary, WorkedIn};
 pub use store::{FileJournalStore, JournalStore};
 pub use tabs::{TabAgent, Tabs};
