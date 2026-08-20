@@ -7,6 +7,7 @@ use crate::features::agents::{AgentState, Presence, ProgramIdentity, RecognizedA
 use crate::shared::time::UnixMillis;
 
 use super::agent_states::AgentStates;
+use super::compose::{ComposeDesk, ComposeOutcome, Foreground};
 use super::error::PtyError;
 use super::flow::Credits;
 use super::locate::{TabLocation, WorktreeLocator};
@@ -89,6 +90,8 @@ struct Tab {
     watch: SharedWatch,
     /// La dernière localisation résolue, et le répertoire pour lequel elle l'a été.
     place: SharedPlace,
+    /// Ce que le registre retient de la **saisie** de cet onglet — voir [`super::compose`].
+    compose: SharedDesk,
     /// Le dernier `TabInfo` que la boucle a poussé vers la webview.
     ///
     /// C'est lui qui garde la frontière Tauri muette au repos : un onglet n'est annoncé que
@@ -125,6 +128,11 @@ type SharedPlace = Arc<Mutex<Option<Located>>>;
 /// Ce que la webview sait déjà d'un onglet, tenu à part du verrou du registre pour la même
 /// raison que la sonde et la localisation.
 type SharedAnnouncement = Arc<Mutex<Option<TabInfo>>>;
+
+/// Le pupitre de composition d'un onglet, tenu à part du verrou du registre pour la même
+/// raison que la sonde : il est touché à **chaque frappe**, et une frappe clavier n'a pas
+/// à attendre derrière la description de tous les onglets.
+type SharedDesk = Arc<Mutex<ComposeDesk>>;
 
 struct Located {
     cwd: PathBuf,
@@ -280,6 +288,7 @@ impl PtyRegistry {
             watch,
             place: Arc::new(Mutex::new(None)),
             announced: Arc::new(Mutex::new(None)),
+            compose: Arc::new(Mutex::new(ComposeDesk::default())),
         });
 
         Ok(Opened {
@@ -324,21 +333,46 @@ impl PtyRegistry {
     /// seule sonde laisserait un `waiting` sans producteur visible attendre indéfiniment le
     /// prochain `cd`.
     pub fn changes(&self) -> Result<Vec<TabInfo>, PtyError> {
-        Ok(self
-            .snapshot()?
-            .into_iter()
-            .filter_map(|tab| {
-                let announced = Arc::clone(&tab.announced);
-                let seen = self.observe(&tab.watch);
-                let now = self.describe(tab, seen);
+        let mut changed = Vec::new();
+        for tab in self.snapshot()? {
+            let announced = Arc::clone(&tab.announced);
+            let desk = Arc::clone(&tab.compose);
+            let tab_id = tab.id.clone();
+            let seen = self.observe(&tab.watch);
+            let now = self.describe(tab, seen);
 
-                let mut announced = announced.lock().ok()?;
-                (announced.as_ref() != Some(&now)).then(|| {
-                    *announced = Some(now.clone());
-                    now
-                })
-            })
-            .collect())
+            // Le tour de l'agent vient peut-être de finir : c'est ici, et nulle part
+            // ailleurs, qu'un texte retenu rejoint le prompt (voir [`super::compose`]).
+            // La passe de sonde est le seul endroit qui repose la question de l'état trois
+            // fois par seconde ; un minuteur à part ferait vivre la même cadence deux fois.
+            self.flush_composed(&tab_id, &desk, now.state);
+
+            let Ok(mut announced) = announced.lock() else {
+                continue;
+            };
+            if announced.as_ref() != Some(&now) {
+                *announced = Some(now.clone());
+                changed.push(now);
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Pose dans le prompt le texte que le pupitre retenait, quand le tour est fini.
+    ///
+    /// La règle — rien ne sort tant que le tour dure — est celle de
+    /// [`ComposeDesk::release_after_turn`]. Ici, il n'y a que la traduction de l'état
+    /// d'agent en « un tour est en cours », et l'écriture.
+    fn flush_composed(&self, tab_id: &str, desk: &SharedDesk, state: AgentState) {
+        let released = match desk.lock() {
+            Ok(mut desk) => desk.release_after_turn(state == AgentState::Working),
+            Err(_) => None,
+        };
+        if let Some(text) = released {
+            // Échouer à écrire signifie que l'onglet vient de disparaître : il n'y a plus
+            // de prompt où poser quoi que ce soit.
+            let _ = self.write(tab_id, text.as_bytes());
+        }
     }
 
     /// Les racines de worktree où vit au moins un onglet, sans doublon et **sans rien
@@ -382,8 +416,60 @@ impl PtyRegistry {
         self.with_tab(tab_id, |tab| tab.session.has_foreground_process())
     }
 
+    /// Envoie des octets au shell — une frappe de l'utilisateur, ou un texte composé.
+    ///
+    /// Le **pupitre** en prend note au passage : c'est la seule source d'Ash sur ce que
+    /// contient la ligne de saisie d'un onglet, et elle ne doit rien à la sortie du PTY
+    /// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md), et voir
+    /// [`super::compose`]).
     pub fn write(&self, tab_id: &str, bytes: &[u8]) -> Result<(), PtyError> {
-        self.with_tab(tab_id, |tab| tab.session.write(bytes))
+        self.with_tab(tab_id, |tab| {
+            if let Ok(mut desk) = tab.compose.lock() {
+                desk.wrote(bytes);
+            }
+            tab.session.write(bytes)
+        })
+    }
+
+    /// Rédige un texte dans un onglet — **sans jamais l'envoyer**
+    /// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+    ///
+    /// La règle elle-même — les quatre issues et leur ordre — appartient au **pupitre**
+    /// ([`ComposeDesk::arbitrate`]), et se lit là-bas d'un seul tenant. Le registre ne fait
+    /// ici que trois choses qu'il est seul à savoir faire : dire ce que l'onglet montre,
+    /// tenir le verrou, et poser les octets quand le pupitre le lui dit.
+    ///
+    /// Le `\n` n'est filtré ni ici ni là-bas mais **à la source** : le texte vient de
+    /// `features::git`, dont le compositeur ne rend qu'une seule ligne — dans un PTY, un
+    /// saut de ligne *est* la touche `⏎`.
+    ///
+    /// L'état d'agent consulté est le **dernier annoncé**, jamais un état redemandé : la
+    /// question d'`AgentStates` fait avancer le temps des états qui expirent, et un clic
+    /// n'a pas à faire vieillir une machine que la boucle de sonde arbitre déjà.
+    pub fn compose(&self, tab_id: &str, text: &str) -> Result<ComposeOutcome, PtyError> {
+        let (desk, announced) = self.with_tab(tab_id, |tab| {
+            Ok((Arc::clone(&tab.compose), Arc::clone(&tab.announced)))
+        })?;
+
+        let announced = announced.lock().ok().and_then(|known| known.clone());
+        let foreground = Foreground {
+            // `agent` est ce que le port de reconnaissance a rendu : `pty` ne connaît
+            // toujours aucun nom d'outil.
+            agent_is_running: announced.as_ref().is_some_and(|tab| tab.agent.is_some()),
+            turn_in_progress: announced.is_some_and(|tab| tab.state == AgentState::Working),
+        };
+
+        let outcome = {
+            let Ok(mut desk) = desk.lock() else {
+                return Err(PtyError::Io("pupitre de composition empoisonné".to_owned()));
+            };
+            desk.arbitrate(foreground, text)
+        };
+
+        if outcome == ComposeOutcome::Written {
+            self.write(tab_id, text.as_bytes())?;
+        }
+        Ok(outcome)
     }
 
     /// Pose une grille sur le PTY d'un onglet — et **seulement si c'en est une autre**.
@@ -447,6 +533,7 @@ impl PtyRegistry {
                 watch: Arc::clone(&tab.watch),
                 place: Arc::clone(&tab.place),
                 announced: Arc::clone(&tab.announced),
+                compose: Arc::clone(&tab.compose),
             })
             .collect())
     }
@@ -612,6 +699,7 @@ struct TabHandle {
     watch: SharedWatch,
     place: SharedPlace,
     announced: SharedAnnouncement,
+    compose: SharedDesk,
 }
 
 /// Le nom du shell d'un onglet — `zsh`, `bash`. Le chemin entier pour seul repli.
@@ -628,8 +716,9 @@ mod tests {
     use crate::features::agents::Instrumented;
     use crate::features::probe::{Pid, ProbeError, ProcessInfo};
     use crate::features::pty::fakes::{
-        located_registry, observed_registry, recognizing_registry, registry, spec,
-        supervised_registry, CountingLocator, FakeAgentStates, FakeSpawner, SpecBuilder,
+        composing_registry, located_registry, observed_registry, recognizing_registry, registry,
+        spec, supervised_registry, Composing, CountingLocator, FakeAgentStates, FakeSpawner,
+        SpecBuilder,
     };
     use std::os::fd::RawFd;
     use std::sync::atomic::Ordering;
@@ -647,6 +736,178 @@ mod tests {
     /// Un onglet réduit à ce que le scénario regarde : qui il est, et où il est.
     fn described(tab: TabInfo) -> (TabId, String) {
         (tab.tab_id, tab.cwd)
+    }
+
+    /// Test Data Builder : un onglet où un agent reconnu tient l'avant-plan.
+    ///
+    /// C'est le décor de la spec §7.4 — « passer le travail à l'agent qui tourne déjà là »
+    /// — et le défaut valide de tous les scénarios de composition : `claude` en avant-plan,
+    /// instrumenté, à l'invite (donc pas en plein tour), et un prompt vide.
+    struct ComposingTab {
+        registry: PtyRegistry,
+        agents: Arc<FakeAgentStates>,
+        written: Arc<Mutex<Vec<u8>>>,
+        tab_id: TabId,
+    }
+
+    impl ComposingTab {
+        fn new() -> Self {
+            let fakes = composing_registry("/dev/ash");
+            fakes
+                .recognition
+                .knows("/usr/local/bin/claude", "claude", Instrumented::Installed);
+            fakes.probe.hand_over_to_binary("/usr/local/bin/claude");
+            fakes.registry.open(spec(), "01J0TAB".to_owned()).unwrap();
+            fakes.agents.declare(AgentState::Waiting);
+            // La première passe est ce qui fait connaître l'avant-plan de l'onglet : la
+            // composition lit le dernier `TabInfo` annoncé, jamais une sonde relancée.
+            fakes.registry.changes().unwrap();
+            Self::from(fakes)
+        }
+
+        /// Un shell à son invite : aucun outil reconnu ne tient l'avant-plan.
+        fn at_a_shell_prompt() -> Self {
+            let fakes = composing_registry("/dev/ash");
+            fakes.registry.open(spec(), "01J0TAB".to_owned()).unwrap();
+            fakes.registry.changes().unwrap();
+            Self::from(fakes)
+        }
+
+        fn from(fakes: Composing) -> Self {
+            Self {
+                registry: fakes.registry,
+                agents: fakes.agents,
+                written: fakes.written,
+                tab_id: "01J0TAB".to_owned(),
+            }
+        }
+
+        fn compose(&self, text: &str) -> ComposeOutcome {
+            self.registry.compose(&self.tab_id, text).unwrap()
+        }
+
+        fn typed(&self, keys: &str) -> &Self {
+            self.registry.write(&self.tab_id, keys.as_bytes()).unwrap();
+            self
+        }
+
+        /// L'agent entre dans un tour, ou en sort.
+        fn now(&self, state: AgentState) -> &Self {
+            self.agents.declare(state);
+            self.registry.changes().unwrap();
+            self
+        }
+
+        fn terminal(&self) -> String {
+            String::from_utf8(self.written.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    #[test]
+    fn given_an_agent_tab_with_an_empty_prompt_when_ash_composes_then_the_text_is_in_the_terminal_and_no_return_was_sent(
+    ) {
+        // Given — la première condition d'ADR-0015 : le texte apparaît dans le terminal,
+        // à sa place, tel qu'il sera envoyé
+        let tab = ComposingTab::new();
+
+        // When
+        let outcome = tab.compose("resolve the conflicts in src/probe.rs");
+
+        // Then — la troisième condition : Ash ne presse jamais `⏎`. Dans un PTY, un saut
+        // de ligne *est* la validation : le chercher dans les octets écrits est la seule
+        // façon de le prouver.
+        assert_eq!(outcome, ComposeOutcome::Written);
+        assert_eq!(tab.terminal(), "resolve the conflicts in src/probe.rs");
+        assert!(!tab.terminal().contains('\n'));
+        assert!(!tab.terminal().contains('\r'));
+    }
+
+    #[test]
+    fn given_a_user_typing_in_the_tab_when_ash_wants_to_compose_then_it_refuses_rather_than_inserting_in_the_middle(
+    ) {
+        // Given — le cas qu'ADR-0015 demande explicitement de traiter
+        let tab = ComposingTab::new();
+        tab.typed("explique-moi le ");
+
+        // When
+        let outcome = tab.compose("resolve the conflicts");
+
+        // Then — l'utilisateur enverrait sinon un mélange de son texte et de celui d'Ash
+        assert_eq!(outcome, ComposeOutcome::PromptNotEmpty);
+        assert_eq!(tab.terminal(), "explique-moi le ");
+    }
+
+    #[test]
+    fn given_a_prompt_that_ash_has_already_filled_when_it_is_asked_again_then_it_does_not_write_twice(
+    ) {
+        // Given — le texte composé est du texte comme un autre une fois posé : le
+        // recomposer par-dessus donnerait un prompt en double, illisible et envoyable
+        let tab = ComposingTab::new();
+        tab.compose("resolve the conflicts");
+
+        // When
+        let outcome = tab.compose("resolve the conflicts");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::PromptNotEmpty);
+        assert_eq!(tab.terminal(), "resolve the conflicts");
+    }
+
+    #[test]
+    fn given_a_tab_where_no_recognized_tool_holds_the_foreground_when_ash_wants_to_compose_then_it_refuses(
+    ) {
+        // Given — un shell à son invite. Y poser du texte préparerait une **commande**
+        // dans le terminal de quelqu'un, ce que l'ADR-0015 n'autorise nulle part : elle
+        // parle de passer le travail à l'agent qui tourne déjà là.
+        let tab = ComposingTab::at_a_shell_prompt();
+
+        // When
+        let outcome = tab.compose("resolve the conflicts");
+
+        // Then
+        assert_eq!(outcome, ComposeOutcome::NoAgent);
+        assert_eq!(tab.terminal(), "");
+    }
+
+    #[test]
+    fn given_an_agent_in_the_middle_of_a_turn_when_ash_composes_then_the_text_waits_for_the_end_of_the_turn(
+    ) {
+        // Given — le corollaire de file d'attente d'ADR-0015 : écrire maintenant ferait
+        // atterrir la frappe au milieu d'une sortie, pas dans le prompt
+        let tab = ComposingTab::new();
+        tab.now(AgentState::Working);
+
+        // When
+        let outcome = tab.compose("resolve the conflicts");
+
+        // Then — rien n'est encore dans le terminal, et l'écran a de quoi dire pourquoi
+        assert_eq!(outcome, ComposeOutcome::Queued);
+        assert_eq!(tab.terminal(), "");
+
+        // When — le tour se termine, et la passe de sonde suivante s'en aperçoit
+        tab.now(AgentState::Waiting);
+
+        // Then — le texte est posé, et toujours pas envoyé
+        assert_eq!(tab.terminal(), "resolve the conflicts");
+        assert!(!tab.terminal().contains('\r'));
+    }
+
+    #[test]
+    fn given_a_text_waiting_for_the_end_of_a_turn_when_the_turn_ends_then_it_is_written_once_and_not_at_every_pass(
+    ) {
+        // Given — la passe de sonde repasse trois fois par seconde : un texte relâché à
+        // chaque passe remplirait le prompt de copies
+        let tab = ComposingTab::new();
+        tab.now(AgentState::Working);
+        tab.compose("resolve the conflicts");
+
+        // When
+        tab.now(AgentState::Waiting);
+        tab.registry.changes().unwrap();
+        tab.registry.changes().unwrap();
+
+        // Then
+        assert_eq!(tab.terminal(), "resolve the conflicts");
     }
 
     #[test]

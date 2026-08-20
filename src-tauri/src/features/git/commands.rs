@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use super::git_cli::SystemGit;
 use super::metadata::WorktreeMetadata;
 use super::metadata_watch::{Listeners, MetadataWatch};
+use super::prompt::compose_conflict_prompt;
+use super::stopped::StoppedOperation;
 use super::system_fs::SystemFileSystem;
 use super::throttle::MIN_INTERVAL;
 use super::watcher::SystemWatcher;
@@ -53,6 +55,46 @@ pub async fn git_metadata<R: Runtime>(
 ) -> Option<WorktreeMetadata> {
     let watch = app.state::<Arc<MetadataWatch>>();
     watch.metadata(Path::new(&worktree_root))
+}
+
+/// L'opération arrêtée d'un worktree, quand il y en a une (spec §7.4).
+///
+/// Ce que le panneau des conflits affiche : l'opération, les chemins, le pas, le commit
+/// d'arrêt, `ORIG_HEAD`, et les deux sorties à **montrer** — `abort` et `skip`. Ash n'en
+/// exécute aucune, et n'écrit rien : c'est de la lecture de bout en bout.
+///
+/// `None` est le cas courant — rien n'est en cours.
+///
+/// **`async` pour la même raison que [`git_metadata`]** : la réponse peut coûter une
+/// résolution de worktree et un `git status`, qui n'ont rien à faire sur le fil qui dessine
+/// la fenêtre.
+#[tauri::command]
+pub async fn git_stopped_operation<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+) -> Option<StoppedOperation> {
+    let watch = app.state::<Arc<MetadataWatch>>();
+    watch.stopped(Path::new(&worktree_root))
+}
+
+/// Le prompt à rédiger dans l'onglet de l'agent, pour ce rebase arrêté.
+///
+/// Composé **ici**, dans le backend, et non côté écran : c'est le backend qui détient
+/// l'état ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et la règle
+/// de rédaction est une règle du produit, pas une mise en forme. L'onglet de merge (#30)
+/// appellera le même compositeur sur les seuls conflits qu'il n'a pas résolus.
+///
+/// Rendre le prompt n'écrit rien nulle part : c'est `pty_compose` qui le pose dans le
+/// terminal, et l'utilisateur seul qui l'envoie
+/// ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+#[tauri::command]
+pub async fn git_conflict_prompt<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+) -> Option<String> {
+    let watch = app.state::<Arc<MetadataWatch>>();
+    let stopped = watch.stopped(Path::new(&worktree_root))?;
+    Some(compose_conflict_prompt(&stopped.prompt_subject()))
 }
 
 /// Construit la surveillance avec les adaptateurs du système, et la relie à la fenêtre.
