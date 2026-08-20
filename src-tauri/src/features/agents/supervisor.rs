@@ -87,6 +87,7 @@ use super::notify::{notice, Notice, Notifier};
 use super::preferences::{NotificationChoices, NotificationPreferences};
 use super::state::{AgentState, AgentStatus};
 use super::subagents::{Subagent, Subagents};
+use super::usage::{self, SessionUsage, Transcripts};
 use super::wire::EventFrame;
 use crate::shared::time::{Clock, UnixMillis};
 
@@ -141,6 +142,11 @@ pub struct Supervisor {
     /// pose la valeur par défaut ([`super::SUBAGENT_LINGER`]). C'est aussi ce qui permet à un
     /// scénario de la décrire au lieu de la subir.
     subagent_linger: Duration,
+    /// Par où la fin d'un transcript se lit (`usage.rs`).
+    ///
+    /// Un port, pour la raison habituelle : ouvrir un fichier est un effet système, et les
+    /// scénarios du superviseur doivent pouvoir décrire un transcript au lieu d'en écrire un.
+    transcripts: Arc<dyn Transcripts>,
     tabs: Mutex<Tabs>,
 }
 
@@ -156,6 +162,16 @@ pub struct TabAgents {
     /// Les lignes filles, dans leur ordre d'apparition. Vide dans l'écrasante majorité des
     /// cas — un onglet sans sous-agent, ou un outil qui n'en expose pas.
     pub subagents: Vec<Subagent>,
+    /// La place que la conversation occupe, quand l'outil sait la dire (`usage.rs`).
+    ///
+    /// `None` couvre trois cas que rien ne distingue à l'écran, et c'est voulu : l'outil ne
+    /// tient pas de transcript, aucun hook n'en a encore nommé un, ou la queue lue ne portait
+    /// aucun tour. Dans les trois, la barre d'état reste ce qu'elle était — pas de jauge
+    /// vide, rien qui laisse croire qu'une mesure a échoué.
+    ///
+    /// Elle voyage avec l'onglet, et par le même chemin que l'état : une mesure n'a pas plus
+    /// besoin d'un canal à elle qu'un état (ADR-0009).
+    pub usage: Option<SessionUsage>,
 }
 
 #[derive(Default)]
@@ -185,6 +201,16 @@ struct Tab {
     /// La date ne bouge **que** quand l'état change : c'est ce qui laisse la fiche d'un
     /// onglet identique d'une passe à l'autre (voir [`AgentStatus`]).
     answered: Option<AgentStatus>,
+    /// La dernière mesure lue pour cet onglet, ou rien.
+    ///
+    /// **Retenue entre deux hooks, et c'est ce qui la rend stable.** Elle n'est relue qu'à
+    /// l'arrivée d'un hook — jamais à une passe de sonde : le transcript ne bouge que quand
+    /// l'agent parle, et le relire trois fois par seconde ferait payer une lecture de disque
+    /// par onglet et par passe pour un nombre qui n'a pas changé.
+    ///
+    /// Elle vit **à côté** de la machine, comme les enfants, et pour une raison voisine :
+    /// aucune mesure n'a de chemin vers l'état de l'onglet.
+    usage: Option<SessionUsage>,
     /// Ce que la sonde a vu la dernière fois — de quoi reconnaître un **front**.
     ///
     /// Retenu même sans machine : sans ça, la machine créée par le premier hook prendrait le
@@ -198,6 +224,7 @@ impl Tab {
         Self {
             machine: None,
             children: Subagents::new(subagent_linger),
+            usage: None,
             answered: None,
             seen: Presence::default(),
         }
@@ -211,6 +238,7 @@ impl Supervisor {
         notifier: Arc<dyn Notifier>,
         preferences: Arc<NotificationPreferences>,
         subagent_linger: Duration,
+        transcripts: Arc<dyn Transcripts>,
     ) -> Self {
         Self {
             clock,
@@ -218,6 +246,7 @@ impl Supervisor {
             notifier,
             preferences,
             subagent_linger,
+            transcripts,
             tabs: Mutex::new(Tabs::default()),
         }
     }
@@ -233,7 +262,17 @@ impl Supervisor {
         // adaptateur (ADR-0007, amendement du 2026-08-13).
         let declared = self.translate(&event.kind);
         let child = self.child_event(&event.kind);
-        if declared.is_none() && child.is_none() {
+
+        // La lecture du transcript se fait **avant** le verrou, et c'est sa place : c'est le
+        // seul accès au disque de ce chemin, et le tenir pendant qu'on lit ferait attendre
+        // toutes les passes de sonde le temps d'une entrée-sortie.
+        //
+        // Elle ne dépend pas du verbe : `transcript_path` arrive sur **tous** les événements,
+        // y compris ceux dont aucun adaptateur ne tire d'état. Une mesure fraîche apportée par
+        // un `PreToolUse` vaut celle d'un `Stop`.
+        let measured = self.measure(event);
+
+        if declared.is_none() && child.is_none() && measured.is_none() {
             // Un verbe qu'aucun adaptateur ne reconnaît ne produit rien du tout — ni état, ni
             // ligne fille. Un enfant révélé par un mot inconnu serait deviné.
             return;
@@ -261,6 +300,14 @@ impl Supervisor {
             // L'enfant d'abord, et à part : quoi qu'il arrive ensuite à l'onglet, ce qui suit
             // ne touche que ses lignes filles.
             note_child(&mut tab.children, event, child, now);
+
+            // La mesure ensuite, et à part elle aussi : elle est retenue **avant** le retour
+            // du cas « ce hook ne dit rien de l'onglet », parce qu'un `SubagentStop` porte un
+            // transcript aussi frais qu'un autre. Une mesure absente n'efface pas la
+            // précédente : l'onglet garde ce qu'il savait.
+            if measured.is_some() {
+                tab.usage = measured;
+            }
 
             let Some(declared) = declared else {
                 // Le cas du sixième hook : `SubagentStop` a nommé un enfant, et n'a rien à
@@ -322,6 +369,7 @@ impl Supervisor {
                         since: now,
                     },
                     subagents: Vec::new(),
+                    usage: None,
                 },
                 None,
             );
@@ -370,6 +418,10 @@ impl Supervisor {
             // processus, dans le même onglet).
             tab.machine = None;
             tab.children.clear();
+            // La jauge part avec l'agent : un shell à son invite n'a pas de conversation, et
+            // laisser la dernière mesure à l'écran ferait lire la place occupée par un agent
+            // qui n'est plus là.
+            tab.usage = None;
         }
         // Le seul endroit qui fasse vieillir les lignes filles, comme `tick` est le seul à
         // faire vieillir celle de l'onglet : la boucle de sonde passe déjà, et rien ne
@@ -382,6 +434,7 @@ impl Supervisor {
             TabAgents {
                 status,
                 subagents: tab.children.shown(),
+                usage: tab.usage,
             },
             interrupt(tab_id, changed, focused, self.preferences.choices()),
         )
@@ -450,6 +503,18 @@ impl Supervisor {
             .iter()
             .find_map(|adapter| adapter.child_event(&raw))
     }
+
+    /// Ce que le transcript nommé par cette trame dit de la place consommée, ou rien.
+    ///
+    /// La règle, elle, est dans `usage.rs` : le superviseur ne fait que lui présenter ce
+    /// qu'il détient — ses adaptateurs, son port, et le chemin qu'une trame a nommé.
+    fn measure(&self, event: &EventFrame) -> Option<SessionUsage> {
+        usage::measure(
+            &self.adapters,
+            self.transcripts.as_ref(),
+            event.transcript_path.as_deref(),
+        )
+    }
 }
 
 /// Ce qu'une trame apprend des enfants de son onglet.
@@ -516,9 +581,10 @@ mod tests {
     use super::*;
     use crate::features::agents::adapters::{ClaudeCodeAdapter, GenericAdapter};
     use crate::features::agents::fakes::{
-        FakeNotificationStore, FakeNotifier, ManualClock, FAKE_EPOCH,
+        FakeNotificationStore, FakeNotifier, FakeTranscripts, ManualClock, FAKE_EPOCH,
     };
     use crate::features::agents::subagents::SUBAGENT_LINGER;
+    use crate::features::agents::usage::DEFAULT_CONTEXT_WINDOW;
     use std::path::PathBuf;
 
     const TAB: &str = "01J0TAB";
@@ -542,6 +608,14 @@ mod tests {
         subagent_linger: Duration,
         /// Les trois interrupteurs de la spec §9, à leurs défauts sauf mention contraire.
         choices: NotificationChoices,
+        /// Les transcripts que ce scénario **décrit** — vide par défaut, donc aucun chemin
+        /// nommé par un hook ne mènera nulle part.
+        transcripts: FakeTranscripts,
+        /// L'outil que cet onglet est censé faire tourner n'a pas d'adaptateur à lui.
+        ///
+        /// Faux par défaut : les scénarios courants assemblent les **vrais** adaptateurs, tels
+        /// que le composition root les pose.
+        only_generic: bool,
     }
 
     impl SupervisorBuilder {
@@ -551,7 +625,21 @@ mod tests {
                 focused: false,
                 subagent_linger: SUBAGENT_LINGER,
                 choices: NotificationChoices::default(),
+                transcripts: FakeTranscripts::new(),
+                only_generic: false,
             }
+        }
+
+        /// Un transcript existe à ce chemin, et il porte ce texte.
+        fn holding_transcript(mut self, path: &str, tail: &str) -> Self {
+            self.transcripts = self.transcripts.holding(path, tail);
+            self
+        }
+
+        /// L'outil de l'onglet est inconnu : seul le socle d'ADR-0008 le sert.
+        fn served_only_by_the_generic_adapter(mut self) -> Self {
+            self.only_generic = true;
+            self
         }
 
         /// Un utilisateur qui a mis l'un des trois interrupteurs dans cette position.
@@ -573,12 +661,12 @@ mod tests {
         }
 
         fn build(self) -> Assembled {
-            let adapters: Vec<Arc<dyn Adapter>> = vec![
-                Arc::new(GenericAdapter),
-                Arc::new(ClaudeCodeAdapter::new(PathBuf::from(
+            let mut adapters: Vec<Arc<dyn Adapter>> = vec![Arc::new(GenericAdapter)];
+            if !self.only_generic {
+                adapters.push(Arc::new(ClaudeCodeAdapter::new(PathBuf::from(
                     "/Applications/Ash.app/Contents/MacOS/ash-event",
-                ))),
-            ];
+                ))));
+            }
             let notifier = FakeNotifier::new();
             let supervisor = Supervisor::new(
                 Arc::clone(&self.clock) as Arc<dyn Clock>,
@@ -586,6 +674,7 @@ mod tests {
                 Arc::clone(&notifier) as Arc<dyn Notifier>,
                 FakeNotificationStore::holding(self.choices),
                 self.subagent_linger,
+                Arc::new(self.transcripts) as Arc<dyn Transcripts>,
             );
             supervisor.on_window_focus(self.focused);
             Assembled {
@@ -615,6 +704,22 @@ mod tests {
     /// La même passe, avec la date d'entrée — pour les seuls scénarios qui en parlent.
     fn sweep_status(supervisor: &Supervisor, seen: Presence) -> AgentStatus {
         supervisor.state(TAB, seen).status
+    }
+
+    /// La place consommée que la fiche de l'onglet porterait, à cette passe-ci.
+    fn sweep_usage(supervisor: &Supervisor, seen: Presence) -> Option<SessionUsage> {
+        supervisor.state(TAB, seen).usage
+    }
+
+    /// Le chemin qu'un hook de Claude Code met sur son entrée standard.
+    const TRANSCRIPT: &str = "/Users/x/.claude/projects/ash/session.jsonl";
+
+    /// Une queue de transcript qui déclare exactement `used` tokens.
+    ///
+    /// Un seul compteur renseigné : le partage entre entrée, cache et sortie est ce que les
+    /// tests de l'adaptateur prouvent, et le redire ici ne dirait rien du superviseur.
+    fn transcript_of(used: u64) -> String {
+        format!(r#"{{"type":"assistant","message":{{"usage":{{"input_tokens":{used}}}}}}}"#)
     }
 
     /// Les lignes filles que la sidebar montrerait, réduites à ce qu'un `Then` lit.
@@ -1299,5 +1404,119 @@ mod tests {
 
         // Then
         assert_eq!(notifier.titles(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_a_hook_that_names_a_transcript_when_it_arrives_then_the_tab_carries_what_the_session_consumes(
+    ) {
+        // Given — le scénario du ticket : un onglet servi par `claude-code`, et un transcript
+        // que l'outil tient déjà. Rien n'a été installé pour ça — `transcript_path` voyage sur
+        // le `stdin` de **chaque** hook.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .holding_transcript(TRANSCRIPT, &transcript_of(146_273))
+            .build();
+        sweep(&supervisor, Presence::Program);
+
+        // When — l'agent finit son tour.
+        supervisor.on_hook(&hook("done", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // Then — la mesure voyage avec l'onglet, à la passe suivante, sans canal à elle.
+        assert_eq!(
+            sweep_usage(&supervisor, Presence::Program),
+            Some(SessionUsage {
+                used_tokens: 146_273,
+                window_tokens: DEFAULT_CONTEXT_WINDOW,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_measured_tab_when_a_hook_arrives_without_a_transcript_then_the_last_measure_stays() {
+        // Given — un onglet qui a déjà sa mesure. La suite est le cas courant d'un outil qui
+        // ne nomme pas toujours son transcript, ou d'une trame que la borne du fil a
+        // dépouillée : une absence de mesure n'est pas une mesure à zéro.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .holding_transcript(TRANSCRIPT, &transcript_of(90_000))
+            .build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("working", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // When — deux hooks muets sur ce point : l'un sans chemin, l'autre en nommant un
+        // fichier que rien ne peut lire.
+        supervisor.on_hook(&hook("waiting", TAB));
+        supervisor.on_hook(&hook("working", TAB).with_transcript(Some("/tmp/effacé.jsonl")));
+
+        // Then — l'onglet garde ce qu'il savait, et aucune erreur n'a de trace visible.
+        assert_eq!(
+            sweep_usage(&supervisor, Presence::Program).map(|usage| usage.used_tokens),
+            Some(90_000)
+        );
+    }
+
+    #[test]
+    fn given_a_measured_tab_when_it_becomes_a_shell_row_again_then_its_gauge_leaves_with_the_agent()
+    {
+        // Given — la jauge décrit une conversation, pas un onglet. Un shell revenu à son
+        // invite n'en a plus, et laisser la dernière mesure ferait lire la place occupée par
+        // un agent qui n'est plus là.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new()
+            .watched()
+            .holding_transcript(TRANSCRIPT, &transcript_of(90_000))
+            .build();
+        sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("done", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // When — la ligne `done` vit ses trente secondes, puis l'onglet redevient un shell.
+        sweep(&supervisor, Presence::Prompt);
+        clock.advance(30);
+        let once_it_is_a_shell_row = supervisor.state(TAB, Presence::Prompt);
+
+        // Then
+        assert_eq!(once_it_is_a_shell_row.status.state, AgentState::Idle);
+        assert_eq!(once_it_is_a_shell_row.usage, None);
+    }
+
+    #[test]
+    fn given_a_tab_served_only_by_the_generic_adapter_when_a_transcript_is_named_then_nothing_measures_it(
+    ) {
+        // Given — le deuxième scénario du ticket. L'adaptateur `generic` déclare
+        // `UsageSupport::None` : même en lui présentant un transcript parfaitement lisible,
+        // l'onglet doit rester **sans** usage — pas une jauge à zéro, pas un tiret.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .served_only_by_the_generic_adapter()
+            .holding_transcript(TRANSCRIPT, &transcript_of(146_273))
+            .build();
+        sweep(&supervisor, Presence::Program);
+
+        // When
+        supervisor.on_hook(&hook("done", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // Then — et l'état n'a pas bougé non plus : aucun adaptateur ne comprend ce mot ici.
+        let after = supervisor.state(TAB, Presence::Program);
+        assert_eq!(after.usage, None);
+        assert_eq!(after.status.state, AgentState::Working);
+    }
+
+    #[test]
+    fn given_a_hook_carrying_only_a_transcript_when_no_adapter_reads_its_verb_then_the_measure_still_lands(
+    ) {
+        // Given — un onglet mesuré par un verbe qu'aucun adaptateur ne traduit. Le chemin
+        // court d'`on_hook` — « rien à dire, on s'arrête » — doit tenir compte de la mesure,
+        // sinon un `PreToolUse` porteur d'un transcript frais serait jeté avec son verbe.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .holding_transcript(TRANSCRIPT, &transcript_of(12_345))
+            .build();
+        sweep(&supervisor, Presence::Program);
+
+        // When — `Stop` est un nom de hook de Claude Code, pas un mot de la spec §6.3 : il ne
+        // se traduit en aucun état.
+        supervisor.on_hook(&hook("Stop", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // Then — l'état reste celui de la sonde, et la mesure est arrivée quand même.
+        let after = supervisor.state(TAB, Presence::Program);
+        assert_eq!(after.status.state, AgentState::Working);
+        assert_eq!(after.usage.map(|usage| usage.used_tokens), Some(12_345));
     }
 }

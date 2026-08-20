@@ -4,6 +4,7 @@ use crate::features::agents::adapter::{
     Adapter, ChildEvent, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
+use crate::features::agents::usage::{SessionUsage, UsageSupport};
 
 /// Le socle : l'adaptateur d'un outil dont on ne sait rien
 /// ([ADR-0008](../../../../../docs/adr/0008-abstraction-adapter.md)).
@@ -53,6 +54,25 @@ impl Adapter for GenericAdapter {
     fn subagents(&self) -> SubagentSupport {
         SubagentSupport::None
     }
+
+    /// Rien de la place consommée non plus, et c'est la même logique qu'ailleurs.
+    ///
+    /// Un outil dont Ash ne sait rien ne tient pas forcément de transcript, et s'il en tient
+    /// un, Ash n'en connaît pas le format. Répondre `None` est ce qui fait que la barre
+    /// d'état reste **exactement** ce qu'elle était pour cet onglet : pas de jauge vide, pas
+    /// de `ctx —`, rien qui laisse croire qu'une mesure a échoué.
+    fn usage(&self) -> UsageSupport {
+        UsageSupport::None
+    }
+
+    /// Et donc jamais de mesure, quel que soit le texte qu'on lui présente.
+    ///
+    /// C'est ce que `UsageSupport::None` promet, et la suite contractuelle le vérifie sur un
+    /// vrai transcript de Claude Code : le socle ne doit pas se mettre à lire le format d'un
+    /// autre outil « en attendant » son adaptateur.
+    fn read_usage(&self, _transcript_tail: &str) -> Option<SessionUsage> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -68,7 +88,7 @@ mod tests {
         let adapter = GenericAdapter;
 
         // When
-        let report = check_adapter_contract(&adapter, &[]);
+        let report = check_adapter_contract(&adapter, &[], None);
 
         // Then
         assert!(report.is_satisfied(), "violations :\n{report}");

@@ -136,3 +136,32 @@ impl NotificationStore for FakeNotificationStore {
         Ok(())
     }
 }
+
+/// Un transcript qu'un scénario **décrit**, au lieu de l'écrire sur le disque.
+///
+/// C'est le port [`Transcripts`] tenu par une table : le test dit « ce chemin porte ce
+/// texte », et le superviseur lit exactement ça. Un chemin absent rend `None`, comme le
+/// vrai lecteur devant un fichier effacé.
+#[derive(Debug, Default)]
+pub(crate) struct FakeTranscripts {
+    tails: std::collections::HashMap<std::path::PathBuf, String>,
+}
+
+impl FakeTranscripts {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub(crate) fn holding(mut self, path: &str, tail: &str) -> Self {
+        self.tails
+            .insert(std::path::PathBuf::from(path), tail.to_owned());
+        self
+    }
+}
+
+impl crate::features::agents::usage::Transcripts for FakeTranscripts {
+    fn tail(&self, path: &std::path::Path) -> Option<String> {
+        self.tails.get(path).cloned()
+    }
+}

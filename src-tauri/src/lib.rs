@@ -67,9 +67,9 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use features::agents::{
-    Adapter, ClaudeCodeAdapter, EventFrame, EventSink, FileNotificationStore, GenericAdapter,
-    Notice, NotificationPreferences, NotificationStore, Notifier, Presence, Supervisor, TabAgents,
-    SUBAGENT_LINGER,
+    Adapter, ClaudeCodeAdapter, EventFrame, EventSink, FileNotificationStore, FileTranscripts,
+    GenericAdapter, Notice, NotificationPreferences, NotificationStore, Notifier, Presence,
+    Supervisor, TabAgents, Transcripts, SUBAGENT_LINGER,
 };
 use features::card::{AgentWork as CardWork, Cards, FileModeStore, SystemCardFiles, WorkRecord};
 use features::git::{
@@ -765,6 +765,10 @@ pub fn run() -> tauri::Result<()> {
         // au fond de la feature, pour que le jour où la fenêtre de réglages le porte, il n'y
         // ait qu'un fil à rebrancher.
         SUBAGENT_LINGER,
+        // Par où la fin d'un transcript se lit. Le seul accès au disque de ce chemin, et il
+        // n'a lieu qu'à l'arrivée d'un hook portant un `transcript_path` — jamais à une passe
+        // de sonde.
+        Arc::new(FileTranscripts) as Arc<dyn Transcripts>,
     ));
 
     // L'apparence — le thème et la taille de police du terminal — est relue **avant** la
