@@ -268,9 +268,9 @@ impl WorktreeTable {
 
     /// Ce qu'une suppression de ce worktree emporterait (spec §5.4).
     ///
-    /// **Rien n'est supprimé, et rien n'est exécuté** : la fiche est lue au moment du geste,
-    /// pas au moment où le tableau s'est dessiné — ce qu'elle énonce doit être vrai quand on
-    /// la lit, pas quand on l'a demandée.
+    /// **Rien n'est supprimé, et rien n'est exécuté** : la fiche de suppression est lue au
+    /// moment du geste, pas au moment où le tableau s'est dessiné — ce qu'elle énonce doit
+    /// être vrai quand on la lit, pas quand on l'a demandée.
     pub fn removal(&self, worktree_root: &Path) -> Option<WorktreeRemoval> {
         let row = self.row(
             self.locate(worktree_root)?,
