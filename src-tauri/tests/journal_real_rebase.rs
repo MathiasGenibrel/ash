@@ -15,9 +15,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ash_lib::features::git::{CommitLog, CommitRecord, SystemGit};
+use ash_lib::features::git::{CommitRecord, SystemGit};
 use ash_lib::features::journal::{CommitJournal, FileJournalStore, JournalStore, TabAgent, Tabs};
 use ash_lib::shared::time::SystemClock;
+use ash_lib::GitCommits;
 
 /// Un dossier temporaire qui se supprime à la fin du test, réussi ou non.
 ///
@@ -158,7 +159,7 @@ impl Tabs for OpenTabs {
 /// Le journal tel que le composition root l'assemble : le vrai `git`, un vrai dossier.
 fn journal(sandbox: &Sandbox, tabs: Arc<OpenTabs>) -> Arc<CommitJournal> {
     CommitJournal::watching(
-        Arc::new(SystemGit::default()),
+        Arc::new(GitCommits(SystemGit::default())),
         Arc::new(FileJournalStore::at(sandbox.journal_dir())) as Arc<dyn JournalStore>,
         tabs,
         &SystemClock,
@@ -172,7 +173,7 @@ fn repo_id(repo: &Path) -> String {
 
 /// Les commits de `HEAD`, lus par le même chemin que le journal.
 fn head(repo: &Path) -> Vec<CommitRecord> {
-    SystemGit::default().recent(repo)
+    SystemGit::default().recent_commits(repo)
 }
 
 fn subject_of<'a>(commits: &'a [CommitRecord], subject: &str) -> &'a CommitRecord {

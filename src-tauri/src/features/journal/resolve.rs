@@ -10,7 +10,7 @@
 //! Le second temps est ce qui fait tenir tout le jalon J5 : le rebase est l'opération
 //! centrale du produit, et c'est exactement celle qui réécrit les `sha`.
 
-use crate::features::git::CommitRecord;
+use super::commits::CommitRecord;
 
 use super::entry::Entry;
 
