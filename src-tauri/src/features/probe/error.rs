@@ -19,6 +19,14 @@ pub enum ProbeError {
     /// C'est le cas nominal d'une course : entre `tcgetpgrp` et `proc_pidinfo`, la
     /// commande en avant-plan a eu le temps de se terminer.
     Vanished(Pid),
+    /// On a refusé de signaler ce groupe de processus.
+    ///
+    /// Pas « le signal a échoué » : « on ne l'a pas envoyé ». `0` désigne le groupe de
+    /// l'appelant — Ash lui-même — et les valeurs négatives élargissent la cible au lieu de
+    /// la désigner. Voir [`super::control::signalable`].
+    NotSignalable(Pid),
+    /// Le noyau a refusé le signal : le groupe n'existe plus, ou il ne nous appartient pas.
+    SignalRefused { pgid: Pid, errno: i32 },
 }
 
 impl fmt::Display for ProbeError {
@@ -28,6 +36,13 @@ impl fmt::Display for ProbeError {
                 write!(f, "aucun processus en avant-plan sur le terminal {fd}")
             }
             ProbeError::Vanished(pid) => write!(f, "le processus {pid} n'est plus observable"),
+            ProbeError::NotSignalable(pgid) => {
+                write!(f, "le groupe de processus {pgid} ne peut pas être signalé")
+            }
+            ProbeError::SignalRefused { pgid, errno } => write!(
+                f,
+                "le système a refusé de signaler le groupe {pgid} (errno {errno})"
+            ),
         }
     }
 }

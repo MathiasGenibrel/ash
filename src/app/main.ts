@@ -1,6 +1,6 @@
 import "./styles.css";
-import { mountBranchCard } from "@/features/git";
-import { mountBottomPanel } from "@/features/panel";
+import { mountBranchCard, mountBranches, mountWorktreeTable } from "@/features/git";
+import { mountBottomPanel, type BottomPanelState } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { BranchCard, SidebarRows } from "@/shared/ipc";
@@ -32,6 +32,7 @@ import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
 import { followBottomPanel, type BottomPanelBinding } from "./bottom-panel";
 import { followBranchCard, type BranchCardBinding } from "./branch-card";
+import { listWorktrees, worktreeRemoval } from "./worktrees";
 
 /**
  * Composition root du frontend.
@@ -221,7 +222,35 @@ function mount(
     };
 
     const titleBar = createTitleBar(windowTitle(null, appName));
+
+    // La popup de branches (spec §7.1), reliée ici comme la sidebar et la bande de titre : la
+    // feature terminal ne connaît pas `features/git`, et `features/git` ne connaît ni les
+    // onglets ni la ligne de statut. Ce qui les relie tient en quatre câbles — où l'on est,
+    // où s'ancrer, à qui rendre les doigts, et qui prévenir quand le dépôt a bougé.
+    //
+    // Le worktree courant est relu **à chaque ouverture** et non capturé : l'onglet actif
+    // change, et une popup qui garderait la racine de son premier montage parlerait d'un
+    // autre dépôt que celui affiché.
+    let here: string | null = null;
+    const branches = mountBranches(root, {
+        worktreeRoot: () => here,
+        anchor: () => terminals.branchAnchor(),
+        // Les doigts reviennent au terminal en se refermant : rien dans Ash ne garde le
+        // clavier après un geste (ADR-0010).
+        restoreFocus: () => {
+            host.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+        },
+        // Un checkout réussi change la branche du worktree. La surveillance de `.git`
+        // d'ADR-0011 le verra d'elle-même ; ce câble ne fait que redessiner ce qui est déjà
+        // en main, sans rien redemander à personne.
+        onRepositoryChanged: drawSidebar,
+    });
+    terminals.onBranchesRequested(() => {
+        branches.toggle();
+    });
+
     terminals.onActiveTab((active) => {
+        here = active?.tab.location?.worktreeRoot ?? null;
         titleBar.setTitle(windowTitle(active, appName));
         const worktree = active?.tab.location?.worktreeRoot ?? null;
         if (worktree === cardWorktree) return;
@@ -229,17 +258,58 @@ function mount(
         drawCard();
     });
 
+    // Le tableau des worktrees (spec §7.3) se pose dans le corps du panneau, et ne connaît ni
+    // Tauri ni les autres features : il reçoit ce qu'il sait demander. Les deux colonnes qui
+    // font l'écran — `agents now` et `last worked by` — sont composées par le backend
+    // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)) ; ici, il n'y a que des
+    // câbles.
+    const worktrees = mountWorktreeTable({
+        list: listWorktrees,
+        removal: worktreeRemoval,
+        // Le clic sur un agent va à son onglet — un geste de l'utilisateur, comme sur une
+        // ligne de la sidebar (ADR-0010). Un onglet qui n'existe plus ne change rien.
+        selectTab: (tabId) => void terminals.selectTab(tabId),
+        openTabIn: (worktreeRoot) => void terminals.openTab({ directory: worktreeRoot }),
+        // **Le point de jonction avec la fiche de branche (#31)** : le tableau demande la
+        // fiche, et tout ce que la fenêtre sait en faire aujourd'hui est montrer la vue qui
+        // la portera. Le jour où elle existera, c'est ici — et seulement ici — qu'on lui
+        // passera le worktree et sa branche.
+        showCard: () => {
+            bottomPanel.showView("branch");
+        },
+        now: () => Date.now(),
+    });
+
     // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
     // c'est ce qui laisse un seul détenteur à l'ouverture, et ce qui fera que le clic sur un
     // onglet et le raccourci de #32 ne pourront pas se contredire.
+    //
+    // C'est aussi cette annonce qui décide **quand** le tableau se relit : une vue fermée n'a
+    // rien à demander au backend, et une vue qui s'ouvre doit dire la vérité de l'instant.
+    // Les quatre vues du panneau partageront ce corps ; celle-ci retire ce qu'elle y a posé
+    // dès qu'une autre est montrée.
+    const showPanelBody = (next: BottomPanelState): void => {
+        const mine = next.open && next.view === "worktrees";
+        if (mine) {
+            if (worktrees.element.parentElement !== panel.body) {
+                panel.body.replaceChildren(worktrees.element);
+            }
+            worktrees.refresh();
+        } else if (worktrees.element.parentElement === panel.body) {
+            worktrees.element.remove();
+        }
+    };
+
     bottomPanel.subscribe((next) => {
         panel.setPanel(next);
         const showing = next.open && next.view === "branch";
         const changed = showing !== cardShown;
         cardShown = showing;
         if (changed) drawCard();
+        showPanelBody(next);
     });
     panel.setPanel(bottomPanel.current);
+    showPanelBody(bottomPanel.current);
 
     layout.append(sidebar.element, sidebar.separator, host);
     root.append(titleBar.element, layout);

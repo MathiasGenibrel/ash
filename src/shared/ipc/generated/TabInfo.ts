@@ -81,4 +81,18 @@ subagents: Array<Subagent>,
  * Où cet onglet se range dans la hiérarchie d'ADR-0012. `None` quand le répertoire
  * n'a pas pu être situé.
  */
-location: TabLocation | null, };
+location: TabLocation | null, 
+/**
+ * Le groupe en avant-plan de cet onglet est **arrêté** — `SIGSTOP`
+ * ([ADR-0015](../../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
+ *
+ * Ce n'est **pas** un sixième état d'agent, et il ne passe pas par `agents` : un état
+ * d'agent vient d'un hook (ADR-0007), et un processus arrêté n'en émet aucun — c'est
+ * justement ce qui le rend invisible autrement. Le registre, lui, sait qu'il a posté le
+ * signal, et c'est le seul à le savoir.
+ *
+ * Il voyage dans la fiche parce qu'un agent laissé arrêté sans rien qui le dise est un
+ * piège : il paraîtrait `working` pour toujours, et personne ne saurait qu'il attend un
+ * `SIGCONT`.
+ */
+paused: boolean, };

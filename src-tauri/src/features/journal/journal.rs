@@ -12,6 +12,19 @@ use super::resolve::{already_known, attribution_of};
 use super::store::JournalStore;
 use super::tabs::{author_of, Tabs};
 
+/// Un agent qu'Ash a vu travailler quelque part, et quand — ce que
+/// [`CommitJournal::last_worked_in`] rend.
+///
+/// Deux champs, tous deux certains : c'est ce qui distingue une **observation** d'une ligne
+/// du journal, dont la moitié des champs peut manquer. Un appelant qui reçoit ceci ne peut
+/// pas afficher un nom sans date, ni une date sans nom (ADR-0014).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkedIn {
+    pub agent: String,
+    /// La date d'auteur du commit, en millisecondes murales.
+    pub at: UnixMillis,
+}
+
 /// Ce que le journal pèse — de quoi proposer sa purge en sachant ce qu'elle emporte.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct JournalSummary {
@@ -100,6 +113,11 @@ impl CommitJournal {
                 subject: commit.subject.clone(),
                 agent: author.agent.clone().unwrap_or_default(),
                 tab_id: author.tab_id.clone(),
+                // Où il est né, et quand — les deux champs que la colonne `last worked by`
+                // du tableau des worktrees lit (spec §7.3). Ils ne servent pas
+                // l'attribution : voir leur documentation dans `entry.rs`.
+                worktree: Some(worktree_root.to_string_lossy().into_owned()),
+                authored_at: Some(commit.authored_at.saturating_mul(1_000)),
                 // Les deux champs sans source — voir `mod.rs`.
                 session_started: None,
                 prompt: None,
@@ -123,6 +141,43 @@ impl CommitJournal {
     pub fn attribution(&self, repo: &str, commit: &CommitRecord) -> Option<Entry> {
         let entries = Entry::read_all(&self.store.read(&file_name(repo)));
         attribution_of(&entries, commit).cloned()
+    }
+
+    /// Le dernier agent qu'Ash a **vu travailler** dans ce worktree, et quand.
+    ///
+    /// C'est la seule mémoire du produit qui survive à la fermeture d'un onglet, et elle est
+    /// bornée : elle ne connaît que les agents qui ont **commité**. Un agent qui a passé la
+    /// nuit sur un worktree sans rien valider n'y est pas, et le tableau des worktrees ne
+    /// prétendra pas le contraire — il dira qu'il ne sait pas
+    /// ([ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md) : ne montrer
+    /// un nom d'agent que là où Ash l'a réellement observé).
+    ///
+    /// Les lignes écrites avant que le champ `worktree` n'existe ne répondent pour aucun
+    /// worktree : leur lieu de naissance n'a pas été observé, et il ne se devine pas.
+    ///
+    /// Ce qui sort est [`WorkedIn`], et non l'entrée entière : l'appelant demande une
+    /// observation — un nom, une date —, pas une ligne de fichier. Rendre l'`Entry` ferait
+    /// traverser le format persistant, ses deux champs sans source et ses deux dates, à
+    /// quelqu'un qui n'a rien à en faire ; et laisserait à l'adaptateur du composition root
+    /// le soin de décider ce qu'il advient d'une date absente, là où aucun test ne le
+    /// regarde.
+    pub fn last_worked_in(&self, repo: &str, worktree_root: &Path) -> Option<WorkedIn> {
+        let here = worktree_root.to_string_lossy();
+        Entry::read_all(&self.store.read(&file_name(repo)))
+            .into_iter()
+            .filter(|entry| entry.worktree.as_deref() == Some(here.as_ref()))
+            // Une ligne sans date n'est pas une observation datable : elle est écartée ici
+            // plutôt que classée avec une date de repli, qui la ferait gagner ou perdre par
+            // accident.
+            .filter_map(|entry| {
+                Some(WorkedIn {
+                    agent: entry.agent,
+                    at: entry.authored_at?,
+                })
+            })
+            // La plus récente **observée**, et non la dernière ligne du fichier : un rebase
+            // écrit dans l'ordre où il rejoue, pas dans l'ordre où les commits sont nés.
+            .max_by_key(|worked| worked.at)
     }
 
     /// Ce que le journal pèse aujourd'hui.
@@ -226,6 +281,54 @@ mod tests {
         assert_eq!(entries[0].tab_id, "01J0TAB");
         assert_eq!(entries[0].repo, REPO);
         assert_eq!(entries[0].subject, "feat: onglets");
+    }
+
+    #[test]
+    fn given_two_worktrees_of_one_repository_when_asking_who_worked_in_one_then_the_other_never_answers(
+    ) {
+        // Given — le journal est rangé par **dépôt**, et deux worktrees d'un même projet y
+        // écrivent dans le même fichier. Sans le lieu de naissance, la colonne
+        // `last worked by` du tableau (spec §7.3) donnerait à chaque worktree le dernier
+        // commit du dépôt entier — c'est-à-dire le nom d'un agent qui n'a jamais mis les
+        // pieds là.
+        let world = JournalBuilder::new();
+        let journal = world.build();
+        world
+            .tabs
+            .set_agent("/wt/ash-sidebar", "codex", "01J0OTHER");
+        world.commits.set(vec![fresh("bbb", "feat: sidebar")]);
+        journal.on_head_moved(Path::new("/wt/ash-sidebar"), Path::new(REPO));
+
+        // When
+        let here = journal.last_worked_in(REPO, Path::new("/wt/ash-sidebar"));
+        let elsewhere = journal.last_worked_in(REPO, Path::new(WORKTREE));
+
+        // Then
+        assert_eq!(here.map(|worked| worked.agent), Some("codex".to_owned()));
+        assert_eq!(elsewhere, None);
+    }
+
+    #[test]
+    fn given_a_journal_line_written_before_ash_recorded_worktrees_when_asking_who_worked_there_then_it_stays_silent(
+    ) {
+        // Given — une ligne d'une version antérieure : elle attribue toujours son commit,
+        // mais elle ne dit pas où il est né. La deviner reviendrait à nommer un agent dans
+        // un worktree qu'Ash ne l'a pas vu toucher (ADR-0014).
+        let world = JournalBuilder::new();
+        let journal = world.build();
+        world
+            .store
+            .append(
+                &file_name(REPO),
+                "{\"repo\":\"/dev/ash/.git\",\"sha\":\"aaa\",\"author_date\":\"2026-08-12T14:03:21+02:00\",\"subject\":\"feat: x\",\"agent\":\"claude\",\"tab_id\":\"01J0TAB\"}\n",
+            )
+            .unwrap();
+
+        // When
+        let worked = journal.last_worked_in(REPO, Path::new(WORKTREE));
+
+        // Then
+        assert_eq!(worked, None);
     }
 
     #[test]
