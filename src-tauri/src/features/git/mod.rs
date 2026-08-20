@@ -50,7 +50,7 @@ mod fake_fs;
 mod fakes;
 
 pub use error::GitError;
-pub use git_cli::{StatusReader, SystemGit, STATUS_TIMEOUT};
+pub use git_cli::{CommitRecord, StatusReader, SystemGit, STATUS_TIMEOUT};
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,
     WorktreeMetadata,
