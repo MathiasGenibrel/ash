@@ -275,12 +275,13 @@ fn post(invocation: &Invocation) {
 ///
 /// La borne du fil (`wire::MAX_FRAME_BYTES`, 8 Kio) est une frontière de sécurité du
 /// serveur : au-delà, la ligne est refusée sans être accumulée, donc l'état déclaré serait
-/// perdu. L'état est la seule chose qu'un hook existe pour transporter : les clés d'enfant et
-/// le chemin du transcript tombent donc les premiers, et la trame repart sans eux.
+/// perdu. L'état est la seule chose qu'un hook existe pour transporter : les clés d'enfant,
+/// le chemin du transcript et le dossier de travail tombent donc les premiers, et la trame
+/// repart sans eux.
 ///
 /// **Ce repli est silencieux, et c'est pourquoi il ne doit plus pouvoir se déclencher pour
 /// une clé d'enfant** : une ligne fille qui disparaîtrait ici ne laisserait aucune trace.
-/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES` et de `wire::MAX_TRANSCRIPT_PATH_BYTES`, qui
+/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES` et de `wire::MAX_PATH_BYTES`, qui
 /// écartent une valeur démesurée **là où elle entre**, bien avant que la trame ne puisse
 /// déborder à cause d'elle. Ce qui reste ici ne
 /// couvre plus qu'un `<état>` ou un `--tab` absurdes, que le bloc d'Ash n'écrit pas.

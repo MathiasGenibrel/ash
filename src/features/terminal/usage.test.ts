@@ -53,7 +53,7 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 69%");
-        expect(gauge?.level).toBe("fresh");
+        expect(gauge?.share?.level).toBe("fresh");
     });
 
     it("Given a conversation that reaches seventy percent, when the gauge is composed, then it turns loaded", () => {
@@ -62,7 +62,7 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 70%");
-        expect(gauge?.level).toBe("loaded");
+        expect(gauge?.share?.level).toBe("loaded");
     });
 
     it("Given a conversation that reaches ninety percent, when the gauge is composed, then it announces the compaction", () => {
@@ -71,7 +71,7 @@ describe("la jauge de contexte", () => {
         const gauge = composeContextGauge({ usedTokens: 180_000, windowTokens: 200_000 });
 
         // Then
-        expect(gauge?.level).toBe("compacting");
+        expect(gauge?.share?.level).toBe("compacting");
     });
 
     it("Given a rounded percentage that crosses a threshold, when the gauge is composed, then the colour follows the number that is shown", () => {
@@ -81,7 +81,7 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 70%");
-        expect(gauge?.level).toBe("loaded");
+        expect(gauge?.share?.level).toBe("loaded");
     });
 
     it("Given a conversation past its window, when the gauge is composed, then it stops at a hundred", () => {
@@ -90,7 +90,7 @@ describe("la jauge de contexte", () => {
         const gauge = composeContextGauge({ usedTokens: 286_000, windowTokens: 200_000 });
 
         // Then
-        expect(gauge?.percent).toBe(100);
+        expect(gauge?.share?.percent).toBe(100);
         expect(gauge?.label).toBe("ctx 100%");
     });
 
@@ -102,7 +102,7 @@ describe("la jauge de contexte", () => {
 
         // Then — les 6 % que `/context` affiche, et la teinte d'une conversation fraîche.
         expect(gauge?.label).toBe("ctx 6%");
-        expect(gauge?.level).toBe("fresh");
+        expect(gauge?.share?.level).toBe("fresh");
     });
 
     it("Given a window Ash could not name, when the gauge is composed, then the measure is shown without being put into a ratio", () => {
@@ -114,8 +114,7 @@ describe("la jauge de contexte", () => {
         // Then — un compte, pas une part : ni pourcentage, ni palier, donc ni barre ni
         // couleur de seuil quand la ligne le peindra.
         expect(gauge?.label).toBe("ctx 57k");
-        expect(gauge?.percent).toBeNull();
-        expect(gauge?.level).toBeNull();
+        expect(gauge?.share).toBeNull();
     });
 
     it("Given a small conversation whose window is unknown, when the gauge is composed, then the count is written as it is", () => {
@@ -134,7 +133,7 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 12k");
-        expect(gauge?.percent).toBeNull();
+        expect(gauge?.share).toBeNull();
     });
 });
 

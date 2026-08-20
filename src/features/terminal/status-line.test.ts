@@ -302,7 +302,7 @@ describe("la jauge de contexte de la ligne", () => {
         // Then
         expect(first.context?.label).toBe("ctx 41%");
         expect(second.context?.label).toBe("ctx 92%");
-        expect(second.context?.level).toBe("compacting");
+        expect(second.context?.share?.level).toBe("compacting");
     });
 
     it("Given a shell at its prompt, when the status line is composed, then it carries nothing more than it did before the gauge existed", () => {
