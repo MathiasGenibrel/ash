@@ -25,6 +25,14 @@ import type { CommitGraph, CommitRow, GraphLink } from "./contract";
  * l'issue #27), la colonne `by` aussi, et la phrase qui remplace un prompt absent également.
  * Ce fichier place des pixels ; il ne sait ni ce qu'est un agent, ni ce qu'est un rebase.
  *
+ * La ligne de partage est **le fait, pas la phrase** : ce que ce fichier ne doit jamais
+ * fabriquer, c'est de quoi croire qu'Ash a observé quelque chose. `attributed` est le seul
+ * juge, il vient de Rust, et les deux absences de prompt arrivent déjà rédigées parce qu'elles
+ * *disent* laquelle des deux c'est. Les tournures écrites autour — l'infobulle de la colonne,
+ * « written by … in tab … » du détail — n'ajoutent aucun fait : elles ne se prononcent que
+ * dans la branche où `attributed` est déjà vrai. Si une phrase d'ici devait un jour choisir
+ * entre observé et pas observé, elle appartiendrait à `history.rs`.
+ *
  * # Ce que `shared/agent-state` n'apporte pas ici
  *
  * La colonne `by` nomme un **agent**, mais elle ne montre aucun des cinq **états** : un
