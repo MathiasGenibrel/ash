@@ -22,8 +22,9 @@ use super::tabs::TabId;
 /// Rendre l'onglet **déjà ouvert** quand il y en a un : un worktree n'a qu'une opération
 /// arrêtée, et deux onglets dessus se contrediraient dès le premier hunk tranché.
 ///
-/// Refuse quand rien n'est arrêté. C'est aussi la réponse dont `⌘⌃M` (#32) a besoin pour
-/// savoir s'il est actif, et c'est la même que celle de `git_stopped_operation`.
+/// Refuse quand rien n'est arrêté — la même réponse que `git_stopped_operation`, et la même
+/// que celle qui éteint l'entrée « Resolve Conflicts » du menu (`MergeSurface::reachable`,
+/// #32). L'entrée éteinte est une politesse ; ce refus-ci est la garantie.
 #[tauri::command]
 pub fn merge_open(
     surface: tauri::State<'_, Arc<MergeSurface>>,

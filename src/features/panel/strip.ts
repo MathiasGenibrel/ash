@@ -18,10 +18,11 @@ const LABELS: Readonly<Record<PanelView, string>> = {
 /**
  * La barre d'onglets du panneau — **toujours visible**, panneau ouvert ou fermé.
  *
- * C'est ce qui rend le panneau atteignable à la souris sans raccourci : les liaisons `⌘⌃G`,
- * `⌘⌃W`, `⌘⌃M` et `⌘⌃I` sont détenues par le magasin de `features::shortcuts` et restent à
- * déclarer (#32). Une barre qui n'apparaîtrait qu'avec le panneau aurait laissé la surface
- * sans porte.
+ * C'est ce qui rend le panneau atteignable à la souris, comme la spec §4.4 l'exige de toutes
+ * ses actions : `⌘⌃G`, `⌘⌃W` et `⌘⌃I` ouvrent les mêmes vues au clavier — ils sont déclarés
+ * par le menu natif et détenus par `features::shortcuts` (#32) —, et la vue `conflicts`, qui
+ * n'a pas de raccourci à elle, n'a que cette porte-ci. Une barre qui n'apparaîtrait qu'avec le
+ * panneau l'aurait laissée sans aucune.
  *
  * **La barre demande une vue, jamais un état.** Recliquer la vue montrée referme le
  * panneau — mais c'est le backend qui le décide, sous son verrou

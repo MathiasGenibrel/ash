@@ -41,7 +41,9 @@ pub enum PanelView {
     Graph,
     /// Le tableau des worktrees (`⌘⌃W`).
     Worktrees,
-    /// Les conflits d'un rebase ou d'un merge arrêté (`⌘⌃M`).
+    /// Les conflits d'un rebase ou d'un merge arrêté. **La seule vue sans raccourci** :
+    /// `⌘⌃M` ouvre l'onglet de merge (spec §4.4), et cette vue-ci en est la porte à la
+    /// souris — elle s'atteint par la barre du panneau.
     Conflicts,
     /// La fiche de branche (`⌘⌃I`).
     Branch,

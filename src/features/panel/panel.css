@@ -105,9 +105,9 @@
 /* --- la barre d'onglets ----------------------------------------------------
  *
  * `graph │ worktrees │ conflicts` du schéma d'interface de la spec §4, plus la fiche de
- * branche. Toujours visible : c'est la seule porte du panneau tant que les raccourcis git ne
- * sont pas déclarés (#32). 26 px — la même mesure que `layout.ts` publie sous
- * `STRIP_HEIGHT`. */
+ * branche. Toujours visible : c'est la porte à la souris de vues que `⌘⌃G`, `⌘⌃W` et `⌘⌃I`
+ * atteignent au clavier (#32), et la seule de la vue `conflicts`, qui n'a pas de raccourci.
+ * 26 px — la même mesure que `layout.ts` publie sous `STRIP_HEIGHT`. */
 .ash-panel-strip-host {
     flex: none;
     height: 26px;

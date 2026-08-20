@@ -67,13 +67,16 @@
 //! connaître la forme d'un menu. La remarque de [`check_only`] vaut mot pour mot pour elles.
 
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tauri::menu::{
     AboutMetadata, CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use crate::features::merge::MergeSurface;
 use crate::features::settings::commands as settings;
 use crate::features::shortcuts::{
     ActionBinding, Bindings, CapturePreview, Combination, ConflictChoice, KeyStroke, Listing,
@@ -109,6 +112,83 @@ const MAIN_WINDOW: &str = "main";
 /// Nombre d'onglets directement adressables — `Cmd+1` … `Cmd+9` (spec §4.4).
 const DIRECT_TABS: u8 = 9;
 
+/// Ce que le menu sait de l'instant — **et rien de plus**.
+///
+/// Une seule entrée d'Ash dépend d'autre chose que de sa liaison : « Resolve Conflicts »,
+/// que la spec §4.4 veut active « seulement pendant un rebase ou un merge arrêté ». Les
+/// trois formes possibles ne se valent pas :
+///
+/// - **l'éteindre** est la forme de macOS, celle que `validateMenuItem:` produit partout
+///   ailleurs sur le système : l'entrée reste à sa place, grisée, et son équivalent clavier
+///   ne s'allume pas. C'est celle-ci ;
+/// - **la laisser allumée et refuser au moment du geste** annoncerait un raccourci qui ne
+///   fait rien — exactement ce que l'issue #127 reproche à l'état d'avant, où le groupe git
+///   était listé sans entrée de menu ;
+/// - **ne pas la déclarer** tant que rien n'est arrêté ferait scintiller la barre de menus
+///   au rythme des rebases, et ferait disparaître de la fenêtre de réglages une ligne que
+///   l'utilisateur a peut-être rebindée.
+///
+/// **Ce que ça coûte, et il faut le dire** : le menu doit apprendre deux choses qu'il ne
+/// savait pas — quel worktree est sous les yeux, et si quelque chose y est arrêté. Le second
+/// est une lecture de `features::merge` ([`MergeSurface::reachable`]), donc la règle reste
+/// chez qui la possède. Le premier ne se trouve **nulle part** dans le backend : la fenêtre
+/// est seule à savoir quel onglet est actif, et c'est elle qui le rapporte
+/// ([`menu_worktree_in_view`]). Elle ne décide de rien pour autant — elle nomme un worktree,
+/// le backend en tire l'état de l'entrée. C'est la même forme que
+/// [`shortcut_listening`] : la webview rapporte un fait, le menu en tire ce qu'il en fait.
+#[derive(Default)]
+pub struct MergeReach {
+    /// Le worktree de l'onglet au premier plan. `None` : aucun onglet, ou un onglet hors de
+    /// tout dépôt — l'entrée est alors éteinte, faute de worktree à résoudre.
+    in_view: Mutex<Option<PathBuf>>,
+    /// L'entrée est-elle allumée ? Retenu pour deux raisons : ne reposer l'état du menu que
+    /// lorsqu'il change, et permettre à [`rebuild`] de reposer une entrée éteinte éteinte —
+    /// un menu neuf ne sait rien de l'instant, comme les coches de thème.
+    live: AtomicBool,
+}
+
+impl MergeReach {
+    /// La fenêtre annonce le worktree qu'elle regarde.
+    fn look_at(&self, worktree_root: Option<PathBuf>) {
+        *self.locked() = worktree_root;
+    }
+
+    /// Le worktree regardé est-il celui dont on vient d'apprendre quelque chose ?
+    ///
+    /// C'est ce qui évite de rouvrir la question à chaque écriture de `.git` d'un dépôt qui
+    /// n'est pas sous les yeux — la surveillance en observe autant qu'il y a d'onglets.
+    fn watching(&self, worktree_root: &Path) -> bool {
+        self.locked().as_deref() == Some(worktree_root)
+    }
+
+    /// L'entrée doit-elle être allumée ? — **la règle, sans Tauri ni menu**.
+    ///
+    /// `stopped` est la lecture de `features::merge` ; rien n'est en vue veut dire éteint,
+    /// et c'est le défaut au démarrage, avant que le premier onglet ne soit né.
+    fn decide(&self, stopped: impl Fn(&Path) -> bool) -> bool {
+        self.locked().as_deref().is_some_and(stopped)
+    }
+
+    /// Retient le nouvel état, et dit s'il a changé — le menu ne se repose que dans ce cas.
+    fn settle(&self, live: bool) -> bool {
+        self.live.swap(live, Ordering::Relaxed) != live
+    }
+
+    /// L'état en vigueur, pour un menu qu'on reconstruit.
+    fn live(&self) -> bool {
+        self.live.load(Ordering::Relaxed)
+    }
+
+    /// Un verrou empoisonné veut dire qu'un fil a paniqué **ailleurs** en le tenant. Ce
+    /// qu'il protège est un chemin : le propager éteindrait la fenêtre pour une entrée de
+    /// menu. Même conduite que `features::shortcuts::Bindings`.
+    fn locked(&self) -> std::sync::MutexGuard<'_, Option<PathBuf>> {
+        self.in_view
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 /// Construit le menu de l'application.
 ///
 /// `theme_mode` est le mode retenu de la session précédente : le menu est construit avant
@@ -116,12 +196,17 @@ const DIRECT_TABS: u8 = 9;
 /// vérité. `bindings` est la même chose pour les touches — les liaisons sont relues avant,
 /// et **c'est d'elles que chaque accélérateur vient**.
 ///
+/// `merge_live` est la même chose pour la seule entrée qui s'éteint : un menu neuf ne sait
+/// rien de l'instant, et la reconstruire allumée rendrait `⌘⌃M` actif sur un worktree
+/// tranquille jusqu'au prochain changement d'onglet (voir [`MergeReach`]).
+///
 /// Elle est appelée deux fois dans la vie du processus : au démarrage, et à chaque
 /// changement de liaison — voir [`rebuild`].
 pub fn build<R: Runtime>(
     app: &AppHandle<R>,
     theme_mode: ThemeMode,
     bindings: &Bindings,
+    merge_live: bool,
 ) -> tauri::Result<Menu<R>> {
     // `Cmd+,` ouvre les réglages : c'est le raccourci que macOS attend dans le menu
     // applicatif, et le seul endroit où un utilisateur va le chercher. Il est écrit
@@ -293,6 +378,39 @@ pub fn build<R: Runtime>(
 
     let view = Submenu::with_items(app, "View", true, &view_items)?;
 
+    // Le sous-menu « Git » — les cinq surfaces de la spec §7, et les cinq raccourcis de la
+    // §4.4. Elles n'y arrivent qu'aujourd'hui parce qu'un accélérateur se déclare **avec**
+    // sa surface : les déclarer plus tôt aurait mis dans la fenêtre de réglages cinq lignes
+    // que rien n'aurait jouées (issue #127).
+    //
+    // Elles sont aussi ce qui rend ces gestes atteignables à la souris, comme la spec §4.4
+    // l'exige de « toutes ces actions » : sans entrée de menu, `⌘⌃I` serait le seul chemin
+    // vers la fiche de branche pour qui ne connaît pas la barre du panneau bas.
+    let branches = item(app, Action::ToggleBranches, bindings)?;
+    let graph = item(app, Action::ToggleGraph, bindings)?;
+    let worktrees = item(app, Action::ToggleWorktrees, bindings)?;
+    // **La seule entrée d'Ash qui naisse peut-être éteinte** — voir [`MergeReach`]. Elle
+    // s'éteint ici et pas dans [`item`] : quatorze entrées n'ont pas à porter le paramètre
+    // d'une quinzième, et l'exception se lit à l'endroit qui la connaît.
+    let merge = item(app, Action::OpenMerge, bindings)?;
+    merge.set_enabled(merge_live)?;
+    let branch_card = item(app, Action::ToggleBranchCard, bindings)?;
+    let git_separator = PredefinedMenuItem::separator(app)?;
+    let git = Submenu::with_items(
+        app,
+        "Git",
+        true,
+        &[
+            &branches,
+            &git_separator,
+            &graph,
+            &worktrees,
+            &branch_card,
+            &git_separator,
+            &merge,
+        ],
+    )?;
+
     // Pas de « Close Window » ici : son `Cmd+W` prendrait le pas sur celui des onglets.
     // C'est `route` qui rend `Cmd+W` juste devant une fenêtre sans onglets — la même
     // entrée « Close Tab », acheminée vers la surface au premier plan.
@@ -306,7 +424,10 @@ pub fn build<R: Runtime>(
         ],
     )?;
 
-    Menu::with_items(app, &[&application, &edit, &view, &terminal, &window])
+    // **L'ordre de cette ligne est celui que la fenêtre de réglages montre** : elle ne trie
+    // pas, elle groupe dans l'ordre reçu, pour qu'on retrouve un raccourci là où on l'a vu
+    // dans le menu. `Action::every` le suit, et un test le tient.
+    Menu::with_items(app, &[&application, &edit, &view, &terminal, &git, &window])
 }
 
 /// Ce que le menu affiche d'une action, et où il la range.
@@ -394,6 +515,29 @@ fn descriptor(action: Action) -> Descriptor {
             }),
         ),
         Action::ChooseTheme(mode) => ("view", mode.label(), None),
+        // **La famille git de la spec §4.4, et les cinq lettres ne sont pas au hasard** :
+        // `⌘⌃` parce que ces combinaisons sont libres sur macOS et qu'aucune n'est réclamée
+        // par un terminal — `⌃B` seul, que tmux prend pour préfixe, n'a rien à voir avec
+        // `⌘⌃B`, qui porte `Cmd` et ne descend donc dans aucun PTY. La mnémonique est
+        // **B**ranches, **G**raph, **W**orktrees, **M**erge, **I**nfo.
+        //
+        // Ces cinq-là ne posent pas la question de `⌘K` (voir `ClearScrollback`), et c'est
+        // ce qui les rend déclarables : un accélérateur de menu est bien consommé par
+        // `performKeyEquivalent:` avant la webview, mais aucun shell n'attend `⌘⌃`
+        // quoi que ce soit — macOS ne fait descendre `Cmd` dans aucune séquence de
+        // terminal. Ce qu'on retire au shell en les posant est exactement rien.
+        //
+        // Les trois combinaisons `⌘⌃` que **macOS** prend — `⌘⌃F`, `⌘⌃D`, `⌘⌃Espace` — sont
+        // dans `features::shortcuts::reserved`, et le test
+        // `given_the_combinations_ash_will_never_receive_…` de ce module confronte chaque
+        // défaut déclaré ici à cette table. Aucune des cinq n'en fait partie.
+        Action::ToggleBranches => ("git", "Branches…", Some("Cmd+Ctrl+B")),
+        Action::ToggleGraph => ("git", "Commit Graph", Some("Cmd+Ctrl+G")),
+        // `⌘⌃W`, et `⌘W` ferme toujours un onglet : deux combinaisons distinctes, que macOS
+        // apparie sur leurs modificateurs — elles ne se disputent rien.
+        Action::ToggleWorktrees => ("git", "Worktrees", Some("Cmd+Ctrl+W")),
+        Action::OpenMerge => ("git", "Resolve Conflicts", Some("Cmd+Ctrl+M")),
+        Action::ToggleBranchCard => ("git", "Branch Card", Some("Cmd+Ctrl+I")),
     };
 
     Descriptor {
@@ -430,6 +574,12 @@ pub fn action_bindings() -> Vec<ActionBinding> {
 }
 
 /// Une entrée de menu : son libellé vient de [`descriptor`], **sa touche des liaisons**.
+///
+/// Elle naît allumée, sans exception : la seule entrée d'Ash qui s'éteigne — « Resolve
+/// Conflicts », quand rien n'est arrêté dans le worktree sous les yeux (voir
+/// [`MergeReach`]) — s'éteint chez [`build`], juste après avoir été construite. Le fait est
+/// alors écrit une fois, à l'endroit qui le connaît, plutôt que passé par quatorze appels
+/// qui n'en ont rien à faire.
 fn item<R: Runtime>(
     app: &AppHandle<R>,
     action: Action,
@@ -467,9 +617,96 @@ fn rebuild<R: Runtime>(app: &AppHandle<R>) {
         .try_state::<Arc<crate::features::theme::ThemeState>>()
         .map(|theme| theme.mode())
         .unwrap_or_default();
-    if let Ok(menu) = build(app, mode, bindings.inner().as_ref()) {
+    // Comme les coches de thème : un menu neuf ne sait rien de l'instant, et une entrée
+    // « Resolve Conflicts » reposée allumée sur un worktree tranquille annoncerait un `⌘⌃M`
+    // sans effet jusqu'au prochain changement d'onglet.
+    if let Ok(menu) = build(app, mode, bindings.inner().as_ref(), merge_live(app)) {
         let _ = app.set_menu(menu);
     }
+}
+
+/// La fenêtre annonce le worktree qu'elle regarde — l'onglet actif a changé.
+///
+/// Elle ne décide de rien : elle **nomme** un worktree, et le backend en tire l'état de
+/// l'entrée « Resolve Conflicts » (voir [`MergeReach`]). `None` quand l'onglet actif n'est
+/// dans aucun worktree, ou qu'il n'y a plus d'onglet du tout.
+///
+/// **Synchrone, comme [`theme_set_mode`] et pour la même raison** : Tauri exécute une
+/// commande sans `async` sur le fil principal, et c'est le seul fil depuis lequel un
+/// `NSMenu` se modifie.
+#[tauri::command]
+pub fn menu_worktree_in_view<R: Runtime>(app: AppHandle<R>, worktree_root: Option<String>) {
+    let Some(reach) = app.try_state::<Arc<MergeReach>>() else {
+        return;
+    };
+    reach.look_at(worktree_root.map(PathBuf::from));
+    settle_merge_entry(&app);
+}
+
+/// L'état git d'un worktree surveillé a changé — le menu rouvre la question s'il le regarde.
+///
+/// Appelée par le composition root depuis la surveillance de `.git`
+/// ([ADR-0011](../../docs/adr/0011-surveillance-de-fichiers.md)), et **pas** par la fenêtre :
+/// un rebase commence le plus souvent dans le terminal qu'on a sous les yeux, sans qu'aucun
+/// onglet ne change. Sans ce chemin, `⌘⌃M` resterait éteint jusqu'à ce qu'on change d'onglet
+/// et qu'on revienne.
+///
+/// Le travail est **reporté sur le fil principal** : cette fonction est appelée depuis le
+/// fil de FSEvents, et un `NSMenuItem` ne se modifie que sur le fil de l'interface. Le
+/// report a un second effet, voulu : la lecture de `features::merge` n'a pas lieu pendant
+/// que la surveillance tient ses propres verrous.
+pub fn worktree_changed<R: Runtime>(app: &AppHandle<R>, worktree_root: &Path) {
+    let Some(reach) = app.try_state::<Arc<MergeReach>>() else {
+        return;
+    };
+    if !reach.watching(worktree_root) {
+        return;
+    }
+    let deferred = app.clone();
+    let _ = app.run_on_main_thread(move || settle_merge_entry(&deferred));
+}
+
+/// L'état en vigueur de « Resolve Conflicts » — allumée, ou éteinte.
+///
+/// **Retenu, jamais relu** : les deux appelants reposent un menu (l'un le reconstruit,
+/// l'autre sort d'une capture de combinaison), et aucun des deux n'est un moment où la
+/// question se rouvre. Refaire ici la lecture de `features::merge` donnerait une seconde
+/// réponse là où [`settle_merge_entry`] en a déjà écrit une, et les deux pourraient
+/// diverger le temps d'un rebase.
+///
+/// `false` avant que le composition root n'ait posé le [`MergeReach`] : au démarrage, aucun
+/// onglet n'est encore né, donc rien n'est arrêté sous des yeux qui ne regardent rien.
+fn merge_live<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.try_state::<Arc<MergeReach>>()
+        .is_some_and(|reach| reach.live())
+}
+
+/// Allume ou éteint « Resolve Conflicts » selon ce qui est arrêté là où l'on regarde.
+///
+/// **La règle n'est pas ici** : elle est dans `features::merge`
+/// ([`MergeSurface::reachable`]), qui est aussi ce que l'ouverture consulte. Ce module ne
+/// fait que la poser sur une entrée de menu, et seulement quand la réponse a changé — un
+/// `set_enabled` par écriture de `.git` reposerait l'entrée trois fois par `git add`.
+fn settle_merge_entry<R: Runtime>(app: &AppHandle<R>) {
+    let (Some(reach), Some(merges)) = (
+        app.try_state::<Arc<MergeReach>>(),
+        app.try_state::<Arc<MergeSurface>>(),
+    ) else {
+        return;
+    };
+    let live = reach.decide(|root| merges.reachable(root));
+    if !reach.settle(live) {
+        return;
+    }
+    let Some(menu) = app.menu() else {
+        return;
+    };
+    let id = Action::OpenMerge.id();
+    walk(&menu.items().unwrap_or_default(), &mut |entry| {
+        if entry.id().as_ref() == id {
+            let _ = entry.set_enabled(live);
+        }
+    });
 }
 
 /// Éteint — ou rallume — les entrées d'Ash pendant qu'une combinaison se capture.
@@ -517,13 +754,22 @@ pub fn shortcut_listening<R: Runtime>(app: AppHandle<R>, active: bool) {
 }
 
 /// Allume ou éteint toutes les entrées qu'Ash traite lui-même, et elles seules.
+///
+/// **Rallumer n'est pas symétrique d'éteindre**, et c'est « Resolve Conflicts » qui le dit :
+/// elle est la seule dont l'état ne dépend pas d'une capture en cours mais du worktree sous
+/// les yeux (voir [`MergeReach`]). Rallumer tout la rallumerait aussi, et `⌘⌃M` répondrait
+/// sur un worktree tranquille jusqu'au prochain changement d'onglet. Elle est donc reposée
+/// après coup, à partir de l'état retenu — pas d'une seconde lecture, qui pourrait diverger.
 fn enable_actions<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
     let Some(menu) = app.menu() else {
         return;
     };
+    let merge = Action::OpenMerge.id();
+    let live = enabled && merge_live(app);
     walk(&menu.items().unwrap_or_default(), &mut |item| {
-        if Action::from_id(item.id().as_ref()).is_some() {
-            let _ = item.set_enabled(enabled);
+        let id = item.id();
+        if Action::from_id(id.as_ref()).is_some() {
+            let _ = item.set_enabled(if id.as_ref() == merge { live } else { enabled });
         }
     });
 }
@@ -548,10 +794,11 @@ fn walk<R: Runtime>(items: &[MenuItemKind<R>], visit: &mut impl FnMut(&MenuItem<
 /// #110, et il n'a pas changé quand les raccourcis sont devenus réglables — seule la
 /// personne qui détient la liste a changé.
 ///
-/// La liste reste plus courte que le tableau de la spec, et ce n'est pas un oubli : le
-/// groupe git (`Cmd+Ctrl+B`, `G`, `W`, `M`, `I`) n'a pas encore d'entrée de menu, donc pas
-/// encore d'effet, et annoncer un raccourci qui ne fait rien serait exactement le mensonge
-/// que la lecture depuis la source évite (issue #127).
+/// La liste couvre désormais le tableau de la spec §4.4 en entier, groupe git compris — et
+/// **aucune ligne n'a été ajoutée à la fenêtre de réglages pour ça** (issue #32). Les cinq
+/// combinaisons sont apparues le jour où [`build`] a déclaré le sous-menu « Git », parce que
+/// c'est de là que la liste vient : un accélérateur se déclare avec sa surface, et la
+/// section `shortcuts` le lit ensuite, comme le reste (issue #127).
 #[tauri::command]
 pub fn menu_shortcuts(bindings: tauri::State<'_, Arc<Bindings>>) -> ShortcutsReport {
     bindings.report()
@@ -823,6 +1070,15 @@ fn route(action: Action, focused: Option<&str>) -> Route<'_> {
         | Action::PreviousTab
         | Action::ClearScrollback
         | Action::ToggleSidebar
+        // Les cinq surfaces git vivent dans la fenêtre à onglets — la popup de branches
+        // s'ancre sur sa ligne de statut, les trois vues sur son panneau bas, et l'onglet de
+        // merge **est** un de ses onglets. Elles suivent donc la règle de #116 comme les
+        // actions d'onglet : le geste ne part que si c'est cette fenêtre-là qu'on regarde.
+        | Action::ToggleBranches
+        | Action::ToggleGraph
+        | Action::ToggleWorktrees
+        | Action::OpenMerge
+        | Action::ToggleBranchCard
         | Action::SelectTab(_) => match focused {
             Some(MAIN_WINDOW) => Route::Webview(MAIN_WINDOW),
             // Une autre fenêtre devant, ou aucune : la surface à onglets n'est pas celle
@@ -939,6 +1195,17 @@ enum Action {
     ResizeFont(FontStep),
     /// Ouvre la fenêtre de réglages — `Cmd+,`. Traitée ici, comme le thème.
     OpenSettings,
+    /// La popup de branches — `⌘⌃B` (spec §7.1).
+    ToggleBranches,
+    /// Le graphe de commits dans le panneau bas — `⌘⌃G` (spec §7.2).
+    ToggleGraph,
+    /// Le tableau des worktrees dans le panneau bas — `⌘⌃W` (spec §7.3).
+    ToggleWorktrees,
+    /// L'onglet de merge — `⌘⌃M` (spec §7.4). **La seule entrée d'Ash qui s'éteigne**, et
+    /// la seule qui dépende d'autre chose que de sa liaison : voir [`MergeReach`].
+    OpenMerge,
+    /// La fiche de branche dans le panneau bas — `⌘⌃I` (spec §7.5, ADR-0013).
+    ToggleBranchCard,
 }
 
 impl Action {
@@ -970,6 +1237,13 @@ impl Action {
             Action::ClearScrollback,
         ]);
         every.extend((1..=DIRECT_TABS).map(Action::SelectTab));
+        every.extend([
+            Action::ToggleBranches,
+            Action::ToggleGraph,
+            Action::ToggleWorktrees,
+            Action::OpenMerge,
+            Action::ToggleBranchCard,
+        ]);
         every
     }
 
@@ -986,6 +1260,11 @@ impl Action {
             Action::ChooseTheme(mode) => format!("view:theme:{}", mode.as_id()),
             Action::ResizeFont(step) => format!("view:font:{}", step.as_id()),
             Action::OpenSettings => "app:settings".to_owned(),
+            Action::ToggleBranches => "git:branches".to_owned(),
+            Action::ToggleGraph => "git:graph".to_owned(),
+            Action::ToggleWorktrees => "git:worktrees".to_owned(),
+            Action::OpenMerge => "git:merge".to_owned(),
+            Action::ToggleBranchCard => "git:branch-card".to_owned(),
         }
     }
 
@@ -999,6 +1278,11 @@ impl Action {
             "tab:previous" => Some(Action::PreviousTab),
             "view:toggle-sidebar" => Some(Action::ToggleSidebar),
             "app:settings" => Some(Action::OpenSettings),
+            "git:branches" => Some(Action::ToggleBranches),
+            "git:graph" => Some(Action::ToggleGraph),
+            "git:worktrees" => Some(Action::ToggleWorktrees),
+            "git:merge" => Some(Action::OpenMerge),
+            "git:branch-card" => Some(Action::ToggleBranchCard),
             other => match (
                 other.strip_prefix("view:theme:"),
                 other.strip_prefix("view:font:"),
@@ -1251,7 +1535,115 @@ mod tests {
                 groups.push(&row.group);
             }
         }
-        assert_eq!(groups, ["application", "view", "terminal"]);
+        assert_eq!(groups, ["application", "view", "terminal", "git"]);
+    }
+
+    #[test]
+    fn given_the_five_git_surfaces_when_the_settings_window_asks_for_the_shortcuts_then_it_reads_them_from_the_menu(
+    ) {
+        // Given — c'est le critère de l'issue #127 : le groupe git de la spec §4.4 est
+        // apparu dans la fenêtre de réglages **sans qu'une ligne y soit ajoutée à la main**,
+        // le jour où `build` a déclaré le sous-menu « Git ». Rien côté TypeScript ne nomme
+        // ces combinaisons — la section groupe ce que le backend lui envoie
+        let listed = menu_bindings().report();
+
+        // When
+        let git: Vec<(String, String)> = listed
+            .rows
+            .iter()
+            .filter(|row| row.group == "git")
+            .map(|row| (row.label.clone(), row.keys.clone()))
+            .collect();
+
+        // Then — les cinq de la spec, dans l'ordre du menu, avec la mnémonique
+        // **B**ranches, **G**raph, **W**orktrees, **M**erge, **I**nfo
+        assert_eq!(
+            git,
+            [
+                ("Branches…", "⌃⌘B"),
+                ("Commit Graph", "⌃⌘G"),
+                ("Worktrees", "⌃⌘W"),
+                ("Resolve Conflicts", "⌃⌘M"),
+                ("Branch Card", "⌃⌘I"),
+            ]
+            .map(|(label, keys)| (label.to_owned(), keys.to_owned()))
+        );
+    }
+
+    #[test]
+    fn given_a_git_shortcut_rebound_by_hand_onto_a_combination_macos_takes_when_its_row_is_read_then_it_says_who_takes_it(
+    ) {
+        // Given — `~/.ash/shortcuts.json` est un fichier de l'utilisateur, éditable à la
+        // main : rien n'empêche d'y poser `⌘⌃D` sur la popup de branches. Ash ne l'**interdit
+        // pas** — c'est la règle de `reserved.rs`, et elle tient parce qu'un panneau des
+        // Réglages Système peut libérer `⌘⌃D` pendant qu'Ash tourne — mais il ne se tait pas.
+        // C'est bien le fichier qu'on relit ici, et pas une capture : les deux chemins ne
+        // sont pas le même code, et c'est celui-là que personne ne voit passer
+        use crate::features::shortcuts::BindingStore;
+        let edited = Arc::new(crate::features::shortcuts::FakeBindingStore::default());
+        edited
+            .save(&crate::features::shortcuts::StoredBindings {
+                bindings: [(
+                    Action::ToggleBranches.id(),
+                    Some(Combination::parse("Cmd+Ctrl+D").expect("la table écrit cette touche")),
+                )]
+                .into_iter()
+                .collect(),
+            })
+            .expect("le magasin de test écrit");
+        let bindings = Bindings::restore(edited, action_bindings());
+
+        // When
+        let row = bindings
+            .report()
+            .rows
+            .into_iter()
+            .find(|row| row.action == Action::ToggleBranches.id())
+            .expect("la popup de branches a sa ligne");
+
+        // Then — la ligne porte la combinaison **et** sa raison, celle-là même que le bloc
+        // de capture affiche : annoncer ne ferme rien, se taire aurait laissé un raccourci
+        // que macOS mange sans que rien ne le dise
+        assert_eq!(row.keys, "⌃⌘D");
+        assert_eq!(
+            row.reservation.map(|taken| taken.note),
+            Some("is reserved by macOS (look up) — ash will never receive it".to_owned())
+        );
+    }
+
+    #[test]
+    fn given_nothing_stopped_where_one_looks_when_the_merge_entry_is_settled_then_it_stays_dark() {
+        // Given — la condition de `⌘⌃M` (spec §4.4) : « seulement pendant un rebase ou un
+        // merge arrêté ». Trois situations, une seule règle
+        let reach = MergeReach::default();
+        let stopped = |root: &Path| root == Path::new("/wt/ash-rebase");
+
+        // When — aucun onglet, un worktree tranquille, puis un rebase arrêté
+        let mut live = vec![reach.decide(stopped)];
+        reach.look_at(Some(PathBuf::from("/dev/ash")));
+        live.push(reach.decide(stopped));
+        reach.look_at(Some(PathBuf::from("/wt/ash-rebase")));
+        live.push(reach.decide(stopped));
+
+        // Then — un menu sans worktree sous les yeux est éteint, et il ne s'allume que là
+        // où l'ouverture aboutirait (`MergeSurface::reachable`)
+        assert_eq!(live, [false, false, true]);
+    }
+
+    #[test]
+    fn given_a_merge_entry_already_dark_when_the_same_answer_comes_back_then_the_menu_is_left_alone(
+    ) {
+        // Given — la surveillance de `.git` annonce à chaque écriture du dossier, et un
+        // `git add` en produit plusieurs. Reposer l'entrée à chaque fois toucherait au menu
+        // natif pour rien, sur le fil qui dessine la fenêtre
+        let reach = MergeReach::default();
+        reach.look_at(Some(PathBuf::from("/wt/ash-rebase")));
+
+        // When
+        let changed = [reach.settle(true), reach.settle(true), reach.settle(false)];
+
+        // Then
+        assert_eq!(changed, [true, false, true]);
     }
 
     #[test]

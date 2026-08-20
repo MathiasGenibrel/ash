@@ -903,10 +903,18 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::new(
             features::settings::commands::PendingFocus::default(),
         ))
+        // Ce que le menu sait de l'instant : le worktree sous les yeux, et si `⌘⌃M` y a
+        // quelque chose à ouvrir. C'est la seule entrée d'Ash qui s'éteigne — voir
+        // `menu::MergeReach` pour les trois formes possibles et celle qui a été retenue.
+        .manage(Arc::new(menu::MergeReach::default()))
         .manage(spike::Flow::default())
         .menu({
             let shortcuts = Arc::clone(&shortcuts);
-            move |app| menu::build(app, theme_mode, &shortcuts)
+            // `false` : au démarrage, aucun onglet n'existe encore, donc aucun worktree
+            // n'est sous les yeux — l'entrée « Resolve Conflicts » naît éteinte, et la
+            // fenêtre l'allumera si son premier onglet tombe sur un rebase arrêté
+            // (`menu::MergeReach`).
+            move |app| menu::build(app, theme_mode, &shortcuts, false)
         })
         .on_menu_event(|app, event| menu::dispatch(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
@@ -980,6 +988,7 @@ pub fn run() -> tauri::Result<()> {
             menu::shortcut_reset,
             menu::shortcut_reset_all,
             menu::shortcut_resolve,
+            menu::menu_worktree_in_view,
             features::settings::commands::settings_notifications,
             features::settings::commands::settings_set_notification,
             features::settings::commands::settings_tools,
@@ -1080,6 +1089,14 @@ pub fn run() -> tauri::Result<()> {
         },
         move |worktree_root: &Path, common_dir: &Path| {
             recording(worktree_root, common_dir);
+        },
+        // Et c'est aussi elle qui apprend qu'un rebase vient de s'arrêter — ou de reprendre
+        // — dans le worktree qu'on regarde. Sans ce fil, `⌘⌃M` resterait éteint jusqu'à ce
+        // qu'on change d'onglet et qu'on revienne, alors que le rebase démarre le plus
+        // souvent dans le terminal qui est sous les yeux (`menu::MergeReach`).
+        {
+            let menu_handle = app.handle().clone();
+            move |worktree_root: &Path| menu::worktree_changed(&menu_handle, worktree_root)
         },
     );
     {
