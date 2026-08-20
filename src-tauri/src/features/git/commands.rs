@@ -1,8 +1,11 @@
-//! La surface de la feature vers le frontend : une commande, un event.
+//! La surface de la feature vers le frontend : quatre commandes, un event.
 //!
-//! Le frontend ne connaît de `git` que ces deux noms et les types qui traversent. Il
+//! Le frontend ne connaît de `git` que ces cinq noms et les types qui traversent. Il
 //! **rend** l'état ; c'est ici qu'on le lui pousse
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+//!
+//! Les quatre commandes **lisent**, et rien d'autre : aucun verbe git ne touche l'arbre
+//! depuis cette surface, pas même le graphe qui en dessine l'histoire.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +13,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::git_cli::SystemGit;
+use super::history::{CommitGraph, CommitGraphReader};
 use super::metadata::WorktreeMetadata;
 use super::metadata_watch::{Listeners, MetadataWatch};
 use super::prompt::compose_conflict_prompt;
@@ -17,6 +21,7 @@ use super::stopped::StoppedOperation;
 use super::system_fs::SystemFileSystem;
 use super::throttle::MIN_INTERVAL;
 use super::watcher::SystemWatcher;
+use super::worktree::resolve_worktree;
 use crate::shared::time::{SystemClock, ThreadScheduler};
 
 /// Nom de l'event qui porte l'état git d'un worktree.
@@ -95,6 +100,36 @@ pub async fn git_conflict_prompt<R: Runtime>(
     let watch = app.state::<Arc<MetadataWatch>>();
     let stopped = watch.stopped(Path::new(&worktree_root))?;
     Some(compose_conflict_prompt(&stopped.prompt_subject()))
+}
+
+/// Le graphe de commits d'un worktree, colonne `by` comprise (spec §7.2).
+///
+/// `window` est le nombre de lignes demandées **depuis le sommet** : voir `graph.rs` pour
+/// pourquoi le graphe grandit par une fenêtre et non par des pages. Le backend la borne — une
+/// webview ne décide pas de faire lire dix ans d'histoire d'un coup.
+///
+/// `None` pour un répertoire hors de tout dépôt, ou dont les fichiers de contrôle ne se
+/// lisent pas : c'est le même cas nominal que `git_metadata`, et il se rend pareil — le
+/// panneau dit qu'il n'a rien à montrer.
+///
+/// **`async` pour la même raison que [`git_metadata`]** : la réponse lance un processus
+/// `git`, qui n'a rien à faire sur le fil qui dessine la fenêtre.
+#[tauri::command]
+pub async fn git_commit_graph<R: Runtime>(
+    app: AppHandle<R>,
+    worktree_root: String,
+    window: usize,
+) -> Option<CommitGraph> {
+    let reader = app.state::<Arc<CommitGraphReader>>();
+    // Le dépôt **commun** : c'est la clé du journal, et deux worktrees d'un même projet
+    // partagent donc leur attribution comme ils partagent leurs commits (ADR-0012).
+    let located = resolve_worktree(&SystemFileSystem, Path::new(&worktree_root)).ok()?;
+    let (_, common_dir) = located.git_dirs()?;
+    Some(reader.window(
+        &located.worktree.root,
+        &common_dir.to_string_lossy(),
+        window,
+    ))
 }
 
 /// Construit la surveillance avec les adaptateurs du système, et la relie à la fenêtre.

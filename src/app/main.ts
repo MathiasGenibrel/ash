@@ -1,4 +1,5 @@
 import "./styles.css";
+import { mountCommitGraph } from "@/features/git";
 import { mountBottomPanel } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
@@ -30,6 +31,7 @@ import { windowTitle } from "./window-title";
 import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
 import { followBottomPanel, type BottomPanelBinding } from "./bottom-panel";
+import { readCommitGraph } from "./commit-graph";
 
 /**
  * Composition root du frontend.
@@ -179,8 +181,46 @@ function mount(
     // pour toute la session, et le relire à chaque changement d'onglet ferait un
     // aller-retour Tauri par `cd`.
     const titleBar = createTitleBar(windowTitle(null, appName));
+
+    // Le graphe de commits (#27, spec §7.2) se pose dans le corps du panneau, qui est une
+    // boîte vide que le panneau expose sans rien savoir de git. Les deux features ne se
+    // connaissent donc pas plus que la sidebar et la feature terminal : elles se rencontrent
+    // ici, et nulle part ailleurs.
+    //
+    // Il **lit**, et rien d'autre : aucun verbe git ne part de cet écran.
+    const graph = mountCommitGraph({ read: readCommitGraph });
+    // Le worktree regardé est celui de l'onglet actif : c'est la même clé que celle par
+    // laquelle la sidebar range les onglets et par laquelle le backend résout un dépôt
+    // ([ADR-0012](../../docs/adr/0012-worktree-unite-de-travail.md)). Le graphe ne la calcule
+    // pas — le backend a déjà situé l'onglet.
+    let graphRoot: string | null = null;
+    let graphShown = false;
+
+    /**
+     * Ce que le graphe regarde, et quand il relit.
+     *
+     * Une seule règle, et elle tient à un processus : **on ne lance un `git log` que pour un
+     * écran qu'on regarde**. Un graphe relu à chaque changement d'onglet, panneau fermé,
+     * ferait partir un processus par `cd` de l'utilisateur — exactement ce qu'ADR-0011
+     * interdit à la boucle de sonde.
+     */
+    const syncGraph = (): void => {
+        if (!graphShown) {
+            graph.element.remove();
+            return;
+        }
+        const arriving = !graph.element.isConnected;
+        if (arriving) panel.body.append(graph.element);
+        // `show` ne relit que si le worktree a changé ; la vue qui s'ouvre, elle, relit
+        // toujours — le `HEAD` a pu bouger pendant qu'elle était cachée.
+        graph.show(graphRoot);
+        if (arriving) graph.refresh();
+    };
+
     terminals.onActiveTab((active) => {
         titleBar.setTitle(windowTitle(active, appName));
+        graphRoot = active?.tab.location?.worktreeRoot ?? null;
+        syncGraph();
     });
 
     // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
@@ -188,8 +228,12 @@ function mount(
     // onglet et le raccourci de #32 ne pourront pas se contredire.
     bottomPanel.subscribe((next) => {
         panel.setPanel(next);
+        graphShown = next.open && next.view === "graph";
+        syncGraph();
     });
     panel.setPanel(bottomPanel.current);
+    graphShown = bottomPanel.current.open && bottomPanel.current.view === "graph";
+    syncGraph();
 
     layout.append(sidebar.element, sidebar.separator, host);
     root.append(titleBar.element, layout);

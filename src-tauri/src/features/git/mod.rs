@@ -8,7 +8,11 @@
 //! - les **métadonnées** d'un worktree — branche et opération en cours — tenues à jour par
 //!   **surveillance de fichiers**, jamais par sondage (spec §5.3) ;
 //! - ce qu'une opération **arrêtée** dit d'elle-même ([`stopped`]), et le **texte** qu'on
-//!   en tire pour l'agent ([`prompt`], spec §7.4).
+//!   en tire pour l'agent ([`prompt`], spec §7.4) ;
+//! - le **graphe de commits** et sa colonne `by` ([`graph`], [`history`], spec §7.2) : les
+//!   couloirs sont une fonction pure, et le nom de l'agent vient du journal d'ADR-0014 par le
+//!   port [`Attributions`], que cette feature possède parce que c'est elle qui pose la
+//!   question.
 //!
 //! # Pourquoi la rédaction du prompt vit ici
 //!
@@ -46,14 +50,19 @@
 //! | `FileWatcher` (`watcher.rs`) | `watcher.rs` | `fakes.rs` |
 //! | `Clock`, `Scheduler` (`shared/time.rs`) | `shared/time.rs` | `fakes.rs` |
 //! | `StatusReader` (`git_cli.rs`) | `git_cli.rs` | `fakes.rs` |
+//! | `GraphLog` (`git_cli.rs`) | `git_cli.rs` | `history.rs` |
+//! | `Attributions` (`attribution.rs`) | `lib.rs`, sur `CommitJournal` | `history.rs` |
 
 // `commands` est public : `tauri::generate_handler!` a besoin des macros que
 // `#[tauri::command]` génère à côté de chaque fonction, et un `pub use` ne les emporte pas.
 pub mod commands;
 
+mod attribution;
 mod control;
 mod error;
 mod git_cli;
+mod graph;
+mod history;
 mod metadata;
 mod metadata_watch;
 mod porcelain;
@@ -75,8 +84,15 @@ mod fake_fs;
 #[cfg(test)]
 mod fakes;
 
+pub use attribution::{Attribution, Attributions};
 pub use error::GitError;
-pub use git_cli::{CommitRecord, StatusReader, SystemGit, STATUS_TIMEOUT};
+pub use git_cli::{
+    CommitRecord, GraphLog, StatusReader, SystemGit, MAX_GRAPH_WINDOW, STATUS_TIMEOUT,
+};
+// `graph::FoldedBranch` reste privée : `history` en expose une jumelle sérialisable, et deux
+// types du même nom dans la même API publique n'apprendraient rien à personne.
+pub use graph::{lay_out, GraphCommit, Layout, Link, INACTIVE_AFTER, MAX_LANES};
+pub use history::{CommitGraph, CommitGraphReader, CommitRow, DEFAULT_WINDOW};
 pub use metadata::{
     read_metadata, Head, Operation, OperationKind, Progress, Status, TreeStatus, Upstream,
     WorktreeMetadata,
