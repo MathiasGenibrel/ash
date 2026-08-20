@@ -116,31 +116,42 @@ pub struct Layout {
 /// `now` est l'heure murale, en millisecondes : elle ne sert qu'à la règle des 30 jours, et
 /// elle est **passée**, jamais lue ici.
 pub fn lay_out(commits: &[GraphCommit], now: UnixMillis) -> Layout {
-    let placed = assign(commits, &(0..commits.len()).collect::<Vec<_>>());
-    if placed.1 <= MAX_LANES {
-        return Layout {
-            rows: placed.0,
-            lanes: placed.1,
-            folded: Vec::new(),
-        };
+    let whole = assign(commits, &(0..commits.len()).collect::<Vec<_>>());
+    if whole.lanes <= MAX_LANES {
+        return whole.folding(Vec::new());
     }
 
     // Au-delà de quatre couloirs, et à ce moment-là seulement, la règle des 30 jours
     // s'applique : ce n'est pas un filtre permanent, c'est un secours de lisibilité.
     let (kept, folded) = fold_inactive(commits, now);
     if folded.is_empty() {
-        return Layout {
-            rows: placed.0,
-            lanes: placed.1,
-            folded,
-        };
+        // Plus de quatre couloirs, mais tous touchés récemment : on les dessine tous. La
+        // règle replie les branches *inactives*, pas les *excédentaires*.
+        return whole.folding(folded);
     }
 
-    let (rows, lanes) = assign(commits, &kept);
-    Layout {
-        rows,
-        lanes,
-        folded,
+    assign(commits, &kept).folding(folded)
+}
+
+/// Ce que l'affectation rend : des lignes posées, et la largeur qu'elles occupent.
+///
+/// Elle ne sait **rien** du repli — c'est [`lay_out`] qui décide s'il y a lieu de replier,
+/// puis rappelle l'affectation sur ce qui reste. Le type existe pour que ces deux passes se
+/// lisent sans avoir à se souvenir de ce qu'était le second membre d'un couple.
+struct Assignment {
+    rows: Vec<Placed>,
+    lanes: usize,
+}
+
+impl Assignment {
+    /// Le dessin complet : cette affectation, et les branches que le repli a écartées pour
+    /// l'obtenir — vides quand il n'a pas eu lieu.
+    fn folding(self, folded: Vec<FoldedBranch>) -> Layout {
+        Layout {
+            rows: self.rows,
+            lanes: self.lanes,
+            folded,
+        }
     }
 }
 
@@ -155,7 +166,7 @@ pub fn lay_out(commits: &[GraphCommit], now: UnixMillis) -> Layout {
 ///    rejoignent sur leur parent ;
 /// 2. **le premier parent hérite du couloir du commit** — c'est la convention de git, et
 ///    c'est elle qui garde `main` sur une colonne droite d'un bout à l'autre.
-fn assign(commits: &[GraphCommit], kept: &[usize]) -> (Vec<Placed>, usize) {
+fn assign(commits: &[GraphCommit], kept: &[usize]) -> Assignment {
     // Le sha attendu par chaque couloir. `None` = couloir libre.
     let mut active: Vec<Option<String>> = Vec::new();
     let mut rows: Vec<Placed> = Vec::new();
@@ -256,7 +267,7 @@ fn assign(commits: &[GraphCommit], kept: &[usize]) -> (Vec<Placed>, usize) {
         });
     }
 
-    (rows, lanes)
+    Assignment { rows, lanes }
 }
 
 /// Le premier couloir libre, en en ouvrant un au besoin.

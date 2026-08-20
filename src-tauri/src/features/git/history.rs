@@ -227,13 +227,10 @@ impl CommitGraphReader {
             .iter()
             .filter_map(|placed| {
                 let commit = commits.get(placed.commit)?;
-                let attributed = seen.get(placed.commit).and_then(Option::as_ref);
-                Some(CommitRow::of(
-                    commit,
-                    attributed,
-                    placed.lane,
-                    &placed.links,
-                ))
+                // `seen` est aligné sur `commits`, et `placed.commit` indexe `commits` — pas
+                // les lignes : le repli en écarte, donc les deux ne se numérotent pas pareil.
+                let observed = seen.get(placed.commit).and_then(Option::as_ref);
+                Some(CommitRow::of(commit, observed, placed.lane, &placed.links))
             })
             .collect();
 
