@@ -1,10 +1,27 @@
-//! L'invocation de `git`, derrière un trait que la feature possède.
+//! L'invocation de `git`, derrière trois traits que la feature possède.
 //!
 //! C'est le seul endroit du dépôt où le binaire `git` est lancé en production, et il n'y
-//! en aura pas d'autre. La règle qui l'encadre est celle du critère d'acceptation de
-//! l'issue #8 : **jamais dans la boucle de sonde**. L'appel part des trois mêmes moments
+//! en aura pas d'autre. **La frontière de sécurité tient en une phrase : rien n'atteint le
+//! processus `git` sans passer par [`Invocation`].** Chaque verbe y a une variante, chaque
+//! variante compose le même [`HARDENED_PREFIX`], et c'est cette composition-là — pas une
+//! liste recopiée à côté — que les tests du bas de fichier relisent.
+//!
+//! | [`Invocation`] | Ce qui la déclenche | Consentement |
+//! |---|---|---|
+//! | `Status` | la surveillance de `.git` — donc un simple `cd` | **aucun** |
+//! | `Refs`, `Worktrees` | l'ouverture de la popup de branches | un geste |
+//! | `Tree` (`switch`, `rebase`, `merge`) | une action confirmée, qui a nommé ses deux côtés | un geste **explicite** |
+//!
+//! La colonne de droite est ce qui décide de la sévérité : voir [`TREE_ARGS`] pour ce
+//! qu'on assume de ne **pas** neutraliser sur la dernière ligne, et pourquoi cette réponse
+//! serait fausse sur la première.
+//!
+//! La règle qui encadre `Status` est celle du critère d'acceptation de l'issue #8 :
+//! **jamais dans la boucle de sonde**. L'appel part des trois mêmes moments
 //! que le reste des métadonnées — rattachement, focus, écriture surveillée — et passe par
-//! la même limitation à un rafraîchissement par worktree et par tranche de 5 s.
+//! la même limitation à un rafraîchissement par worktree et par tranche de 5 s. Les deux
+//! lectures de branches, elles, ne partent jamais sans que l'utilisateur ait ouvert la
+//! popup.
 //!
 //! Pourquoi un appel plutôt qu'une lecture de fichiers : l'état de l'arbre (`+3 ~1`) est
 //! la comparaison de l'index avec l'arbre de travail, et l'avance sur l'amont (`↑2 ↓1`)
@@ -25,26 +42,14 @@ use std::time::Duration;
 /// de statut **sans** état d'arbre — mais avec sa branche, qui vient des fichiers.
 pub const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Les arguments de l'appel, et pourquoi chacun est là.
+/// Ce que `status` ajoute au préfixe — et rien de plus.
 ///
-/// Cette liste est une **frontière de sécurité**, pas une préférence de formatage. Ash
-/// lance `git status` tout seul, sur le simple fait que le shell de l'utilisateur a fait
-/// un `cd` — sans qu'aucune commande git n'ait été tapée. Un dépôt hostile récupéré puis
-/// simplement visité ne doit donc pas pouvoir exécuter quoi que ce soit.
-///
-/// `core.fsmonitor` est le vecteur : sa valeur est une **commande** que `git status`
-/// exécute, et elle se pose dans le `.git/config` du dépôt visité. La protection
-/// `safe.directory` de git ne couvre pas ce cas — elle ne se déclenche que si le dépôt
-/// appartient à un *autre* utilisateur, alors qu'un dépôt téléchargé appartient au nôtre.
-/// La configuration passée en `-c` l'emporte sur celle du dépôt : c'est ce qui la
-/// neutralise. Vérifié en reproduisant l'exécution, puis son absence.
-const HARDENED_STATUS_ARGS: [&str; 8] = [
-    // Un lecteur de fond n'a pas à réécrire l'index de l'utilisateur pour rafraîchir des
-    // dates : sans ça, chaque appel écrirait dans `.git`.
-    "--no-optional-locks",
-    // Le vecteur d'exécution, neutralisé. Ne retire jamais cette ligne.
-    "-c",
-    "core.fsmonitor=false",
+/// C'est la seule invocation qu'Ash lance **tout seul**, sur le simple fait que le shell de
+/// l'utilisateur a fait un `cd`, sans qu'aucune commande git n'ait été tapée. Un dépôt
+/// hostile récupéré puis simplement visité ne doit donc pas pouvoir exécuter quoi que ce
+/// soit — c'est de cette invocation-ci que [`HARDENED_PREFIX`] est né, avant d'être étendu
+/// aux autres.
+const STATUS_ARGS: [&str; 5] = [
     // Les chemins de contrôle sont échappés, jamais rendus tels quels : une ligne du
     // résultat reste une ligne, même pour un fichier au nom exotique.
     "-c",
@@ -101,14 +106,14 @@ pub struct Completed {
 /// Les deux premiers partent **tout seuls**, sur un simple `cd` de l'utilisateur ; celui-ci
 /// ne part **jamais** sans un geste explicite, et jamais sans qu'Ash ait nommé les deux
 /// côtés de ce qu'il s'apprête à faire. C'est cette différence de consentement qui décide de
-/// ce qu'on a le droit de laisser passer — voir [`HARDENED_TREE_ARGS`].
+/// ce qu'on a le droit de laisser passer — voir [`TREE_ARGS`].
 pub trait TreeWriter: Send + Sync {
     fn run(&self, worktree_root: &Path, args: &[String]) -> Option<Completed>;
 }
 
 /// Le préfixe commun à **toute** invocation de git faite par Ash.
 ///
-/// La règle est celle de [`HARDENED_STATUS_ARGS`], sortie de la seule commande qui la
+/// La règle est celle de [`STATUS_ARGS`], sortie de la seule commande qui la
 /// portait : un dépôt visité ne doit pas pouvoir exécuter du code, et `core.fsmonitor` est
 /// une **commande** que le dépôt pose dans son propre `.git/config`. Elle vaut pour
 /// `for-each-ref` et `worktree list` comme pour `status` — non parce que ces deux-là
@@ -121,7 +126,14 @@ pub trait TreeWriter: Send + Sync {
 /// tout ce qui sépare son exécution de nous est une propriété du descripteur de sortie —
 /// c'est-à-dire un détail d'implémentation de l'appelant, pas une décision.
 const HARDENED_PREFIX: [&str; 5] = [
+    // Un lecteur de fond n'a pas à réécrire l'index de l'utilisateur pour rafraîchir des
+    // dates : sans ça, chaque appel écrirait dans `.git`.
     "--no-optional-locks",
+    // Le vecteur d'exécution, neutralisé. Ne retire jamais cette ligne. La protection
+    // `safe.directory` de git ne couvre pas ce cas — elle ne se déclenche que si le dépôt
+    // appartient à un *autre* utilisateur, alors qu'un dépôt téléchargé appartient au nôtre.
+    // La configuration passée en `-c` l'emporte sur celle du dépôt : c'est ce qui la
+    // neutralise. Vérifié en reproduisant l'exécution, puis son absence.
     "-c",
     "core.fsmonitor=false",
     "-c",
@@ -144,7 +156,7 @@ const HARDENED_PREFIX: [&str; 5] = [
 ///   donc sûrs, sans échappement à défaire.
 /// - aucun hook, aucun pilote de diff, aucun `textconv` n'est sur ce chemin : `for-each-ref`
 ///   ne lit que le graphe de refs.
-const HARDENED_REF_ARGS: [&str; 4] = [
+const REF_ARGS: [&str; 4] = [
     "for-each-ref",
     // Objet court, date en secondes Unix, `*` pour le `HEAD` de **ce** worktree, nom complet.
     "--format=%(objectname:short)%09%(committerdate:unix)%09%(HEAD)%09%(refname)",
@@ -159,7 +171,7 @@ const HARDENED_REF_ARGS: [&str; 4] = [
 /// sécurité se repose ici comme ailleurs et la réponse est la même : aucun hook, aucun
 /// pilote, aucune configuration exécutable sur ce chemin — la commande lit
 /// `.git/worktrees/*/gitdir`, ce que la feature sait déjà lire elle-même.
-const HARDENED_WORKTREE_ARGS: [&str; 3] = ["worktree", "list", "--porcelain"];
+const WORKTREE_ARGS: [&str; 3] = ["worktree", "list", "--porcelain"];
 
 /// Ce qu'on ajoute aux verbes qui **écrivent** — et ce qu'on assume de ne pas neutraliser.
 ///
@@ -185,7 +197,64 @@ const HARDENED_WORKTREE_ARGS: [&str; 3] = ["worktree", "list", "--porcelain"];
 ///   option. Deux verrous, et il en faut deux : le nom est vérifié contre la liste que
 ///   [`super::branches`] vient de lire — donc contre ce que le dépôt contient vraiment — et
 ///   le `--` sépare les options des opérandes là où git l'accepte.
-const HARDENED_TREE_ARGS: [&str; 1] = ["--no-pager"];
+const TREE_ARGS: [&str; 1] = ["--no-pager"];
+
+/// Les invocations de `git` qu'Ash sait faire — **la liste entière**.
+///
+/// Une seule composition, et c'est tout l'intérêt : ce qui atteint le processus est
+/// `HARDENED_PREFIX` suivi des arguments du verbe, ici et nulle part ailleurs. Avant, le
+/// durcissement était composé deux fois — une fois dans chaque implémentation de trait, une
+/// fois dans le test qui prétendait le vérifier — et il avait **déjà** divergé : `status`
+/// portait sa propre copie du préfixe, sans `core.pager`.
+///
+/// Ajouter un verbe, c'est donc ajouter une variante : [`Invocation::verb`] ne compile pas
+/// sans elle, et `ALL` — la liste que relisent les tests de la frontière — est écrite juste
+/// au-dessus du `match` qui a refusé de compiler. On ne peut pas ajouter un verbe sans se
+/// tenir devant elle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Invocation {
+    /// L'état de l'arbre et l'avance sur l'amont, pour la ligne de statut.
+    Status,
+    /// Les branches et leur date, pour la popup.
+    Refs,
+    /// Quelle branche vit dans quel worktree — ADR-0012.
+    Worktrees,
+    /// Les verbes qui **écrivent** : `switch`, `rebase`, `merge`. Les opérandes sont
+    /// ajoutés par [`TreeWriter::run`], après ce préfixe et jamais dedans.
+    Tree,
+}
+
+impl Invocation {
+    /// Toutes les variantes. Les tests relisent la frontière de sécurité à travers elle,
+    /// et elle n'existe que pour eux : la production, elle, nomme toujours une invocation
+    /// précise.
+    #[cfg(test)]
+    const ALL: [Invocation; 4] = [
+        Invocation::Status,
+        Invocation::Refs,
+        Invocation::Worktrees,
+        Invocation::Tree,
+    ];
+
+    /// Ce que le verbe ajoute au préfixe.
+    fn verb(self) -> &'static [&'static str] {
+        match self {
+            Invocation::Status => &STATUS_ARGS,
+            Invocation::Refs => &REF_ARGS,
+            Invocation::Worktrees => &WORKTREE_ARGS,
+            Invocation::Tree => &TREE_ARGS,
+        }
+    }
+
+    /// La ligne d'arguments complète — **le seul chemin jusqu'au processus**.
+    fn args(self) -> Vec<&'static str> {
+        HARDENED_PREFIX
+            .iter()
+            .chain(self.verb().iter())
+            .copied()
+            .collect()
+    }
+}
 
 /// L'appel réel : un processus `git`, dans le worktree, sans shell.
 #[derive(Debug, Clone, Copy)]
@@ -203,29 +272,17 @@ impl Default for SystemGit {
 
 impl StatusReader for SystemGit {
     fn read(&self, worktree_root: &Path) -> Option<String> {
-        self.capture(worktree_root, HARDENED_STATUS_ARGS.iter().copied())
+        self.capture(worktree_root, Invocation::Status)
     }
 }
 
 impl BranchReader for SystemGit {
     fn refs(&self, worktree_root: &Path) -> Option<String> {
-        self.capture(
-            worktree_root,
-            HARDENED_PREFIX
-                .iter()
-                .copied()
-                .chain(HARDENED_REF_ARGS.iter().copied()),
-        )
+        self.capture(worktree_root, Invocation::Refs)
     }
 
     fn worktrees(&self, worktree_root: &Path) -> Option<String> {
-        self.capture(
-            worktree_root,
-            HARDENED_PREFIX
-                .iter()
-                .copied()
-                .chain(HARDENED_WORKTREE_ARGS.iter().copied()),
-        )
+        self.capture(worktree_root, Invocation::Worktrees)
     }
 }
 
@@ -234,10 +291,10 @@ impl TreeWriter for SystemGit {
     /// verbe de son énumération et d'un nom de branche déjà vérifié contre le dépôt. Rien
     /// de ce que le frontend envoie n'arrive ici tel quel.
     fn run(&self, worktree_root: &Path, args: &[String]) -> Option<Completed> {
-        let hardened: Vec<String> = HARDENED_PREFIX
-            .iter()
-            .chain(HARDENED_TREE_ARGS.iter())
-            .map(|fixed| (*fixed).to_owned())
+        let hardened: Vec<String> = Invocation::Tree
+            .args()
+            .into_iter()
+            .map(str::to_owned)
             .chain(args.iter().cloned())
             .collect();
 
@@ -273,18 +330,15 @@ impl SystemGit {
     /// Lance `git`, sous délai, et rend sa sortie standard si — et seulement si — il a réussi.
     ///
     /// Le seul chemin de lecture du dépôt, partagé par les trois questions qu'Ash pose.
-    fn capture<'a>(
-        &self,
-        worktree_root: &Path,
-        args: impl Iterator<Item = &'a str>,
-    ) -> Option<String> {
+    fn capture(&self, worktree_root: &Path, invocation: Invocation) -> Option<String> {
+        let args = invocation.args();
         // `Command` prend le programme et ses arguments séparément : aucun shell n'est
         // lancé, donc aucun chemin de worktree ne peut être interprété comme du code.
         // Le répertoire de travail est **explicite** — un `git` lancé depuis le
         // répertoire courant du processus décrirait un autre dépôt que celui demandé.
         let mut child = Command::new("git")
             .current_dir(worktree_root)
-            .args(args)
+            .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -325,57 +379,88 @@ impl SystemGit {
 mod tests {
     use super::*;
 
-    #[test]
-    fn given_the_status_invocation_when_a_visited_repository_configures_a_fsmonitor_command_then_it_is_overridden(
-    ) {
-        // Given
-        let args = HARDENED_STATUS_ARGS;
-        // When
-        let neutralises_fsmonitor = args
-            .windows(2)
-            .any(|pair| pair == ["-c", "core.fsmonitor=false"]);
-        // Then
-        assert!(
-            neutralises_fsmonitor,
-            "`core.fsmonitor` est une commande que `git status` exécute, et le dépôt \
-             visité la pose dans son propre `.git/config`. Ash lance `git status` sur un \
-             simple `cd` : sans cette surcharge, visiter un dépôt hostile suffit à \
-             exécuter du code."
-        );
+    /// Deux options `-c` consécutives, telles que git les lit.
+    fn sets(args: &[&str], setting: &str) -> bool {
+        args.windows(2).any(|pair| pair == ["-c", setting])
     }
 
     #[test]
-    fn given_any_added_git_verb_when_it_is_invoked_then_it_carries_the_same_neutralisation() {
-        // Given — les trois questions de lecture, plus le préfixe des verbes qui écrivent
-        let invocations: [Vec<&str>; 3] = [
-            HARDENED_STATUS_ARGS.to_vec(),
-            HARDENED_PREFIX
-                .iter()
-                .chain(HARDENED_REF_ARGS.iter())
-                .copied()
-                .collect(),
-            HARDENED_PREFIX
-                .iter()
-                .chain(HARDENED_WORKTREE_ARGS.iter())
-                .copied()
-                .collect(),
-        ];
+    fn given_any_invocation_ash_makes_when_a_visited_repository_configures_a_command_then_it_is_overridden(
+    ) {
+        // Given — toutes les invocations, composées comme la production les compose
+        let invocations = Invocation::ALL;
 
         // When
-        let all_neutralise = invocations.iter().all(|args| {
-            args.windows(2)
-                .any(|pair| pair == ["-c", "core.fsmonitor=false"])
-        });
+        let neutralised: Vec<bool> = invocations
+            .iter()
+            .map(|invocation| {
+                let args = invocation.args();
+                sets(&args, "core.fsmonitor=false") && sets(&args, "core.pager=cat")
+            })
+            .collect();
 
-        // Then — une neutralisation vraie sur certaines commandes seulement est une
-        // neutralisation qu'on oubliera à la suivante
-        assert!(all_neutralise);
+        // Then — `core.fsmonitor` et `core.pager` sont des **commandes** que le dépôt visité
+        // pose dans son propre `.git/config`, et Ash lance `status` sur un simple `cd` : une
+        // neutralisation vraie sur certaines commandes seulement est une neutralisation
+        // qu'on oubliera à la suivante
+        assert_eq!(neutralised, vec![true; Invocation::ALL.len()]);
+    }
+
+    #[test]
+    fn given_any_invocation_ash_makes_when_it_is_built_then_it_never_rewrites_the_index() {
+        // Given
+        let invocations = Invocation::ALL;
+
+        // When — un lecteur de fond n'a pas à écrire dans le `.git` de l'utilisateur
+        let all_read_only = invocations
+            .iter()
+            .all(|invocation| invocation.args().contains(&"--no-optional-locks"));
+
+        // Then
+        assert!(all_read_only);
+    }
+
+    #[test]
+    fn given_any_invocation_ash_makes_when_it_is_built_then_it_never_goes_through_a_shell() {
+        // Given
+        let invocations = Invocation::ALL;
+
+        // When
+        let program = "git";
+
+        // Then — le programme est nommé, jamais une ligne de shell, et un argument porteur
+        // d'espace trahirait une ligne de commande recomposée
+        assert_eq!(program, "git");
+        for invocation in invocations {
+            assert!(
+                invocation
+                    .args()
+                    .iter()
+                    .all(|arg| !arg.contains(char::is_whitespace)),
+                "{invocation:?} recompose une ligne de commande"
+            );
+        }
+    }
+
+    #[test]
+    fn given_the_status_invocation_when_it_is_built_then_it_asks_for_a_contractual_format() {
+        // Given
+        let args = Invocation::Status.args();
+
+        // When
+        let quotes_paths = sets(&args, "core.quotePath=true");
+
+        // Then — `--porcelain=v2` est documenté et stable, contrairement à `--short`, et un
+        // nom de fichier exotique reste sur une seule ligne
+        assert!(args.contains(&"--porcelain=v2"));
+        assert!(args.contains(&"--branch"));
+        assert!(quotes_paths);
     }
 
     #[test]
     fn given_the_branch_listing_when_it_is_built_then_it_uses_plumbing_and_imposes_its_format() {
         // Given
-        let args = HARDENED_REF_ARGS;
+        let args = REF_ARGS;
 
         // When
         let verb = args.first().copied();
@@ -394,7 +479,7 @@ mod tests {
     #[test]
     fn given_a_verb_that_touches_the_tree_when_it_is_invoked_then_no_pager_can_hold_it() {
         // Given
-        let args = HARDENED_TREE_ARGS;
+        let args = Invocation::Tree.args();
 
         // When
         let refuses_pager = args.contains(&"--no-pager");
@@ -402,22 +487,5 @@ mod tests {
         // Then — un `git` qui attend un pager n'a ni terminal, ni fenêtre, et ne rend jamais
         // la main. C'est la seule protection qui ne dépende pas de ce que le dépôt a écrit.
         assert!(refuses_pager);
-    }
-
-    #[test]
-    fn given_the_status_invocation_when_it_is_built_then_it_never_goes_through_a_shell() {
-        // Given
-        let args = HARDENED_STATUS_ARGS;
-        // When
-        let program = "git";
-        // Then
-        assert_eq!(
-            program, "git",
-            "le programme est nommé, jamais une ligne de shell"
-        );
-        assert!(
-            args.iter().all(|arg| !arg.contains(char::is_whitespace)),
-            "un argument porteur d'espace trahirait une ligne de commande recomposée"
-        );
     }
 }
