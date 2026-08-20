@@ -21,12 +21,14 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::features::agents::{AgentState, NotificationPreferences};
+use crate::features::usage::UsagePoller;
 
 use super::error::SettingsError;
 use super::hooks::HooksReport;
 use super::notifications::{self, NotificationsReport};
 use super::registry::{Changed, SecondPass, ToolRegistry};
 use super::tool::{NewTool, ToolDeclaration};
+use super::usage::{self, UsageReport};
 use super::values::Command;
 use super::verification::{ToolTest, Verification};
 use super::withdrawal::{RemovalPlan, RemovalReport};
@@ -226,6 +228,37 @@ pub async fn settings_set_notification<R: Runtime>(
     };
     let banners = app.state::<Arc<dyn crate::features::notifications::Banners>>();
     notifications::report(notifications::observed(banners.authorization()), choices)
+}
+
+/// Ce que la section `usage` affiche (ADR-0016, condition 3 ; ADR-0017, conséquences).
+///
+/// **Synchrone, et c'est le point** : contrairement à [`settings_notifications`], composer
+/// cette section ne demande rien à personne. Elle lit un booléen et un souvenir, tous deux
+/// déjà dans le poller. La rendre `async` laisserait croire qu'elle attend quelque chose —
+/// et ce quelque chose serait forcément une lecture de trousseau, donc un dialogue macOS sur
+/// un chemin de rendu, ce que la condition 1 d'ADR-0016 interdit.
+#[tauri::command]
+pub fn settings_usage(state: tauri::State<'_, Arc<UsagePoller>>) -> UsageReport {
+    usage::report(state.polling(), state.token_readability())
+}
+
+/// Coupe ou rallume les appels sortants — **le geste de la section** (ADR-0016, condition 3).
+///
+/// Le choix n'est pas appliqué ici : il est confié à `features::usage`, qui le garde et que
+/// le portillon consulte au moment de sortir. La fenêtre reçoit la section recomposée à
+/// partir de ce que le backend détient désormais, et non de ce qu'elle vient de demander
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — sans quoi elle
+/// deviendrait le second détenteur d'un réglage qu'elle ne fait qu'afficher.
+///
+/// Éteindre fait aussi **disparaître** les deux quotas de la barre d'état dans la foulée :
+/// c'est le poller qui le décide, pas cette commande. Voir `features/usage/poller.rs`.
+#[tauri::command]
+pub fn settings_set_usage_polling(
+    state: tauri::State<'_, Arc<UsagePoller>>,
+    enabled: bool,
+) -> UsageReport {
+    state.set_polling(enabled);
+    usage::report(state.polling(), state.token_readability())
 }
 
 /// L'outil sur lequel la fenêtre de réglages doit s'ouvrir, tant qu'elle ne l'a pas lu.

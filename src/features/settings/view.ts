@@ -7,6 +7,7 @@ import type {
     FontStep,
     JournalReport,
     NotificationsReport,
+    UsageReport,
     ConflictChoice,
     SettingsSnapshot,
     ShortcutsReport,
@@ -27,6 +28,7 @@ import {
     navColumn,
     noToolsYet,
     notificationsSection,
+    usageSection,
     pathFocusKey,
     scaleNote,
     sectionHeader,
@@ -135,6 +137,16 @@ export interface SettingsViewActions {
      */
     setNotification(state: AgentState, enabled: boolean): void;
     /**
+     * L'interrupteur de la section `usage` — les appels sortants d'ADR-0016.
+     *
+     * Elle ne coupe rien ici : `features::usage` retient le choix, et c'est son portillon qui
+     * le consulte au moment de sortir. La fenêtre redessine la section que le backend lui
+     * répond ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — un
+     * interrupteur qui basculerait tout seul afficherait `off` sur des appels qui
+     * partiraient encore.
+     */
+    setUsagePolling(enabled: boolean): void;
+    /**
      * Efface le journal d'attribution (spec §10, ADR-0014).
      *
      * Elle n'efface rien ici : elle demande, et le backend rend la fiche relue après coup.
@@ -218,6 +230,15 @@ export interface SettingsScene {
      */
     notifications: NotificationsReport | null;
     /**
+     * La section `usage` telle que le backend la compose, ou `null` tant qu'il n'a pas
+     * répondu (ADR-0016, condition 3).
+     *
+     * Elle n'est pas dans `snapshot` pour la raison qui vaut pour `notifications`, et une de
+     * plus qui lui est propre : la lisibilité du jeton change **pendant** qu'Ash tourne, au
+     * premier appel du fil de fond, sans qu'aucun outil ait été déclaré.
+     */
+    usage: UsageReport | null;
+    /**
      * Ce que le journal d'attribution pèse, ou `null` tant que le backend n'a pas répondu.
      *
      * Il n'est pas dans `snapshot` pour la raison qui vaut pour `notifications` : le journal
@@ -274,10 +295,10 @@ export function settingsNav(
 }
 
 /**
- * Le panneau de droite — l'un des quatre écrans, jamais deux.
+ * Le panneau de droite — l'un des cinq écrans, jamais deux.
  *
  * Le `switch` couvre `SettingsSection` **en entier**, et il n'a pas de `default` : c'est ce
- * qui fait échouer `bun run typecheck` le jour où une cinquième section s'ajoute, à l'endroit
+ * qui fait échouer `bun run typecheck` le jour où une section s'ajoute, à l'endroit
  * exact où son écran manque. Une chaîne de `if` avec `tools` en dernier recours l'aurait
  * silencieusement affichée sous le titre d'une autre section — c'est le filet que le
  * `Record<EmptySection, string>` des sections vides tendait avant qu'elles aient du contenu.
@@ -287,6 +308,12 @@ export function settingsPanel(
     actions: SettingsRendering,
 ): readonly UiChild[] {
     switch (scene.section) {
+        case "usage":
+            return usageSection(scene.usage, {
+                setPolling: (enabled) => {
+                    actions.setUsagePolling(enabled);
+                },
+            });
         case "notifications":
             return notificationsSection(scene.notifications, {
                 setNotification: (state, enabled) => {
