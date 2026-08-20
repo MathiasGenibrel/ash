@@ -27,11 +27,12 @@ import { foot, sectionHeader } from "./chrome";
  * | conflit | `report.conflict` nomme ses deux côtés |
  * | combinaison avalée | `row.reservation` |
  *
- * **La liste reste plus courte que le tableau de la spec §4.4, et ce n'est pas un oubli** :
- * la famille git (`⌘⌃B`, `G`, `W`, `M`, `I`) n'a pas encore d'entrée de menu — ni popup de
- * branches, ni graphe, ni onglet de merge n'existent —, donc pas encore de liaison. Rien ne
- * peut être ajouté ici pour combler l'écart : ce serait recopier une combinaison à la main, et
- * annoncer un raccourci qui ne fait rien (issue #127).
+ * **La liste couvre le tableau de la spec §4.4 en entier**, famille git comprise (`⌘⌃B`,
+ * `G`, `W`, `M`, `I`) — et **aucune ligne n'a été écrite ici pour ça** (issue #32). Les cinq
+ * combinaisons sont apparues le jour où `src-tauri/src/menu.rs` a déclaré son sous-menu
+ * « Git », parce que la liste vient de là : ce composant groupe ce que le backend lui envoie,
+ * dans l'ordre où il l'envoie. Recopier une combinaison ici aurait annoncé un raccourci que
+ * le menu ne joue pas (issue #127), et c'est l'écran qu'on croit quand les deux divergent.
  */
 export interface ShortcutsActions {
     /** Ouvre le bloc de capture sur une ligne — clic, ou `⏎` sur la ligne au focus. */

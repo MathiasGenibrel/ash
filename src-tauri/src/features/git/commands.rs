@@ -197,10 +197,15 @@ pub async fn git_worktree_removal<R: Runtime>(
 /// naître ([ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md)). Il ne
 /// traverse pas non plus la frontière du frontend, et pour la même raison que
 /// `on_relocation` : la feature dit ce qu'elle a observé, elle ne sait pas qui l'écoute.
+/// `on_change` est le **même fait** que l'event, rendu à qui n'est pas une webview : le menu
+/// natif y allume ou éteint son entrée « Resolve Conflicts » (issue #32). Il est passé par le
+/// composition root et non branché ici pour la raison habituelle — cette feature ne sait pas
+/// ce qu'est un menu, et n'a pas à l'apprendre pour dire qu'un rebase vient de s'arrêter.
 pub fn watch_metadata<R: Runtime>(
     app: AppHandle<R>,
     on_relocation: impl Fn() + Send + Sync + 'static,
     on_head_moved: impl Fn(&Path, &Path) + Send + Sync + 'static,
+    on_change: impl Fn(&Path) + Send + Sync + 'static,
 ) -> Arc<MetadataWatch> {
     MetadataWatch::new(
         Arc::new(SystemFileSystem),
@@ -211,6 +216,7 @@ pub fn watch_metadata<R: Runtime>(
         MIN_INTERVAL,
         Listeners {
             announce: Arc::new(move |root: &Path, metadata: &WorktreeMetadata| {
+                on_change(root);
                 // Échouer à émettre signifie qu'il n'y a plus de webview à prévenir : rien à
                 // rattraper, et surtout pas de panique dans un fil de fond.
                 let _ = app.emit(

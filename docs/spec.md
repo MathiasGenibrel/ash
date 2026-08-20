@@ -262,6 +262,19 @@ réclame. Mnémonique : **B**ranches, **G**raph, **W**orktrees, **M**erge, **I**
 Attention en cas de rebinding : `Cmd+Ctrl+F`, `Cmd+Ctrl+D` et `Cmd+Ctrl+Space` sont,
 eux, pris par le système.
 
+**« Seulement pendant un rebase ou un merge arrêté » veut dire : l'entrée de menu est
+éteinte** — écrit le 2026-08-20, avec l'issue #32. C'est la forme de macOS, celle que
+`validateMenuItem:` produit partout ailleurs sur le système : « Resolve Conflicts » reste
+à sa place dans le menu Git, grisée, et son équivalent clavier ne s'allume pas. Les deux
+autres formes ont été écartées — laisser l'accélérateur posé et refuser au moment du geste
+aurait annoncé un raccourci qui ne fait rien, et retirer l'entrée du menu l'aurait fait
+scintiller au rythme des rebases, en escamotant une ligne que l'utilisateur a peut-être
+rebindée. Le prix est que le menu apprend deux choses qu'il ne savait pas : quel worktree
+est sous les yeux — la fenêtre le rapporte, elle seule le sait — et si quelque chose y est
+arrêté, qu'il **demande** à `features::merge`, par la lecture même que l'ouverture consulte.
+La surveillance de `.git` rouvre la question quand un rebase commence ou se termine, sans
+quoi le raccourci ne s'allumerait qu'au prochain changement d'onglet.
+
 **Un raccourci est un caractère, pas une position de touche** — écrit le 2026-08-19, après
 l'issue #133. Ces combinaisons se lisent comme macOS les apparie : `Cmd+W` est la touche qui
 produit `w`, où qu'elle se trouve sur le clavier. Changer de disposition peut donc déplacer un

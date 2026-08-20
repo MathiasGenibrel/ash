@@ -100,11 +100,28 @@ impl MergeSurface {
         }
     }
 
-    /// Ouvre l'onglet de merge d'un worktree — `⌘⌃M`, une fois que #32 l'aura déclaré.
+    /// Y a-t-il un onglet de merge à ouvrir ici ? — **la condition de `⌘⌃M`** (issue #32).
+    ///
+    /// C'est la question d'[`open`](Self::open) posée sans rien ouvrir, et c'est
+    /// délibérément la **même** lecture : `src-tauri/src/menu.rs` éteint son entrée
+    /// « Resolve Conflicts » quand elle rend `false`, et un menu qui déciderait par un
+    /// autre chemin finirait par proposer une entrée que l'ouverture refuse — ou l'inverse,
+    /// ce qui est pire : une opération arrêtée qu'aucune touche n'atteint.
+    ///
+    /// Elle ne coûte rien pour un worktree déjà surveillé : `StoppedWorktree` est branché
+    /// sur `features::git::MetadataWatch`, qui a déjà l'état en mémoire.
+    pub fn reachable(&self, worktree_root: &Path) -> bool {
+        self.worktrees.stopped(worktree_root).is_some()
+    }
+
+    /// Ouvre l'onglet de merge d'un worktree — `⌘⌃M` (spec §4.4), ou le bouton de la vue
+    /// `conflicts` du panneau bas.
     ///
     /// Refuse quand rien n'est arrêté : un onglet de merge sur un worktree tranquille
-    /// n'aurait rien à montrer, et c'est aussi ce qui dit à #32 quand son raccourci est
-    /// actif — la même réponse que `git_stopped_operation`, sur le même worktree.
+    /// n'aurait rien à montrer. La garde est **ici aussi** et pas seulement dans le menu :
+    /// une entrée éteinte est une politesse, pas une garantie — la vue `conflicts` appelle
+    /// par le même chemin, et le worktree a pu redevenir tranquille entre l'affichage et le
+    /// clic.
     pub fn open(&self, worktree_root: &Path, tab_id: TabId) -> Result<TabId, MergeError> {
         if self.worktrees.stopped(worktree_root).is_none() {
             return Err(MergeError::NothingStopped(
@@ -634,6 +651,34 @@ mod tests {
 
         // Then
         assert_eq!(opened, Err(MergeError::NothingStopped(ROOT.to_owned())));
+    }
+
+    #[test]
+    fn given_a_worktree_with_nothing_stopped_when_the_menu_asks_if_a_merge_tab_is_reachable_then_it_is_not(
+    ) {
+        // Given — l'entrée « Resolve Conflicts » du menu et son `⌘⌃M` (spec §4.4, #32) : ils
+        // ne sont actifs que pendant un rebase ou un merge arrêté, et c'est **cette** lecture
+        // qui le dit. Deux worktrees, deux réponses, une seule règle — celle d'`open`
+        let quiet = MergeSurface::new(
+            Arc::new(FakeWorktree::none()),
+            Arc::new(FakeFiles::new()),
+            Arc::new(FakeGit::new()),
+        );
+        let stopped = MergeSurface::new(
+            Arc::new(FakeWorktree::rebase()),
+            Arc::new(FakeFiles::new()),
+            Arc::new(FakeGit::new()),
+        );
+
+        // When
+        let reach = [
+            quiet.reachable(Path::new(ROOT)),
+            stopped.reachable(Path::new(ROOT)),
+        ];
+
+        // Then — un menu qui déciderait par un autre chemin finirait par éteindre une entrée
+        // qu'`open` accepte, ou allumer celle qu'il refuse
+        assert_eq!(reach, [false, true]);
     }
 
     #[test]
