@@ -56,6 +56,19 @@ impl FakeFs {
         })
     }
 
+    /// Le `gitdir` que git écrit dans `.git/worktrees/<nom>` : le chemin du `.git` du
+    /// worktree lié.
+    ///
+    /// C'est le seul fichier qui permet d'aller du dépôt **vers** ses worktrees, alors que
+    /// `commondir` fait le trajet inverse. Le tableau des worktrees (spec §7.3) énumère par
+    /// lui — sans lancer `git worktree list`.
+    pub fn worktree_gitdir(self, repo: &str, name: &str, worktree_root: &str) -> Self {
+        self.file(
+            &format!("{repo}/.git/worktrees/{name}/gitdir"),
+            &format!("{worktree_root}/.git\n"),
+        )
+    }
+
     /// Un worktree lié : `.git` y est un **fichier**.
     pub fn linked_worktree(self, root: &str, git_file: &str) -> Self {
         self.dir(root).file(&format!("{root}/.git"), git_file)
