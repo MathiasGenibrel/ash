@@ -10,15 +10,20 @@
  * Les variables (`--ash-bg`, `--ash-fg`) viennent de `app/styles.css` : le thème est à
  * l'application, la mise en forme est à la feature. */
 
-/* Terminaux au-dessus, ligne de statut en bas (spec §4.2).
+/* Terminaux au-dessus, panneau bas, ligne de statut tout en bas (spec §4.2 et §4.3).
  *
- * Deux rangées et non trois : la barre d'onglets qui occupait la première est partie —
- * la sidebar range déjà les onglets, et mieux (§4.2, amendée le 2026-08-17).
+ * `1fr auto auto` : seuls les terminaux se laissent réduire. C'est **la** règle de mise en
+ * page qui fait qu'un panneau qui s'ouvre prend sa hauteur au terminal et la lui rend en se
+ * refermant ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)) — la rangée du
+ * milieu annonce sa hauteur, et le `1fr` absorbe la différence.
+ *
+ * La rangée du milieu reste vide quand le composition root ne passe pas de panneau : une
+ * piste de grille sans élément n'occupe rien.
  *
  * La position sert d'ancre à la confirmation de fermeture. */
 .terminal-workbench {
     display: grid;
-    grid-template-rows: 1fr auto;
+    grid-template-rows: 1fr auto auto;
     position: relative;
 }
 

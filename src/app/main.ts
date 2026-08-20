@@ -1,4 +1,5 @@
 import "./styles.css";
+import { mountBottomPanel } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { SidebarRows } from "@/shared/ipc";
@@ -28,6 +29,7 @@ import { createTitleBar } from "./titlebar";
 import { windowTitle } from "./window-title";
 import { followSidebarRows, type SidebarRowsBinding } from "./sidebar-rows";
 import { followSidebarColumn, type SidebarColumnBinding } from "./sidebar-column";
+import { followBottomPanel, type BottomPanelBinding } from "./bottom-panel";
 
 /**
  * Composition root du frontend.
@@ -47,6 +49,7 @@ function mount(
     fontFamily: FontFamilySignal,
     sidebarRows: SidebarRowsBinding,
     sidebarColumn: SidebarColumnBinding,
+    bottomPanel: BottomPanelBinding,
     appName: string,
 ): void {
     // Deux rangées : la bande de titre, puis les deux colonnes. La bande traverse toute la
@@ -65,7 +68,33 @@ function mount(
     // ([ADR-0009](../../docs/adr/0009-cycle-de-vie-des-agents.md)), et un terminal ne peint
     // pas en CSS — il lui faut l'avis pour relire la palette, changer de taille et refaire
     // sa grille, onglets déjà ouverts compris.
-    const terminals = mountTerminals(host, theme, fontSize, fontFamily);
+    // Le panneau bas (spec §4.3) se pose **entre** les terminaux et la ligne de statut, et
+    // c'est là toute son histoire : la rangée du milieu de `.terminal-workbench` annonce sa
+    // hauteur, le terminal absorbe la différence, sa pile rétrécit, son `ResizeObserver`
+    // refait la grille, et le PTY reçoit son `SIGWINCH`. Ce chemin est le seul, et il existait
+    // déjà — le panneau n'en ouvre pas un second
+    // ([ADR-0003](../../docs/adr/0003-zone-terminal-unique.md)).
+    //
+    // Les deux features ne se connaissent pas : la feature terminal reçoit un élément, le
+    // panneau reçoit une hauteur de zone à mesurer. Elles se rencontrent ici, et nulle part
+    // ailleurs. Le panneau ne détient rien non plus — ses trois gestes partent au backend et
+    // reviennent par son annonce, comme la colonne de gauche.
+    const panel = mountBottomPanel({
+        showView: (view) => {
+            bottomPanel.showView(view);
+        },
+        setHeight: (height) => {
+            bottomPanel.setHeight(height);
+        },
+        close: () => {
+            bottomPanel.close();
+        },
+        // La zone terminal, et non la fenêtre : les bornes du panneau (15 % à 70 %) parlent de
+        // la place qu'il partage avec les terminaux, pas de celle qu'occupe la bande de titre.
+        areaHeight: () => host.getBoundingClientRect().height,
+    });
+
+    const terminals = mountTerminals(host, theme, fontSize, fontFamily, panel.element);
 
     // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
     // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
@@ -154,8 +183,26 @@ function mount(
         titleBar.setTitle(windowTitle(active, appName));
     });
 
+    // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
+    // c'est ce qui laisse un seul détenteur à l'ouverture, et ce qui fera que le clic sur un
+    // onglet et le raccourci de #32 ne pourront pas se contredire.
+    bottomPanel.subscribe((next) => {
+        panel.setPanel(next);
+    });
+    panel.setPanel(bottomPanel.current);
+
     layout.append(sidebar.element, sidebar.separator, host);
     root.append(titleBar.element, layout);
+
+    // **Après l'accrochage au document, et pas avant** : les bornes du panneau se lisent sur
+    // la hauteur de la zone terminal, et un élément qui n'est pas encore dans le document en
+    // mesure zéro — le panneau se serait ouvert sur un pixel.
+    panel.layOut();
+    // La fenêtre qui rétrécit ne redessine pas le panneau — elle le **replace** dans ses
+    // bornes, et rend ses lignes au terminal sans jamais réécrire la hauteur réglée.
+    window.addEventListener("resize", () => {
+        panel.layOut();
+    });
 
     const fail = (error: unknown): void => {
         // Un shell qui ne démarre pas laisse l'application sans rien à montrer : le dire
@@ -297,6 +344,12 @@ sidebarRows.ready.catch(() => undefined);
 const sidebarColumn = followSidebarColumn();
 sidebarColumn.ready.catch(() => undefined);
 
+// Et une cinquième, pour le panneau bas — sa hauteur, son ouverture et sa vue (spec §4.3).
+// Un échec du raccordement laisse un panneau **fermé**, donc un terminal qui garde toute sa
+// hauteur : c'est exactement ce qu'un premier démarrage montre, et le défaut le plus sûr.
+const bottomPanel = followBottomPanel();
+bottomPanel.ready.catch(() => undefined);
+
 // La police du terminal et la densité de la sidebar suivent le même chemin que les trois
 // au-dessus : elles sont détenues par le backend, demandées ici, et posées quand il répond.
 // Toutes deux se règlent dans la fenêtre de réglages (spec §9), qui est un **autre document** :
@@ -357,7 +410,16 @@ void document.fonts.ready.finally(() => {
         // `loadAppName` ne rejette jamais — elle se replie sur un nom plutôt que de laisser
         // une fenêtre sans rien —, donc il n'y a pas d'échec à rattraper ici.
         void appName.then((name) => {
-            mount(root, theme.changes, fontSize.changes, fontFamily, sidebarRows, sidebarColumn, name);
+            mount(
+                root,
+                theme.changes,
+                fontSize.changes,
+                fontFamily,
+                sidebarRows,
+                sidebarColumn,
+                bottomPanel,
+                name,
+            );
         });
     }
 });
