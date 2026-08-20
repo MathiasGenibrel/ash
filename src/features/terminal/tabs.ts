@@ -1,4 +1,4 @@
-import type { TabId, TabInfo } from "./ports";
+import type { ShellTab, Tab, TabId } from "./ports";
 
 /**
  * Les règles d'onglets, sans DOM ni IPC.
@@ -11,8 +11,15 @@ import type { TabId, TabInfo } from "./ports";
  * aucun shell n'en dépend.
  */
 export interface TabsState {
-    /** Dans l'ordre du backend. C'est celui que `Cmd+1..9` numérote (spec §4.4). */
-    readonly tabs: readonly TabInfo[];
+    /**
+     * Dans l'ordre du backend. C'est celui que `Cmd+1..9` numérote (spec §4.4).
+     *
+     * **Les deux genres** d'onglet depuis #30 : un terminal, ou une surface d'outil
+     * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)). La sélection, le cycle
+     * et la numérotation ne font aucune différence entre les deux — un onglet est un onglet.
+     * Ce qui diffère, c'est ce qu'on peut lire dessus, et le type l'impose.
+     */
+    readonly tabs: readonly Tab[];
     readonly activeTabId: TabId | null;
 }
 
@@ -27,7 +34,7 @@ export const noTabs: TabsState = { tabs: [], activeTabId: null };
  * là où il est, sans le renvoyer en tête de liste. Le repli vers la gauche évite le
  * seul cas où « le suivant » n'existe pas, celui du dernier onglet.
  */
-export function adopt(state: TabsState, tabs: readonly TabInfo[]): TabsState {
+export function adopt(state: TabsState, tabs: readonly Tab[]): TabsState {
     const stillThere = (tabId: TabId): boolean => tabs.some((tab) => tab.tabId === tabId);
 
     if (state.activeTabId !== null && stillThere(state.activeTabId)) {
@@ -63,13 +70,13 @@ export function adopt(state: TabsState, tabs: readonly TabInfo[]): TabsState {
  * Rend l'état **inchangé**, à l'identique, quand rien ne s'applique : un changement qui
  * ne concerne que des onglets déjà fermés ne doit pas provoquer de rendu.
  */
-export function withUpdates(state: TabsState, changed: readonly TabInfo[]): TabsState {
+export function withUpdates(state: TabsState, changed: readonly ShellTab[]): TabsState {
     const announced = new Map(changed.map((tab) => [tab.tabId, tab]));
 
     let touched = false;
     const tabs = state.tabs.map((tab) => {
         const update = announced.get(tab.tabId);
-        if (update === undefined || sameTab(update, tab)) return tab;
+        if (update === undefined || sameTab(tab, update)) return tab;
         touched = true;
         return update;
     });
@@ -77,8 +84,16 @@ export function withUpdates(state: TabsState, changed: readonly TabInfo[]): Tabs
     return touched ? { tabs, activeTabId: state.activeTabId } : state;
 }
 
-/** Deux descriptions d'un même onglet qui ne changeraient rien à l'affichage. */
-function sameTab(one: TabInfo, other: TabInfo): boolean {
+/**
+ * Deux descriptions d'un même onglet qui ne changeraient rien à l'affichage.
+ *
+ * L'annonce ne porte que des shells — elle vient de la boucle de sonde du registre de PTY —,
+ * donc un onglet de merge n'est jamais remplacé par elle. La comparaison le dit plutôt que
+ * de le supposer : un onglet dont le genre a changé n'existe pas, et un identifiant qui
+ * désignerait deux genres serait un bug qu'on veut voir plutôt qu'appliquer.
+ */
+function sameTab(one: Tab, other: ShellTab): boolean {
+    if (one.kind !== "shell") return true;
     return (
         one.cwd === other.cwd &&
         one.process === other.process &&
@@ -137,6 +152,6 @@ export function cycle(state: TabsState, step: Step): TabsState {
     return tab === undefined ? state : { tabs: state.tabs, activeTabId: tab.tabId };
 }
 
-export function activeTab(state: TabsState): TabInfo | null {
+export function activeTab(state: TabsState): Tab | null {
     return state.tabs.find((tab) => tab.tabId === state.activeTabId) ?? null;
 }

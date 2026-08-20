@@ -259,11 +259,18 @@ const WORKTREE_ARGS: [&str; 3] = ["worktree", "list", "--porcelain"];
 ///   ligne devient fausse et il faudra la réécrire avant le code.
 /// - **`--no-edit`** sur `merge` : sans lui, git ouvre `$EDITOR` — donc un processus qui
 ///   n'a ni terminal ni fenêtre, et qui ne rendrait jamais la main.
+/// - **`core.editor=true`**, ajouté le 2026-08-20 avec l'onglet de merge (#30). `--no-edit`
+///   ne couvre que `merge` : `git rebase --continue` n'a pas d'option équivalente, et il
+///   ouvre l'éditeur pour le message du commit qu'il rejoue. `true` est le programme qui
+///   sort en 0 sans rien faire — git garde donc le message d'origine, tel quel. **Ash ne
+///   réécrit aucun message de commit** ; il refuse seulement d'ouvrir un éditeur qui ne
+///   rendrait jamais la main. C'est une neutralisation de plus, jamais une de moins : elle
+///   vaut pour les trois verbes de #25 sans rien leur retirer.
 /// - **l'injection d'arguments** : une branche nommée `--upload-pack=…` serait lue comme une
 ///   option. Deux verrous, et il en faut deux : le nom est vérifié contre la liste que
 ///   [`super::branches`] vient de lire — donc contre ce que le dépôt contient vraiment — et
 ///   le `--` sépare les options des opérandes là où git l'accepte.
-const TREE_ARGS: [&str; 1] = ["--no-pager"];
+const TREE_ARGS: [&str; 3] = ["-c", "core.editor=true", "--no-pager"];
 
 /// Les invocations de `git` qu'Ash sait faire — **la liste entière**.
 ///
@@ -535,6 +542,21 @@ mod tests {
 
         // Then
         assert!(all_read_only);
+    }
+
+    #[test]
+    fn given_a_verb_that_writes_when_it_is_built_then_it_can_never_open_an_editor() {
+        // Given — `git rebase --continue` (#30) ouvre `$EDITOR` pour le message du commit
+        // qu'il rejoue, et n'a pas de `--no-edit`. Un éditeur sans terminal ni fenêtre ne
+        // rendrait jamais la main : le verbe resterait pendu, et l'opération arrêtée avec.
+        let writing = Invocation::Tree;
+
+        // When
+        let args = writing.args();
+
+        // Then — `true` sort en 0 sans rien faire : git garde le message d'origine, tel
+        // quel. Ash ne réécrit aucun message de commit.
+        assert!(sets(&args, "core.editor=true"));
     }
 
     #[test]

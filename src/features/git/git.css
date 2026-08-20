@@ -172,3 +172,33 @@
 .status-branch-anchor:hover {
     text-decoration: underline;
 }
+
+/**
+ * La vue `conflicts` du panneau bas — **minimale** (#30), en attendant l'écran de #29.
+ */
+.git-conflicts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+}
+
+.git-conflicts-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.git-conflicts-head .ui-spacer {
+    flex: 1;
+}
+
+.git-conflicts-paths,
+.git-conflicts-escapes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-family: var(--ash-terminal-font, monospace);
+    opacity: 0.8;
+}

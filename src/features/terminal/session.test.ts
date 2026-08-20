@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { ComposeOutcome } from "@/shared/ipc";
 import { TabBuilder } from "@/shared/ipc/builders";
 import { TerminalSession } from "./session";
-import type { PtyBridge, PtyFrame, TabId, TabInfo, TerminalSize, TerminalView } from "./ports";
+import type { PtyBridge, PtyFrame, ShellTab, TabId, TerminalSize, TerminalView } from "./ports";
 
 /**
  * Terminal de test : les écritures ne se terminent que lorsqu'on le décide, parce que
@@ -73,7 +73,7 @@ class FakeBridge implements PtyBridge {
         this.openedAt = cwd;
         return Promise.resolve("01JTAB");
     }
-    tabs(): Promise<TabInfo[]> {
+    tabs(): Promise<ShellTab[]> {
         const cwd = this.openedAt ?? "/Users/me";
         return Promise.resolve([
             TabBuilder.create().named("01JTAB").inFlatWorktree(cwd).build(),

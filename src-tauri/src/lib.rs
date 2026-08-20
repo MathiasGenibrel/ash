@@ -13,6 +13,9 @@ pub mod shared;
 /// Le menu applicatif : les raccourcis de la spec §4.4, et leur chemin souris.
 mod menu;
 
+/// La réunion des deux genres d'onglet — `Shell | Merge` (ADR-0003).
+mod tabs;
+
 /// Banc de mesure du spike xterm.js — jetable, retiré avec le spike.
 pub mod spike;
 
@@ -69,12 +72,14 @@ use features::agents::{
     SUBAGENT_LINGER,
 };
 use features::git::{
-    resolve_worktree, BusyAgent, Entry, FileSystem, SystemFileSystem, SystemGit, WorkingAgents,
+    resolve_worktree, BusyAgent, Entry, FileSystem, Head, MetadataWatch, OperationKind,
+    StoppedOperation, SystemFileSystem, SystemGit, TreeWriter, WorkingAgents,
 };
 use features::journal::{
     CommitJournal, CommitLog as JournalCommits, CommitRecord, FileJournalStore, JournalStore,
     TabAgent, Tabs as JournalTabs,
 };
+use features::merge::{ConflictFiles, MergeOutcome, MergeSurface, StoppedWorktree, TreeGit};
 use features::notifications::{Authorization, Banner, Banners, SystemBanners};
 use features::probe::SystemProbe;
 use features::pty::{
@@ -114,6 +119,89 @@ impl WorktreeLocator for GitWorktrees {
                 name: repo.name,
             }),
         })
+    }
+}
+
+/// Relie l'onglet de merge à ce que la surveillance git sait déjà de l'opération arrêtée.
+///
+/// Troisième rencontre du même genre que [`GitWorktrees`] : `merge` ne connaît que son
+/// port, `git` ne sait rien des onglets. La lecture est celle de #29, réutilisée telle
+/// quelle — aucun second chemin ne lit un rebase arrêté.
+struct WatchedConflicts(Arc<MetadataWatch>);
+
+impl StoppedWorktree for WatchedConflicts {
+    fn stopped(&self, worktree_root: &Path) -> Option<StoppedOperation> {
+        self.0.stopped(worktree_root)
+    }
+
+    fn head(&self, worktree_root: &Path) -> Option<Head> {
+        self.0.metadata(worktree_root).map(|metadata| metadata.head)
+    }
+}
+
+/// Le seul endroit d'Ash qui **réécrive** un fichier de travail de l'utilisateur.
+///
+/// Il est ici, au composition root, et pas dans `features::git` : le `FileSystem` de cette
+/// feature-là est en lecture seule et doit le rester. La résolution de worktree et la
+/// surveillance de `.git` n'ont aucune raison de gagner le droit d'écrire par le seul fait
+/// qu'elles partagent un trait avec l'onglet de merge.
+struct WorktreeFiles;
+
+impl ConflictFiles for WorktreeFiles {
+    fn read(&self, path: &Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+
+    fn write(&self, path: &Path, text: &str) -> Result<(), String> {
+        std::fs::write(path, text).map_err(|why| why.to_string())
+    }
+}
+
+/// Les deux verbes qui écrivent, sur le **même** `SystemGit` que tout le reste.
+///
+/// Un seul objet parce que c'est un seul binaire, et parce que le durcissement qui
+/// l'encadre — `core.fsmonitor=false`, `core.pager=cat`, `core.editor=true`, aucun shell —
+/// doit valoir pour toutes les questions à la fois. La justification de ce qui n'est
+/// **pas** neutralisé — les hooks du projet — est dans `features::merge::ports::TreeGit`.
+struct MergeGit(Arc<dyn TreeWriter>);
+
+impl TreeGit for MergeGit {
+    fn stage(&self, worktree_root: &Path, path: &str) -> MergeOutcome {
+        // Le `--` sépare les options des opérandes : un fichier nommé `--upload-pack=…`
+        // existe, contrairement à une branche du même nom.
+        let args = vec!["add".to_owned(), "--".to_owned(), path.to_owned()];
+        outcome(format!("Stage {path}"), self.0.run(worktree_root, &args))
+    }
+
+    fn resume(&self, worktree_root: &Path, kind: OperationKind) -> MergeOutcome {
+        let verb = match kind {
+            OperationKind::Rebase => "rebase",
+            OperationKind::Am => "am",
+            OperationKind::Merge => "merge",
+        };
+        let args = vec![verb.to_owned(), "--continue".to_owned()];
+        outcome(
+            format!("git {verb} --continue"),
+            self.0.run(worktree_root, &args),
+        )
+    }
+}
+
+/// Ce que rend une invocation qui n'a même pas pu être lancée — `git` absent du `PATH`.
+///
+/// Un échec nommé, jamais un succès silencieux : l'écran affiche cette phrase telle quelle.
+fn outcome(label: String, completed: Option<features::git::Completed>) -> MergeOutcome {
+    match completed {
+        Some(completed) => MergeOutcome {
+            label,
+            success: completed.success,
+            output: completed.output,
+        },
+        None => MergeOutcome {
+            label,
+            success: false,
+            output: "git could not be run".to_owned(),
+        },
     }
 }
 
@@ -638,6 +726,10 @@ pub fn run() -> tauri::Result<()> {
 
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
+        // Le localisateur est **partagé** avec la réunion des onglets (`tabs.rs`) : un
+        // onglet de merge se range dans la sidebar par la même résolution qu'un shell, et
+        // deux résolutions parallèles finiraient par mettre le même worktree sur deux lignes.
+        .manage(Arc::new(GitWorktrees) as Arc<dyn WorktreeLocator>)
         .manage(Arc::clone(&journal))
         .manage(Arc::clone(&git) as Arc<dyn features::git::BranchReader>)
         .manage(Arc::clone(&git) as Arc<dyn features::git::TreeWriter>)
@@ -668,6 +760,13 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_ack,
             features::pty::commands::pty_close,
             features::pty::commands::pty_tabs,
+            tabs::tabs,
+            features::merge::commands::merge_open,
+            features::merge::commands::merge_close,
+            features::merge::commands::merge_view,
+            features::merge::commands::merge_resolve,
+            features::merge::commands::merge_continue,
+            features::merge::commands::merge_rest_prompt,
             features::pty::commands::pty_has_foreground_process,
             features::pty::commands::pty_pause,
             features::pty::commands::pty_resume,
@@ -822,6 +921,21 @@ pub fn run() -> tauri::Result<()> {
     {
         use tauri::Manager;
         app.manage(Arc::clone(&git_watch));
+    }
+
+    // L'onglet de merge naît dans le même créneau, et pour la même raison : il lit
+    // l'opération arrêtée **par** la surveillance, qui n'existait pas avant `build`.
+    //
+    // Il ne détient rien qu'un identifiant et une racine de worktree : tout ce qu'il montre
+    // est relu dans le worktree et dans l'index à chaque appel. C'est ce qui fait que le
+    // fermer ne perd rien (spec §7.4).
+    {
+        use tauri::Manager;
+        app.manage(Arc::new(MergeSurface::new(
+            Arc::new(WatchedConflicts(Arc::clone(&git_watch))),
+            Arc::new(WorktreeFiles),
+            Arc::new(MergeGit(Arc::clone(&git) as Arc<dyn TreeWriter>)),
+        )));
     }
 
     // La boucle de sonde d'ADR-0005 démarre ici, et pas dans une commande : elle observe

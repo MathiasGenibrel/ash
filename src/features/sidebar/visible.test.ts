@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import type { AgentState, TabInfo } from "@/shared/ipc";
+import { isShell } from "@/shared/ipc";
+import type { AgentState, Tab } from "@/shared/ipc";
 import { TabBuilder } from "@/shared/ipc/builders";
 import { buildSidebar, type SidebarTree } from "./tree";
 import { showsSubagents, visibleStates } from "./visible";
@@ -14,7 +15,7 @@ const GROUP = "repo:/dev/acme/.git";
 const API = "/wt/acme-api";
 const WEB = "/wt/acme-web";
 
-function tabsWith(waiting: "in-api" | "in-web" | "nowhere"): readonly TabInfo[] {
+function tabsWith(waiting: "in-api" | "in-web" | "nowhere"): readonly Tab[] {
     const state = (where: "in-api" | "in-web"): AgentState =>
         waiting === where ? "waiting" : "working";
 
@@ -58,7 +59,7 @@ function describeFolding(folding: Folding): string {
     return `groupe:[${folding.groups.join()}] worktrees:[${folding.worktrees.join()}] colonne:${String(folding.columnCollapsed)}`;
 }
 
-function foldedTree(tabs: readonly TabInfo[], folding: Folding): SidebarTree {
+function foldedTree(tabs: readonly Tab[], folding: Folding): SidebarTree {
     return buildSidebar(tabs, {
         activeTabId: null,
         collapsed: new Set([...folding.worktrees, ...folding.groups]),
@@ -66,7 +67,7 @@ function foldedTree(tabs: readonly TabInfo[], folding: Folding): SidebarTree {
     });
 }
 
-function shownUnder(tabs: readonly TabInfo[], folding: Folding): readonly AgentState[] {
+function shownUnder(tabs: readonly Tab[], folding: Folding): readonly AgentState[] {
     return visibleStates(foldedTree(tabs, folding), folding.columnCollapsed);
 }
 
@@ -116,12 +117,12 @@ describe("une ligne repliée ne cache jamais un agent qui attend", () => {
  * et c'est ce que la tranche des sous-agents ajoute à la garantie de la spec §4.1 : une
  * colonne repliée ne doit pas davantage cacher ce qui se passe *sous* une ligne d'agent.
  */
-function tabsWithSubagents(waiting: "in-api" | "in-web" | "nowhere"): readonly TabInfo[] {
+function tabsWithSubagents(waiting: "in-api" | "in-web" | "nowhere"): readonly Tab[] {
     return tabsWith(waiting).map((tab, index) =>
         index === 0
             ? TabBuilder.create()
                   .named(tab.tabId)
-                  .running(tab.process, tab.state)
+                  .running(isShell(tab) ? tab.process : "zsh", isShell(tab) ? tab.state : "idle")
                   .inWorktree(API, REPO)
                   .withSubagent("explore", "working")
                   .withSubagent("code-reviewer", "done")

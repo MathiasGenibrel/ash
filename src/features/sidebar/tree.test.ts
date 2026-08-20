@@ -1,33 +1,33 @@
 import { describe, expect, it } from "bun:test";
 
-import type { TabInfo } from "@/shared/ipc";
+import type { Tab } from "@/shared/ipc";
 import type { PinnedWorktree } from "@/shared/ipc";
-import { PinBuilder, TabBuilder } from "@/shared/ipc/builders";
+import { MergeTabBuilder, PinBuilder, TabBuilder } from "@/shared/ipc/builders";
 import { MAX_LABEL } from "./labels";
 import { buildSidebar, type SidebarGroup, type SidebarTree } from "./tree";
 
-const build = (tabs: readonly TabInfo[], activeTabId: string | null = null): SidebarTree =>
+const build = (tabs: readonly Tab[], activeTabId: string | null = null): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId,
         collapsed: new Set(),
         pinned: [],
     });
 
-const collapsing = (tabs: readonly TabInfo[], ...roots: string[]): SidebarTree =>
+const collapsing = (tabs: readonly Tab[], ...roots: string[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
         collapsed: new Set(roots),
         pinned: [],
     });
 
-const pinning = (tabs: readonly TabInfo[], ...pinned: PinnedWorktree[]): SidebarTree =>
+const pinning = (tabs: readonly Tab[], ...pinned: PinnedWorktree[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
         collapsed: new Set(),
         pinned,
     });
 
-const collapsingGroups = (tabs: readonly TabInfo[], ...keys: string[]): SidebarTree =>
+const collapsingGroups = (tabs: readonly Tab[], ...keys: string[]): SidebarTree =>
     buildSidebar(tabs, {
         activeTabId: null,
         collapsed: new Set(keys),
@@ -186,7 +186,7 @@ describe("la migration d'un onglet qui change de dépôt", () => {
 
         // When — « B » est reparti dans un autre projet
         const after = [
-            before[0] as TabInfo,
+            before[0] as Tab,
             TabBuilder.create().named("B").inFlatWorktree("/dev/omelette-web").build(),
         ];
         const migrated = build(after);
@@ -335,5 +335,47 @@ describe("les worktrees épinglés (spec §5.2)", () => {
         expect(tree.groups).toHaveLength(1);
         expect(tree.tabCount).toBe(0);
         expect(worktreesOf(tree.groups[0])[0]?.state).toBe("idle");
+    });
+});
+
+describe("l'onglet de merge dans la colonne", () => {
+    it("Given a merge tab in a worktree, when the column is built, then its row carries no agent state at all", () => {
+        // Given — un onglet de merge n'a pas de processus. Lui prêter le `idle` d'un shell
+        // à son invite serait afficher un état qui n'a **aucune source**
+        // ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+        const merge = MergeTabBuilder.create().id("M").inWorktree("/wt/ash-merge", "ash").build();
+
+        // When
+        const tree = build([merge]);
+
+        // Then
+        const row = tree.groups[0]?.kind === "repo" ? tree.groups[0].worktrees[0]?.tabs[0] : null;
+        expect(row?.state).toBeNull();
+        expect(row?.label).toBe("rebase feat onto main");
+        expect(row?.subagents).toEqual([]);
+    });
+
+    it("Given a waiting agent beside a merge tab, when the worktree row bubbles a state, then the merge tab adds nothing to it", () => {
+        // Given — la remontée ne doit voir que ce qui a une source. Un `idle` inventé pour
+        // la surface d'outil ne changerait rien ici, mais il masquerait un worktree dont le
+        // seul onglet est un onglet de merge : sa ligne dirait `idle` sans qu'aucun shell
+        // n'existe.
+        const waiting = TabBuilder.create()
+            .named("A")
+            .running("claude", "waiting")
+            .inWorktree("/wt/ash-merge", "ash")
+            .build();
+        const merge = MergeTabBuilder.create().id("M").inWorktree("/wt/ash-merge", "ash").build();
+
+        // When
+        const withAgent = build([waiting, merge]);
+        const alone = build([merge]);
+
+        // Then
+        const stateOf = (tree: SidebarTree): string | undefined =>
+            tree.groups[0]?.kind === "repo" ? tree.groups[0].worktrees[0]?.state : undefined;
+        expect(stateOf(withAgent)).toBe("waiting");
+        expect(stateOf(alone)).toBe("idle");
+        expect(withAgent.waitingCount).toBe(1);
     });
 });

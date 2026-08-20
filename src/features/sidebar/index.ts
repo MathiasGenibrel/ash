@@ -13,7 +13,7 @@
 
 import "./sidebar.css";
 
-import type { TabId, TabInfo, SidebarRows } from "@/shared/ipc";
+import type { SidebarRows, Tab, TabId } from "@/shared/ipc";
 import {
     appliedWidth,
     DEFAULT_SIDEBAR_WIDTH,
@@ -106,7 +106,7 @@ export interface Sidebar {
      * et l'état gardé d'une session à l'autre — les épingles et les lignes repliées.
      */
     render(
-        tabs: readonly TabInfo[],
+        tabs: readonly Tab[],
         activeTabId: TabId | null,
         kept: SidebarRows,
     ): void;
@@ -147,7 +147,7 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
     // reviendrait d'une image à sa largeur précédente avant de repartir à la bonne.
     let dragged: number | null = null;
 
-    let tabs: readonly TabInfo[] = [];
+    let tabs: readonly Tab[] = [];
     let activeTabId: TabId | null = null;
     let kept: SidebarRows = { pinned: [], collapsed: [] };
     const now = ports.now ?? ((): number => Date.now());

@@ -454,3 +454,150 @@ export interface ActionOutcome {
     /** Ce que git a dit, tel quel. */
     output: string;
 }
+
+/* ------------------------------------------------------------------------------------- *
+ * L'onglet de merge (spec §7.4, issue #30) — miroir de `src-tauri/src/features/merge/`
+ * et de `src-tauri/src/tabs.rs`.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Un côté d'un conflit — **nommé par sa branche**, jamais `ours` ni `theirs`.
+ *
+ * C'est le critère du ticket, et ce n'est pas du vocabulaire : le `ours` de git désigne la
+ * branche courante pendant un merge, et la branche **cible** pendant un rebase. Un écran qui
+ * garderait les deux mots mettrait le travail de l'utilisateur du mauvais côté une fois sur
+ * deux, au moment précis où il tranche.
+ *
+ * `role` est ce que ce côté *est* dans cette opération — « the branch you are rebasing
+ * onto », « the branch you are on ». Le backend le compose, la webview l'affiche : c'est le
+ * backend qui sait laquelle des deux lectures s'applique.
+ */
+export interface SideLabel {
+    name: string;
+    role: string;
+}
+
+/** Les deux colonnes extérieures des trois panneaux. */
+export interface MergeSides {
+    /** Ce que git appelle `ours`. Le mot s'arrête au backend. */
+    left: SideLabel;
+    /** Ce que git appelle `theirs`. */
+    right: SideLabel;
+}
+
+/**
+ * Un conflit, tel que git l'a écrit dans le fichier du worktree.
+ *
+ * `base` n'est là que si le dépôt configure `merge.conflictStyle = diff3`. Son absence
+ * n'est pas un manque : les trois panneaux de la spec sont `gauche` / résultat / `droite`.
+ */
+export interface MergeHunk {
+    /** Le rang dans le fichier, à partir de zéro : c'est par lui qu'une résolution le désigne. */
+    index: number;
+    ours: string;
+    base: string | null;
+    theirs: string;
+}
+
+/**
+ * Un fichier en conflit.
+ *
+ * `resolved` se déduit du **fichier**, pas de `git status` : l'état de l'index est
+ * rafraîchi par une surveillance limitée à une lecture toutes les cinq secondes, et un
+ * compte en retard ferait clignoter `continue` à contretemps.
+ *
+ * `unreadable` est un refus, pas une panne : un chemin que git a dû échapper
+ * (`"src/\303\251.rs"`) n'est jamais ouvert ni réécrit par Ash. Il reste listé et compté.
+ */
+export interface ConflictFile {
+    path: string;
+    hunks: MergeHunk[];
+    resolved: boolean;
+    unreadable: boolean;
+}
+
+/** Ce que l'onglet montre quand l'opération est toujours arrêtée. */
+export interface MergeStopped {
+    operation: GitOperation;
+    sides: MergeSides;
+    files: ConflictFile[];
+    /** Les conflits que git compte au-delà de la liste, bornée à cent. Zéro d'ordinaire. */
+    hidden: number;
+    /** Le compte à droite de `continue` (spec §7.4). */
+    unresolved: number;
+    origHead: string | null;
+    /** `abort` et `skip` — du **texte**, qu'Ash n'exécute pas (ADR-0015). */
+    escapes: string[];
+    /** Le libellé du bouton : `git rebase --continue`, `git merge --continue`. */
+    continueCommand: string;
+    /** Faux tant qu'il reste un conflit : le bouton reste **visible**, éteint. */
+    canContinue: boolean;
+}
+
+/**
+ * L'onglet de merge, relu de bout en bout.
+ *
+ * `stopped` à `null` veut dire que l'opération s'est terminée ou a été abandonnée
+ * **ailleurs** — dans un terminal, par un agent. L'onglet reste ouvert et le dit ; rien ne
+ * se ferme sans un geste de l'utilisateur
+ * ([ADR-0010](../../../docs/adr/0010-la-sidebar-informe-l-ecran-agit.md)).
+ */
+export interface MergeView {
+    tabId: TabId;
+    worktreeRoot: string;
+    title: string;
+    stopped: MergeStopped | null;
+}
+
+/** Ce qu'une invocation git de l'onglet a fait, ou n'a pas fait. */
+export interface MergeOutcome {
+    /** La phrase qui nomme ce qui a été tenté. Présente même quand `success` est faux. */
+    label: string;
+    success: boolean;
+    /** Ce que git a dit, tel quel. */
+    output: string;
+}
+
+/**
+ * Un onglet de shell — ce qu'un onglet a toujours été jusqu'à #30.
+ *
+ * C'est `TabInfo` **plus son étiquette**. Le champ `kind` n'existe que parce qu'un second
+ * genre existe désormais : sans lui, la seule façon de distinguer les deux serait de tester
+ * la présence d'un champ, c'est-à-dire de deviner.
+ */
+export type ShellTab = TabInfo & { kind: "shell" };
+
+/**
+ * Un onglet de merge : **pas de PTY du tout**
+ * ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md), reformulation du 2026-08-10).
+ *
+ * Il n'a ni `cwd`, ni processus en avant-plan, ni état d'agent, ni `stateSince`, ni pause —
+ * et ces champs ne sont **pas** dans sa forme. Les y mettre à des valeurs neutres ferait
+ * apparaître un `idle · 12m` sous un onglet où aucun processus ne tourne, et la ligne de
+ * statut afficherait la durée d'un état qui n'existe pas.
+ */
+export interface MergeTab {
+    kind: "merge";
+    tabId: TabId;
+    /** La racine du worktree dont on résout le conflit — la clé de rangement de la sidebar. */
+    worktreeRoot: string;
+    /** Ce que la ligne affiche — `rebase feat onto main`, composé par le backend. */
+    title: string;
+    /** L'opération est toujours arrêtée dans ce worktree. */
+    live: boolean;
+    location: TabLocation | null;
+}
+
+/**
+ * Un onglet, quel que soit son genre — la somme du modèle §3.
+ *
+ * L'ordre de la liste est celui du backend, et lui seul : les shells d'abord, dans leur
+ * ordre, puis les surfaces de merge. C'est celui que `⌘1..9` numérote et que `⌃⇥` parcourt
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export type Tab = ShellTab | MergeTab;
+
+/** L'onglet est-il un terminal ? La seule question à poser avant de lire un champ de shell. */
+export function isShell(tab: Tab): tab is ShellTab {
+    return tab.kind === "shell";
+}

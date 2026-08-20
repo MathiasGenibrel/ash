@@ -1,14 +1,17 @@
 import "./styles.css";
-import { mountBranches } from "@/features/git";
+import { mountBranches, paintConflicts, stoppedOperation } from "@/features/git";
+import { createMergeSurface, mergeBridge } from "@/features/merge";
 import { mountBottomPanel } from "@/features/panel";
 import { revealTool } from "@/features/settings";
 import { mountSidebar } from "@/features/sidebar";
 import type { SidebarRows } from "@/shared/ipc";
 import {
     mountTerminals,
+    tauriPtyBridge,
+    writePromptInTab,
     type FontFamilySignal,
     type TabId,
-    type TabInfo,
+    type Tab,
     type Terminals,
 } from "@/features/terminal";
 import { loadAppName } from "./app-name";
@@ -95,7 +98,55 @@ function mount(
         areaHeight: () => host.getBoundingClientRect().height,
     });
 
-    const terminals = mountTerminals(host, theme, fontSize, fontFamily, panel.element);
+    // Les onglets vivants, retenus ici parce que **deux** surfaces en ont besoin : la
+    // colonne de gauche, qui les range, et l'onglet de merge, qui cherche l'agent à qui
+    // passer le reste de ses conflits. Un seul abonnement, une seule vérité (ADR-0009).
+    let tabs: readonly Tab[] = [];
+
+    /**
+     * L'onglet où poser un prompt de conflit : un **shell du même worktree** qui porte un
+     * agent reconnu (ADR-0006).
+     *
+     * `null` quand il n'y en a aucun. Ash n'en ouvre pas un pour l'occasion : ouvrir un
+     * onglet est un geste de l'utilisateur, et l'écran le lui dit
+     * ([ADR-0010](../../docs/adr/0010-la-sidebar-informe-l-ecran-agit.md)).
+     */
+    const agentTabIn = (worktreeRoot: string): TabId | null => {
+        const found = tabs.find(
+            (tab) =>
+                tab.kind === "shell" &&
+                tab.agent !== null &&
+                tab.location?.worktreeRoot === worktreeRoot,
+        );
+        return found?.tabId ?? null;
+    };
+
+    const terminals: Terminals = mountTerminals(
+        host,
+        theme,
+        fontSize,
+        fontFamily,
+        panel.element,
+        // La surface d'un onglet qui n'est pas un shell (ADR-0003). C'est **ici** que les
+        // deux features se rencontrent : la feature terminal ne connaît pas `features/merge`,
+        // et `features/merge` ne connaît ni les onglets de shell ni le pupitre de composition.
+        (tab) =>
+            tab.kind === "merge"
+                ? createMergeSurface(tab, {
+                      bridge: mergeBridge,
+                      agentTab: agentTabIn,
+                      // Le **même** chemin d'écriture que la vue `conflicts` du panneau bas :
+                      // sélectionner l'onglet, puis composer, jamais envoyer (ADR-0015).
+                      writePrompt: async (prompt, tabId) =>
+                          (
+                              await writePromptInTab(prompt, tabId, {
+                                  pty: tauriPtyBridge,
+                                  selectTab: (target) => void terminals.selectTab(target),
+                              })
+                          )?.message ?? null,
+                  })
+                : null,
+    );
 
     // La sidebar ne connaît pas la feature terminal, et la feature terminal ne connaît pas
     // la sidebar : elles se rencontrent ici, et nulle part ailleurs. La sidebar ne
@@ -142,7 +193,6 @@ function mount(
     // La colonne se dessine sur deux sources — les onglets que la sonde pousse, et l'état
     // gardé d'une session à l'autre —, donc les deux dernières valeurs se retiennent ici : un
     // avis n'apporte jamais que sa moitié.
-    let tabs: readonly TabInfo[] = [];
     let activeTabId: TabId | null = null;
     let kept: SidebarRows = sidebarRows.changes.current;
 
@@ -207,9 +257,50 @@ function mount(
         branches.toggle();
     });
 
+    /**
+     * La vue `conflicts` du panneau bas — **la porte d'entrée de l'onglet de merge** (#30).
+     *
+     * Elle est posée au minimum, et elle est partagée : #29 y mettra l'écran complet des
+     * conflits. Ce qu'elle fait ici tient en deux câbles — relire ce qui est arrêté dans le
+     * worktree courant, et ouvrir l'onglet de merge quand on le demande. `⌘⌃M` (#32) fera
+     * exactement le second, sur la même commande.
+     */
+    let shownConflicts: string | null = null;
+    const drawConflicts = (force = false): void => {
+        const state = bottomPanel.current;
+        if (!state.open || state.view !== "conflicts") {
+            shownConflicts = null;
+            return;
+        }
+        const root = here;
+        if (!force && root === shownConflicts) return;
+        shownConflicts = root;
+
+        const open = (): void => {
+            if (root === null) return;
+            void mergeBridge
+                .open(root)
+                .then((tabId) => terminals.adoptTab(tabId))
+                // Rien n'est arrêté, ou le worktree a disparu : le panneau se redessine et
+                // le dit. Ouvrir un onglet vide serait pire que ne rien ouvrir.
+                .catch(() => {
+                    drawConflicts(true);
+                });
+        };
+
+        if (root === null) {
+            paintConflicts(panel.body, null, { resolveInAsh: open });
+            return;
+        }
+        void stoppedOperation(root).then((stopped) => {
+            paintConflicts(panel.body, stopped, { resolveInAsh: open });
+        });
+    };
+
     terminals.onActiveTab((active) => {
         here = active?.tab.location?.worktreeRoot ?? null;
         titleBar.setTitle(windowTitle(active, appName));
+        drawConflicts();
     });
 
     // Le panneau s'apprend par l'annonce du backend, jamais par le geste qui l'a demandée :
@@ -217,6 +308,7 @@ function mount(
     // onglet et le raccourci de #32 ne pourront pas se contredire.
     bottomPanel.subscribe((next) => {
         panel.setPanel(next);
+        drawConflicts(true);
     });
     panel.setPanel(bottomPanel.current);
 
