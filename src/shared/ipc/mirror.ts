@@ -14,6 +14,8 @@
  * deux sens.
  */
 
+import type { AccountUsage as RustAccountUsage } from "./generated/AccountUsage";
+import type { Quota as RustQuota } from "./generated/Quota";
 import type { AgentState as RustAgentState } from "./generated/AgentState";
 import type { BranchCard as RustBranchCard } from "./generated/BranchCard";
 import type { CardLog as RustCardLog } from "./generated/CardLog";
@@ -66,6 +68,7 @@ import type { WorkSource as RustWorkSource } from "./generated/WorkSource";
 import type { WorktreeAgent as RustWorktreeAgent } from "./generated/WorktreeAgent";
 import type { WorktreeRow as RustWorktreeRow } from "./generated/WorktreeRow";
 import type {
+    AccountUsage,
     ActionOffer,
     ActionOutcome,
     AgentState,
@@ -90,6 +93,7 @@ import type {
     GitStatus,
     GitTreeStatus,
     GitUpstream,
+    Quota,
     RecognizedAgent,
     RepoRef,
     StoppedCommit,
@@ -259,3 +263,17 @@ export type WorktreeRowStillMirrorsRust = Assert<Mirrors<RustWorktreeRow, Worktr
  * mette à supprimer quoi que ce soit (ADR-0015).
  */
 export type WorktreeRemovalStillMirrorsRust = Assert<Mirrors<RustWorktreeRemoval, WorktreeRemoval>>;
+
+/**
+ * Les deux quotas du compte (spec §4.2, ADR-0016).
+ *
+ * L'assertion qui porte le ticket est [`Quota`] : elle confronte **deux** champs, et c'est
+ * le second qui compte. Le jour où quelqu'un remplacerait `resetsAt` par un décompte côté
+ * Rust — `resetsIn`, en secondes, parce que c'est ce que la maquette montre —, cette ligne
+ * cesserait de compiler avant que l'event ne se mette à repartir chaque seconde pour animer
+ * un compteur.
+ */
+export type QuotaStillMirrorsRust = Assert<Mirrors<RustQuota, Quota>>;
+
+/** Le contenu de l'event `ash://account-usage`. */
+export type AccountUsageStillMirrorsRust = Assert<Mirrors<RustAccountUsage, AccountUsage>>;

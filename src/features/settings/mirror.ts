@@ -46,6 +46,8 @@ import type { ToolDeclaration as RustToolDeclaration } from "@/shared/ipc/genera
 import type { Verification as RustVerification } from "@/shared/ipc/generated/Verification";
 import type { VerificationState as RustVerificationState } from "@/shared/ipc/generated/VerificationState";
 import type { Verified as RustVerified } from "@/shared/ipc/generated/Verified";
+import type { Readability as RustReadability } from "@/shared/ipc/generated/Readability";
+import type { UsageReport as RustUsageReport } from "@/shared/ipc/generated/UsageReport";
 import type { Accepts, Assert, Mirrors } from "@/shared/ipc/mirroring";
 
 import type {
@@ -58,6 +60,8 @@ import type {
     Mismatch,
     NotificationPermission,
     JournalReport,
+    UsageReadability,
+    UsageReport,
     NotificationsReport,
     NotificationSwitch,
     Outcome,
@@ -210,3 +214,17 @@ export type SettingsSidebarDensityStillMirrorsRust = Assert<
  * vaut « absent ».
  */
 export type ToolDraftIsAcceptedByRust = Assert<Accepts<RustNewTool, ToolDraft>>;
+
+/**
+ * La section `usage` (ADR-0016, condition 3 ; ADR-0017, conséquences).
+ *
+ * Les deux assertions qui portent le ticket sont `Readability` et `endpoint`. La première
+ * cesserait de compiler le jour où quelqu'un fondrait « refusé », « absent » et « illisible »
+ * en un seul mot — c'est-à-dire au moment précis où la fenêtre redeviendrait incapable de
+ * dire *laquelle* des trois s'applique, ce que les conséquences d'ADR-0017 lui demandent
+ * nommément. La seconde tient l'adresse affichée à celle que le code appelle : une chaîne
+ * recopiée à la main finirait par mentir sur ce qui sort de la machine.
+ */
+export type UsageReadabilityStillMirrorsRust = Assert<Mirrors<RustReadability, UsageReadability>>;
+
+export type UsageReportStillMirrorsRust = Assert<Mirrors<RustUsageReport, UsageReport>>;

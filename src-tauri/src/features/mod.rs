@@ -16,3 +16,4 @@ pub mod settings;
 pub mod shortcuts;
 pub mod sidebar;
 pub mod theme;
+pub mod usage;

@@ -12,6 +12,7 @@ import type {
     SettingsPorts,
     SettingsSnapshot,
     ToolDraft,
+    UsageReport,
     Verification,
     Verified,
 } from "./contract";
@@ -62,6 +63,9 @@ export const tauriSettings: SettingsPorts = {
         invoke<NotificationsReport>("settings_set_notification", { state, enabled }),
     // Le nom du paramètre est `tool` des deux côtés : Tauri passe les arguments par nom, et
     // une faute de frappe ici se verrait à l'exécution, pas à la compilation.
+    usage: () => invoke<UsageReport>("settings_usage"),
+    setUsagePolling: (enabled: boolean) =>
+        invoke<UsageReport>("settings_set_usage_polling", { enabled }),
     journal: () => invoke<JournalReport>("journal_summary"),
     purgeJournal: () => invoke<JournalReport>("journal_purge"),
     declareTool: (draft: ToolDraft) =>

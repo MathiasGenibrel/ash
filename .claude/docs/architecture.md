@@ -34,6 +34,8 @@ src-tauri/src/
                          système, taille de police du terminal — et sa persistance
     sidebar/             ce qui survit à la fermeture : worktrees épinglés et
                          lignes repliées (`~/.ash/state.json`)      — spec §3.1/5.2
+    usage/               les quotas du compte : le trousseau, la seule adresse
+                         réseau du dépôt, la cadence          — ADR-0016/0017
   shared/                réellement transverse, et justifié
 src/
   app/                   composition root du frontend
@@ -44,7 +46,8 @@ src/
                          d'onglets — jamais de terminal      — spec §4.3 / ADR-0003
     git/                 popup de branches, graphe, fiche, vue des conflits
     merge/               les trois panneaux de l'onglet de merge      — spec §7.4
-    settings/            la fenêtre de réglages
+    settings/            la fenêtre de réglages — dont la section `usage`, qui
+                         nomme l'hôte appelé et porte son interrupteur — ADR-0016
   shared/
     ipc/                 le contrat Rust ↔ TypeScript
     agent-state/         la présentation des cinq états — sidebar et ligne de statut
