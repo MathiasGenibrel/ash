@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { WorktreeMetadata, WorktreeMetadataChanged } from "@/shared/ipc";
+import type { StoppedOperation, WorktreeMetadata, WorktreeMetadataChanged } from "@/shared/ipc";
 import type { GitBridge } from "./ports";
 
 /**
@@ -25,4 +25,7 @@ export const tauriGit: GitBridge = {
         listen<WorktreeMetadataChanged>(METADATA_CHANGED_EVENT, (event) => {
             handler(event.payload);
         }),
+    stoppedOperation: (worktreeRoot) =>
+        invoke<StoppedOperation | null>("git_stopped_operation", { worktreeRoot }),
+    conflictPrompt: (worktreeRoot) => invoke<string | null>("git_conflict_prompt", { worktreeRoot }),
 };

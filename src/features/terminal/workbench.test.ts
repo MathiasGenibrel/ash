@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import type { ComposeOutcome } from "@/shared/ipc";
 import { TabBuilder } from "@/shared/ipc/builders";
 import type {
     PtyBridge,
@@ -39,6 +40,11 @@ class FakeBackend implements PtyBridge {
         this.order.push(describe_tab(tabId, cwd ?? "/Users/me"));
         this.frames.set(tabId, onFrame);
         return Promise.resolve(tabId);
+    }
+
+    /** L'atelier ne compose pas : le geste d'ADR-0015 part du panneau des conflits. */
+    compose(): Promise<ComposeOutcome> {
+        return Promise.resolve("written");
     }
 
     write() {

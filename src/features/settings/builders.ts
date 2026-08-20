@@ -1,6 +1,7 @@
 import type {
     Appearance,
     HooksReport,
+    JournalReport,
     NotificationPermission,
     NotificationsReport,
     SettingsSnapshot,
@@ -119,6 +120,23 @@ export function aNotificationsReport(
             { state: "error", enabled: true, means: "an agent failed" },
             { state: "done", enabled: false, means: "an agent finished" },
         ],
+        ...overrides,
+    };
+}
+
+/**
+ * Un journal d'attribution vide — l'état de toute session qui n'a encore rien vu naître.
+ *
+ * Les phrases sont celles que `features::journal` compose : un scénario qui les réécrirait
+ * décrirait un backend qui n'existe pas.
+ */
+export function aJournalReport(overrides: Partial<JournalReport> = {}): JournalReport {
+    return {
+        entries: 0,
+        repos: 0,
+        summary: "nothing recorded yet",
+        note: "the journal never leaves this machine. it is not synced, and nothing is sent anywhere.",
+        path: "~/.ash/journal",
         ...overrides,
     };
 }

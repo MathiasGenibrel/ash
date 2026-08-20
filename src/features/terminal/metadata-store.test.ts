@@ -26,6 +26,19 @@ class FakeGit implements GitBridge {
         return Promise.resolve(() => undefined);
     }
 
+    /**
+     * Ce module ne regarde pas le rebase arrêté : il garde à portée d'un rendu ce que la
+     * ligne de statut affiche, et le panneau des conflits (spec §7.4) demande à la
+     * commande, pas à ce cache.
+     */
+    stoppedOperation(): Promise<null> {
+        return Promise.resolve(null);
+    }
+
+    conflictPrompt(): Promise<null> {
+        return Promise.resolve(null);
+    }
+
     /** Le backend répond à la demande en attente. */
     async reply(metadata: WorktreeMetadata | null): Promise<void> {
         this.answer.shift()?.(metadata);

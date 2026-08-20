@@ -1,3 +1,4 @@
+use super::bottom_panel::BottomPanel;
 use super::density::SidebarDensity;
 use super::font::TerminalFont;
 use super::font_size::FontSize;
@@ -52,4 +53,13 @@ pub struct Appearance {
     /// qu'elle existe se relisent sans rien perdre.
     #[serde(default)]
     pub sidebar: SidebarColumn,
+    /// Le panneau bas : sa hauteur, son ouverture, et la vue qu'il montre (spec §4.3).
+    ///
+    /// Sixième préférence du même fichier, et pour les mêmes raisons que la colonne de
+    /// gauche : elle survit à la fermeture, elle décide de la place qu'a le terminal, et
+    /// elle n'est pas de l'état de session — voir [`BottomPanel`]. `#[serde(default)]` pour
+    /// que les fichiers écrits avant que le panneau existe se relisent sans rien perdre, et
+    /// **sans ouvrir un panneau que personne n'a demandé**.
+    #[serde(default)]
+    pub panel: BottomPanel,
 }

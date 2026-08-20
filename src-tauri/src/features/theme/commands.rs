@@ -1,8 +1,8 @@
-//! La surface de la feature vers le frontend : douze commandes, cinq events.
+//! La surface de la feature vers le frontend : seize commandes, six events.
 //!
 //! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode, les
-//! trois pas de taille et les deux paliers de densité. Il **rend** la palette ; les quatre
-//! choix, eux, sont ici
+//! trois pas de taille, les deux paliers de densité et les quatre noms de vue du panneau
+//! bas. Il **rend** la palette, la colonne et le panneau ; les six choix, eux, sont ici
 //! ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 //!
 //! Ce que ce module ne contient **pas**, et c'est délibéré : le menu natif. Ses
@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use super::bottom_panel::{BottomPanel, PanelHeight, PanelView};
 use super::density::SidebarDensity;
 use super::font::{FontCatalog, TerminalFont};
 use super::font_size::{FontSize, FontStep};
@@ -32,6 +33,10 @@ pub const TERMINAL_FONT_SIZE_EVENT: &str = "ash://terminal-font-size";
 /// Nom de l'event qui porte la largeur et le repli de la colonne. Contrat avec
 /// `src/app/sidebar-column.ts`.
 pub const SIDEBAR_COLUMN_EVENT: &str = "ash://sidebar-column";
+
+/// Nom de l'event qui porte le panneau bas — sa hauteur, son ouverture et sa vue. Contrat
+/// avec `src/app/bottom-panel.ts`.
+pub const BOTTOM_PANEL_EVENT: &str = "ash://bottom-panel";
 
 /// Nom de l'event qui porte la police du terminal. Contrat avec `src/app/terminal-font.ts`.
 pub const TERMINAL_FONT_EVENT: &str = "ash://terminal-font";
@@ -174,6 +179,67 @@ fn announce<R: Runtime>(app: &AppHandle<R>, changed: Option<SidebarColumn>) {
     // et surtout pas de panique dans une commande.
     let _ = app.emit(SIDEBAR_COLUMN_EVENT, column);
 }
+/// Le panneau bas, lu par la webview en s'affichant.
+///
+/// Ensuite, c'est [`BOTTOM_PANEL_EVENT`] qui la tient à jour : elle ne redemande jamais.
+/// Même contrat que [`sidebar_column`], parce que c'est la même sorte de préférence — une
+/// surface de mise en page dont la place est prise au terminal.
+#[tauri::command]
+pub fn bottom_panel(state: tauri::State<'_, Arc<ThemeState>>) -> BottomPanel {
+    state.bottom_panel()
+}
+
+/// La hauteur que la webview vient de régler en relâchant le bord du panneau.
+///
+/// Comme pour la colonne de gauche, c'est un **nombre** qui traverse, et pour la même
+/// raison : les bornes du panneau sont relatives à la zone terminal — 15 % à 70 % —, que
+/// seule la webview mesure. Elle applique la règle de mise en page et annonce le résultat ;
+/// ce qui **survit** à la fermeture reste ici
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// Appelée au **relâchement** seulement, jamais pendant le glissement : chaque annonce fait
+/// refaire sa grille au terminal visible, donc poste un `SIGWINCH` à la TUI qui y tourne
+/// ([ADR-0003](../../../../docs/adr/0003-zone-terminal-unique.md)). Une par image serait
+/// exactement le défaut que ce jalon devait vérifier.
+#[tauri::command]
+pub fn set_bottom_panel_height<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+    height: i64,
+) {
+    announce_panel(&app, state.set_panel_height(PanelHeight::from(height)));
+}
+
+/// Demande une vue au panneau — le clic sur une entrée de sa barre, et demain `⌘⌃G`,
+/// `⌘⌃W`, `⌘⌃M`, `⌘⌃I` (spec §4.4, issue #32).
+///
+/// La webview demande une **vue**, pas un état : c'est le backend qui décide que redemander
+/// celle qui est déjà montrée referme le panneau. Deux surfaces ne peuvent donc pas se
+/// contredire, et la webview ne devient le détenteur de rien.
+#[tauri::command]
+pub fn show_bottom_panel_view<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+    view: PanelView,
+) {
+    announce_panel(&app, state.show_panel_view(view));
+}
+
+/// Referme le panneau — il rend sa hauteur au terminal, et la garde pour la prochaine fois.
+#[tauri::command]
+pub fn close_bottom_panel<R: Runtime>(app: AppHandle<R>, state: tauri::State<'_, Arc<ThemeState>>) {
+    announce_panel(&app, state.close_panel());
+}
+
+/// Annonce le panneau, et seulement s'il a bougé — même raison que pour la colonne, en plus
+/// coûteux : ce que le panneau prend en hauteur, le terminal le perd en lignes.
+fn announce_panel<R: Runtime>(app: &AppHandle<R>, changed: Option<BottomPanel>) {
+    let Some(panel) = changed else {
+        return;
+    };
+    let _ = app.emit(BOTTOM_PANEL_EVENT, panel);
+}
+
 /// La police du terminal, lue par la webview en s'affichant. Même contrat que
 /// [`terminal_font_size`] : ensuite, c'est l'event qui la tient à jour.
 #[tauri::command]
