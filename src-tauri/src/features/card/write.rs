@@ -60,6 +60,13 @@ impl LogState {
 }
 
 /// Ce qu'Ash ferait de cette fiche, dit **avant** de le faire.
+///
+/// C'est le plan qui porte les octets, et l'écriture ne fait que les poser : `diff` est
+/// l'aperçu de `document`, et rien d'autre ne se décide entre les deux. Un plan qui ne
+/// rendrait que l'état laisserait l'écriture reclasser le fichier pour son propre compte —
+/// deux lectures, deux classements, et le jour où l'un des deux dérive, **le diff montré à
+/// l'utilisateur n'est plus celui qui s'applique**. C'est exactement ce que la spec §10
+/// interdit. Même forme que `hooks::merge::Plan::Write`, qui porte déjà son `Document`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     pub state: LogState,
@@ -70,6 +77,9 @@ pub struct Plan {
     pub diff: String,
     /// Ce qui se passe, en une phrase — y compris quand rien ne se passe.
     pub note: String,
+    /// La fiche telle qu'Ash la laisserait, **aux octets près**. `None` quand il n'y a rien
+    /// à écrire : le bloc est déjà à jour, ou Ash refuse.
+    pub(super) document: Option<CardDocument>,
 }
 
 /// Ce qu'une écriture a fait.
@@ -94,42 +104,60 @@ pub enum LogWrite {
 }
 
 /// Ce qu'Ash ferait — sans rien écrire.
+///
+/// **Une lecture, un classement.** C'est ici, et nulle part ailleurs, que le fichier est lu
+/// et que sa zone est classée ; [`write_log`] ne fait que poser ce que ce plan porte.
 pub fn plan(files: &dyn CardFiles, path: &Path, table: &str) -> Result<Plan, CardError> {
-    let existing = read(files, path)?;
+    let content = read(files, path)?.filter(|content| !content.trim().is_empty());
     let table = table.to_owned();
 
-    let Some(content) = existing.filter(|content| !content.trim().is_empty()) else {
-        let would = scaffold(&table);
-        return Ok(Plan {
-            state: LogState::NoCard,
-            diff: text_diff::preview("", &would),
-            table,
-            note: "there is no card yet — ash would write one, with its log block.".to_owned(),
-        });
+    let (state, note, document) = match content.as_deref() {
+        None => (
+            LogState::NoCard,
+            "there is no card yet — ash would write one, with its log block.".to_owned(),
+            Some(CardDocument::fresh(scaffold(&table))),
+        ),
+        Some(content) => classify(content, &table),
     };
 
-    let (state, note, would) = match block::locate(&content) {
+    Ok(Plan {
+        state,
+        diff: document
+            .as_ref()
+            .map(|would| text_diff::preview(content.as_deref().unwrap_or_default(), would.as_str()))
+            .unwrap_or_default(),
+        table,
+        note,
+        document,
+    })
+}
+
+/// Dans quel état est la zone d'Ash, ce qu'on en dit, et la fiche telle qu'il la laisserait.
+///
+/// Les huit branches sont ici en entier, et c'est voulu : lire de haut en bas doit suffire à
+/// savoir dans quels cas Ash écrit et dans quels cas il s'abstient. Trois seulement portent
+/// une écriture possible — [`LogState::lets_ash_write`] en est la seule lecture ; les autres
+/// composent quand même le document, parce que **c'est lui que le diff du refus montre**
+/// (spec §10 : « il signale, propose le diff, et demande »).
+fn classify(content: &str, table: &str) -> (LogState, String, Option<CardDocument>) {
+    match block::locate(content) {
         Zone::Absent => (
             LogState::NoBlock,
             "the card has no ash:log block — ash would append one at the end, and touch \
              nothing else."
                 .to_owned(),
-            Some(
-                CardDocument::with_block(&content, &block::block(&table))
-                    .as_str()
-                    .to_owned(),
-            ),
+            Some(CardDocument::with_block(content, &block::block(table))),
         ),
+        // La reconnaissance passe par la **grammaire** de la table, et sa limite est écrite
+        // en tête de [`log`] : une ligne écrite à la main *dans* cette grammaire passe pour
+        // une ligne d'Ash, et sera remplacée. Ce qui reste garanti quoi qu'il arrive : rien
+        // hors du bloc, une sauvegarde avant, un diff montré.
         Zone::Present { inner, body } if !log::is_ours(&body) => (
             LogState::EditedByHand,
             "the ash:log block carries something ash did not write. it is left alone — \
              ash never rewrites a hand-edited block."
                 .to_owned(),
-            Some(
-                CardDocument::with_log(&content, inner, &table)
-                    .as_str()
-                    .to_owned(),
-            ),
+            Some(CardDocument::with_log(content, inner, table)),
         ),
         Zone::Present { body, .. } if body == table => (
             LogState::Current,
@@ -139,12 +167,11 @@ pub fn plan(files: &dyn CardFiles, path: &Path, table: &str) -> Result<Plan, Car
         Zone::Present { inner, .. } => (
             LogState::Stale,
             "ash would refresh the ash:log block, and touch nothing else.".to_owned(),
-            Some(
-                CardDocument::with_log(&content, inner, &table)
-                    .as_str()
-                    .to_owned(),
-            ),
+            Some(CardDocument::with_log(content, inner, table)),
         ),
+        // Les trois derniers ne composent rien : Ash ne sait pas où est sa zone, ou saurait
+        // mais choisirait pour l'utilisateur. Il n'y a donc pas de diff à montrer — la
+        // phrase dit ce qu'il y a à faire, et c'est l'utilisateur qui le fait.
         Zone::Conflicted { .. } => (
             LogState::Conflicted,
             "the ash:log block is in conflict. ash never resolves it — settle it like any \
@@ -166,16 +193,7 @@ pub fn plan(files: &dyn CardFiles, path: &Path, table: &str) -> Result<Plan, Car
                 .to_owned(),
             None,
         ),
-    };
-
-    Ok(Plan {
-        state,
-        diff: would
-            .map(|would| text_diff::preview(&content, &would))
-            .unwrap_or_default(),
-        table,
-        note,
-    })
+    }
 }
 
 /// Écrit le journal dans la fiche, ou refuse en le disant.
@@ -184,55 +202,41 @@ pub fn plan(files: &dyn CardFiles, path: &Path, table: &str) -> Result<Plan, Car
 /// fiche d'avant Ash, et une seconde écriture ne doit pas la remplacer par la fiche d'après.
 /// Même règle que `hooks::install`, et pour la même raison — le filet ne sert que s'il porte
 /// l'état auquel on veut revenir.
+///
+/// **Elle ne décide rien** : elle demande le plan, refuse ou pose ses octets. Les octets
+/// écrits sont donc, par construction, ceux dont le diff a été montré.
 pub fn write_log(files: &dyn CardFiles, path: &Path, table: &str) -> Result<LogWrite, CardError> {
     let plan = plan(files, path, table)?;
+    let path = path.to_owned();
+
     if plan.state == LogState::Current {
-        return Ok(LogWrite::AlreadyCurrent {
-            path: path.to_owned(),
-        });
+        return Ok(LogWrite::AlreadyCurrent { path });
     }
-    if !plan.state.lets_ash_write() {
+    // La même lecture que celle dont l'écran allume son bouton — il n'y en a qu'une.
+    let Some(document) = plan.document.filter(|_| plan.state.lets_ash_write()) else {
         return Ok(LogWrite::Refused {
-            path: path.to_owned(),
+            path,
             state: plan.state,
             note: plan.note,
             diff: plan.diff,
         });
-    }
-
-    let existing = read(files, path)?;
-    let Some(content) = existing.filter(|content| !content.trim().is_empty()) else {
-        // Rien de l'utilisateur à préserver, donc rien à sauvegarder : Ash écrit la fiche
-        // entière. C'est le seul cas où il compose autre chose que sa zone.
-        let created_the_card = !files.exists(path);
-        write(files, path, &CardDocument::fresh(scaffold(table)))?;
-        return Ok(LogWrite::Written {
-            path: path.to_owned(),
-            backup: None,
-            created_the_card,
-        });
     };
 
-    let document = match block::locate(&content) {
-        Zone::Absent => CardDocument::with_block(&content, &block::block(table)),
-        Zone::Present { inner, .. } => CardDocument::with_log(&content, inner, table),
-        // Les trois autres états ont déjà été refusés par `lets_ash_write`.
-        _ => {
-            return Ok(LogWrite::Refused {
-                path: path.to_owned(),
-                state: plan.state,
-                note: plan.note,
-                diff: plan.diff,
-            })
-        }
+    // Une fiche absente ou vide n'a rien de l'utilisateur à préserver : rien à sauvegarder,
+    // et c'est le seul cas où Ash compose autre chose que sa zone.
+    let from_scratch = plan.state == LogState::NoCard;
+    // Avant l'écriture, sinon le fichier existe déjà quand on le demande.
+    let created_the_card = from_scratch && !files.exists(&path);
+    let backup = if from_scratch {
+        None
+    } else {
+        back_up(files, &path)?
     };
-
-    let backup = back_up(files, path)?;
-    write(files, path, &document)?;
+    write(files, &path, &document)?;
     Ok(LogWrite::Written {
-        path: path.to_owned(),
+        path,
         backup,
-        created_the_card: false,
+        created_the_card,
     })
 }
 
@@ -365,6 +369,56 @@ mod tests {
         assert!(note.contains("never resolves"), "{note}");
         assert_eq!(files.contents(CARD), Some(conflicted));
         assert!(files.contents(&format!("{CARD}.bak")).is_none());
+    }
+
+    #[test]
+    fn given_a_block_whose_closing_marker_is_gone_when_the_log_is_written_then_ash_writes_nothing_at_all(
+    ) {
+        // Given — Ash ne sait plus où sa zone s'arrête. Écrire « jusqu'à la fin » effacerait
+        // tout ce que l'utilisateur a mis dessous ; le refus doit donc aller jusqu'au bout,
+        // sauvegarde comprise — on n'a pas commencé.
+        let truncated = CardBuilder::new()
+            .logging(LOG)
+            .build()
+            .replace("<!-- /ash:log -->", "");
+        let files = MemoryCardFiles::new().file(CARD, &truncated);
+
+        // When
+        let written = write_log(&files, Path::new(CARD), LOG);
+
+        // Then
+        let Ok(LogWrite::Refused { state, note, .. }) = written else {
+            panic!("Ash a écrit dans une zone dont il ignore la fin : {written:?}");
+        };
+        assert_eq!(state, LogState::Unterminated);
+        assert!(note.contains("never closed"), "{note}");
+        assert_eq!(files.contents(CARD), Some(truncated));
+        assert_eq!(files.written_paths(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_two_blocks_left_by_a_merge_when_the_log_is_written_then_ash_refuses_rather_than_picking_one(
+    ) {
+        // Given — la fusion recollée à la main. Écrire dans « le » bloc reviendrait à choisir
+        // lequel garder, donc à résoudre le conflit à la place de l'utilisateur (ADR-0013).
+        let two = format!(
+            "{}{}",
+            CardBuilder::new().logging(LOG).build(),
+            CardBuilder::new().logging(LOG).build()
+        );
+        let files = MemoryCardFiles::new().file(CARD, &two);
+
+        // When
+        let written = write_log(&files, Path::new(CARD), LOG);
+
+        // Then
+        let Ok(LogWrite::Refused { state, note, .. }) = written else {
+            panic!("Ash a choisi un bloc : {written:?}");
+        };
+        assert_eq!(state, LogState::Duplicated);
+        assert!(note.contains("resolving a merge"), "{note}");
+        assert_eq!(files.contents(CARD), Some(two));
+        assert_eq!(files.written_paths(), Vec::<String>::new());
     }
 
     #[test]
