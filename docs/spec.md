@@ -206,6 +206,36 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     réglages suit la même règle : `settings — <application>`.
 - Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent.
   La branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
+  - **L'usage est à sa droite** — amendé le 2026-08-20. Quatre morceaux, dans cet
+    ordre, chacun affiché **seulement si sa donnée existe** : le quota de session
+    (`s 63% · 2h14`), le quota hebdomadaire (`w 28% · 3d 09h`), la jauge de
+    contexte de la conversation, et son libellé (`ctx 41%`). La jauge et son
+    libellé passent en `--ash-warning` à 70 % puis en `--ash-accent` à 90 % —
+    et **rien d'autre ne se produit** à ces seuils : ni alerte, ni modale, ni
+    bannière. Un contexte plein annonce un compactage, pas une panne.
+  - **Deux rythmes, et une seule ligne.** La jauge suit l'**onglet** : elle
+    arrive avec sa fiche, et change quand on en change. Les deux quotas sont
+    ceux du **compte** : ils ne dépendent d'aucune sélection, arrivent par
+    `ash://account-usage`, et changer d'onglet ne les touche pas.
+  - **Le weekly est masqué par défaut dans la barre**, et le clic gauche sur une
+    pastille ouvre un popover de 248 px qui montre les **deux** quotas — c'est
+    ce qu'il sert à révéler. Le menu contextuel « show in the status bar » de la
+    maquette (vue 5c), qui rendrait ces défauts réglables, n'est **pas** livré :
+    la ligne porte les défauts sans le moyen de les changer. Le `⌘⌥U` écrit au
+    pied du popover est un **indice** : la vue d'usage complète n'existe pas, et
+    aucune liaison n'est réclamée pour cette combinaison (§4.4).
+  - Une valeur qu'Ash n'a pas **disparaît** — ni zéro, ni tiret, ni dernière
+    valeur connue, et aucune erreur signalée : l'écran ne sait pas laquelle des
+    raisons s'applique ([ADR-0016](./adr/0016-ash-sort-sur-le-reseau.md),
+    condition 3). Un onglet dont l'outil est muet rend donc exactement la ligne
+    d'avant.
+  - **Ce qui traverse est une date, jamais un décompte** : les `2h14` et
+    `3d 09h` sont dérivés à l'affichage de `resetsAt`, comme la durée d'état
+    l'est de `stateSince`. La durée de la fenêtre — les cinq heures écrites dans
+    le popover — n'est une donnée nulle part : c'est un libellé.
+  - Quand la ligne se resserre, les segments se retirent dans un ordre défini —
+    les quotas d'abord, la jauge et son libellé ensuite. Le `cwd`, la branche et
+    l'état de l'agent ne se retirent jamais.
 - Le rendu est délégué à xterm.js. Le terminal doit rester pleinement fonctionnel
   pour les TUI plein écran (c'est le cas de tous les outils visés).
 - **Police par défaut : JetBrains Mono**, embarquée avec l'application — pas chargée

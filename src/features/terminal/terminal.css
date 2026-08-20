@@ -78,6 +78,11 @@
     overflow: hidden;
     /* Sans ça, les compteurs et les étapes d'un rebase dansent à chaque rafraîchissement. */
     font-variant-numeric: tabular-nums;
+    /* Ce qui se retire quand la ligne rétrécit se décide sur **sa** largeur, pas sur celle de
+     * la fenêtre : la sidebar en prend une part réglable à la souris. Voir les deux
+     * `@container` plus bas. */
+    container-type: inline-size;
+    container-name: statusline;
 }
 
 /* Le `flex: 1` de la maquette : c'est lui qui pousse le rappel tout à droite, et c'est
@@ -126,6 +131,230 @@
  * mot qui le suit. */
 .terminal-status .ash-glyph {
     margin-right: -8px;
+}
+
+/* `display: contents` : le groupe ne dessine rien, ses enfants restent les éléments du
+ * `flex` de la ligne — ils gardent donc le `gap` de 14 px et le `flex: 1` du `spacer`.
+ *
+ * Il n'existe pas pour la mise en page mais pour la **frontière** : c'est lui que
+ * `StatusLine.render` vide, et le groupe d'usage est son frère. Un changement d'onglet ne
+ * peut donc pas détruire des pastilles de quota qui ne parlent pas d'onglets. */
+.terminal-status .status-main {
+    display: contents;
+}
+
+/* --- l'usage, à droite de la ligne (spec §4.2, vues 5 et 5b) -----------------
+ *
+ * Quatre morceaux dans l'ordre de la maquette — session, weekly, jauge, libellé —, chacun
+ * masqué quand sa donnée n'existe pas. `[hidden]` est réaffirmé parce qu'une pastille est un
+ * `inline-flex` : sans cette règle, l'attribut ne masquerait rien. */
+.terminal-status .status-usage {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    /* Les chiffres ne doivent pas faire danser la ligne en changeant. La ligne entière la
+     * porte déjà ; le groupe la redit parce que le popover, lui, est posé dans le `body`. */
+    font-variant-numeric: tabular-nums;
+}
+
+/* Le groupe lui-même se replie quand il n'a rien à montrer : un élément vide compte quand
+ * même pour un `gap` de 14 px, et un onglet sans usage doit rendre la ligne d'avant, au
+ * pixel. La règle est explicite parce que la précédente l'emporterait sur le `display: none`
+ * que le navigateur attache à `[hidden]`. */
+.terminal-status .status-usage[hidden],
+.terminal-status .status-usage [hidden] {
+    display: none;
+}
+
+/* Une pastille de quota : un vrai bouton, dépouillé de tout ce qu'un bouton apporte. */
+.terminal-status .status-usage-quota {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--ash-fg-meta);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+}
+
+.terminal-status .status-usage-mark {
+    color: var(--ash-working);
+}
+
+.terminal-status .status-usage-quota[data-quota="weekly"] .status-usage-mark {
+    color: var(--ash-done);
+}
+
+/* Le délai est un rappel, pas la valeur : il s'efface derrière le pourcentage. */
+.terminal-status .status-usage-resets {
+    color: var(--ash-fg-dim);
+}
+
+/* La barre de la maquette : 104 × 4, rayon 2, sur un rail de fond.
+ *
+ * La transition est sur la **largeur** : un contexte qui grossit se voit glisser, et un
+ * changement d'onglet ne la fait pas repartir — le nœud n'est jamais reconstruit. */
+.terminal-status .status-usage-gauge {
+    width: 104px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ash-rule);
+    overflow: hidden;
+}
+
+.terminal-status .status-usage-fill {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--ash-working);
+    transition: width 700ms linear;
+}
+
+/* Une largeur minimale réservée : `ctx 9%` et `ctx 100%` ne doivent pas déplacer le bord
+ * droit de la ligne à chaque passage de dizaine. */
+.terminal-status .status-usage-label {
+    min-width: 52px;
+    color: var(--ash-fg-dim);
+}
+
+/* Les trois paliers. La couleur vaut pour la jauge **et** pour le libellé — sous 70 %, le
+ * libellé reste gris : le chiffre n'a alors rien à annoncer. */
+.terminal-status .status-usage[data-context="loaded"] .status-usage-fill {
+    background: var(--ash-warning);
+}
+
+.terminal-status .status-usage[data-context="loaded"] .status-usage-label {
+    color: var(--ash-warning);
+}
+
+.terminal-status .status-usage[data-context="compacting"] .status-usage-fill {
+    background: var(--ash-accent);
+}
+
+.terminal-status .status-usage[data-context="compacting"] .status-usage-label {
+    color: var(--ash-accent);
+}
+
+/* Le weekly est masqué par défaut dans la barre (vue 5c). Il l'est **en TypeScript**, par
+ * `SHOWN_IN_STATUS_BAR` — pas ici : le popover le montre quand même, et une règle CSS ne
+ * saurait pas faire la différence entre les deux endroits. */
+
+/* --- ce qui se retire quand la fenêtre rétrécit -----------------------------
+ *
+ * La ligne ne déborde jamais : elle coupe ce qui la dépasse. Sans ces deux règles, ce serait
+ * son bord droit qui serait coupé — donc l'usage, mais à moitié, un chiffre tranché en deux.
+ *
+ * L'ordre est explicite, et c'est un critère : les quotas partent d'abord, la jauge et son
+ * libellé ensuite. Le `cwd`, la branche et l'état de l'agent ne sont visés par aucune de ces
+ * règles — ils survivent, et c'est le seul contenu de la ligne qui ne se discute pas.
+ *
+ * Une requête de conteneur, et non de fenêtre : c'est la largeur de la **ligne** qui décide,
+ * et elle dépend aussi de la sidebar, dont la largeur se règle à la souris. Le conteneur est
+ * déclaré sur `.terminal-status` plus haut — une seule règle par sélecteur. */
+
+@container statusline (max-width: 560px) {
+    .status-usage-quota {
+        display: none;
+    }
+}
+
+@container statusline (max-width: 420px) {
+    .status-usage {
+        display: none;
+    }
+}
+
+/* --- le popover d'usage (vue 5b) --------------------------------------------
+ *
+ * Posé dans le `body`, ancré au-dessus du groupe : la ligne de statut coupe ce qui la
+ * dépasse, et un popover ouvert vers le haut en dépasse par construction. */
+.status-usage-popover {
+    position: fixed;
+    z-index: 40;
+    width: 248px;
+}
+
+.status-usage-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background: var(--ash-bg-card);
+    border: 1px solid var(--ash-border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+    font-size: 11px;
+    color: var(--ash-fg);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-usage-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.status-usage-line .ui-spacer {
+    flex: 1;
+}
+
+.status-usage-card .status-usage-mark {
+    color: var(--ash-working);
+}
+
+.status-usage-card .status-usage-mark.is-weekly {
+    color: var(--ash-done);
+}
+
+.status-usage-card .status-usage-name {
+    color: var(--ash-fg-muted);
+}
+
+.status-usage-card .status-usage-resets {
+    color: var(--ash-fg-dim);
+}
+
+/* Les deux barres mesurent le **quota**, jamais le temps écoulé dans la fenêtre : l'API ne
+ * rend aucune durée de fenêtre, et une barre de plus serait inventée. */
+.status-usage-rail {
+    height: 4px;
+    margin-bottom: 4px;
+    border-radius: 2px;
+    background: var(--ash-rule);
+    overflow: hidden;
+}
+
+.status-usage-card .status-usage-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--ash-working);
+}
+
+.status-usage-card .status-usage-fill.is-weekly {
+    background: var(--ash-done);
+}
+
+/* Le pied : la fenêtre à gauche, l'indice de raccourci à droite. `⌘⌥U` **n'est lié à rien** —
+ * la vue d'usage complète n'existe pas, et aucune combinaison n'est réclamée pour elle. */
+.status-usage-foot {
+    display: flex;
+    align-items: center;
+    padding-top: 6px;
+    border-top: 1px solid var(--ash-border);
+    color: var(--ash-fg-dim);
+}
+
+.status-usage-foot .ui-spacer {
+    flex: 1;
+}
+
+.status-usage-key {
+    color: var(--ash-fg-faint);
 }
 
 /* `visibility` et non `display` : un onglet masqué **garde sa taille**. Avec
