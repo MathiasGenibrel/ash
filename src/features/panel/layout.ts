@@ -19,6 +19,15 @@
  * de mise en page, ses vues sont des noms, et leur contenu appartient à #27, #28, #30 et #31.
  */
 
+import {
+    clampedSize,
+    edgeBounds,
+    grabOffset as edgeGrabOffset,
+    handleOffset as edgeHandleOffset,
+    sizePercent,
+    type EdgeBounds,
+} from "@/shared/resizable-edge";
+
 /** Les quatre vues du panneau (spec §4.3, ADR-0003). Miroir de `PanelView` côté Rust. */
 export type PanelView = "graph" | "worktrees" | "conflicts" | "branch";
 
@@ -77,10 +86,18 @@ export const DEFAULT_PANEL_HEIGHT = 220;
 /** La barre d'onglets, toujours visible — voir [`BottomPanel`](./index.ts). */
 export const STRIP_HEIGHT = 26;
 
+/**
+ * Les deux bornes du panneau, sur l'échelle que `shared/resizable-edge` attend.
+ *
+ * Les fractions restent **ici** — ce sont les siennes, et elles se justifient par ce que le
+ * terminal doit garder de place ; c'est la géométrie qui les applique qui est partagée avec
+ * la colonne de gauche.
+ */
+const HEIGHT_BOUNDS: EdgeBounds = { min: MIN_HEIGHT_FRACTION, max: MAX_HEIGHT_FRACTION };
+
 /** Les deux bornes en pixels, pour la zone terminal du moment. */
 function bounds(areaHeight: number): { min: number; max: number } {
-    const usable = Math.max(1, areaHeight);
-    return { min: usable * MIN_HEIGHT_FRACTION, max: usable * MAX_HEIGHT_FRACTION };
+    return edgeBounds(areaHeight, HEIGHT_BOUNDS);
 }
 
 /**
@@ -91,8 +108,7 @@ function bounds(areaHeight: number): { min: number; max: number } {
  * sur le disque.
  */
 export function appliedHeight(height: number, areaHeight: number): number {
-    const { min, max } = bounds(areaHeight);
-    return Math.round(Math.min(Math.max(height, min), max));
+    return clampedSize(height, areaHeight, HEIGHT_BOUNDS);
 }
 
 /**
@@ -123,7 +139,7 @@ export interface DragOutcome {
  * punirait celui qui l'atteint.
  */
 export function grabOffset(pointerY: number, zoneTop: number): number {
-    return pointerY - (zoneTop + GRAB_OVERHANG);
+    return edgeGrabOffset(pointerY, zoneTop, GRAB_OVERHANG);
 }
 
 /**
@@ -152,9 +168,7 @@ export function dragOutcome(pointerY: number, area: PanelArea, grab = 0): DragOu
  * extrémités pour ne pas déborder.
  */
 export function handleOffset(pointerX: number, edgeLeft: number, edgeWidth: number): number {
-    const floor = HANDLE_MARGIN;
-    const ceiling = Math.max(floor, edgeWidth - HANDLE_MARGIN);
-    return Math.min(Math.max(pointerX - edgeLeft, floor), ceiling);
+    return edgeHandleOffset(pointerX, edgeLeft, edgeWidth, HANDLE_MARGIN);
 }
 
 /** Ce qu'une frappe sur le séparateur demande, ou `null` — et `null` veut dire « laisse passer ». */
@@ -192,5 +206,5 @@ export function resizeByKey(
  * et la seule échelle qui ait un sens ici est celle des bornes — 15 à 70.
  */
 export function heightPercent(height: number, areaHeight: number): number {
-    return Math.round((appliedHeight(height, areaHeight) / Math.max(1, areaHeight)) * 100);
+    return sizePercent(height, areaHeight, HEIGHT_BOUNDS);
 }
