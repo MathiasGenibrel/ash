@@ -71,9 +71,12 @@ use features::agents::{
     Notice, NotificationPreferences, NotificationStore, Notifier, Presence, Supervisor, TabAgents,
     SUBAGENT_LINGER,
 };
+use features::card::{AgentWork as CardWork, Cards, FileModeStore, SystemCardFiles, WorkRecord};
 use features::git::{
-    resolve_worktree, BusyAgent, Entry, FileSystem, Head, MetadataWatch, OperationKind,
-    StoppedOperation, SystemFileSystem, SystemGit, TreeWriter, WorkingAgents,
+    resolve_worktree, Attribution, Attributions, BusyAgent, CommitGraphReader, Entry, FileSystem,
+    GraphLog, Head, InhabitingTab, MetadataWatch, OperationKind, StoppedOperation,
+    SystemFileSystem, SystemGit, TabPresence, TreeWriter, WorkHistory, Worked, WorkingAgents,
+    WorktreeTable,
 };
 use features::journal::{
     CommitJournal, CommitLog as JournalCommits, CommitRecord, FileJournalStore, JournalStore,
@@ -414,6 +417,52 @@ impl AgentStates for SupervisedTabs {
     }
 }
 
+/// Relie le port de la fiche de branche au journal d'attribution, et à git.
+///
+/// La fiche demande *qui a écrit quoi dans ce worktree* ; la réponse tient en deux features
+/// dont aucune ne connaît la fiche. `features::git` sait seul lancer `git log` — derrière la
+/// frontière de sécurité de `git_cli.rs`, et c'est toujours le seul endroit du dépôt qui
+/// lance le binaire —, et `features::journal` sait seul qui tenait l'avant-plan quand chacun
+/// de ces commits est né ([ADR-0014](../../docs/adr/0014-attribution-locale-des-commits.md)).
+///
+/// La résolution du worktree vers son dossier git **commun** est ici aussi, et pour la même
+/// raison qu'elle est dans [`GitWorktrees`] : c'est la clé sous laquelle le journal range un
+/// dépôt, et `features::card` n'a pas à savoir ce qu'est un dépôt.
+///
+/// Il n'y a aucune décision ici — une résolution, une lecture, une projection sur deux
+/// champs. Ce que la table dit d'un travail vit dans `card/log.rs`, où ça se prouve.
+struct CardWorkFromJournal {
+    journal: Arc<CommitJournal>,
+    git: SystemGit,
+}
+
+impl CardWork for CardWorkFromJournal {
+    fn in_worktree(&self, worktree_root: &Path) -> Vec<WorkRecord> {
+        let Ok(located) = resolve_worktree(&SystemFileSystem, worktree_root) else {
+            return Vec::new();
+        };
+        let Some(repo) = located.repo.map(|repo| repo.git_dir.display().to_string()) else {
+            return Vec::new();
+        };
+        self.git
+            .recent_commits(worktree_root)
+            .iter()
+            .filter_map(|commit| {
+                // Un commit qu'Ash n'a pas vu naître n'a pas d'agent, et la fiche ne lui en
+                // invente pas : la colonne resterait vide dans le graphe aussi.
+                let entry = self.journal.attribution(&repo, commit)?;
+                if entry.agent.is_empty() {
+                    return None;
+                }
+                Some(WorkRecord {
+                    agent: entry.agent,
+                    authored_at: commit.authored_at,
+                })
+            })
+            .collect()
+    }
+}
+
 /// Relie le port du journal au registre d'onglets.
 ///
 /// C'est par lui qu'ADR-0014 tient sa promesse : l'attribution « ne dépend que de la
@@ -447,6 +496,59 @@ impl JournalTabs for TabAuthors {
     }
 }
 
+/// Relie le port des onglets du **tableau des worktrees** au registre de PTY.
+///
+/// C'est la jointure que la spec §7.3 décrit en une phrase — « Ash les connaît parce qu'il
+/// connaît le `cwd` de chaque onglet » — et c'est ici qu'elle se fait : `git` ne sait pas ce
+/// qu'est un onglet, `pty` ne sait pas ce qu'est un tableau. Le consommateur possède le port,
+/// le composition root relie, exactement comme [`TabAuthors`] juste au-dessus.
+///
+/// Il n'y a aucune décision ici — une lecture, une projection sur cinq champs — et c'est
+/// délibéré : la règle qui décide ce qu'un agent présent dit d'un worktree vit dans
+/// `git/table.rs`, où elle se prouve.
+struct InhabitedWorktrees(Arc<PtyRegistry>);
+
+impl TabPresence for InhabitedWorktrees {
+    fn inhabiting(&self) -> Vec<InhabitingTab> {
+        self.0
+            .tabs()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|tab| {
+                Some(InhabitingTab {
+                    tab_id: tab.tab_id,
+                    worktree_root: std::path::PathBuf::from(tab.location?.worktree_root),
+                    // La **commande**, comme pour l'attribution : `claude`, et non
+                    // l'adaptateur qui le traduit (ADR-0006).
+                    agent: tab.agent.map(|agent| agent.command),
+                    state: tab.state,
+                    since: tab.state_since,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Relie la colonne `last worked by` du tableau au journal d'attribution.
+///
+/// Le journal est la **seule** mémoire d'un agent qui survive à la fermeture de son onglet :
+/// ADR-0009 interdit d'en persister une autre, et ADR-0014 borne celle-ci aux commits qu'Ash
+/// a vus naître. Un agent qui a travaillé sans rien valider n'y est pas — la colonne se tait
+/// alors, plutôt que de nommer quelqu'un qu'Ash n'a pas observé.
+struct JournalledWork(Arc<CommitJournal>);
+
+impl WorkHistory for JournalledWork {
+    fn last_worked(&self, repo: &Path, worktree_root: &Path) -> Option<Worked> {
+        let worked = self
+            .0
+            .last_worked_in(&repo.to_string_lossy(), worktree_root)?;
+        Some(Worked {
+            agent: worked.agent,
+            at: worked.at,
+        })
+    }
+}
+
 /// Relie le port du journal au seul endroit du dépôt où le binaire `git` est lancé.
 ///
 /// `features/journal` pose la question — *quels commits `HEAD` porte-t-il ?* — et
@@ -463,6 +565,35 @@ pub struct GitCommits(pub SystemGit);
 impl JournalCommits for GitCommits {
     fn recent(&self, worktree_root: &Path) -> Vec<CommitRecord> {
         self.0.recent_commits(worktree_root)
+    }
+}
+
+/// Relie le port du graphe au journal d'attribution — **la colonne `by`** (spec §7.2).
+///
+/// C'est le troisième branchement du même genre, et il boucle la paire : `features/journal`
+/// demande des commits à `features/git` par son port `CommitLog`, `features/git` demande des
+/// agents à `features/journal` par son port `Attributions`. Les deux features restent sans
+/// dépendance l'une envers l'autre — chacune possède la question qu'elle pose —, et le seul
+/// endroit qui connaît les deux est celui qui les assemble.
+///
+/// Il n'y a aucune décision ici : la résolution en deux temps d'ADR-0014 vit dans
+/// `journal/resolve.rs`, où elle se prouve, et le choix du mot affiché dans
+/// `git/history.rs`, où il se prouve aussi.
+struct JournalAttributions(Arc<CommitJournal>);
+
+impl Attributions for JournalAttributions {
+    fn of(&self, repo: &str, commits: &[CommitRecord]) -> Vec<Option<Attribution>> {
+        self.0
+            .attributions(repo, commits)
+            .into_iter()
+            .map(|entry| {
+                entry.map(|entry| Attribution {
+                    agent: entry.agent,
+                    tab_id: entry.tab_id,
+                    prompt: entry.prompt,
+                })
+            })
+            .collect()
     }
 }
 
@@ -724,6 +855,31 @@ pub fn run() -> tauri::Result<()> {
         &shared::time::SystemClock,
     );
 
+    // Le lecteur du graphe (#27, spec §7.2). Il naît ici parce que c'est ici que ses trois
+    // ports se rencontrent : le seul endroit du dépôt où `git` est lancé, le journal
+    // d'attribution, et l'horloge dont la règle des 30 jours a besoin.
+    let commit_graph = Arc::new(CommitGraphReader::new(
+        Arc::new(SystemGit::default()) as Arc<dyn GraphLog>,
+        Arc::new(JournalAttributions(Arc::clone(&journal))),
+        Arc::new(shared::time::SystemClock),
+    ));
+
+    // La fiche de branche d'ADR-0013. Elle ne connaît ni git, ni le journal, ni les
+    // onglets : elle demande où elle vit, ce que le bloc porte, et qui a écrit dans ce
+    // worktree — et c'est ici que les trois questions trouvent leurs répondants.
+    let cards = Cards::new(
+        Arc::new(SystemCardFiles),
+        Arc::new(FileModeStore::in_home()),
+        Arc::new(CardWorkFromJournal {
+            journal: Arc::clone(&journal),
+            git: SystemGit::default(),
+        }),
+        Arc::new(shared::time::SystemClock),
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/")),
+    );
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&ptys))
         // Le localisateur est **partagé** avec la réunion des onglets (`tabs.rs`) : un
@@ -731,6 +887,8 @@ pub fn run() -> tauri::Result<()> {
         // deux résolutions parallèles finiraient par mettre le même worktree sur deux lignes.
         .manage(Arc::new(GitWorktrees) as Arc<dyn WorktreeLocator>)
         .manage(Arc::clone(&journal))
+        .manage(Arc::clone(&commit_graph))
+        .manage(Arc::clone(&cards))
         .manage(Arc::clone(&git) as Arc<dyn features::git::BranchReader>)
         .manage(Arc::clone(&git) as Arc<dyn features::git::TreeWriter>)
         .manage(Arc::new(TabAgentsInWorktree(Arc::clone(&ptys))) as Arc<dyn WorkingAgents>)
@@ -771,11 +929,19 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_pause,
             features::pty::commands::pty_resume,
             features::git::commands::git_metadata,
+            features::git::commands::git_commit_graph,
+            features::journal::commands::journal_summary,
+            features::journal::commands::journal_purge,
+            features::card::commands::branch_card,
+            features::card::commands::branch_card_write_log,
+            features::card::commands::branch_card_place,
             features::git::commands::git_branches,
             features::git::commands::git_branch_offers,
             features::git::commands::git_branch_action,
             features::git::commands::git_stopped_operation,
             features::git::commands::git_conflict_prompt,
+            features::git::commands::git_worktrees,
+            features::git::commands::git_worktree_removal,
             features::journal::commands::journal_summary,
             features::journal::commands::journal_purge,
             features::sidebar::commands::sidebar_rows,
@@ -936,6 +1102,25 @@ pub fn run() -> tauri::Result<()> {
             Arc::new(WorktreeFiles),
             Arc::new(MergeGit(Arc::clone(&git) as Arc<dyn TreeWriter>)),
         )));
+    }
+
+    // Le tableau des worktrees (spec §7.3), assemblé **après** la surveillance parce qu'il
+    // lit ce qu'elle sait : c'est elle qui rend l'état d'un worktree sans relancer un
+    // `git status` pour une racine déjà observée.
+    //
+    // Ses trois autres sources sont les trois features qui ne se connaissent pas : le
+    // système de fichiers pour énumérer les worktrees d'un dépôt — **aucun verbe git de plus**
+    // n'est lancé pour ça —, les onglets pour `agents now`, et le journal pour
+    // `last worked by`.
+    {
+        use tauri::Manager;
+        app.manage(WorktreeTable::new(
+            Arc::new(SystemFileSystem),
+            Arc::clone(&git_watch) as Arc<dyn features::git::WorktreeFacts>,
+            Arc::new(InhabitedWorktrees(Arc::clone(&ptys))),
+            Arc::new(JournalledWork(Arc::clone(&journal))),
+            Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
+        ));
     }
 
     // La boucle de sonde d'ADR-0005 démarre ici, et pas dans une commande : elle observe

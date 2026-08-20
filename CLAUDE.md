@@ -288,15 +288,20 @@ src-tauri/src/
     shortcuts/         ✓ les liaisons, leur magasin, les combinaisons
                          réservées — **le menu en dérive**           — spec §4.4
     journal/           ✓ attribution commit → agent → prompt        — ADR-0014
-  shared/              ✓ réellement transverse, et justifié (l'horloge)
+    card/              ✓ la fiche de branche : le bloc `ash:log`, sa
+                         sauvegarde, ses refus, le mode local        — ADR-0013
+    merge/             ✓ le déroulé d'un merge : ses conflits, ses fichiers,
+                         ses verbes git                              — spec §7.4
+  shared/              ✓ réellement transverse, et justifié (l'horloge, le diff)
 src/
   app/                 ✓ composition root, tokens des thèmes, menu
   features/
     terminal/          ✓ xterm.js, ligne de statut
     sidebar/           ✓ dépôts, worktrees, onglets, lignes filles
     settings/          ✓ la fenêtre de réglages
-    git/                 popup de branches, graphe, fiche ; ✓ la vue des
-                         conflits, minimale, en attendant #29
+    git/               ✓ popup de branches, tableau des worktrees, graphe,
+                         fiche de branche, et la vue des conflits — minimale,
+                         en attendant #29
     merge/             ✓ les trois panneaux de l'onglet de merge     — spec §7.4
   shared/
     ipc/               ✓ le contrat Rust ↔ TypeScript, et ses builders

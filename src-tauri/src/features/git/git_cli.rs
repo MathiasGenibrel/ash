@@ -34,6 +34,8 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use super::graph::GraphCommit;
+
 /// Délai au-delà duquel on renonce à l'état de l'arbre.
 ///
 /// Cinq secondes, comme la fenêtre de limitation : au-delà, un nouveau rafraîchissement
@@ -107,6 +109,91 @@ const LOG_ARGS: [&str; 7] = [
     "HEAD",
 ];
 
+/// Ce que la lecture du graphe ajoute au préfixe — le verbe, ses options, et son format.
+///
+/// **La question de sécurité se repose ici une troisième fois, et sa réponse n'est pas la
+/// même que pour les deux autres appels — elle est plus exigeante.** `git status` et la
+/// lecture des derniers commits partent tout seuls ; celui-ci part d'un **geste** —
+/// l'utilisateur ouvre le panneau bas sur `graph`. Ce serait une raison de se relâcher, et
+/// c'en serait une mauvaise : le geste est « je regarde », pas « j'exécute », et un dépôt
+/// visité ne doit rien pouvoir lancer parce qu'on a regardé son histoire.
+///
+/// Les mêmes trois commandes qu'un dépôt peut faire lancer à `git log` sont donc neutralisées
+/// — `core.fsmonitor`, le pager, `gpg` —, et **aucune option de diff n'est passée** : c'est ce
+/// qui garde les pilotes `textconv` et `diff` hors jeu, puisqu'ils ne s'exécutent que sur un
+/// diff. Le pager l'est **deux fois** : `--no-pager`, et `core.pager=cat` en `-c`. Les deux ne
+/// font pas double emploi — `--no-pager` ne dépend de rien, tandis que la surcharge en `-c` est
+/// la seule qui réponde au fait que `core.pager` est une commande *lue dans le dépôt visité*.
+/// La seule chose qui l'empêche aujourd'hui de partir est que notre sortie standard est un
+/// tuyau : une propriété de l'appelant, donc pas une protection.
+///
+/// **Le durcissement n'est pas ici : il vient de [`HARDENED_PREFIX`], par
+/// [`Invocation::Graph`].** Cette liste-ci portait sa propre copie du préfixe le temps que la
+/// branche vive à côté de `main` ; elle ne le porte plus, et pour une raison qui s'est déjà
+/// vérifiée deux fois — quand chaque verbe écrivait son préfixe à la main, `status` avait
+/// perdu `core.pager` en route, puis le graphe l'avait reperdu. Une copie écrite à la main est
+/// exactement ce que l'`enum` existe pour rendre impossible. Ce qui reste ici est donc le
+/// **verbe** — de `"log"` à `"HEAD"` — plus [`GRAPH_FORMAT`], et `Invocation::ALL` fait relire
+/// la frontière de sécurité à cette invocation-ci gratuitement.
+///
+/// La **fenêtre** (`--max-count`) n'y est pas non plus, et c'est le seul argument variable
+/// qu'Ash passe à une lecture : elle est ajoutée **après** la composition, par
+/// [`GraphLog::window`], exactement comme [`TreeWriter::run`] ajoute ses opérandes après
+/// [`Invocation::Tree`]. Un argument variable dans le tableau obligerait `verb()` à rendre
+/// autre chose que du `'static`, donc à recomposer — et recomposer est précisément ce qui a
+/// fait perdre `core.pager` deux fois.
+///
+/// Ce que cet appel-ci ajoute aux deux autres, et ce que ça coûte :
+///
+/// - **`--decorate=short`** et `%D` : les noms de refs du dépôt visité entrent dans la
+///   sortie. Ce n'est **pas** un vecteur d'exécution — c'est du texte — et ce texte est
+///   traité comme non fiable de bout en bout : il traverse la frontière en JSON, et l'écran
+///   le pose en `textContent`, jamais en HTML. Il est là parce que dire « 3 branches
+///   repliées » sans pouvoir en nommer une n'apprend rien (spec §7.2) ;
+/// - **`--branches`** : la sélection de révisions s'élargit de `HEAD` à toutes les branches
+///   locales. Une sélection de révisions ne lance rien ; elle décide seulement quels objets
+///   sont lus. C'est indispensable — un graphe qui ne suivrait que `HEAD` n'aurait qu'un
+///   couloir, donc rien à dessiner ;
+/// - **`--topo-order`** : l'ordre topologique est l'unique hypothèse de [`super::graph`].
+///   Sans lui, deux branches s'entrelaceraient par date et le dessin serait faux.
+///
+/// Ce qui n'y est **pas**, et ce n'est pas un oubli : `--all`, qui ajouterait les branches
+/// distantes et les notes. Un dépôt cloné en porte des centaines, et le graphe doit d'abord
+/// dire ce que cette machine fabrique.
+const GRAPH_ARGS: [&str; 8] = [
+    // Redondant avec le `core.pager=cat` du préfixe, et gardé quand même : c'est la seule des
+    // deux protections qui ne dépende pas de ce que le dépôt a écrit dans sa configuration.
+    "--no-pager",
+    "log",
+    // `gpg` est une commande, et `log.showSignature` peut la réclamer.
+    "--no-show-signature",
+    // Les noms de branches, pour pouvoir nommer une branche repliée. Du texte, et rien d'autre.
+    "--decorate=short",
+    // L'unique hypothèse de l'algorithme des couloirs.
+    "--topo-order",
+    // Toutes les branches locales, et `HEAD` — qui n'en est pas une quand il est détaché.
+    "--branches",
+    // Le format est **dans** la composition, et pas ajouté à côté : c'est ce qui le fait
+    // relire par le test qui refuse toute option de diff.
+    GRAPH_FORMAT,
+    "HEAD",
+];
+
+/// Le format d'une ligne de graphe : huit champs, séparés par l'unité de séparation ASCII.
+///
+/// Le sujet est **dernier**, comme dans [`LOG_ARGS`], et pour la même raison : c'est
+/// le seul champ dont on ne contrôle pas le contenu, donc le seul qui ait le droit de
+/// déborder sur la fin de la ligne.
+const GRAPH_FORMAT: &str = "--format=%H%x1f%h%x1f%P%x1f%at%x1f%aI%x1f%an%x1f%D%x1f%s";
+
+/// Combien de commits une fenêtre de graphe peut demander, au maximum.
+///
+/// La borne est **ici**, dans le backend, et pas dans l'écran : c'est le backend qui lance le
+/// processus, et une fenêtre demandée par une webview n'a pas à pouvoir décider de lire dix
+/// ans d'histoire d'un coup. Deux mille lignes sont déjà bien au-delà de ce qu'on parcourt à
+/// l'œil, et le dessin reste sous la seconde à cette taille.
+pub const MAX_GRAPH_WINDOW: usize = 2_000;
+
 /// Un commit tel que git le décrit, et rien de plus.
 ///
 /// Les trois champs qui comptent pour [ADR-0014](../../../../docs/adr/0014-attribution-locale-des-commits.md)
@@ -136,6 +223,20 @@ pub struct CommitRecord {
 /// c'est un cas nominal.
 pub trait StatusReader: Send + Sync {
     fn read(&self, worktree_root: &Path) -> Option<String>;
+}
+
+/// D'où le graphe tire ses commits, derrière un trait que la feature possède.
+///
+/// Il est ici, à côté de [`StatusReader`], et pour la même raison : c'est un effet système,
+/// et le seul endroit du dépôt où `git` est lancé est ce fichier. Ce que le port cache à
+/// [`super::history`], c'est un processus — pas un format.
+///
+/// Rend un vecteur vide pour tout ce qui peut mal se passer. L'appelant en fait la même
+/// chose : un graphe vide, qui se lit comme « rien à montrer ».
+pub trait GraphLog: Send + Sync {
+    /// Les `limit` commits les plus récents des branches locales et de `HEAD`, en ordre
+    /// topologique. La fenêtre part **toujours** du sommet : voir [`super::graph`].
+    fn window(&self, worktree_root: &Path, limit: usize) -> Vec<GraphCommit>;
 }
 
 /// Ce que git seul sait dire des **refs** d'un dépôt, et de qui les détient.
@@ -294,6 +395,10 @@ enum Invocation {
     Worktrees,
     /// Les derniers commits de `HEAD`, pour le journal d'attribution — ADR-0014.
     Log,
+    /// Les commits des branches locales et de `HEAD`, pour le graphe — spec §7.2. La
+    /// **fenêtre** est ajoutée après composition, comme les opérandes de `Tree` : voir
+    /// [`GRAPH_ARGS`].
+    Graph,
     /// Les verbes qui **écrivent** : `switch`, `rebase`, `merge`. Les opérandes sont
     /// ajoutés par [`TreeWriter::run`], après ce préfixe et jamais dedans.
     Tree,
@@ -304,11 +409,12 @@ impl Invocation {
     /// et elle n'existe que pour eux : la production, elle, nomme toujours une invocation
     /// précise.
     #[cfg(test)]
-    const ALL: [Invocation; 5] = [
+    const ALL: [Invocation; 6] = [
         Invocation::Status,
         Invocation::Refs,
         Invocation::Worktrees,
         Invocation::Log,
+        Invocation::Graph,
         Invocation::Tree,
     ];
 
@@ -319,6 +425,7 @@ impl Invocation {
             Invocation::Refs => &REF_ARGS,
             Invocation::Worktrees => &WORKTREE_ARGS,
             Invocation::Log => &LOG_ARGS,
+            Invocation::Graph => &GRAPH_ARGS,
             Invocation::Tree => &TREE_ARGS,
         }
     }
@@ -421,6 +528,69 @@ impl SystemGit {
     }
 }
 
+impl GraphLog for SystemGit {
+    fn window(&self, worktree_root: &Path, limit: usize) -> Vec<GraphCommit> {
+        // La borne est tenue **ici**, au bord du processus : c'est le dernier endroit où
+        // elle protège encore quelque chose.
+        let window = limit.clamp(1, MAX_GRAPH_WINDOW);
+        // Le seul argument variable d'une lecture, ajouté **après** la composition — comme
+        // [`TreeWriter::run`] ajoute ses opérandes. Le préfixe neutralisant reste donc
+        // impossible à oublier : il n'est écrit qu'à un endroit, et c'est [`Invocation`].
+        let count = format!("--max-count={window}");
+        self.capture_with(worktree_root, Invocation::Graph, &[count])
+            .as_deref()
+            .map(parse_graph)
+            .unwrap_or_default()
+    }
+}
+
+/// Les lignes d'un `git log` de graphe, en commits dessinables.
+///
+/// Même discipline que [`parse_log`] : une ligne qu'on ne comprend pas est **jetée**, pas
+/// devinée. La sortie vient d'un dépôt que personne n'a validé.
+fn parse_graph(output: &str) -> Vec<GraphCommit> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\u{1f}');
+            let sha = fields.next()?;
+            let short = fields.next()?;
+            let parents = fields.next()?;
+            let authored_at = fields.next()?.parse().ok()?;
+            let author_date = fields.next()?;
+            let author = fields.next()?;
+            let refs = fields.next()?;
+            let subject = fields.collect::<Vec<_>>().join("\u{1f}");
+            (!sha.is_empty()).then(|| GraphCommit {
+                sha: sha.to_owned(),
+                short: short.to_owned(),
+                parents: parents
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+                author_date: author_date.to_owned(),
+                authored_at,
+                author: author.to_owned(),
+                refs: parse_refs(refs),
+                subject,
+            })
+        })
+        .collect()
+}
+
+/// Les refs de `%D`, découpées et débarrassées de ce que git ajoute pour l'affichage.
+///
+/// `HEAD -> main, origin/main, tag: v1` devient `["HEAD -> main", "origin/main", "v1"]` :
+/// seul le `tag: ` est retiré, parce que c'est un préfixe d'affichage et non un nom. Le
+/// `HEAD -> ` est **gardé** — il dit où l'on est, et c'est une information du produit.
+fn parse_refs(refs: &str) -> Vec<String> {
+    refs.split(", ")
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.strip_prefix("tag: ").unwrap_or(name).to_owned())
+        .collect()
+}
+
 /// Les lignes d'un `git log` formaté, en commits.
 ///
 /// Une ligne qu'on ne comprend pas est **jetée**, pas devinée : la sortie de git vient d'un
@@ -455,7 +625,26 @@ impl SystemGit {
     /// programme nommé, arguments composés par [`Invocation`], répertoire explicite, délai
     /// tenu — ne se décide qu'une fois.
     fn capture(&self, worktree_root: &Path, invocation: Invocation) -> Option<String> {
-        let args = invocation.args();
+        self.capture_with(worktree_root, invocation, &[])
+    }
+
+    /// Le même appel, plus les arguments **variables** de l'invocation.
+    ///
+    /// Un seul appelant aujourd'hui — la fenêtre du graphe —, et une seule règle : ce qui est
+    /// ajouté ici l'est **après** [`Invocation::args`], jamais à sa place. Le durcissement
+    /// n'est donc pas quelque chose qu'un appelant compose, c'est quelque chose qu'il reçoit.
+    fn capture_with(
+        &self,
+        worktree_root: &Path,
+        invocation: Invocation,
+        extra: &[String],
+    ) -> Option<String> {
+        let args: Vec<String> = invocation
+            .args()
+            .into_iter()
+            .map(str::to_owned)
+            .chain(extra.iter().cloned())
+            .collect();
         // `Command` prend le programme et ses arguments séparément : aucun shell n'est
         // lancé, donc aucun chemin de worktree ne peut être interprété comme du code.
         // Le répertoire de travail est **explicite** — un `git` lancé depuis le
@@ -645,6 +834,99 @@ mod tests {
                 || argument.starts_with("--stat")),
             "aucune option de diff : c'est ce qui garde les pilotes `textconv` hors jeu"
         );
+    }
+
+    #[test]
+    fn given_the_graph_invocation_when_a_visited_repository_configures_a_command_then_none_of_them_runs(
+    ) {
+        // Given — la lecture du graphe part d'un **geste** (ouvrir le panneau sur `graph`),
+        // là où les deux autres appels partent tout seuls. Ce n'est pas une raison de se
+        // relâcher : regarder l'histoire d'un dépôt qu'on vient de cloner ne doit rien
+        // exécuter, et la surface d'attaque est exactement la même que celle de `git log`.
+        let args = Invocation::Graph.args();
+
+        // When
+        let neutralised = |flag: &str| args.contains(&flag);
+
+        // Then
+        assert!(
+            sets(&args, "core.fsmonitor=false"),
+            "`core.fsmonitor` est une commande du dépôt visité, et `git log` rafraîchit \
+             l'index"
+        );
+        assert!(neutralised("--no-pager"), "`pager.log` est une commande");
+        assert!(
+            sets(&args, "core.pager=cat"),
+            "`core.pager` est une commande **lue dans le dépôt visité**. Ce qui l'empêche \
+             de partir sans cette ligne est que notre sortie est un tuyau — une propriété \
+             de l'appelant, pas une protection. `--no-pager` ne la remplace pas : les deux \
+             ferment le même vecteur par deux chemins indépendants."
+        );
+        assert!(
+            neutralised("--no-show-signature"),
+            "`log.showSignature` fait lancer `gpg` sur chaque commit lu"
+        );
+        assert!(
+            !args.iter().any(|argument| argument.starts_with("--patch")
+                || argument.starts_with("-p")
+                || argument.starts_with("--stat")
+                || argument.starts_with("--diff")),
+            "aucune option de diff : c'est ce qui garde les pilotes `textconv` hors jeu, et \
+             le format ne demande que des champs d'en-tête de commit"
+        );
+        assert!(
+            args.iter().all(|arg| !arg.contains(char::is_whitespace)),
+            "un argument porteur d'espace trahirait une ligne de commande recomposée"
+        );
+    }
+
+    #[test]
+    fn given_a_window_larger_than_the_backend_allows_when_it_is_asked_for_then_it_is_capped() {
+        // Given — la fenêtre est demandée par une webview, qui n'a pas à pouvoir faire lire
+        // dix ans d'histoire d'un coup. La borne est du côté qui lance le processus.
+        let asked = MAX_GRAPH_WINDOW * 10;
+
+        // When
+        let window = asked.clamp(1, MAX_GRAPH_WINDOW);
+
+        // Then
+        assert_eq!(window, MAX_GRAPH_WINDOW);
+    }
+
+    #[test]
+    fn given_a_graph_output_when_it_is_read_then_a_merge_keeps_both_parents_and_its_refs() {
+        // Given — les parents font les traits du dessin, et les refs nomment une branche
+        // repliée. Les perdre à la lecture rendrait le graphe faux sans rien casser d'autre.
+        let output = "8f3a1c2aaaa\u{1f}8f3a1c2\u{1f}1111111 2222222\u{1f}1755000000\u{1f}\
+                      2026-08-12T14:03:21+02:00\u{1f}mathias\u{1f}HEAD -> main, tag: v1\u{1f}\
+                      merge: onglets\n";
+
+        // When
+        let commits = parse_graph(output);
+
+        // Then
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].parents, vec!["1111111", "2222222"]);
+        assert_eq!(commits[0].refs, vec!["HEAD -> main", "v1"]);
+        assert_eq!(commits[0].author, "mathias");
+        assert_eq!(commits[0].subject, "merge: onglets");
+        assert_eq!(commits[0].author_date, "2026-08-12T14:03:21+02:00");
+    }
+
+    #[test]
+    fn given_a_graph_output_for_a_root_commit_when_it_is_read_then_it_simply_has_no_parent() {
+        // Given — le premier commit d'un dépôt n'a pas de parent, et `%P` est alors vide. Une
+        // chaîne vide découpée sans précaution donnerait un parent nommé `""`, donc un trait
+        // qui descend vers un commit qui n'existe pas.
+        let output = "aaa\u{1f}aaa\u{1f}\u{1f}1700000000\u{1f}2023-11-14T22:13:20+01:00\u{1f}\
+                      mathias\u{1f}\u{1f}chore: initial import\n";
+
+        // When
+        let commits = parse_graph(output);
+
+        // Then
+        assert!(commits[0].parents.is_empty());
+        assert!(commits[0].refs.is_empty());
     }
 
     #[test]

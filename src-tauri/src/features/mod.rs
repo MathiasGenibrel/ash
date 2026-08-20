@@ -4,6 +4,7 @@
 //! `commands.rs`. Voir `.claude/docs/architecture.md`.
 
 pub mod agents;
+pub mod card;
 pub mod git;
 pub mod hooks;
 pub mod journal;
