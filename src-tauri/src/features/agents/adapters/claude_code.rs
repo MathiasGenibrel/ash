@@ -326,11 +326,12 @@ impl Adapter for ClaudeCodeAdapter {
     /// disparaît plutôt que d'inventer un mot.
     fn model_name(&self, ran: &str, configured: Option<&str>) -> Option<String> {
         let short = short_name(ran)?;
-        Some(match configured {
-            Some(configured) if is_long_context(configured) => {
-                format!("{short} {LONG_CONTEXT_MARK}")
-            }
-            _ => short,
+        let long_context = configured.is_some_and(|configured| identifier(configured).long_context);
+
+        Some(if long_context {
+            format!("{short} {LONG_CONTEXT_MARK}")
+        } else {
+            short
         })
     }
 
@@ -380,12 +381,11 @@ impl Adapter for ClaudeCodeAdapter {
     /// faute de frappe — vaut `None`. C'est la règle qui remplace `DEFAULT_CONTEXT_WINDOW`, et
     /// elle est le cœur de la correction : **rien de reconnu ne vaut rien**.
     fn context_window(&self, model: &str) -> Option<u64> {
-        let family = without_suffix(model);
+        let model = identifier(model);
 
-        KNOWN_FAMILIES
-            .iter()
-            .any(|known| family.contains(known))
-            .then_some(if is_long_context(model) {
+        family_of(&model.named)
+            .is_some()
+            .then_some(if model.long_context {
                 LONG_CONTEXT_WINDOW
             } else {
                 STANDARD_CONTEXT_WINDOW
@@ -393,25 +393,46 @@ impl Adapter for ClaudeCodeAdapter {
     }
 }
 
-/// L'identifiant sans ce qui n'appartient pas à la famille : espaces, casse, suffixe `[1m]`.
-fn without_suffix(model: &str) -> String {
-    let model = model.trim().to_ascii_lowercase();
-    model
-        .strip_suffix(LONG_CONTEXT_SUFFIX)
-        .unwrap_or(&model)
-        .to_owned()
+/// Ce qu'un identifiant de modèle porte, lu **une seule fois**.
+///
+/// Le suffixe `[1m]` tranche deux questions — la taille de la fenêtre et le `1M` du nom court
+/// — et il n'est lu qu'ici : le retirer et constater sa présence sont la même lecture, et deux
+/// lectures séparées finiraient par diverger. La barre dirait alors `Opus 5` sur un
+/// pourcentage calculé en 1 M.
+struct Identifier {
+    /// L'identifiant sans ce qui n'appartient pas à la famille : espaces, casse, suffixe.
+    named: String,
+    /// Le suffixe était là, donc la session tourne dans la fenêtre du million.
+    long_context: bool,
 }
 
-/// Cet identifiant demande-t-il la fenêtre du million ?
+/// L'identifiant tel qu'on le lit — voir [`Identifier`].
+fn identifier(model: &str) -> Identifier {
+    let model = model.trim().to_ascii_lowercase();
+    match model.strip_suffix(LONG_CONTEXT_SUFFIX) {
+        Some(named) => Identifier {
+            named: named.to_owned(),
+            long_context: true,
+        },
+        None => Identifier {
+            named: model,
+            long_context: false,
+        },
+    }
+}
+
+/// La famille connue que cet identifiant contient, et l'endroit où elle commence.
 ///
-/// Une seule lecture du suffixe pour les deux questions qu'il tranche — la taille de la
-/// fenêtre et le `1M` du nom court. Deux tests séparés finiraient par diverger, et la barre
-/// dirait alors `Opus 5` sur un pourcentage calculé en 1 M.
-fn is_long_context(model: &str) -> bool {
-    model
-        .trim()
-        .to_ascii_lowercase()
-        .ends_with(LONG_CONTEXT_SUFFIX)
+/// **La porte des deux tables**, celle de la fenêtre ([`Adapter::context_window`]) et celle du
+/// nom ([`short_name`]) : ce que Claude Code ne sait pas mesurer, il ne sait pas non plus le
+/// nommer, et une seconde recherche sur la même liste finirait par répondre autrement — une
+/// barre qui écrirait `Opus 5` à côté d'un pourcentage qu'elle refuse de calculer.
+///
+/// Cherchée **dans** l'identifiant, jamais comparée à lui — voir [`KNOWN_FAMILIES`].
+fn family_of(named: &str) -> Option<(&'static str, usize)> {
+    KNOWN_FAMILIES
+        .iter()
+        .find_map(|known| named.find(known).map(|at| (*known, at)))
 }
 
 /// L'identifiant ramené à sa famille et à sa version — `claude-opus-5` → `Opus 5`.
@@ -425,10 +446,8 @@ fn is_long_context(model: &str) -> bool {
 /// le millésime `20251001` qu'aucune barre d'état n'a à montrer (voir [`DATE_DIGITS`]). Un
 /// identifiant sans version — l'alias `opus`, que Claude Code accepte — rend la famille seule.
 fn short_name(model: &str) -> Option<String> {
-    let model = without_suffix(model);
-    let (family, at) = KNOWN_FAMILIES
-        .iter()
-        .find_map(|known| model.find(known).map(|at| (*known, at)))?;
+    let model = identifier(model).named;
+    let (family, at) = family_of(&model)?;
 
     let version = model[at + family.len()..]
         .split('-')
