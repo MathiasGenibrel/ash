@@ -1,6 +1,10 @@
 import { badge, column, paint, row, text, type UiComponent } from "@/shared/ui";
 import type { AccountUsage, Quota, SessionUsage } from "@/shared/ipc";
-import { DEFAULT_STATUS_BAR_SEGMENTS, type StatusBarSegments } from "./status-bar";
+import {
+    DEFAULT_STATUS_BAR_SEGMENTS,
+    type StatusBarSegmentId,
+    type StatusBarSegments,
+} from "./status-bar";
 
 /**
  * L'usage, à droite de la ligne de statut (spec §4.2, vues 5 et 5b de la maquette).
@@ -385,6 +389,16 @@ export class UsageSegments {
     /** Ce qui est réellement à l'écran — voir [`fold`]. */
     private shownQuotas = 0;
     private shownGauge = false;
+    /**
+     * Lesquels des quatre segments d'usage ont quelque chose à montrer, maintenant.
+     *
+     * Le seul état que ce groupe expose vers l'extérieur, et il n'existe que pour les `│` :
+     * la ligne pose un trait entre deux **voisins visibles**, donc elle a besoin de savoir
+     * qu'un quota manquant n'occupe aucune place. Il est tenu ici parce que c'est ici qu'on
+     * le décide — le relire sur un `hidden` déjà écrit reviendrait à demander au DOM ce
+     * qu'on vient de lui dire.
+     */
+    private readonly onScreen = new Set<StatusBarSegmentId>();
 
     /**
      * `beforeOpen` est appelé juste avant que le popover s'ouvre — c'est par là que la ligne
@@ -397,7 +411,7 @@ export class UsageSegments {
 
         for (const kind of ["session", "weekly"] as const) {
             const pill = quotaPill(kind, () => {
-                this.togglePopover();
+                this.togglePopover(pill.element);
             });
             this.pills.set(kind, pill);
             this.element.append(pill.element);
@@ -442,7 +456,9 @@ export class UsageSegments {
         );
 
         for (const [kind, pill] of this.pills) {
-            pill.show(shown.get(kind) ?? null);
+            const quota = shown.get(kind) ?? null;
+            pill.show(quota);
+            this.mark(kind, quota !== null);
         }
         this.shownQuotas = shown.size;
         this.fold();
@@ -482,6 +498,8 @@ export class UsageSegments {
         this.label.hidden = !showsContext;
         this.model.hidden = !showsModel;
         this.shownGauge = showsContext || showsModel;
+        this.mark("context", showsContext);
+        this.mark("model", showsModel);
         this.fold();
 
         if (gauge !== null) write(this.label, gauge.label);
@@ -526,6 +544,44 @@ export class UsageSegments {
         this.showContext(this.gaugeShown);
     }
 
+    /**
+     * Ce segment d'usage occupe-t-il une place dans la ligne ?
+     *
+     * Lu par la ligne de statut au moment de poser les `│` : un trait à côté d'un quota que
+     * le backend ne sait pas encore donner serait un `│` orphelin.
+     */
+    shows(id: StatusBarSegmentId): boolean {
+        return this.onScreen.has(id);
+    }
+
+    /**
+     * Le rang de chacun des quatre segments d'usage dans la ligne (vue 5e).
+     *
+     * Une valeur `order` du `flex`, et non une place dans le DOM : c'est ce qui permet à la
+     * barre de se réorganiser sans qu'aucun de ces nœuds ne soit déplacé. Un `append` sur un
+     * enfant déjà présent le retire et le réinsère — pour le CSS, c'est un élément neuf, et
+     * la transition de 700 ms de la jauge repartirait de zéro à chaque changement d'onglet.
+     *
+     * La jauge et son libellé reçoivent **le même rang**, parce qu'ils sont un seul segment :
+     * à rang égal, le `flex` garde l'ordre du document, et le libellé reste à droite de la
+     * barre qu'il chiffre.
+     */
+    place(orders: ReadonlyMap<StatusBarSegmentId, number>): void {
+        const at = (element: HTMLElement, id: StatusBarSegmentId): void => {
+            const order = orders.get(id);
+            element.style.order = order === undefined ? "" : String(order);
+        };
+        for (const [kind, pill] of this.pills) at(pill.element, kind);
+        at(this.gauge, "context");
+        at(this.label, "context");
+        at(this.model, "model");
+    }
+
+    private mark(id: StatusBarSegmentId, onScreen: boolean): void {
+        if (onScreen) this.onScreen.add(id);
+        else this.onScreen.delete(id);
+    }
+
     /** Referme le popover, s'il est ouvert — le clic ailleurs, et le clic droit. */
     closePopover(): void {
         if (this.popover === null) return;
@@ -535,7 +591,7 @@ export class UsageSegments {
         this.popover = null;
     }
 
-    private togglePopover(): void {
+    private togglePopover(on: HTMLElement): void {
         if (this.popover !== null) {
             this.closePopover();
             return;
@@ -554,7 +610,7 @@ export class UsageSegments {
         // construction.
         document.body.append(card);
         this.popover = card;
-        this.anchor(card);
+        this.anchor(card, on);
 
         document.addEventListener("pointerdown", this.onPointerDown, true);
         document.addEventListener("contextmenu", this.onContextMenu, true);
@@ -569,8 +625,12 @@ export class UsageSegments {
      * déborde. Même règle que la popup de branches : l'ancre est au **pied** de la fenêtre,
      * ouvrir vers le bas la ferait sortir de l'écran.
      */
-    private anchor(card: HTMLElement): void {
-        const bounds = this.element.getBoundingClientRect();
+    private anchor(card: HTMLElement, on: HTMLElement): void {
+        // La pastille qui a ouvert, et non le groupe : depuis #165 le groupe est un
+        // `display: contents`, donc il n'a **pas de boîte** — son `getBoundingClientRect()`
+        // rend un rectangle nul, et le popover se poserait dans le coin de la fenêtre. C'est
+        // aussi plus juste : les quatre morceaux d'usage ne sont plus forcément côte à côte.
+        const bounds = on.getBoundingClientRect();
         card.style.right = `${String(Math.round(Math.max(8, window.innerWidth - bounds.right)))}px`;
         card.style.bottom = `${String(Math.round(window.innerHeight - bounds.top + 6))}px`;
     }
