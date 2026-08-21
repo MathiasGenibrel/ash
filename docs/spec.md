@@ -274,11 +274,39 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     `ash://account-usage`, et changer d'onglet ne les touche pas.
   - **Le weekly est masqué par défaut dans la barre**, et le clic gauche sur une
     pastille ouvre un popover de 248 px qui montre les **deux** quotas — c'est
-    ce qu'il sert à révéler. Le menu contextuel « show in the status bar » de la
-    maquette (vue 5c), qui rendrait ces défauts réglables, n'est **pas** livré :
-    la ligne porte les défauts sans le moyen de les changer. Le `⌘⌥U` écrit au
-    pied du popover est un **indice** : la vue d'usage complète n'existe pas, et
-    aucune liaison n'est réclamée pour cette combinaison (§4.4).
+    ce qu'il sert à révéler. Le `⌘⌥U` écrit au pied du popover est un
+    **indice** : la vue d'usage complète n'existe pas, et aucune liaison n'est
+    réclamée pour cette combinaison (§4.4).
+  - **Le menu « show in the status bar » existe, et les sept éléments s'y
+    coupent** — ajouté le 2026-08-21, vue 5c. Un clic droit n'importe où sur la
+    ligne ouvre un panneau de 206 px ancré au-dessus d'elle, qui liste le quota
+    de session, le quota hebdomadaire, la jauge de contexte, le modèle, puis —
+    après un trait — l'état de l'agent, la branche et le `cwd`. Chaque ligne
+    porte sa coche, son nom et l'**aperçu de sa valeur courante** ; un élément
+    décoché perd sa coche, passe en gris, et **reste dans la liste** — c'est le
+    seul endroit d'où on peut le rallumer. Un élément dont la donnée manque
+    montre un aperçu **vide**, jamais un tiret
+    ([ADR-0016](./adr/0016-ash-sort-sur-le-reseau.md), condition 3). Décocher un
+    quota ne le retire **pas** du popover, qui existe précisément pour montrer
+    ce que la barre cache. Le menu et le popover ne s'ouvrent jamais ensemble.
+    La ligne « réorganiser la barre… » de la maquette n'y est pas : le mode
+    édition n'existe pas, et une entrée qui n'ouvre rien vaut moins que pas
+    d'entrée du tout.
+  - **Les sept interrupteurs survivent à la fermeture, et la maquette disait
+    « par fenêtre »** — amendement du 2026-08-21. La phrase visait surtout à
+    exclure un réglage **par onglet** ; réorganiser sa barre à chaque lancement
+    n'est pas un réglage, c'est une corvée. Ils sont donc détenus par le
+    **backend**, dans `features::theme` et `~/.ash/theme.json`, comme le thème,
+    la police et la densité de la sidebar (§9) : l'écran demande une bascule, le
+    backend annonce le résultat
+    ([ADR-0009](./adr/0009-cycle-de-vie-des-agents.md)). Un fichier absent ou
+    illisible rend les défauts — weekly masqué, le reste visible — sans rien
+    signaler.
+  - **Deux règles de retrait cohabitent, et ne se connaissent pas.** Le
+    resserrement automatique ci-dessus dit ce qui **tient** dans la largeur
+    restante, et là le `cwd`, la branche et l'état de l'agent ne partent jamais.
+    Le menu, lui, dit ce que l'utilisateur **veut** lire, et là tout se coupe,
+    jauge comprise.
   - Une valeur qu'Ash n'a pas **disparaît** — ni zéro, ni tiret, ni dernière
     valeur connue, et aucune erreur signalée : l'écran ne sait pas laquelle des
     raisons s'applique ([ADR-0016](./adr/0016-ash-sort-sur-le-reseau.md),
@@ -290,7 +318,8 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     le popover — n'est une donnée nulle part : c'est un libellé.
   - Quand la ligne se resserre, les segments se retirent dans un ordre défini —
     les quotas d'abord, la jauge et son libellé ensuite. Le `cwd`, la branche et
-    l'état de l'agent ne se retirent jamais.
+    l'état de l'agent ne se retirent jamais **de ce fait-là** ; ils se décochent,
+    eux, dans le menu de la vue 5c.
 - Le rendu est délégué à xterm.js. Le terminal doit rester pleinement fonctionnel
   pour les TUI plein écran (c'est le cas de tous les outils visés).
 - **Police par défaut : JetBrains Mono**, embarquée avec l'application — pas chargée
