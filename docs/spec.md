@@ -230,6 +230,20 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     libellé passent en `--ash-warning` à 70 % puis en `--ash-accent` à 90 % —
     et **rien d'autre ne se produit** à ces seuils : ni alerte, ni modale, ni
     bannière. Un contexte plein annonce un compactage, pas une panne.
+  - **La fenêtre est lue, pas supposée — et quand elle est inconnue, la jauge
+    disparaît sans emporter la mesure.** Le transcript donne le numérateur, mais
+    ne dit jamais si la session tourne en 200 k ou en 1 M ; c'est la
+    **configuration de l'outil** qui nomme le modèle — `ANTHROPIC_MODEL`, puis
+    le `.claude/` du dépôt (`settings.local.json` avant `settings.json`), puis
+    celui du foyer —, et un suffixe `[1m]` vaut un million. La lire est de la
+    lecture au sens d'[ADR-0006](./adr/0006-decouverte-automatique-des-agents.md) :
+    aucun fichier écrit, aucune autorisation, aucun appel réseau, et au rythme
+    de la mesure — à l'arrivée d'un hook, jamais sur un chemin de rendu. **Rien
+    de reconnu ne vaut rien** : aucune fenêtre par défaut, donc pas de
+    pourcentage, pas de barre, pas de couleur de seuil — le libellé lit alors
+    `ctx 57k`, la mesure brute, parce qu'elle, elle est exacte. Un `/model`
+    changé en cours de session n'est rapporté par aucune source autorisée : la
+    configuration reste le meilleur signal, et c'est une limite assumée.
   - **Deux rythmes, et une seule ligne.** La jauge suit l'**onglet** : elle
     arrive avec sa fiche, et change quand on en change. Les deux quotas sont
     ceux du **compte** : ils ne dépendent d'aucune sélection, arrivent par

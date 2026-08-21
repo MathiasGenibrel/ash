@@ -105,7 +105,8 @@ impl Invocation {
         self.frame = self
             .frame
             .with_subagent(payload.agent_id.as_deref(), payload.agent_type.as_deref())
-            .with_transcript(payload.transcript_path.as_deref());
+            .with_transcript(payload.transcript_path.as_deref())
+            .with_cwd(payload.cwd.as_deref());
         self
     }
 }
@@ -116,10 +117,11 @@ impl Invocation {
 /// à transporter, et un hook en dit bien davantage — le `cwd`, la session, le mode de
 /// permission.
 ///
-/// **Trois clés, et aucune n'est un état.** Les deux premières nomment l'enfant qui a produit
-/// l'événement (amendement du 2026-08-13) ; la troisième nomme le fichier où l'outil écrit sa
-/// conversation. Aucune ne se traduit en l'un des cinq mots : l'état déclaré vient de la
-/// ligne de commande, et de nulle part ailleurs.
+/// **Quatre clés, et aucune n'est un état.** Les deux premières nomment l'enfant qui a
+/// produit l'événement (amendement du 2026-08-13) ; la troisième nomme le fichier où l'outil
+/// écrit sa conversation ; la quatrième dit où il tournait. Aucune ne se traduit en l'un des
+/// cinq mots : l'état déclaré vient de la ligne de commande, et de nulle part ailleurs. Et
+/// aucune ne corrèle : `--tab` reste la seule façon de retrouver un onglet.
 #[derive(Debug, Default, PartialEq, Eq, serde::Deserialize)]
 struct HookPayload {
     #[serde(default)]
@@ -134,6 +136,14 @@ struct HookPayload {
     /// voudra.
     #[serde(default)]
     transcript_path: Option<String>,
+    /// Le dossier où l'outil tournait — que **tous** les hooks de Claude Code écrivent.
+    ///
+    /// Il traverse comme une donnée, et jamais comme une corrélation : voir
+    /// [`wire::EventFrame::cwd`], qui porte la règle en toutes lettres. Ash s'en sert pour
+    /// trouver la configuration du dépôt, qui nomme le modèle, donc la taille de la fenêtre
+    /// de contexte.
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 /// Ce que l'entrée standard porte — et rien du tout au moindre doute.
@@ -265,12 +275,13 @@ fn post(invocation: &Invocation) {
 ///
 /// La borne du fil (`wire::MAX_FRAME_BYTES`, 8 Kio) est une frontière de sécurité du
 /// serveur : au-delà, la ligne est refusée sans être accumulée, donc l'état déclaré serait
-/// perdu. L'état est la seule chose qu'un hook existe pour transporter : les clés d'enfant et
-/// le chemin du transcript tombent donc les premiers, et la trame repart sans eux.
+/// perdu. L'état est la seule chose qu'un hook existe pour transporter : les clés d'enfant,
+/// le chemin du transcript et le dossier de travail tombent donc les premiers, et la trame
+/// repart sans eux.
 ///
 /// **Ce repli est silencieux, et c'est pourquoi il ne doit plus pouvoir se déclencher pour
 /// une clé d'enfant** : une ligne fille qui disparaîtrait ici ne laisserait aucune trace.
-/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES` et de `wire::MAX_TRANSCRIPT_PATH_BYTES`, qui
+/// C'est le rôle de `wire::MAX_CHILD_KEY_BYTES` et de `wire::MAX_PATH_BYTES`, qui
 /// écartent une valeur démesurée **là où elle entre**, bien avant que la trame ne puisse
 /// déborder à cause d'elle. Ce qui reste ici ne
 /// couvre plus qu'un `<état>` ou un `--tab` absurdes, que le bloc d'Ash n'écrit pas.
@@ -346,14 +357,15 @@ mod tests {
         // When
         let read = payload_of(&written);
 
-        // Then — les trois clés d'un coup : l'enfant, et le transcript que **tout** hook
-        // porte, y compris celui-ci.
+        // Then — les quatre clés d'un coup : l'enfant, puis le transcript et le dossier que
+        // **tout** hook porte, y compris celui-ci.
         assert_eq!(
             read,
             Some(HookPayload {
                 agent_id: Some("agent-7".to_owned()),
                 agent_type: Some("code-reviewer".to_owned()),
                 transcript_path: Some("/tmp/t.jsonl".to_owned()),
+                cwd: Some("/dev/ash".to_owned()),
             })
         );
     }
@@ -376,6 +388,7 @@ mod tests {
                 agent_id: None,
                 agent_type: None,
                 transcript_path: Some("/tmp/t.jsonl".to_owned()),
+                cwd: Some("/dev/ash".to_owned()),
             })
         );
     }

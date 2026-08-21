@@ -1656,7 +1656,7 @@ mod tests {
         // piège que la durée, et il coûterait en plus une lecture de disque par passe.
         agents.declare_usage(SessionUsage {
             used_tokens: 146_273,
-            window_tokens: 200_000,
+            window_tokens: Some(200_000),
         });
         let discovered = registry.changes().unwrap(); // la passe qui découvre l'onglet
 
@@ -1680,7 +1680,7 @@ mod tests {
                 1,
                 Some(SessionUsage {
                     used_tokens: 146_273,
-                    window_tokens: 200_000,
+                    window_tokens: Some(200_000),
                 })
             )]
         );
