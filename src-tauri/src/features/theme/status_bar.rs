@@ -21,8 +21,11 @@
 
 /// Les sept segments de la ligne, dans l'ordre du menu de la vue 5c.
 ///
-/// L'ordre de cette énumération **est** celui du menu, et le frontend le suit sans le
-/// redéclarer : `session`, `weekly`, `context`, `model`, puis — après le trait — `agent`,
+/// L'ordre est écrit ici **et** dans `MENU_ORDER` (`src/features/terminal/status-bar.ts`), et
+/// rien ne les apparie : ce qui traverse la frontière est un identifiant, et le miroir de
+/// `mirror.ts` garantit l'**ensemble** des sept noms, jamais leur suite. L'ordre du menu est
+/// une décision de présentation, et c'est le frontend qui la porte ; celui-ci n'existe que
+/// pour se lire — `session`, `weekly`, `context`, `model`, puis — après le trait — `agent`,
 /// `branch`, `cwd`. Les quatre premiers parlent de ce que la conversation consomme, les
 /// trois derniers d'où l'on est et de ce que l'agent fait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -48,7 +51,8 @@ pub enum StatusBarSegment {
 }
 
 impl StatusBarSegment {
-    /// Les sept, dans l'ordre du menu.
+    /// Les sept, énumérés. Rien du produit ne les parcourt — c'est le frontend qui dessine
+    /// la liste ; cette table sert à interroger les défauts d'un seul geste.
     pub const ALL: [StatusBarSegment; 7] = [
         StatusBarSegment::Session,
         StatusBarSegment::Weekly,
@@ -110,18 +114,30 @@ impl Default for StatusBarSegments {
 }
 
 impl StatusBarSegments {
+    /// L'interrupteur de ce segment, **le seul endroit du fichier qui apparie un nom de
+    /// variante à un nom de champ**.
+    ///
+    /// Il est privé, et il est unique parce que sept arms écrits deux fois se lisent pareil
+    /// et ne disent pas forcément la même chose : un `Model => &mut self.agent` compile, et
+    /// seul un test par segment le verrait. Le `match` reste exhaustif, donc un huitième
+    /// segment ne se déclare toujours pas sans que le compilateur le réclame — mais il ne se
+    /// réclame plus qu'à un endroit.
+    fn switch(&mut self, segment: StatusBarSegment) -> &mut bool {
+        match segment {
+            StatusBarSegment::Session => &mut self.session,
+            StatusBarSegment::Weekly => &mut self.weekly,
+            StatusBarSegment::Context => &mut self.context,
+            StatusBarSegment::Model => &mut self.model,
+            StatusBarSegment::Agent => &mut self.agent,
+            StatusBarSegment::Branch => &mut self.branch,
+            StatusBarSegment::Cwd => &mut self.cwd,
+        }
+    }
+
     /// Ce segment est-il montré ?
     #[must_use]
-    pub fn shows(self, segment: StatusBarSegment) -> bool {
-        match segment {
-            StatusBarSegment::Session => self.session,
-            StatusBarSegment::Weekly => self.weekly,
-            StatusBarSegment::Context => self.context,
-            StatusBarSegment::Model => self.model,
-            StatusBarSegment::Agent => self.agent,
-            StatusBarSegment::Branch => self.branch,
-            StatusBarSegment::Cwd => self.cwd,
-        }
+    pub fn shows(mut self, segment: StatusBarSegment) -> bool {
+        *self.switch(segment)
     }
 
     /// Les mêmes choix, ce segment-là retourné.
@@ -132,38 +148,10 @@ impl StatusBarSegments {
     /// même booléen ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)) —
     /// la conduite de `toggle_sidebar_column`, pour la même raison.
     #[must_use]
-    pub fn toggled(self, segment: StatusBarSegment) -> Self {
-        let flipped = !self.shows(segment);
-        match segment {
-            StatusBarSegment::Session => Self {
-                session: flipped,
-                ..self
-            },
-            StatusBarSegment::Weekly => Self {
-                weekly: flipped,
-                ..self
-            },
-            StatusBarSegment::Context => Self {
-                context: flipped,
-                ..self
-            },
-            StatusBarSegment::Model => Self {
-                model: flipped,
-                ..self
-            },
-            StatusBarSegment::Agent => Self {
-                agent: flipped,
-                ..self
-            },
-            StatusBarSegment::Branch => Self {
-                branch: flipped,
-                ..self
-            },
-            StatusBarSegment::Cwd => Self {
-                cwd: flipped,
-                ..self
-            },
-        }
+    pub fn toggled(mut self, segment: StatusBarSegment) -> Self {
+        let switch = self.switch(segment);
+        *switch = !*switch;
+        self
     }
 }
 
