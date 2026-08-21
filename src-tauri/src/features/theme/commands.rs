@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : seize commandes, six events.
+//! La surface de la feature vers le frontend : dix-huit commandes, sept events.
 //!
 //! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode, les
 //! trois pas de taille, les deux paliers de densité et les quatre noms de vue du panneau
@@ -23,6 +23,7 @@ use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::sidebar_column::{SidebarColumn, SidebarWidth};
 use super::state::ThemeState;
+use super::status_bar::{StatusBarSegment, StatusBarSegments};
 
 /// Nom de l'event qui porte le mode choisi. Contrat avec `src/app/theme.ts`.
 pub const THEME_MODE_EVENT: &str = "ash://theme-mode";
@@ -44,6 +45,10 @@ pub const TERMINAL_FONT_EVENT: &str = "ash://terminal-font";
 /// Nom de l'event qui porte la densité de la sidebar. Contrat avec
 /// `src/app/sidebar-density.ts`.
 pub const SIDEBAR_DENSITY_EVENT: &str = "ash://sidebar-density";
+
+/// Nom de l'event qui porte ce que la ligne de statut montre. Contrat avec
+/// `src/features/terminal/status-bar-bridge.ts`.
+pub const STATUS_BAR_SEGMENTS_EVENT: &str = "ash://status-bar-segments";
 
 /// Le mode courant, lu par la webview en s'affichant.
 ///
@@ -305,4 +310,34 @@ pub fn choose_sidebar_density<R: Runtime>(app: AppHandle<R>, density: SidebarDen
         return;
     }
     let _ = app.emit(SIDEBAR_DENSITY_EVENT, density);
+}
+
+/// Ce que la ligne de statut montre, lu par la webview en s'affichant (spec §4.2, vue 5c).
+///
+/// Ensuite, c'est [`STATUS_BAR_SEGMENTS_EVENT`] qui la tient à jour : elle ne redemande
+/// jamais. Même contrat que [`sidebar_density`], parce que c'est la même sorte de
+/// préférence.
+#[tauri::command]
+pub fn status_bar_segments(state: tauri::State<'_, Arc<ThemeState>>) -> StatusBarSegments {
+    state.status_bar()
+}
+
+/// Le clic sur une ligne du menu contextuel de la ligne de statut.
+///
+/// La webview demande une **bascule**, pas un état : c'est le chemin de `toggle_sidebar_column`,
+/// et pour la même raison — le menu montre ce que le backend détient, et un menu qui
+/// renverrait le booléen qu'il a lu en s'ouvrant en deviendrait le second détenteur
+/// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+///
+/// Rien n'est rendu à l'appelante : elle apprend le nouvel état par l'event, comme pour la
+/// densité — c'est ce qui fait que la barre et le menu ouvert au-dessus d'elle ne peuvent
+/// pas diverger.
+#[tauri::command]
+pub fn toggle_status_bar_segment<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+    segment: StatusBarSegment,
+) {
+    let shown = state.toggle_status_bar_segment(segment);
+    let _ = app.emit(STATUS_BAR_SEGMENTS_EVENT, shown);
 }

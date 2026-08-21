@@ -7,6 +7,7 @@ use super::font::TerminalFont;
 use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::sidebar_column::{SidebarColumn, SidebarWidth};
+use super::status_bar::{StatusBarSegment, StatusBarSegments};
 use super::store::ThemeStore;
 
 /// L'apparence courante de la fenêtre — **la** source de vérité.
@@ -181,6 +182,22 @@ impl ThemeState {
     pub fn set_density(&self, density: SidebarDensity) -> bool {
         self.change(|appearance| appearance.density = density)
             .is_some()
+    }
+
+    /// Ce que la ligne de statut montre (spec §4.2, vue 5c).
+    pub fn status_bar(&self) -> StatusBarSegments {
+        self.locked().status_bar
+    }
+
+    /// Coche ou décoche un segment de la ligne de statut, et rend ce qu'elle montre alors.
+    ///
+    /// La bascule est calculée **ici, sous le verrou**, et non par le menu à partir d'un
+    /// état qu'il aurait lu en s'ouvrant : c'est la conduite de `toggle_sidebar_collapsed`,
+    /// et pour la même raison — deux gestes rapprochés ne peuvent pas se répondre le même
+    /// booléen. Rend toujours une valeur : une bascule change toujours quelque chose.
+    pub fn toggle_status_bar_segment(&self, segment: StatusBarSegment) -> StatusBarSegments {
+        self.change(|appearance| appearance.status_bar = appearance.status_bar.toggled(segment))
+            .map_or_else(|| self.status_bar(), |appearance| appearance.status_bar)
     }
 
     /// Applique un changement, le garde sur le disque, et rend la nouvelle apparence — ou

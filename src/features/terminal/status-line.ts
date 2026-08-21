@@ -14,7 +14,16 @@ import {
 import { branchOf, locationLabel } from "@/shared/tab-context";
 import { activeTab, type TabsState } from "./tabs";
 import {
+    DEFAULT_STATUS_BAR_SEGMENTS,
+    MENU_ORDER,
+    type StatusBarSegmentId,
+    type StatusBarSegments,
+    type VisibilityRow,
+} from "./status-bar";
+import { StatusBarMenu } from "./status-bar-menu";
+import {
     composeContextGauge,
+    contextMeasure,
     UsageSegments,
     type ContextGauge,
     type QuotaSegment,
@@ -45,6 +54,13 @@ import {
  * libellé, le modèle qui la consomme, et les deux quotas du compte. Le modèle ci-dessous ne
  * porte que ce qui bat au rythme de l'onglet — les quotas battent à un autre, et la frontière
  * entre les deux est un `<div class="status-main">` que `render` est seul à vider.
+ *
+ * **Ce que la ligne montre se règle** (spec §4.2, vue 5c) : un clic droit ouvre un menu de
+ * sept interrupteurs, et un segment décoché quitte la barre. Le modèle, lui, ne change pas —
+ * il porte toujours **tout**, décoché compris, parce que le menu montre l'aperçu de ce qu'il
+ * cache. Le retrait se fait au rendu, par [`shownStatusGroups`], et les sept booléens
+ * viennent de `features::theme` : la ligne les lit, elle ne les détient pas
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 
 /**
@@ -349,6 +365,149 @@ export function elide(path: string, max: number = MAX_CWD): string {
     return path.length <= max ? path : `…${path.slice(path.length - max + 1)}`;
 }
 
+
+/* ------------------------------------------------------------------------------------- *
+ * Le menu contextuel (vue 5c) — ce qu'il liste, et l'aperçu de chaque valeur.
+ *
+ * Il est composé **ici** et non dans `status-bar.ts` parce que ses aperçus se lisent sur le
+ * modèle ci-dessus : ce sont les valeurs de la barre, prises au même instant, et rien n'a le
+ * droit d'en fabriquer une seconde source. `status-bar.ts` reste en aval de tout — les types,
+ * les défauts, et le panneau —, ce qui laisse `ports.ts` et `usage.ts` le lire sans cycle.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Le nom lu dans le menu — celui de la maquette, pas celui du champ.
+ *
+ * `context bar` et `agent state` disent ce que la ligne montre ; `context` et `agent` ne
+ * diraient rien à quelqu'un qui n'a pas écrit le code.
+ */
+const MENU_NAMES: Readonly<Record<StatusBarSegmentId, string>> = {
+    session: "session",
+    weekly: "weekly",
+    context: "context bar",
+    model: "model",
+    agent: "agent state",
+    branch: "branch",
+    cwd: "cwd",
+};
+
+/**
+ * Le trait de la maquette : il sépare ce que la conversation **consomme** de ce qui dit
+ * **où l'on est**. Il se pose au-dessus de la première ligne du second groupe.
+ */
+const SEPARATED: StatusBarSegmentId = "agent";
+
+/**
+ * Ce que le `cwd` garde dans un panneau de 206 px — coupé **par la gauche**, comme dans la
+ * ligne : c'est la fin d'un chemin qui dit où l'on est.
+ */
+const MAX_PREVIEW = 20;
+
+/**
+ * Les sept lignes du menu, telles qu'il s'ouvre.
+ *
+ * Une fonction pure, et c'est ce qui rend les aperçus vérifiables : ils viennent des mêmes
+ * valeurs que la barre, au même instant, et rien ici n'a le droit d'en inventer une. Un
+ * élément **masqué** est dans la liste comme les autres, avec son aperçu — sans quoi le
+ * rallumer demanderait de savoir d'avance ce qu'il montrerait.
+ *
+ * `model` à `null` est le départ de la fenêtre : la ligne de statut n'a pas encore été
+ * composée, et tous les aperçus sont vides.
+ */
+export function visibilityRows(
+    segments: StatusBarSegments,
+    model: StatusLineModel | null,
+    quotas: readonly QuotaSegment[],
+): readonly VisibilityRow[] {
+    return MENU_ORDER.map((id) => ({
+        id,
+        name: MENU_NAMES[id],
+        preview: preview(id, model, quotas),
+        shown: segments[id],
+        separated: id === SEPARATED,
+    }));
+}
+
+function preview(
+    id: StatusBarSegmentId,
+    model: StatusLineModel | null,
+    quotas: readonly QuotaSegment[],
+): string {
+    switch (id) {
+        case "session":
+        case "weekly":
+            return quotaPreview(quotas.find((quota) => quota.kind === id) ?? null);
+        case "context": {
+            const gauge = model?.context ?? null;
+            return gauge === null ? "" : contextMeasure(gauge);
+        }
+        case "model":
+            return model?.context?.model ?? "";
+        case "agent":
+            // Le mot d'état seul, et non le segment entier : `claude · working · 15m22s` ne
+            // tient pas dans la colonne de droite d'un panneau de 206 px, et c'est l'état qui
+            // est la valeur. Une surface d'outil n'a pas d'état (ADR-0003) — son titre est
+            // alors ce que la ligne montre, donc ce que l'aperçu doit montrer.
+            return model === null
+                ? ""
+                : model.agent.state === null
+                  ? model.agent.text
+                  : presentAgentState(model.agent.state).label;
+        case "branch":
+            // Tous les morceaux du segment, comme la ligne les écrit : la branche, l'opération
+            // en cours, et les compteurs. C'est un seul segment, et son aperçu aussi.
+            return model === null ? "" : model.git.map((chip) => chip.text).join(" ");
+        case "cwd":
+            return model === null ? "" : elide(model.cwd.text, MAX_PREVIEW);
+    }
+}
+
+/** `63% · 2h14` — le décompte ne s'écrit que s'il existe, comme dans la pastille. */
+function quotaPreview(quota: QuotaSegment | null): string {
+    if (quota === null) return "";
+    return quota.resets === null ? quota.percent : `${quota.percent} · ${quota.resets}`;
+}
+
+/**
+ * Un groupe de la moitié gauche : ce que sépare un `│`.
+ *
+ * Les trois groupes sont les trois interrupteurs du menu contextuel — `cwd`, `branch`,
+ * `agent` —, et c'est ce qui fait qu'un segment décoché emporte **son** séparateur : la
+ * ligne pose un trait entre deux groupes montrés, jamais autour d'un groupe absent.
+ */
+export interface StatusGroup {
+    readonly chips: readonly StatusChip[];
+    /** Le glyphe d'état, sur le seul groupe qui en porte un. */
+    readonly glyph: AgentState | null;
+}
+
+/**
+ * Les groupes que la ligne peint, une fois les segments décochés retirés (spec §4.2, vue 5c).
+ *
+ * Une fonction pure, et c'est elle qui porte la seule règle que le retrait pose : les traits
+ * tombent **entre** les groupes restants. Un `cwd` décoché ne doit pas laisser la ligne
+ * s'ouvrir sur un `│`, ni un état d'agent décoché la laisser finir sur un.
+ *
+ * Le **rappel** de sidebar repliée n'est pas un groupe : il n'est pas dans le menu de la
+ * maquette, et il ne dit rien de l'onglet — il dit qu'un agent attend derrière une colonne
+ * repliée, ce qu'aucun réglage ne doit pouvoir cacher.
+ */
+export function shownStatusGroups(
+    model: StatusLineModel,
+    segments: StatusBarSegments,
+): readonly StatusGroup[] {
+    const groups: StatusGroup[] = [];
+    if (segments.cwd) groups.push({ chips: [model.cwd], glyph: null });
+    if (segments.branch) groups.push({ chips: model.git, glyph: null });
+    if (segments.agent) {
+        groups.push({
+            chips: [{ text: model.agent.text, tone: model.agent.tone, title: null }],
+            glyph: model.agent.state,
+        });
+    }
+    return groups;
+}
+
 /**
  * Le rendu de la ligne. Il ne décide rien : il pose le modèle dans le DOM, comme la barre
  * d'onglets pose son `TabsState`.
@@ -365,7 +524,29 @@ export class StatusLine {
      */
     private readonly main: HTMLElement;
     /** Le groupe de droite : les deux quotas, la jauge de contexte et son libellé. */
-    private readonly usage = new UsageSegments();
+    private readonly usage = new UsageSegments(() => {
+        this.menu.close();
+    });
+    /**
+     * Le menu contextuel de la vue 5c — **le second panneau de la ligne**, et jamais ouvert
+     * en même temps que le popover d'usage : chacun referme l'autre en s'ouvrant.
+     */
+    private readonly menu: StatusBarMenu;
+    /**
+     * Ce que la ligne montre. Lu, jamais détenu : il vient de `features::theme`
+     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et les défauts posés
+     * ici ne servent qu'au premier battement.
+     */
+    private segments: StatusBarSegments = DEFAULT_STATUS_BAR_SEGMENTS;
+    /**
+     * Le dernier modèle peint — c'est lui que le menu relit pour ses aperçus.
+     *
+     * `null` avant le premier rendu : le menu montre alors sept lignes sans aperçu, ce qui
+     * ne se produit pas en pratique — la ligne se peint avant qu'on puisse la viser.
+     */
+    private lastModel: StatusLineModel | null = null;
+    /** Les quotas de la dernière annonce, pour les mêmes aperçus. */
+    private lastQuotas: readonly QuotaSegment[] = [];
     /**
      * Le morceau qui porte la branche, une fois peint — l'ancre de la popup.
      *
@@ -380,10 +561,27 @@ export class StatusLine {
      * de branches, et elle n'a aucune raison de la connaître. C'est le composition root qui
      * relie les deux, comme il relie déjà la sidebar aux onglets.
      */
-    constructor(private readonly onAction: (action: StatusAction) => void = () => undefined) {
+    constructor(
+        private readonly onAction: (action: StatusAction) => void = () => undefined,
+        onToggleSegment: (segment: StatusBarSegmentId) => void = () => undefined,
+    ) {
         this.element = document.createElement("div");
         this.element.className = "terminal-status";
         this.element.setAttribute("role", "status");
+
+        this.menu = new StatusBarMenu(
+            this.element,
+            () => visibilityRows(this.segments, this.lastModel, this.lastQuotas),
+            onToggleSegment,
+        );
+        // Le clic droit **n'importe où sur la ligne** ouvre le menu (spec §4.2) : la cible
+        // n'est pas interrogée, parce qu'il n'y a rien à viser — le menu parle de la ligne
+        // entière, pas du mot sous le pointeur.
+        this.element.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            this.usage.closePopover();
+            this.menu.toggle(event.clientX);
+        });
 
         this.main = document.createElement("div");
         this.main.className = "status-main";
@@ -405,11 +603,28 @@ export class StatusLine {
      * deux rythmes ont la même forme, seul leur déclencheur diffère.
      */
     showQuotas(quotas: readonly QuotaSegment[]): void {
+        this.lastQuotas = quotas;
         this.usage.showQuotas(quotas);
+        this.menu.refresh();
+    }
+
+    /**
+     * Ce que la ligne montre vient du backend — la lecture du démarrage, ou la réponse à une
+     * bascule du menu.
+     *
+     * Elle ne repeint pas : le battement de la seconde s'en charge au plus tard, et
+     * l'appelante redessine tout de suite. Ce qui est réappliqué ici, c'est la moitié droite,
+     * que rien d'autre ne renverra.
+     */
+    showSegments(segments: StatusBarSegments): void {
+        this.segments = segments;
+        this.usage.showSegments(segments);
+        this.menu.refresh();
     }
 
     render(model: StatusLineModel): void {
         this.anchorElement = null;
+        this.lastModel = model;
         const paint = (piece: StatusChip): HTMLElement => {
             if (piece.action === undefined) return chip(piece);
             const opener = actionChip(piece, piece.action, this.onAction);
@@ -417,17 +632,19 @@ export class StatusLine {
             return opener;
         };
 
-        const nodes: Node[] = [chip(model.cwd), rule(), ...joinChips(model.git, paint), rule()];
+        const nodes: Node[] = [];
+        for (const group of shownStatusGroups(model, this.segments)) {
+            if (nodes.length > 0) nodes.push(rule());
+            if (group.glyph !== null) nodes.push(agentGlyph(group.glyph));
+            nodes.push(...joinChips(group.chips, paint));
+        }
 
-        if (model.agent.state !== null) nodes.push(agentGlyph(model.agent.state));
-        nodes.push(
-            chip({ text: model.agent.text, tone: model.agent.tone, title: null }),
-            spacer(),
-        );
+        nodes.push(spacer());
         if (model.hint !== null) nodes.push(chip(model.hint));
 
         this.main.replaceChildren(...nodes);
         this.usage.showContext(model.context);
+        this.menu.refresh();
     }
 }
 

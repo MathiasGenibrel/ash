@@ -17,6 +17,7 @@ import type {
     WorktreeMetadata,
     WorktreeMetadataChanged,
 } from "@/shared/ipc";
+import type { StatusBarSegmentId, StatusBarSegments } from "./status-bar";
 
 /**
  * `TabId` et `TabInfo` sont le contrat partagé avec le backend, pas la propriété de cette
@@ -248,4 +249,21 @@ export interface UsageBridge {
      */
     snapshot(): Promise<AccountUsage>;
     onAccountUsage(handler: (usage: AccountUsage) => void): Promise<Unsubscribe>;
+}
+
+/**
+ * Ce que la ligne de statut montre — la quatrième frontière, et la seule qui écrive.
+ *
+ * Une lecture, une **bascule**, un event : le couple du thème, plus le geste. Ce qui part
+ * vers le backend est l'identifiant du segment, jamais son nouvel état — le menu montre ce
+ * que `features::theme` détient, et un menu qui renverrait le booléen qu'il a lu en
+ * s'ouvrant en deviendrait le second détenteur
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export interface StatusBarBridge {
+    /** Ce que la ligne montre, tel que la session précédente l'a laissé. */
+    segments(): Promise<StatusBarSegments>;
+    /** Coche ou décoche ce segment. Le résultat revient par [`onSegments`]. */
+    toggle(segment: StatusBarSegmentId): Promise<void>;
+    onSegments(handler: (segments: StatusBarSegments) => void): Promise<Unsubscribe>;
 }

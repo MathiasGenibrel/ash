@@ -6,6 +6,7 @@ import { AccountUsageBuilder, noAccountUsage } from "@/shared/ipc/builders";
 import type { SessionUsage } from "@/shared/ipc";
 import { findAll, plainText } from "@/shared/ui";
 
+import { DEFAULT_STATUS_BAR_SEGMENTS } from "./status-bar";
 import {
     composeContextGauge,
     composeQuotas,
@@ -244,12 +245,41 @@ describe("les deux quotas du compte", () => {
 
 describe("ce que la barre montre, et ce que le popover montre", () => {
     it("Given both quotas, when the status bar is filled, then only the session one is on it", () => {
-        // Given / When — le défaut de la maquette (vue 5c) : le weekly est masqué dans la
-        // barre. Les six interrupteurs qui le rallumeraient ne sont dans aucun ticket.
-        const bar = inStatusBar(quotas());
+        // Given / When — le défaut de la spec §4.2 : le weekly est masqué dans la barre, et
+        // le menu contextuel de la vue 5c est ce qui le rallume
+        const bar = inStatusBar(quotas(), DEFAULT_STATUS_BAR_SEGMENTS);
 
         // Then
         expect(bar.map((quota) => quota.kind)).toEqual(["session"]);
+    });
+
+    it("Given a weekly quota switched back on, when the status bar is filled, then both are on it", () => {
+        // Given — l'utilisateur a coché `weekly` dans le menu contextuel
+        const segments = { ...DEFAULT_STATUS_BAR_SEGMENTS, weekly: true };
+
+        // When
+        const bar = inStatusBar(quotas(), segments);
+
+        // Then
+        expect(bar.map((quota) => quota.kind)).toEqual(["session", "weekly"]);
+    });
+
+    it("Given a session quota switched off, when the popover is composed, then it is still there", () => {
+        // Given — le critère de la tâche, pris dans l'autre sens que le weekly : ce que la
+        // barre cache, le popover le montre. Sans ça, décocher un quota le rendrait
+        // introuvable
+        const segments = { ...DEFAULT_STATUS_BAR_SEGMENTS, session: false };
+
+        // When
+        const bar = inStatusBar(quotas(), segments);
+        const popover = composeUsagePopover(quotas()).build();
+
+        // Then
+        expect(bar).toEqual([]);
+        expect(findAll(popover, "status-usage-name").map(plainText)).toEqual([
+            "session",
+            "weekly",
+        ]);
     });
 
     it("Given a weekly quota hidden from the bar, when the popover is composed, then it shows up there with its own countdown", () => {

@@ -22,8 +22,10 @@ import { tauriLinks } from "./link-bridge";
 import { WorktreeMetadataStore } from "./metadata-store";
 import { tauriPty } from "./pty-bridge";
 import { StatusLine, composeStatusLine } from "./status-line";
+import { tauriStatusBar } from "./status-bar-bridge";
 import { composeQuotas } from "./usage";
 import { tauriUsage } from "./usage-bridge";
+import type { StatusBarSegments } from "./status-bar";
 import { activeTab, noTabs, type Step, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
@@ -217,9 +219,17 @@ export function mountTerminals(
     // (ADR-0012). Elle ne détient rien : le `cwd` vient de la sonde, l'état git de la
     // surveillance, l'état d'agent du backend.
     const branchListeners: (() => void)[] = [];
-    const status = new StatusLine(() => {
-        for (const listener of branchListeners) listener();
-    });
+    const status = new StatusLine(
+        () => {
+            for (const listener of branchListeners) listener();
+        },
+        // Le clic sur une ligne du menu contextuel part en **bascule** vers le backend, et
+        // rien n'est appliqué ici : ce qui revient par l'event est ce que la barre montrera
+        // (ADR-0009). Un échec se tait — l'affichage n'a alors simplement pas bougé.
+        (segment) => {
+            void tauriStatusBar.toggle(segment).catch(() => undefined);
+        },
+    );
     let shown: TabsState = noTabs;
     let sidebarCollapsed = false;
     /**
@@ -320,6 +330,22 @@ export function mountTerminals(
     };
     void tauriUsage.snapshot().then(takeAccountUsage, () => undefined);
     void tauriUsage.onAccountUsage(takeAccountUsage).catch(() => undefined);
+
+    /**
+     * Ce que la ligne de statut montre (spec §4.2, vue 5c).
+     *
+     * Le couple du thème, une troisième fois : on lit une fois en s'affichant, puis c'est
+     * l'event qui tient à jour. La lecture peut échouer — la ligne garde alors les défauts
+     * qu'elle s'est posés, weekly masqué et le reste visible, et rien ne le signale : un
+     * fichier de préférence n'est jamais une raison d'écrire une erreur dans une barre
+     * d'état.
+     */
+    const takeStatusBarSegments = (segments: StatusBarSegments): void => {
+        status.showSegments(segments);
+        drawStatus();
+    };
+    void tauriStatusBar.segments().then(takeStatusBarSegments, () => undefined);
+    void tauriStatusBar.onSegments(takeStatusBarSegments).catch(() => undefined);
 
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,

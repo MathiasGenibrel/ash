@@ -1,9 +1,22 @@
 import { describe, expect, it } from "bun:test";
 
-import { MergeTabBuilder, MetadataBuilder, TabBuilder } from "@/shared/ipc/builders";
+import {
+    AccountUsageBuilder,
+    MergeTabBuilder,
+    MetadataBuilder,
+    TabBuilder,
+} from "@/shared/ipc/builders";
 import type { Tab, WorktreeMetadata } from "@/shared/ipc";
-import { composeStatusLine, elide, type StatusLineModel } from "./status-line";
+import { DEFAULT_STATUS_BAR_SEGMENTS, type StatusBarSegments } from "./status-bar";
+import {
+    composeStatusLine,
+    elide,
+    shownStatusGroups,
+    visibilityRows,
+    type StatusLineModel,
+} from "./status-line";
 import type { TabsState } from "./tabs";
+import { composeQuotas } from "./usage";
 
 /**
  * Un onglet actif dans un worktree, et rien d'autre : le décor de la plupart des cas.
@@ -316,5 +329,128 @@ describe("la jauge de contexte de la ligne", () => {
         // Then
         expect(line.context).toBeNull();
         expect(line.agent.text).toBe("zsh · idle");
+    });
+});
+
+describe("ce que la ligne montre, et ce que le menu en dit", () => {
+    /** Le décor de la maquette : un agent qui travaille dans un worktree sale. */
+    function line(): StatusLineModel {
+        const tab = TabBuilder.create()
+            .running("claude")
+            .consuming(82_000, 200_000, "Opus 5 1M")
+            .inFlatWorktree("/dev/omelette-web")
+            .build();
+        const metadata = MetadataBuilder.create()
+            .onBranch("feat/agent-sidebar")
+            .withTree({ added: 3, modified: 1 })
+            .build();
+        return composeStatusLine({ tabs: [tab], activeTabId: tab.tabId }, metadata, false, 0);
+    }
+
+    function shownWords(segments: StatusBarSegments): string[] {
+        return shownStatusGroups(line(), segments).flatMap((group) =>
+            group.chips.map((chip) => chip.text),
+        );
+    }
+
+    it("Given every segment shown, when the groups are composed, then the line reads as it always has", () => {
+        // Given / When
+        const groups = shownStatusGroups(line(), DEFAULT_STATUS_BAR_SEGMENTS);
+
+        // Then — trois groupes, donc deux `│`, et le glyphe d'état sur le seul qui en porte un
+        expect(groups.map((group) => group.chips[0]?.text)).toEqual([
+            "/dev/omelette-web",
+            "feat/agent-sidebar",
+            "claude · working · 0s",
+        ]);
+        expect(groups.map((group) => group.glyph)).toEqual([null, null, "working"]);
+    });
+
+    it("Given a hidden cwd, when the groups are composed, then the line opens on the branch instead of on a separator", () => {
+        // Given — le trait tombe **entre** deux groupes montrés ; un `cwd` décoché qui
+        // laisserait le sien ferait s'ouvrir la ligne sur un `│` orphelin
+        const segments = { ...DEFAULT_STATUS_BAR_SEGMENTS, cwd: false };
+
+        // When
+        const groups = shownStatusGroups(line(), segments);
+
+        // Then
+        expect(groups.length).toBe(2);
+        expect(groups[0]?.chips[0]?.text).toBe("feat/agent-sidebar");
+    });
+
+    it("Given a hidden context bar, when the groups are composed, then what says where we are stays in place", () => {
+        // Given — le scénario de la tâche : décocher la jauge ne touche ni le `cwd`, ni la
+        // branche, ni l'état de l'agent. Les deux moitiés de la ligne sont indépendantes
+        const segments = { ...DEFAULT_STATUS_BAR_SEGMENTS, context: false };
+
+        // When / Then
+        expect(shownWords(segments)).toEqual(shownWords(DEFAULT_STATUS_BAR_SEGMENTS));
+    });
+
+    it("Given every segment hidden, when the groups are composed, then nothing is drawn rather than a row of separators", () => {
+        // Given — la légende de la vue 5c est formelle : chaque élément de la barre se coupe
+        const nothing: StatusBarSegments = {
+            session: false,
+            weekly: false,
+            context: false,
+            model: false,
+            agent: false,
+            branch: false,
+            cwd: false,
+        };
+
+        // When / Then
+        expect(shownStatusGroups(line(), nothing)).toEqual([]);
+    });
+
+    it("Given an open menu, when its rows are composed, then each preview is the value the bar shows right now", () => {
+        // Given — les aperçus ne sont pas des exemples figés : `63% · 2h14` est la vraie
+        // valeur du quota de session à l'instant où le menu s'ouvre
+        const quotas = composeQuotas(new AccountUsageBuilder().build(), 1_787_241_600_000);
+
+        // When
+        const rows = visibilityRows(DEFAULT_STATUS_BAR_SEGMENTS, line(), quotas);
+
+        // Then
+        expect(rows.map((row) => [row.name, row.preview])).toEqual([
+            ["session", "63% · 2h14"],
+            ["weekly", "28% · 2d 17h"],
+            ["context bar", "41%"],
+            ["model", "Opus 5 1M"],
+            ["agent state", "working"],
+            ["branch", "feat/agent-sidebar +3 ~1"],
+            ["cwd", "/dev/omelette-web"],
+        ]);
+        expect(rows.map((row) => row.shown)).toEqual([true, false, true, true, true, true, true]);
+    });
+
+    it("Given a tab whose tool says nothing, when the menu rows are composed, then the previews are empty instead of dashed", () => {
+        // Given — ni quota, ni jauge, ni modèle : trois absences qu'ADR-0016 interdit de
+        // maquiller. Un tiret dirait qu'on attend une valeur qui n'existe pas
+        const shell = TabBuilder.create().running("zsh", "idle").build();
+        const bare = composeStatusLine({ tabs: [shell], activeTabId: shell.tabId }, null, false, 0);
+
+        // When
+        const rows = visibilityRows(DEFAULT_STATUS_BAR_SEGMENTS, bare, []);
+
+        // Then
+        const previews = new Map(rows.map((row) => [row.id, row.preview]));
+        expect(previews.get("session")).toBe("");
+        expect(previews.get("weekly")).toBe("");
+        expect(previews.get("context")).toBe("");
+        expect(previews.get("model")).toBe("");
+        // Ce que la ligne montre quand même, elle, se lit dans le menu comme dans la barre.
+        expect(previews.get("branch")).toBe("no repo");
+        expect(previews.get("agent")).toBe("idle");
+    });
+
+    it("Given the seven segments, when the menu is composed, then the rule falls between the context bar and the agent state", () => {
+        // Given / When — l'ordre de la maquette, et son seul trait : d'un côté ce que la
+        // conversation consomme, de l'autre où l'on est et ce que l'agent fait
+        const rows = visibilityRows(DEFAULT_STATUS_BAR_SEGMENTS, line(), []);
+
+        // Then
+        expect(rows.filter((row) => row.separated).map((row) => row.id)).toEqual(["agent"]);
     });
 });
