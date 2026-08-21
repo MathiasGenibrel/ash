@@ -238,10 +238,33 @@ pub trait Adapter: Send + Sync {
     /// changé, un fichier encore vide. Ce n'est pas une erreur : l'onglet garde ce qu'il
     /// savait déjà.
     ///
-    /// **Un nombre, et pas un pourcentage ni une fenêtre.** Le transcript mesure le
+    /// **Un tour, et pas un pourcentage ni une fenêtre.** Le transcript mesure le
     /// numérateur, et rien d'autre : le dénominateur ne s'y trouve pas, et il a coûté un bug
     /// de faire semblant du contraire ([`Self::context_window`]).
-    fn read_used_tokens(&self, transcript_tail: &str) -> Option<u64>;
+    ///
+    /// **Les tokens et le modèle sortent ensemble parce qu'ils sont écrits ensemble.** Un
+    /// tour d'assistant porte son `usage` et son identifiant de modèle sur la même ligne :
+    /// deux méthodes feraient deux parcours de la queue, et laisseraient le nom d'un tour
+    /// rencontrer la mesure d'un autre.
+    fn read_turn(&self, transcript_tail: &str) -> Option<super::usage::Turn>;
+
+    /// Le **nom court** de ce modèle, tel qu'il s'écrit dans la barre — ou rien.
+    ///
+    /// La table des noms vit ici, à côté de celle des fenêtres ([`Self::context_window`]) et
+    /// pour la même raison : `claude-opus-5` est un mot de l'outil, que ni le cœur ni l'écran
+    /// n'ont à connaître. Un identifiant qu'on ne sait pas nommer rend `None`, et le segment
+    /// disparaît alors entièrement — jamais un tiret, jamais `unknown`. C'est la règle
+    /// d'[`Self::context_window`], appliquée à l'autre moitié de ce que l'identifiant dit.
+    ///
+    /// Deux entrées, parce qu'aucune ne suffit :
+    ///
+    /// - `ran` est l'identifiant que le **transcript** a écrit. C'est ce qui a réellement
+    ///   tourné, donc ce qui suit un `/model` changé en cours de session — au premier tour
+    ///   d'agent qui suit le changement.
+    /// - `configured` est celui que la **configuration** nomme, quand elle en nomme un. Elle
+    ///   seule porte le suffixe `[1m]` : le transcript écrit `claude-opus-5` qu'on tourne en
+    ///   200 k ou en 1 M, et sans elle il n'y aurait aucun moyen de distinguer les deux.
+    fn model_name(&self, ran: &str, configured: Option<&str>) -> Option<String>;
 
     /// Où cet outil peut nommer le modèle avec lequel il tourne, **du plus spécifique au
     /// moins spécifique**.

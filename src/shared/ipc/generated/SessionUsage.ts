@@ -31,4 +31,25 @@ usedTokens: number,
  * Le numérateur, lui, **reste** : il est exact, et l'effacer avec le dénominateur serait
  * perdre ce qu'Ash sait vraiment.
  */
-windowTokens: number | null, };
+windowTokens: number | null, 
+/**
+ * Le **nom court** du modèle qui a produit ce tour — `Opus 5`, `Opus 5 1M`.
+ *
+ * **Un nom, et pas un identifiant**, et c'est le seul champ du contrat qui traverse déjà
+ * mis en mots. La raison n'est pas la commodité de l'écran mais la propriété de la
+ * connaissance : `claude-opus-5` ne veut rien dire pour le cœur, et encore moins pour le
+ * frontend — c'est un mot de Claude Code, que seul son adaptateur sait traduire, à côté
+ * de la table qui traduit le même mot en fenêtre ([`Adapter::model_name`]). Faire
+ * traverser l'identifiant brut poserait la table dans le TypeScript, donc deux endroits
+ * qui devraient reconnaître les mêmes identifiants, et deux façons de se tromper le jour
+ * où un modèle change de nom.
+ *
+ * Ce n'est pas une **mise en forme** pour autant, et c'est ce qui le distingue du
+ * pourcentage qu'on a refusé de porter ici : l'écran ne peut rien recalculer d'un nom, il
+ * n'y a rien à en dériver, et aucune maquette future n'en voudra une autre écriture.
+ *
+ * `None` quand aucune source ne nomme de modèle, et quand le modèle nommé n'est reconnu
+ * par personne. Les deux effacent le segment entièrement — ni tiret, ni `unknown`, ni
+ * dernière valeur connue —, exactement comme une fenêtre inconnue efface la barre.
+ */
+model: string | null, };

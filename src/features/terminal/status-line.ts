@@ -41,10 +41,10 @@ import {
  * dans l'état, une fois, en absolu, et l'écart jusqu'à maintenant est un fait d'affichage.
  * C'est ce qui laisse la fiche d'un onglet identique d'une passe de sonde à l'autre.
  *
- * **La droite de la ligne appartient à `usage.ts`** : la jauge de contexte de l'onglet, et
- * les deux quotas du compte. Le modèle ci-dessous ne porte que la première — la seconde bat à
- * un autre rythme, et la frontière entre les deux est un `<div class="status-main">` que
- * `render` est seul à vider.
+ * **La droite de la ligne appartient à `usage.ts`** : la jauge de contexte de l'onglet, son
+ * libellé, le modèle qui la consomme, et les deux quotas du compte. Le modèle ci-dessous ne
+ * porte que ce qui bat au rythme de l'onglet — les quotas battent à un autre, et la frontière
+ * entre les deux est un `<div class="status-main">` que `render` est seul à vider.
  */
 
 /**
@@ -108,8 +108,8 @@ export interface StatusLineModel {
     /** Le rappel de la sidebar repliée. `null` quand il n'y a rien à rappeler. */
     readonly hint: StatusChip | null;
     /**
-     * La place que la conversation de l'onglet actif occupe dans sa fenêtre — `null` quand
-     * il n'y a rien à montrer.
+     * La place que la conversation de l'onglet actif occupe dans sa fenêtre, et le **modèle**
+     * qui la consomme — `null` quand il n'y a rien à montrer.
      *
      * Elle est **dans ce modèle** parce qu'elle bat au rythme de l'onglet : elle arrive avec
      * sa fiche, et change quand on en change. Les deux quotas du **compte**, eux, n'y sont

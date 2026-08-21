@@ -120,10 +120,17 @@ export interface RecognizedAgent {
  * Ce champ portait auparavant une **supposition** — 200 000, quel que soit le modèle —, et
  * elle mentait d'un facteur cinq sur une session d'un million : `ctx 28%` là où `/context`
  * lisait 6 %. `usedTokens`, lui, a toujours été exact, et le reste.
+ *
+ * `model` est le **nom court** de ce qui a tourné — `Opus 5`, `Opus 5 1M` —, et c'est le seul
+ * champ du contrat qui traverse déjà mis en mots. Ce n'est pas une mise en forme : traduire
+ * `claude-opus-5` demande la table de Claude Code, qui vit dans son adaptateur à côté de celle
+ * des fenêtres, et la poser ici en ferait une seconde — donc deux endroits qui devraient
+ * reconnaître les mêmes identifiants. `null` efface le segment entièrement, jamais un tiret.
  */
 export interface SessionUsage {
     usedTokens: number;
     windowTokens: number | null;
+    model: string | null;
 }
 
 /**
