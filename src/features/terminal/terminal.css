@@ -83,12 +83,34 @@
      * `@container` plus bas. */
     container-type: inline-size;
     container-name: statusline;
+    /* Le repère du trait de maintien (vue 5e), et rien d'autre : les trois panneaux de la
+     * ligne — popover d'usage, menu contextuel, tiroir d'édition — sont posés dans le `body`
+     * et se calent sur la fenêtre, parce que celle-ci coupe ce qui la dépasse. */
+    position: relative;
 }
 
-/* Le `flex: 1` de la maquette : c'est lui qui pousse le rappel tout à droite, et c'est
- * aussi lui qui donne à l'opération en cours la place que la maquette n'avait pas prévue. */
+/* L'élastique de la vue 5e — le `flex: 1` de la maquette : c'est lui qui pousse l'usage à
+ * droite, et c'est aussi lui qui donne à l'opération en cours la place que la maquette
+ * n'avait pas prévue.
+ *
+ * Il n'y en avait qu'un, posé par le rendu ; il y en a maintenant autant que l'utilisateur en
+ * pose, et chacun vient de la disposition. **Hors édition, c'est un espace** : ni bordure, ni
+ * libellé, ni `×`. Sa mise en pastille est plus bas, sous `[data-edit]`. */
 .terminal-status .status-spacer {
     flex: 1;
+    min-width: 0;
+}
+
+/* Un segment de la moitié gauche : le `cwd`, la branche, l'état de l'agent.
+ *
+ * Une enveloppe, et c'est ce qui a changé en #165 : elle porte le `order` du `flex`, donc la
+ * place que la disposition donne au segment. Ses morceaux — la branche, l'opération en cours,
+ * les compteurs — restent séparés d'un blanc, comme avant, mais par un `gap` : une espace
+ * écrite entre deux éléments d'un `flex` n'est pas rendue. */
+.terminal-status .status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
 }
 
@@ -127,10 +149,10 @@
     color: var(--ash-rule);
 }
 
-/* Le glyphe d'état n'a pas les 14 px de gap qui séparent les segments : il appartient au
- * mot qui le suit. */
+/* Le glyphe d'état appartient au mot qui le suit : il vit dans l'enveloppe du segment, donc
+ * il a déjà le `gap` de 6 px et non les 14 px qui séparent deux segments. */
 .terminal-status .ash-glyph {
-    margin-right: -8px;
+    margin-right: 0;
 }
 
 /* `display: contents` : le groupe ne dessine rien, ses enfants restent les éléments du
@@ -148,10 +170,17 @@
  * Quatre morceaux dans l'ordre de la maquette — session, weekly, jauge, libellé —, chacun
  * masqué quand sa donnée n'existe pas. `[hidden]` est réaffirmé parce qu'une pastille est un
  * `inline-flex` : sans cette règle, l'attribut ne masquerait rien. */
+/* `display: contents` comme `.status-main`, et depuis #165 : ses quatre morceaux doivent
+ * pouvoir se **placer** dans la ligne, chacun pour son compte, et un `order` ne vaut que
+ * pour les enfants directs du `flex`. Le groupe n'était de toute façon là que pour deux
+ * choses — se replier d'un bloc, et porter le palier de contexte —, et les deux marchent
+ * toujours : `[hidden]` masque ses enfants, et un attribut se lit à travers un `contents`.
+ *
+ * Le prix est le `gap` : les quatre morceaux étaient à 10 px les uns des autres, ils sont
+ * maintenant à 14 px comme tout le reste de la ligne. Deux écarts n'avaient plus de sens dès
+ * lors qu'un `cwd` peut se poser entre deux pastilles de quota. */
 .terminal-status .status-usage {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    display: contents;
     /* Les chiffres ne doivent pas faire danser la ligne en changeant. La ligne entière la
      * porte déjà ; le groupe la redit parce que le popover, lui, est posé dans le `body`. */
     font-variant-numeric: tabular-nums;
@@ -254,6 +283,220 @@
  * `features::theme::StatusBarSegments` — pas ici : le popover le montre quand même, une règle
  * CSS ne saurait pas faire la différence entre les deux endroits, et surtout ce masquage-là
  * se règle (menu contextuel de la vue 5c) alors qu'une feuille de style ne se règle pas. */
+
+/* --- le mode édition de la barre (vue 5e) -----------------------------------
+ *
+ * Un clic gauche maintenu 430 ms fait passer la ligne en édition : ses éléments deviennent
+ * des pastilles qu'on glisse, un `×` les jette, et un tiroir rend ce qui a été retiré.
+ *
+ * Les mesures sont celles de la maquette. Ce qui n'en vient pas est dit à l'endroit
+ * concerné. */
+
+/* Le trait du maintien : 2 px sur le bord **haut** de la barre, en `--ash-working`, de 0 à
+ * 100 % en 420 ms. Il file pendant l'appui et disparaît au relâchement — c'est ce qui rend le
+ * geste visible avant qu'il aboutisse, et ce qui fait qu'un clic ordinaire ne montre qu'un
+ * éclair de quelques pixels.
+ *
+ * `position: absolute` sur une ligne devenue `position: relative` pour l'occasion : c'est la
+ * seule façon de le coller au bord haut de la barre sans réécrire ailleurs sa hauteur de
+ * 25 px. Hors du flux, il ne compte donc pas pour un `gap` — et la ligne reste celle d'avant,
+ * au pixel. */
+.terminal-status .status-hold {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 2px;
+    background: var(--ash-working);
+    pointer-events: none;
+}
+
+.terminal-status .status-hold.is-running {
+    width: 100%;
+    transition: width 420ms linear;
+}
+
+/* En édition, la ligne ne montre plus ni ses valeurs ni ses quotas : elle montre ses
+ * **éléments**. C'est aussi ce qui fait tenir « en édition, rien n'agit » sans une seule
+ * condition dans le code — l'ancre de branche et les pastilles de quota ne sont pas dans le
+ * document, donc rien ne peut les cliquer. */
+.terminal-status[data-edit] .status-main,
+.terminal-status[data-edit] .status-usage {
+    display: none;
+}
+
+.terminal-status .status-editor {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.terminal-status .status-editor[hidden] {
+    display: none;
+}
+
+/* Une pastille : bordure pointillée 1 px, fond légèrement relevé, rayon 4 px, `grab`. */
+.terminal-status .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 4px 1px 6px;
+    border: 1px dashed var(--ash-border);
+    border-radius: 4px;
+    background: var(--ash-bg-card);
+    color: var(--ash-fg-meta);
+    cursor: grab;
+    /* Sans ça, glisser une pastille sélectionnerait son libellé et laisserait une traînée
+     * bleue derrière le doigt. La sélection de texte de la barre **au repos**, elle, n'est
+     * pas touchée : cette règle ne vaut que sur les pastilles, qui n'existent qu'en
+     * édition. */
+    user-select: none;
+    animation: status-pill-shiver 0.42s ease-in-out infinite;
+}
+
+/* Le frémissement de la maquette — ±0,7° et ±0,3 px —, décalé de 60 ms de trois en trois
+ * pour que les voisines ne battent pas ensemble. Le rang est posé par le rendu et non par un
+ * `nth-child` : le tiroir ajoute des pastilles juste à côté, et le compte du DOM ne serait
+ * pas celui de la barre. */
+@keyframes status-pill-shiver {
+    0%,
+    100% {
+        transform: rotate(-0.7deg) translateY(-0.3px);
+    }
+    50% {
+        transform: rotate(0.7deg) translateY(0.3px);
+    }
+}
+
+.terminal-status .status-pill[data-beat="1"] {
+    animation-delay: 60ms;
+}
+
+.terminal-status .status-pill[data-beat="2"] {
+    animation-delay: 120ms;
+}
+
+/* La pastille qu'on tient tombe à 35 % : c'est elle qu'on déplace, et le reste de la ligne
+ * montre déjà où elle atterrira. */
+.terminal-status .status-pill.is-dragging {
+    opacity: 0.35;
+    cursor: grabbing;
+}
+
+/* L'élastique, devenu un objet : largeur minimale 44 px, hauteur 17 px, un fond bleuté très
+ * pâle, et son libellé en 9 px. Il se manipule exactement comme les autres. */
+.terminal-status .status-pill.is-spacer {
+    flex: 1;
+    min-width: 44px;
+    height: 17px;
+    justify-content: center;
+    background: color-mix(in srgb, var(--ash-working) 12%, transparent);
+    font-size: 9px;
+}
+
+.terminal-status .status-pill-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Le `×` : rond de 12 px, gris plein, `--ash-accent` au survol — c'est un geste qui retire,
+ * et l'accent est la couleur de ce qui demande une décision. */
+.terminal-status .status-pill-drop {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: var(--ash-rule);
+    color: var(--ash-bg-status);
+    font: inherit;
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.terminal-status .status-pill-drop:hover {
+    background: var(--ash-accent);
+}
+
+/* `terminé`, à droite de la barre — l'une des trois sorties, avec `Échap` et le clic
+ * ailleurs. */
+.terminal-status .status-editor-done {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--ash-working);
+    font: inherit;
+    cursor: pointer;
+}
+
+/* Le tiroir, sur toute la largeur de la barre.
+ *
+ * **Au-dessus d'elle, et non dessous** : la maquette le pose sous la barre, mais dans Ash la
+ * ligne de statut est la dernière rangée de la fenêtre et « dessous » est hors de l'écran. Il
+ * prend donc la place qu'occupent déjà le popover d'usage et le menu contextuel — et pour la
+ * même raison qu'eux : la ligne coupe ce qui la dépasse, donc rien d'ancré à elle ne peut
+ * vivre dedans. */
+.status-drawer-panel {
+    position: fixed;
+    z-index: 40;
+    background: var(--ash-bg-card);
+    border: 1px solid var(--ash-border);
+    border-radius: 4px 4px 0 0;
+    box-shadow: 0 -4px 14px rgb(0 0 0 / 22%);
+    font-size: 10.5px;
+    color: var(--ash-fg-meta);
+}
+
+.status-drawer-panel .status-drawer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    flex-wrap: wrap;
+}
+
+.status-drawer-panel .status-drawer-hint {
+    color: var(--ash-fg-dim);
+    margin-right: auto;
+}
+
+.status-drawer-panel .status-drawer-pill,
+.status-drawer-panel .status-drawer-spacer,
+.status-drawer-panel .status-drawer-reset {
+    padding: 1px 6px;
+    border: 1px dashed var(--ash-border);
+    border-radius: 4px;
+    background: var(--ash-bg-status);
+    color: var(--ash-fg-meta);
+    font: inherit;
+    cursor: pointer;
+}
+
+.status-drawer-panel .status-drawer-pill:hover,
+.status-drawer-panel .status-drawer-spacer:hover {
+    border-color: var(--ash-working);
+    color: var(--ash-fg);
+}
+
+/* Le retour aux défauts n'est pas dans la maquette : il est là parce qu'une barre vidée de
+ * tout doit rester récupérable, et c'est le seul endroit qui existe encore quand elle l'est.
+ * Le `reset all` des raccourcis, appliqué à la ligne (spec §4.4) — donc discret, et non un
+ * bouton d'alerte. */
+.status-drawer-panel .status-drawer-reset {
+    border-style: solid;
+    color: var(--ash-fg-dim);
+}
+
+.status-drawer-panel .status-drawer-reset:hover {
+    color: var(--ash-fg);
+}
 
 /* --- ce qui se retire quand la fenêtre rétrécit -----------------------------
  *

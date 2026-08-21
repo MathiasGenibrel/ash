@@ -10,5 +10,7 @@
  * pour se lire — `session`, `weekly`, `context`, `model`, puis — après le trait — `agent`,
  * `branch`, `cwd`. Les quatre premiers parlent de ce que la conversation consomme, les
  * trois derniers d'où l'on est et de ce que l'agent fait.
+ *
+ * **Ce n'est pas l'ordre de la barre** : celui-là est [`FULL_ORDER`], et il se règle.
  */
 export type StatusBarSegment = "session" | "weekly" | "context" | "model" | "agent" | "branch" | "cwd";

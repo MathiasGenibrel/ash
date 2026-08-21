@@ -7,14 +7,8 @@ import {
     TabBuilder,
 } from "@/shared/ipc/builders";
 import type { Tab, WorktreeMetadata } from "@/shared/ipc";
-import { DEFAULT_STATUS_BAR_SEGMENTS, type StatusBarSegments } from "./status-bar";
-import {
-    composeStatusLine,
-    elide,
-    shownStatusGroups,
-    visibilityRows,
-    type StatusLineModel,
-} from "./status-line";
+import { DEFAULT_STATUS_BAR_SEGMENTS } from "./status-bar";
+import { composeStatusLine, elide, visibilityRows, type StatusLineModel } from "./status-line";
 import type { TabsState } from "./tabs";
 import { composeQuotas } from "./usage";
 
@@ -346,63 +340,6 @@ describe("ce que la ligne montre, et ce que le menu en dit", () => {
             .build();
         return composeStatusLine({ tabs: [tab], activeTabId: tab.tabId }, metadata, false, 0);
     }
-
-    function shownWords(segments: StatusBarSegments): string[] {
-        return shownStatusGroups(line(), segments).flatMap((group) =>
-            group.chips.map((chip) => chip.text),
-        );
-    }
-
-    it("Given every segment shown, when the groups are composed, then the line reads as it always has", () => {
-        // Given / When
-        const groups = shownStatusGroups(line(), DEFAULT_STATUS_BAR_SEGMENTS);
-
-        // Then — trois groupes, donc deux `│`, et le glyphe d'état sur le seul qui en porte un
-        expect(groups.map((group) => group.chips[0]?.text)).toEqual([
-            "/dev/omelette-web",
-            "feat/agent-sidebar",
-            "claude · working · 0s",
-        ]);
-        expect(groups.map((group) => group.glyph)).toEqual([null, null, "working"]);
-    });
-
-    it("Given a hidden cwd, when the groups are composed, then the line opens on the branch instead of on a separator", () => {
-        // Given — le trait tombe **entre** deux groupes montrés ; un `cwd` décoché qui
-        // laisserait le sien ferait s'ouvrir la ligne sur un `│` orphelin
-        const segments = { ...DEFAULT_STATUS_BAR_SEGMENTS, cwd: false };
-
-        // When
-        const groups = shownStatusGroups(line(), segments);
-
-        // Then
-        expect(groups.length).toBe(2);
-        expect(groups[0]?.chips[0]?.text).toBe("feat/agent-sidebar");
-    });
-
-    it("Given a hidden context bar, when the groups are composed, then what says where we are stays in place", () => {
-        // Given — le scénario de la tâche : décocher la jauge ne touche ni le `cwd`, ni la
-        // branche, ni l'état de l'agent. Les deux moitiés de la ligne sont indépendantes
-        const segments = { ...DEFAULT_STATUS_BAR_SEGMENTS, context: false };
-
-        // When / Then
-        expect(shownWords(segments)).toEqual(shownWords(DEFAULT_STATUS_BAR_SEGMENTS));
-    });
-
-    it("Given every segment hidden, when the groups are composed, then nothing is drawn rather than a row of separators", () => {
-        // Given — la légende de la vue 5c est formelle : chaque élément de la barre se coupe
-        const nothing: StatusBarSegments = {
-            session: false,
-            weekly: false,
-            context: false,
-            model: false,
-            agent: false,
-            branch: false,
-            cwd: false,
-        };
-
-        // When / Then
-        expect(shownStatusGroups(line(), nothing)).toEqual([]);
-    });
 
     it("Given an open menu, when its rows are composed, then each preview is the value the bar shows right now", () => {
         // Given — les aperçus ne sont pas des exemples figés : `63% · 2h14` est la vraie

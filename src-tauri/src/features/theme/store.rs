@@ -80,7 +80,7 @@ mod tests {
     use super::super::font_size::{FontSize, FontStep};
     use super::super::mode::ThemeMode;
     use super::super::sidebar_column::{SidebarColumn, SidebarWidth};
-    use super::super::status_bar::{StatusBarSegment, StatusBarSegments};
+    use super::super::status_bar::{StatusBarLayout, StatusBarSegment};
 
     /// L'apparence complète, telle qu'une session l'aurait réglée de bout en bout.
     fn all_seven_chosen() -> Appearance {
@@ -98,7 +98,7 @@ mod tests {
                 open: true,
                 view: PanelView::Worktrees,
             },
-            status_bar: StatusBarSegments::default().toggled(StatusBarSegment::Cwd),
+            status_bar: StatusBarLayout::default().toggled(StatusBarSegment::Cwd),
         }
     }
 
@@ -138,7 +138,7 @@ mod tests {
                 open: false,
                 view: PanelView::Graph,
             },
-            status_bar: StatusBarSegments::default(),
+            status_bar: StatusBarLayout::default(),
         };
 
         // When
@@ -216,6 +216,33 @@ mod tests {
     }
 
     #[test]
+    fn given_a_preference_file_whose_status_bar_is_unreadable_when_it_is_read_then_only_the_bar_is_lost(
+    ) {
+        // Given — la seule clé du fichier qui accepte n'importe quoi plutôt que d'échouer
+        // (`StatusBarLayout::Stored::Unreadable`). Le filet n'a d'intérêt que par ce qu'il
+        // **épargne**, et c'est cela qu'aucun test ne disait : la barre est un champ parmi
+        // sept, et une barre incompréhensible ne doit coûter ni le thème, ni la police, ni la
+        // colonne qui l'entourent.
+        let bar_from_elsewhere = "{\"mode\":\"dark\",\"font_size\":15,\"status_bar\":\"tout\"}";
+
+        // When
+        let read = decode(bar_from_elsewhere);
+
+        // Then — la barre repart des défauts, et **rien d'autre** ne bouge
+        assert_eq!(
+            read,
+            Some(Appearance {
+                mode: ThemeMode::Dark,
+                font_size: FontSize::DEFAULT
+                    .stepped(FontStep::Bigger)
+                    .stepped(FontStep::Bigger),
+                status_bar: StatusBarLayout::default(),
+                ..Appearance::default()
+            })
+        );
+    }
+
+    #[test]
     fn given_a_preference_file_that_says_nothing_understandable_when_it_is_read_then_ash_falls_back_to_the_system(
     ) {
         // Given — un fichier tronqué par une coupure, vidé, ou édité à la main
@@ -245,7 +272,7 @@ mod tests {
                 collapsed: true,
             },
             panel: BottomPanel::default(),
-            status_bar: StatusBarSegments::default(),
+            status_bar: StatusBarLayout::default(),
         };
 
         // When

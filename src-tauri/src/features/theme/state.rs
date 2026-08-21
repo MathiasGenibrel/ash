@@ -7,7 +7,7 @@ use super::font::TerminalFont;
 use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::sidebar_column::{SidebarColumn, SidebarWidth};
-use super::status_bar::{StatusBarSegment, StatusBarSegments};
+use super::status_bar::{StatusBarItem, StatusBarLayout, StatusBarSegment};
 use super::store::ThemeStore;
 
 /// L'apparence courante de la fenêtre — **la** source de vérité.
@@ -184,19 +184,49 @@ impl ThemeState {
             .is_some()
     }
 
-    /// Ce que la ligne de statut montre (spec §4.2, vue 5c).
-    pub fn status_bar(&self) -> StatusBarSegments {
-        self.locked().status_bar
+    /// Ce que la ligne de statut montre, et dans quel ordre (spec §4.2, vues 5c et 5e).
+    pub fn status_bar(&self) -> StatusBarLayout {
+        self.locked().status_bar.clone()
     }
 
-    /// Coche ou décoche un segment de la ligne de statut, et rend ce qu'elle montre alors.
+    /// Coche ou décoche un segment de la ligne de statut, et rend la barre qui en résulte.
     ///
     /// La bascule est calculée **ici, sous le verrou**, et non par le menu à partir d'un
     /// état qu'il aurait lu en s'ouvrant : c'est la conduite de `toggle_sidebar_collapsed`,
-    /// et pour la même raison — deux gestes rapprochés ne peuvent pas se répondre le même
-    /// booléen. Rend toujours une valeur : une bascule change toujours quelque chose.
-    pub fn toggle_status_bar_segment(&self, segment: StatusBarSegment) -> StatusBarSegments {
+    /// et pour la même raison — deux gestes rapprochés ne peuvent pas se répondre la même
+    /// barre. Rend toujours une valeur : une bascule change toujours quelque chose.
+    pub fn toggle_status_bar_segment(&self, segment: StatusBarSegment) -> StatusBarLayout {
         self.change(|appearance| appearance.status_bar = appearance.status_bar.toggled(segment))
+            .map_or_else(|| self.status_bar(), |appearance| appearance.status_bar)
+    }
+
+    /// La disposition que le mode édition vient de composer — un glissement relâché, un
+    /// spacer posé, un spacer jeté.
+    ///
+    /// C'est la webview qui **propose** la suite, et le backend qui la retient : le chemin
+    /// de `set_bottom_panel_height`, et pour la même raison. Réordonner est de la
+    /// manipulation directe, elle se mesure en pixels sous le pointeur, et faire un
+    /// aller-retour Tauri par `dragenter` rendrait le glissement saccadé sans rien garantir
+    /// de plus. Ce qui **survit** à la fermeture reste ici
+    /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et ce qui arrive
+    /// est ramené à ses invariants par [`StatusBarLayout::normalized`] — la webview propose,
+    /// elle ne dicte pas.
+    ///
+    /// Rend `None` quand un glissement se termine là où il a commencé : rien à annoncer, et
+    /// rien à écrire sur le disque.
+    pub fn set_status_bar_layout(&self, items: Vec<StatusBarItem>) -> Option<StatusBarLayout> {
+        let proposed = StatusBarLayout::normalized(items);
+        self.change(|appearance| appearance.status_bar = proposed)
+            .map(|appearance| appearance.status_bar)
+    }
+
+    /// La barre par défaut — le `reset all` des raccourcis (spec §4.4), appliqué à la ligne
+    /// de statut.
+    ///
+    /// C'est ce qui rend une barre vidée récupérable : le tiroir du mode édition l'offre, et
+    /// il s'ouvre même quand il n'y a plus rien à quoi le geste puisse s'accrocher.
+    pub fn reset_status_bar_layout(&self) -> StatusBarLayout {
+        self.change(|appearance| appearance.status_bar = StatusBarLayout::reset())
             .map_or_else(|| self.status_bar(), |appearance| appearance.status_bar)
     }
 

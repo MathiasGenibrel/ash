@@ -4,7 +4,7 @@ use super::font::TerminalFont;
 use super::font_size::FontSize;
 use super::mode::ThemeMode;
 use super::sidebar_column::SidebarColumn;
-use super::status_bar::StatusBarSegments;
+use super::status_bar::StatusBarLayout;
 
 /// Les préférences d'apparence de la fenêtre, ensemble.
 ///
@@ -63,7 +63,8 @@ pub struct Appearance {
     /// **sans ouvrir un panneau que personne n'a demandé**.
     #[serde(default)]
     pub panel: BottomPanel,
-    /// Ce que la ligne de statut montre — les sept interrupteurs de la vue 5c (spec §4.2).
+    /// Ce que la ligne de statut montre, **et dans quel ordre** — les sept interrupteurs de
+    /// la vue 5c et le mode édition de la vue 5e (spec §4.2).
     ///
     /// Septième préférence du même fichier, et la seule qui ne décide ni d'une couleur ni
     /// d'une place : elle décide d'un **contenu**. Elle est ici quand même, et pour les
@@ -71,6 +72,12 @@ pub struct Appearance {
     /// d'apparence de la fenêtre, elle survit à la fermeture, et elle se relit au même
     /// moment que les six autres. `#[serde(default)]` pour qu'un fichier écrit avant que le
     /// menu existe se relise sur les défauts de la spec, et **sans vider la ligne**.
+    ///
+    /// **La clé n'a pas changé de nom en changeant de forme**, et c'est ce qui permet à
+    /// [`StatusBarLayout`] de relire les deux : `status_bar` porte aujourd'hui un tableau de
+    /// mots, portait hier un objet de sept booléens, et les deux se lisent. Renommer la clé
+    /// aurait été plus propre et aurait silencieusement rendu les défauts à tous ceux qui
+    /// avaient décoché quelque chose.
     #[serde(default)]
-    pub status_bar: StatusBarSegments,
+    pub status_bar: StatusBarLayout,
 }
