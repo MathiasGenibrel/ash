@@ -4,6 +4,7 @@ use super::font::TerminalFont;
 use super::font_size::FontSize;
 use super::mode::ThemeMode;
 use super::sidebar_column::SidebarColumn;
+use super::status_bar::StatusBarSegments;
 
 /// Les préférences d'apparence de la fenêtre, ensemble.
 ///
@@ -62,4 +63,14 @@ pub struct Appearance {
     /// **sans ouvrir un panneau que personne n'a demandé**.
     #[serde(default)]
     pub panel: BottomPanel,
+    /// Ce que la ligne de statut montre — les sept interrupteurs de la vue 5c (spec §4.2).
+    ///
+    /// Septième préférence du même fichier, et la seule qui ne décide ni d'une couleur ni
+    /// d'une place : elle décide d'un **contenu**. Elle est ici quand même, et pour les
+    /// raisons qui ont déjà rangé le panneau bas à cette adresse — c'est une préférence
+    /// d'apparence de la fenêtre, elle survit à la fermeture, et elle se relit au même
+    /// moment que les six autres. `#[serde(default)]` pour qu'un fichier écrit avant que le
+    /// menu existe se relise sur les défauts de la spec, et **sans vider la ligne**.
+    #[serde(default)]
+    pub status_bar: StatusBarSegments,
 }

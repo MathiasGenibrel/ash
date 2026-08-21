@@ -250,9 +250,10 @@
     color: var(--ash-fg-dim);
 }
 
-/* Le weekly est masqué par défaut dans la barre (vue 5c). Il l'est **en TypeScript**, par
- * `SHOWN_IN_STATUS_BAR` — pas ici : le popover le montre quand même, et une règle CSS ne
- * saurait pas faire la différence entre les deux endroits. */
+/* Le weekly est masqué par défaut dans la barre (vue 5c). Il l'est **en Rust**, dans
+ * `features::theme::StatusBarSegments` — pas ici : le popover le montre quand même, une règle
+ * CSS ne saurait pas faire la différence entre les deux endroits, et surtout ce masquage-là
+ * se règle (menu contextuel de la vue 5c) alors qu'une feuille de style ne se règle pas. */
 
 /* --- ce qui se retire quand la fenêtre rétrécit -----------------------------
  *
@@ -261,8 +262,11 @@
  *
  * L'ordre est explicite, et c'est un critère : le **modèle** part le premier, les quotas
  * ensuite, la jauge et son libellé en dernier. Le `cwd`, la branche et l'état de l'agent ne
- * sont visés par aucune de ces règles — ils survivent, et c'est le seul contenu de la ligne
- * qui ne se discute pas.
+ * sont visés par aucune de ces règles — ils survivent au resserrement, et c'est le seul
+ * contenu de la ligne qui ne se discute pas **ici**. Ils se coupent quand même, mais à la
+ * main : le menu contextuel de la vue 5c les décoche comme les autres. Les deux règles ne se
+ * connaissent pas — l'une dit ce qui tient dans la place restante, l'autre ce que
+ * l'utilisateur veut lire.
  *
  * Le modèle passe avant les quotas parce qu'il est le seul des trois à ne pas changer : il
  * dit de quoi le pourcentage voisin est le pourcentage, et cette lecture se fait une fois.
@@ -561,4 +565,82 @@
 .ash-confirm-actions button.is-danger:hover {
     background: color-mix(in srgb, var(--ash-error) 82%, var(--ash-fg));
     border-color: color-mix(in srgb, var(--ash-error) 82%, var(--ash-fg));
+}
+
+/* --- le menu « show in the status bar » (vue 5c) -----------------------------
+ *
+ * Posé dans le `body` et ancré au-dessus de la ligne, exactement pour la raison qui y a déjà
+ * mis le popover d'usage : la ligne coupe ce qui la dépasse. */
+.status-bar-menu {
+    position: fixed;
+    z-index: 40;
+    width: 206px;
+}
+
+.status-menu-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    background: var(--ash-bg-card);
+    border: 1px solid var(--ash-border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+    font-size: 11px;
+    color: var(--ash-fg);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-menu-title {
+    padding: 2px 6px 6px;
+    color: var(--ash-fg-faint);
+}
+
+/* Les trois colonnes de la maquette : la coche, le nom, l'aperçu. La première garde sa
+ * largeur même vide — sans quoi le nom d'un élément décoché glisserait vers la gauche, et la
+ * liste se désaligne à mesure qu'on décoche. */
+.status-menu-line {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    align-items: baseline;
+    gap: 6px;
+    margin: 0;
+    padding: 3px 6px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--ash-fg);
+    font: inherit;
+    text-align: left;
+    cursor: default;
+}
+
+.status-menu-line:hover {
+    background: var(--ash-bg-selected);
+}
+
+.status-menu-check {
+    color: var(--ash-working);
+}
+
+/* Un élément masqué perd sa coche et passe en gris — il **reste dans la liste**, parce que
+ * c'est le seul endroit d'où on peut le rallumer. */
+.status-menu-line.is-hidden .status-menu-name {
+    color: var(--ash-fg-faint);
+}
+
+/* L'aperçu est la valeur, pas l'information : il s'efface derrière le nom, comme le décompte
+ * s'efface derrière le pourcentage dans une pastille. */
+.status-menu-preview {
+    max-width: 96px;
+    overflow: hidden;
+    color: var(--ash-fg-dim);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.status-menu-rule {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--ash-border);
 }

@@ -1,5 +1,6 @@
 import { badge, column, paint, row, text, type UiComponent } from "@/shared/ui";
 import type { AccountUsage, Quota, SessionUsage } from "@/shared/ipc";
+import { DEFAULT_STATUS_BAR_SEGMENTS, type StatusBarSegments } from "./status-bar";
 
 /**
  * L'usage, à droite de la ligne de statut (spec §4.2, vues 5 et 5b de la maquette).
@@ -29,12 +30,14 @@ import type { AccountUsage, Quota, SessionUsage } from "@/shared/ipc";
  *
  * ## Ce que cette tranche ne porte pas
  *
- * Le menu contextuel « show in the status bar » de la vue 5c — six interrupteurs réglés par
- * fenêtre — n'existe pas. [`SHOWN_IN_STATUS_BAR`] en est **le défaut sans le moyen de le
- * changer**, et c'est assumé : livrer la moitié d'un réglage coûte plus qu'une constante
- * nommée. `⌘⌥U`, écrit au pied du popover, est un **indice** : la vue d'usage complète
- * n'existe pas, et aucune liaison n'est réclamée pour cette combinaison — les liaisons vivent
- * dans `features/shortcuts`, et une combinaison non réclamée n'a rien à y faire.
+ * Le menu contextuel « show in the status bar » de la vue 5c existe désormais, et il est
+ * dans `status-bar.ts` : ce qui vit ici est ce que ses interrupteurs **font** à la droite de
+ * la ligne. Les défauts, eux, ne sont plus une constante de ce fichier — ils sont détenus
+ * par `features::theme`, et le weekly masqué est le leur.
+ *
+ * `⌘⌥U`, écrit au pied du popover, reste un **indice** : la vue d'usage complète n'existe
+ * pas, et aucune liaison n'est réclamée pour cette combinaison — les liaisons vivent dans
+ * `features/shortcuts`, et une combinaison non réclamée n'a rien à y faire.
  */
 
 /** Lequel des deux quotas — l'ordre de la maquette est celui de cette union. */
@@ -56,17 +59,6 @@ export interface QuotaSegment {
     /** Entre `0` et `1` : la barre pleine du popover. */
     readonly ratio: number;
 }
-
-/**
- * Les défauts de la maquette (vue 5c) : le weekly est **masqué dans la barre**.
- *
- * Il reste dans le popover, et c'est précisément ce que le clic sur une pastille sert à
- * révéler — sans quoi un quota qu'Ash connaît n'aurait aucun endroit où se lire.
- */
-export const SHOWN_IN_STATUS_BAR: Readonly<Record<QuotaKind, boolean>> = {
-    session: true,
-    weekly: false,
-};
 
 /**
  * Ce que la conversation occupe de sa fenêtre — la jauge, et le mot qui la double.
@@ -123,6 +115,21 @@ export interface ContextShare {
  */
 export type ContextLevel = "fresh" | "loaded" | "compacting";
 
+/**
+ * Le mot qui ouvre le libellé de la jauge, et la seule chose qui le sépare de sa **mesure**.
+ *
+ * Il est nommé parce que deux endroits l'écrivent d'un côté et le retirent de l'autre : la
+ * ligne montre `ctx 41%`, l'aperçu du menu montre `41%` — le nom de la ligne y est déjà dans
+ * la colonne du milieu, et le redire dans la colonne de droite ferait lire `context bar
+ * ctx 41%`.
+ */
+const CONTEXT_PREFIX = "ctx ";
+
+/** La mesure seule, sans le mot qui la nomme — `41%`, `57k`. */
+export function contextMeasure(gauge: ContextGauge): string {
+    return gauge.label.slice(CONTEXT_PREFIX.length);
+}
+
 /** `≥ 70 %` : chargé. */
 export const LOADED_AT = 70;
 /** `≥ 90 %` : bientôt compacté. */
@@ -141,9 +148,18 @@ export function composeQuotas(usage: AccountUsage, now: number): readonly QuotaS
     ].filter((quota): quota is QuotaSegment => quota !== null);
 }
 
-/** Ce que la **barre** montre des quotas — voir [`SHOWN_IN_STATUS_BAR`]. */
-export function inStatusBar(quotas: readonly QuotaSegment[]): readonly QuotaSegment[] {
-    return quotas.filter((quota) => SHOWN_IN_STATUS_BAR[quota.kind]);
+/**
+ * Ce que la **barre** montre des quotas — le popover, lui, les montre toujours tous les deux.
+ *
+ * C'est le seul endroit où le choix de l'utilisateur mord sur les quotas, et c'est ce qui
+ * fait tenir le critère « décocher le quota hebdomadaire ne le retire pas du popover » :
+ * `composeUsagePopover` ne passe pas par ici.
+ */
+export function inStatusBar(
+    quotas: readonly QuotaSegment[],
+    segments: StatusBarSegments,
+): readonly QuotaSegment[] {
+    return quotas.filter((quota) => segments[quota.kind]);
 }
 
 function segment(
@@ -188,7 +204,7 @@ export function composeContextGauge(usage: SessionUsage | null): ContextGauge | 
     const window = usage.windowTokens;
     if (window === null || window <= 0) {
         return {
-            label: `ctx ${abbreviate(usage.usedTokens)}`,
+            label: `${CONTEXT_PREFIX}${abbreviate(usage.usedTokens)}`,
             model: usage.model,
             share: null,
         };
@@ -196,7 +212,7 @@ export function composeContextGauge(usage: SessionUsage | null): ContextGauge | 
 
     const percent = clamp((usage.usedTokens / window) * 100);
     return {
-        label: `ctx ${String(percent)}%`,
+        label: `${CONTEXT_PREFIX}${String(percent)}%`,
         // Le nom traverse tel quel : le backend l'a déjà mis en mots, et il n'y a rien à en
         // dériver. Les deux absences sont **indépendantes** — une fenêtre inconnue n'efface
         // pas le nom, et un modèle qu'on ne sait pas nommer n'efface pas le pourcentage.
@@ -351,12 +367,29 @@ export class UsageSegments {
 
     /** Les deux quotas tels qu'ils ont été composés — le popover les relit à l'ouverture. */
     private quotas: readonly QuotaSegment[] = [];
+    /**
+     * La dernière jauge posée, gardée pour une seule raison : quand les interrupteurs
+     * changent, il faut réappliquer une valeur que personne ne renvoie — l'onglet n'a pas
+     * bougé, donc `ash://tab-changed` n'a rien à dire.
+     */
+    private gaugeShown: ContextGauge | null = null;
+    /**
+     * Ce que la ligne montre (spec §4.2, vue 5c) — **lu, jamais détenu** : il vient de
+     * `features::theme`, et les défauts posés ici ne servent qu'au battement d'avant la
+     * première réponse du backend.
+     */
+    private segments: StatusBarSegments = DEFAULT_STATUS_BAR_SEGMENTS;
     private popover: HTMLElement | null = null;
     /** Ce qui est réellement à l'écran — voir [`fold`]. */
     private shownQuotas = 0;
     private shownGauge = false;
 
-    constructor() {
+    /**
+     * `beforeOpen` est appelé juste avant que le popover s'ouvre — c'est par là que la ligne
+     * de statut referme son menu contextuel. Deux panneaux ne sont jamais ouverts ensemble,
+     * et l'arbitrage est chez celui qui les possède tous les deux, pas ici.
+     */
+    constructor(private readonly beforeOpen: () => void = () => undefined) {
         this.element = document.createElement("div");
         this.element.className = "status-usage";
 
@@ -402,7 +435,9 @@ export class UsageSegments {
      */
     showQuotas(quotas: readonly QuotaSegment[]): void {
         this.quotas = quotas;
-        const shown = new Map(inStatusBar(this.quotas).map((quota) => [quota.kind, quota]));
+        const shown = new Map(
+            inStatusBar(this.quotas, this.segments).map((quota) => [quota.kind, quota]),
+        );
 
         for (const [kind, pill] of this.pills) {
             pill.show(shown.get(kind) ?? null);
@@ -423,18 +458,22 @@ export class UsageSegments {
      * `ash://tab-changed`. `null` efface le segment : pas de jauge à zéro, pas de `ctx —`.
      */
     showContext(gauge: ContextGauge | null): void {
+        this.gaugeShown = gauge;
         // La **barre** ne sort que s'il y a un rapport à montrer ; le **libellé** sort dès
         // qu'il y a une mesure. C'est toute la différence entre « Ash ne sait rien » et « Ash
         // sait combien, mais pas sur combien » — et le seul endroit où elle se voit.
+        // Deux conditions par nœud, et elles ne disent pas la même chose : la donnée peut
+        // manquer, ou l'utilisateur peut avoir décoché le segment. La seconde ne s'écrit
+        // qu'ici — le popover, lui, ne connaît que la première.
         const share = gauge?.share ?? null;
-        this.gauge.hidden = share === null;
-        this.label.hidden = gauge === null;
+        this.gauge.hidden = share === null || !this.segments.context;
+        this.label.hidden = gauge === null || !this.segments.context;
         // Le **troisième** masquage, et la troisième absence : Ash peut mesurer sans connaître
         // la fenêtre, et connaître la fenêtre sans savoir nommer le modèle. Les trois se
         // décident séparément parce qu'elles disent trois choses différentes.
         const named = gauge?.model ?? null;
-        this.model.hidden = named === null;
-        this.shownGauge = gauge !== null;
+        this.model.hidden = named === null || !this.segments.model;
+        this.shownGauge = (gauge !== null && this.segments.context) || !this.model.hidden;
         this.fold();
 
         if (gauge !== null) write(this.label, gauge.label);
@@ -466,6 +505,19 @@ export class UsageSegments {
         this.element.hidden = this.shownQuotas === 0 && !this.shownGauge;
     }
 
+    /**
+     * Ce que la ligne montre vient de changer — la réponse du backend, ou une bascule du
+     * menu contextuel.
+     *
+     * Les deux valeurs déjà posées sont réappliquées telles quelles : ni les quotas ni la
+     * jauge n'ont bougé, et rien d'autre ne les renverra.
+     */
+    showSegments(segments: StatusBarSegments): void {
+        this.segments = segments;
+        this.showQuotas(this.quotas);
+        this.showContext(this.gaugeShown);
+    }
+
     /** Referme le popover, s'il est ouvert — le clic ailleurs, et le clic droit. */
     closePopover(): void {
         if (this.popover === null) return;
@@ -480,6 +532,8 @@ export class UsageSegments {
             this.closePopover();
             return;
         }
+
+        this.beforeOpen();
 
         const card = document.createElement("div");
         card.className = "status-usage-popover";
