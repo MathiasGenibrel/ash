@@ -4,7 +4,7 @@ use crate::features::agents::adapter::{
     Adapter, ChildEvent, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
-use crate::features::agents::usage::{ModelSource, UsageSupport};
+use crate::features::agents::usage::{ModelSource, Turn, UsageSupport};
 
 /// Le socle : l'adaptateur d'un outil dont on ne sait rien
 /// ([ADR-0008](../../../../../docs/adr/0008-abstraction-adapter.md)).
@@ -70,7 +70,7 @@ impl Adapter for GenericAdapter {
     /// C'est ce que `UsageSupport::None` promet, et la suite contractuelle le vérifie sur un
     /// vrai transcript de Claude Code : le socle ne doit pas se mettre à lire le format d'un
     /// autre outil « en attendant » son adaptateur.
-    fn read_used_tokens(&self, _transcript_tail: &str) -> Option<u64> {
+    fn read_turn(&self, _transcript_tail: &str) -> Option<Turn> {
         None
     }
 
@@ -86,6 +86,16 @@ impl Adapter for GenericAdapter {
     /// Et aucune fenêtre pour aucun identifiant : la table des modèles est la connaissance
     /// d'un outil, et le socle n'en est pas un.
     fn context_window(&self, _model: &str) -> Option<u64> {
+        None
+    }
+
+    /// Ni aucun nom, pour la même raison, et avec la même conséquence à l'écran.
+    ///
+    /// Traduire `claude-opus-5` en `Opus 5` demande la table de Claude Code ; l'écrire ici
+    /// ferait du socle un adaptateur qui connaît les modèles d'un outil qu'il n'est pas. Un
+    /// onglet servi par le socle n'a donc **pas de segment de modèle**, exactement comme il
+    /// n'a pas de jauge.
+    fn model_name(&self, _ran: &str, _configured: Option<&str>) -> Option<String> {
         None
     }
 }

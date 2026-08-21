@@ -128,9 +128,17 @@ export class TabBuilder {
      * aucune source ne nomme de modèle reconnu, donc aucune fenêtre. La valeur par défaut,
      * elle, reste un modèle **nommé** — 200 k est ce que déclare un `sonnet`, et non ce
      * qu'Ash suppose faute de mieux.
+     *
+     * Le troisième argument est le **nom court** du modèle, et son défaut est l'absence : un
+     * scénario qui ne parle pas du modèle ne doit pas faire apparaître un septième segment
+     * dans la barre qu'il examine.
      */
-    consuming(usedTokens: number, windowTokens: number | null = 200_000): this {
-        this.usage = { usedTokens, windowTokens };
+    consuming(
+        usedTokens: number,
+        windowTokens: number | null = 200_000,
+        model: string | null = null,
+    ): this {
+        this.usage = { usedTokens, windowTokens, model };
         return this;
     }
 
