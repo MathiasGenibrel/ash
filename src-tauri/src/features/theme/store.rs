@@ -80,9 +80,10 @@ mod tests {
     use super::super::font_size::{FontSize, FontStep};
     use super::super::mode::ThemeMode;
     use super::super::sidebar_column::{SidebarColumn, SidebarWidth};
+    use super::super::status_bar::{StatusBarSegment, StatusBarSegments};
 
     /// L'apparence complète, telle qu'une session l'aurait réglée de bout en bout.
-    fn all_six_chosen() -> Appearance {
+    fn all_seven_chosen() -> Appearance {
         Appearance {
             mode: ThemeMode::Dark,
             font_size: FontSize::DEFAULT.stepped(FontStep::Bigger),
@@ -97,6 +98,7 @@ mod tests {
                 open: true,
                 view: PanelView::Worktrees,
             },
+            status_bar: StatusBarSegments::default().toggled(StatusBarSegment::Cwd),
         }
     }
 
@@ -104,14 +106,14 @@ mod tests {
     fn given_a_stored_choice_when_it_is_read_back_then_it_is_the_same_choice() {
         // Given — le fichier est le seul lien entre deux sessions ; sa forme est un
         // contrat avec la version d'Ash de demain
-        let written = encode(all_six_chosen());
+        let written = encode(all_seven_chosen());
 
         // When
         let read = decode(&written);
 
-        // Then — les six préférences font l'aller-retour, pas seulement les deux
+        // Then — les sept préférences font l'aller-retour, pas seulement les deux
         // premières : elles partagent un fichier qui s'écrit d'un bloc
-        assert_eq!(read, Some(all_six_chosen()));
+        assert_eq!(read, Some(all_seven_chosen()));
     }
 
     #[test]
@@ -136,6 +138,7 @@ mod tests {
                 open: false,
                 view: PanelView::Graph,
             },
+            status_bar: StatusBarSegments::default(),
         };
 
         // When
@@ -149,7 +152,15 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            vec!["density", "font", "font_size", "mode", "panel", "sidebar"]
+            vec![
+                "density",
+                "font",
+                "font_size",
+                "mode",
+                "panel",
+                "sidebar",
+                "status_bar"
+            ]
         );
         assert_eq!(object["sidebar"]["width"], serde_json::json!(320));
         assert_eq!(object["sidebar"]["collapsed"], serde_json::json!(true));
@@ -234,6 +245,7 @@ mod tests {
                 collapsed: true,
             },
             panel: BottomPanel::default(),
+            status_bar: StatusBarSegments::default(),
         };
 
         // When
