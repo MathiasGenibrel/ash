@@ -446,7 +446,7 @@ impl Supervisor {
             TabAgents {
                 status,
                 subagents: tab.children.shown(),
-                usage: tab.usage,
+                usage: tab.usage.clone(),
             },
             interrupt(tab_id, changed, focused, self.preferences.choices()),
         )
@@ -1478,6 +1478,9 @@ mod tests {
             Some(SessionUsage {
                 used_tokens: 146_273,
                 window_tokens: Some(200_000),
+                // La queue de ce scénario ne nomme aucun modèle — c'est la mesure qu'il
+                // vérifie, et le nom a ses propres scénarios.
+                model: None,
             })
         );
     }
@@ -1599,6 +1602,7 @@ mod tests {
             Some(SessionUsage {
                 used_tokens: 57_200,
                 window_tokens: Some(1_000_000),
+                model: None,
             })
         );
     }
@@ -1625,6 +1629,7 @@ mod tests {
             Some(SessionUsage {
                 used_tokens: 57_200,
                 window_tokens: None,
+                model: None,
             })
         );
     }

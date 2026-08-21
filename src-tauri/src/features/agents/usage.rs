@@ -81,7 +81,7 @@ pub const TRANSCRIPT_TAIL_BYTES: u64 = 256 * 1024;
 /// demandera. C'est la même règle que pour
 /// [`state_since`](crate::features::pty::TabInfo) — ce qui traverse est la donnée, pas sa
 /// mise en forme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUsage {
@@ -105,6 +105,47 @@ pub struct SessionUsage {
     /// perdre ce qu'Ash sait vraiment.
     #[cfg_attr(test, ts(type = "number | null"))]
     pub window_tokens: Option<u64>,
+    /// Le **nom court** du modèle qui a produit ce tour — `Opus 5`, `Opus 5 1M`.
+    ///
+    /// **Un nom, et pas un identifiant**, et c'est le seul champ du contrat qui traverse déjà
+    /// mis en mots. La raison n'est pas la commodité de l'écran mais la propriété de la
+    /// connaissance : `claude-opus-5` ne veut rien dire pour le cœur, et encore moins pour le
+    /// frontend — c'est un mot de Claude Code, que seul son adaptateur sait traduire, à côté
+    /// de la table qui traduit le même mot en fenêtre ([`Adapter::model_name`]). Faire
+    /// traverser l'identifiant brut poserait la table dans le TypeScript, donc deux endroits
+    /// qui devraient reconnaître les mêmes identifiants, et deux façons de se tromper le jour
+    /// où un modèle change de nom.
+    ///
+    /// Ce n'est pas une **mise en forme** pour autant, et c'est ce qui le distingue du
+    /// pourcentage qu'on a refusé de porter ici : l'écran ne peut rien recalculer d'un nom, il
+    /// n'y a rien à en dériver, et aucune maquette future n'en voudra une autre écriture.
+    ///
+    /// `None` quand aucune source ne nomme de modèle, et quand le modèle nommé n'est reconnu
+    /// par personne. Les deux effacent le segment entièrement — ni tiret, ni `unknown`, ni
+    /// dernière valeur connue —, exactement comme une fenêtre inconnue efface la barre.
+    #[cfg_attr(test, ts(type = "string | null"))]
+    pub model: Option<String>,
+}
+
+/// Ce qu'un **tour d'assistant** du transcript déclare, lu en une seule fois.
+///
+/// Les deux champs viennent de la **même ligne**, et c'est la raison d'être de ce type : le
+/// transcript écrit `"model":"claude-opus-5"` à côté du `usage` d'où viennent les tokens, si
+/// bien que les lire séparément ferait deux parcours de la queue — et, pire, autoriserait le
+/// nom d'un tour et la mesure d'un autre à se retrouver dans le même `SessionUsage`. Un tour
+/// est une unité ; il se lit comme telle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Turn {
+    /// Les tokens que la conversation occupait à la fin de ce tour.
+    pub used_tokens: u64,
+    /// L'identifiant **brut** du modèle qui a produit ce tour, tel que l'outil l'a écrit.
+    ///
+    /// Brut parce que c'est ce que la ligne contient, et que le traduire est une autre
+    /// question — celle d'[`Adapter::model_name`], qui a besoin de la configuration en plus.
+    ///
+    /// `None` quand la ligne ne le nomme pas : un format qui change, un tour qui ne porte que
+    /// son `usage`. La mesure vaut alors toujours, et c'est seulement le nom qui manque.
+    pub model: Option<String>,
 }
 
 /// Où un outil peut nommer le modèle avec lequel il tourne.
@@ -301,38 +342,59 @@ pub(super) fn measure(
 
     let tail = transcripts.tail(Path::new(path))?;
 
-    // L'adaptateur qui a **mesuré** est celui qu'on interroge sur la fenêtre, et pas un autre :
-    // le numérateur et le dénominateur d'un même pourcentage ne peuvent pas venir de deux
-    // outils différents.
-    let (adapter, used_tokens) = readers.find_map(|adapter| {
+    // L'adaptateur qui a **mesuré** est celui qu'on interroge sur la fenêtre et sur le nom, et
+    // pas un autre : le numérateur et le dénominateur d'un même pourcentage ne peuvent pas
+    // venir de deux outils différents, et le modèle qui a produit le tour non plus.
+    let (adapter, turn) = readers.find_map(|adapter| {
         adapter
-            .read_used_tokens(&tail)
-            .map(|used| (adapter.as_ref(), used))
+            .read_turn(&tail)
+            .map(|turn| (adapter.as_ref(), turn))
     })?;
 
+    // Lue **une fois** pour les deux questions qu'elle sert. C'est ce qui tient la promesse
+    // « aucune lecture de fichier au-delà de celles d'avant » : nommer le modèle ne rouvre
+    // rien, il relit ce que la fenêtre avait déjà fait ouvrir.
+    let configured = configured_model(adapter, config, cwd);
+
     Some(SessionUsage {
-        used_tokens,
-        window_tokens: window_of(adapter, config, cwd),
+        used_tokens: turn.used_tokens,
+        // La fenêtre vient de la **configuration**, et d'elle seule : le transcript nomme le
+        // modèle sans jamais dire s'il tourne en 200 k ou en 1 M, et c'est le suffixe `[1m]`
+        // d'un fichier de réglages qui tranche.
+        window_tokens: configured
+            .as_deref()
+            .and_then(|model| adapter.context_window(model)),
+        // Le nom, lui, vient d'abord du **transcript** : c'est ce qui a réellement tourné, donc
+        // ce qui suit un `/model` changé en cours de session — au tour suivant, quand la
+        // configuration, elle, n'aurait rien vu passer.
+        model: turn
+            .model
+            .as_deref()
+            .and_then(|ran| adapter.model_name(ran, configured.as_deref())),
     })
 }
 
-/// La fenêtre du modèle que la configuration de l'outil nomme, ou rien.
+/// Le modèle que la configuration de l'outil nomme, ou rien.
 ///
 /// **Le premier qui nomme répond**, du plus spécifique au moins spécifique — c'est l'ordre
 /// que l'adaptateur a posé dans [`Adapter::model_sources`], et il reproduit celui de l'outil
 /// lui-même. Une source qui nomme un modèle que l'adaptateur ne reconnaît pas **arrête** la
-/// recherche : elle a répondu, et retomber sur la source suivante rendrait la fenêtre d'une
-/// configuration que l'utilisateur a explicitement remplacée.
+/// recherche : elle a répondu, et retomber sur la source suivante rendrait la configuration
+/// que l'utilisateur a explicitement remplacée.
 ///
-/// `None` quand rien ne nomme de modèle, et quand le modèle nommé n'est reconnu par personne.
-/// Les deux se lisent pareil à l'écran, et c'est voulu : dans les deux cas, Ash ne sait pas.
-fn window_of(adapter: &dyn Adapter, config: &dyn ToolConfig, cwd: Option<&Path>) -> Option<u64> {
+/// Ce qui sort est l'identifiant **brut**, pas une fenêtre : deux questions le lisent
+/// désormais — la taille de la fenêtre et le suffixe `[1m]` du nom court —, et les faire
+/// ouvrir chacune les mêmes fichiers doublerait le coût d'un chemin parcouru à chaque hook.
+fn configured_model(
+    adapter: &dyn Adapter,
+    config: &dyn ToolConfig,
+    cwd: Option<&Path>,
+) -> Option<String> {
     let home = config.home();
     adapter
         .model_sources(cwd, home.as_deref())
         .iter()
         .find_map(|source| model_named_by(source, config))
-        .and_then(|model| adapter.context_window(&model))
 }
 
 /// Le modèle qu'une source nomme, s'il y en a un.
@@ -552,6 +614,9 @@ mod tests {
             Some(SessionUsage {
                 used_tokens: 900,
                 window_tokens: Some(200_000),
+                // La queue de ce scénario ne nomme aucun modèle : la mesure vaut, le nom
+                // manque, et les deux absences sont indépendantes.
+                model: None,
             })
         );
         assert_eq!(transcripts.reads(), 1);
@@ -579,6 +644,7 @@ mod tests {
             Some(SessionUsage {
                 used_tokens: 57_200,
                 window_tokens: Some(1_000_000),
+                model: None,
             })
         );
     }
@@ -644,6 +710,7 @@ mod tests {
             Some(SessionUsage {
                 used_tokens: 57_200,
                 window_tokens: None,
+                model: None,
             })
         );
     }
@@ -742,5 +809,85 @@ mod tests {
 
         // Then
         assert_eq!(tail, None);
+    }
+
+    /// Une queue dont le dernier tour nomme le modèle qui l'a produit — la forme réelle.
+    fn turn_by(model: &str, used: u64) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"model":"{model}","usage":{{"input_tokens":{used}}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn given_a_transcript_naming_opus_and_a_home_settings_carrying_the_suffix_when_the_tab_is_measured_then_it_carries_opus_five_one_m(
+    ) {
+        // Given — le scénario du ticket, de bout en bout : le transcript dit ce qui a tourné,
+        // le `~/.claude/settings.json` porte `opus[1m]`, et aucune des deux sources ne
+        // suffirait seule.
+        let config = configured("~/.claude/settings.json", "opus[1m]");
+
+        // When
+        let measured = measured_with(&config, &turn_by("claude-opus-5", 57_200));
+
+        // Then
+        assert_eq!(
+            measured,
+            Some(SessionUsage {
+                used_tokens: 57_200,
+                window_tokens: Some(1_000_000),
+                model: Some("Opus 5 1M".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_transcript_naming_a_model_ash_cannot_name_when_the_tab_is_measured_then_the_segment_disappears_without_the_gauge(
+    ) {
+        // Given — la configuration nomme un modèle parfaitement connu, et le transcript un
+        // modèle qui ne l'est pas. Retomber sur la configuration pour le **nom** annoncerait
+        // un modèle qui n'a pas tourné : c'est ce qui a réellement tourné qui se lit dans la
+        // barre, ou rien.
+        let config = configured("~/.claude/settings.json", "opus[1m]");
+
+        // When
+        let measured = measured_with(&config, &turn_by("claude-fable-5", 57_200));
+
+        // Then — ni tiret, ni `unknown`, ni repli sur la configuration ; la fenêtre, elle,
+        // vient toujours de la configuration et reste donc lisible.
+        assert_eq!(
+            measured,
+            Some(SessionUsage {
+                used_tokens: 57_200,
+                window_tokens: Some(1_000_000),
+                model: None,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_tab_whose_model_is_named_when_it_is_measured_then_no_file_is_opened_beyond_the_two_the_gauge_already_needed(
+    ) {
+        // Given — le critère qui interdit à cette tranche de coûter une entrée-sortie : le nom
+        // se lit dans la queue déjà tirée, et son suffixe dans la configuration déjà ouverte.
+        let config = configured("~/.claude/settings.json", "opus[1m]");
+        let transcripts = CountingTranscripts::holding(TRANSCRIPT, &turn_by("claude-opus-5", 900));
+
+        // When
+        let measured = measure(
+            &claude_code(),
+            &transcripts,
+            &config,
+            Some(TRANSCRIPT),
+            cwd(),
+        );
+
+        // Then — une lecture de transcript, et les trois fichiers de configuration que la
+        // fenêtre faisait déjà ouvrir (les deux du dépôt, puis celui du foyer). Nommer le
+        // modèle n'en a ajouté aucun.
+        assert_eq!(
+            measured.and_then(|usage| usage.model).as_deref(),
+            Some("Opus 5 1M")
+        );
+        assert_eq!((transcripts.reads(), config.reads()), (1, 3));
     }
 }

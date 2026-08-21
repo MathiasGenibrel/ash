@@ -14,7 +14,7 @@ use std::path::{Component, Path};
 
 use super::adapter::{hook_mark, Adapter, RawEvent, SubagentSupport};
 use super::state::AgentState;
-use super::usage::{ModelSource, UsageSupport};
+use super::usage::{ModelSource, Turn, UsageSupport};
 
 /// Les invariants du contrat, un par un.
 ///
@@ -49,6 +49,8 @@ pub(crate) enum Invariant {
     NoModelSourcesWithoutUsageSupport,
     AnUnknownModelHasNoWindow,
     ContextWindowIsNotZero,
+    AnUnknownModelHasNoName,
+    NoModelNameWithoutUsageSupport,
 }
 
 impl Invariant {
@@ -103,17 +105,17 @@ impl Invariant {
                  ce que rien ne distingue d'un outil qui n'a rien à montrer"
             }
             Self::ReadUsageIsDeterministic => {
-                "read_used_tokens() doit être déterministe : un adaptateur ne retient rien, \
+                "read_turn() doit être déterministe : un adaptateur ne retient rien, \
                  et une mesure qui varie à texte égal ferait clignoter la barre sans qu'aucun \
                  token ait été consommé"
             }
             Self::UsageIsNeverZero => {
-                "read_used_tokens() ne doit jamais rendre zéro : un tour qui déclare un \
+                "read_turn() ne doit jamais rendre zéro token : un tour qui déclare un \
                  `usage` vide n'est pas une conversation vide, et le lire ainsi ferait \
                  retomber la jauge au milieu d'une session"
             }
             Self::UsageSurvivesALineItCannotRead => {
-                "read_used_tokens() doit sauter une ligne illisible au lieu de s'y arrêter : \
+                "read_turn() doit sauter une ligne illisible au lieu de s'y arrêter : \
                  la queue d'un transcript commence au milieu du fichier, et elle porte des \
                  lignes qui ne décrivent aucun tour"
             }
@@ -131,6 +133,17 @@ impl Invariant {
             Self::ContextWindowIsNotZero => {
                 "une fenêtre annoncée doit être non nulle : c'est le dénominateur du \
                  pourcentage affiché, et zéro ne se divise pas"
+            }
+            Self::AnUnknownModelHasNoName => {
+                "model_name() doit rendre `None` sur un identifiant que l'outil ne \
+                 reconnaît pas : le segment de modèle disparaît alors entièrement, et c'est \
+                 la seule issue honnête — un tiret ou un `unknown` occuperait la barre pour \
+                 dire qu'on ne sait pas, et un nom inventé serait pire encore"
+            }
+            Self::NoModelNameWithoutUsageSupport => {
+                "un adaptateur qui répond `UsageSupport::None` ne doit nommer aucun modèle : \
+                 le nom accompagne une jauge qu'il a déclaré ne pas avoir, et la barre \
+                 annoncerait un modèle pour un onglet dont Ash ne sait rien"
             }
             Self::InstrumentationIsACapability => {
                 "instrumentation() doit décrire une capacité de l'outil, pas dépendre du \
@@ -308,25 +321,25 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
         .collect();
 
     for text in &corpus {
-        let measured = adapter.read_used_tokens(text);
+        let read = adapter.read_turn(text);
 
         report.require(
-            measured == adapter.read_used_tokens(text),
+            read == adapter.read_turn(text),
             Invariant::ReadUsageIsDeterministic,
         );
 
         report.require(
-            declares || measured.is_none(),
+            declares || read.is_none(),
             Invariant::NoUsageWithoutUsageSupport,
         );
 
         report.require(
-            measured.is_none_or(|used| used > 0),
+            read.as_ref().is_none_or(|turn| turn.used_tokens > 0),
             Invariant::UsageIsNeverZero,
         );
     }
 
-    check_context_window(adapter, declares, report);
+    check_model_tables(adapter, declares, report);
 
     let Some(own) = own_transcript else {
         // Rien à promettre, donc rien de plus à vérifier : l'absence de queue propre *est*
@@ -335,7 +348,7 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
     };
 
     report.require(
-        !declares || adapter.read_used_tokens(own).is_some(),
+        !declares || adapter.read_turn(own).is_some(),
         Invariant::UsageSupportReadsItsOwnTranscript,
     );
 
@@ -344,7 +357,7 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
     // scénario réel : la queue commence au milieu du fichier.
     let noisy = format!("{}\n{own}", tempting_transcripts().join("\n"));
     report.require(
-        adapter.read_used_tokens(&noisy) == adapter.read_used_tokens(own),
+        adapter.read_turn(&noisy) == adapter.read_turn(own),
         Invariant::UsageSurvivesALineItCannotRead,
     );
 }
@@ -364,8 +377,9 @@ fn unnameable_models() -> [&'static str; 6] {
     ["", "   ", "[1m]", "modèle-inventé", "default", "gpt-5"]
 }
 
-/// Ce que la table modèle → fenêtre doit garantir avant qu'un pourcentage n'atteigne l'écran.
-fn check_context_window(adapter: &dyn Adapter, declares: bool, report: &mut ContractReport) {
+/// Ce que les deux tables d'un modèle — sa fenêtre et son nom — doivent garantir avant qu'un
+/// pourcentage ou un nom n'atteigne l'écran.
+fn check_model_tables(adapter: &dyn Adapter, declares: bool, report: &mut ContractReport) {
     report.require(
         declares
             || adapter
@@ -381,6 +395,30 @@ fn check_context_window(adapter: &dyn Adapter, declares: bool, report: &mut Cont
         report.require(
             window.is_none_or(|tokens| tokens > 0),
             Invariant::ContextWindowIsNotZero,
+        );
+
+        // Le même corpus pour les deux tables, et c'est le fond de l'affaire : ce qu'un outil
+        // ne sait pas mesurer, il ne sait pas non plus le nommer. Une famille reconnue d'un
+        // côté et pas de l'autre ferait une barre qui annonce `Opus 5` sur un pourcentage
+        // qu'elle refuse de calculer — ou l'inverse.
+        //
+        // Chaque identifiant est présenté configuré et non configuré : le suffixe `[1m]` ne
+        // doit pas devenir la porte par laquelle un identifiant inconnu se fait nommer.
+        for configured in [None, Some("opus[1m]"), Some(model)] {
+            report.require(
+                adapter.model_name(model, configured).is_none(),
+                Invariant::AnUnknownModelHasNoName,
+            );
+        }
+    }
+
+    // Un adaptateur muet ne nomme rien, même sur un identifiant que le corpus déclare
+    // nommable ailleurs : c'est le pendant de `NoUsageWithoutUsageSupport`, sur l'autre
+    // moitié de ce qu'un transcript dit.
+    for model in ["claude-opus-5", "claude-sonnet-4-5-20250929", "opus"] {
+        report.require(
+            declares || adapter.model_name(model, None).is_none(),
+            Invariant::NoModelNameWithoutUsageSupport,
         );
     }
 }
@@ -539,6 +577,7 @@ mod tests {
         reports_subagents: bool,
         declares_usage: bool,
         measures_anything: bool,
+        names_anything: bool,
     }
 
     impl AdapterBuilder {
@@ -587,6 +626,13 @@ mod tests {
             self
         }
 
+        /// L'adaptateur nomme **n'importe quel** identifiant, y compris ceux qu'aucun outil ne
+        /// connaît — le nom inventé que le contrat doit attraper.
+        fn naming_anything(mut self) -> Self {
+            self.names_anything = true;
+            self
+        }
+
         fn build(self) -> FakeAdapter {
             FakeAdapter {
                 id: self.id.unwrap_or_else(|| "fake".to_owned()),
@@ -596,6 +642,7 @@ mod tests {
                 reports_subagents: self.reports_subagents,
                 declares_usage: self.declares_usage,
                 measures_anything: self.measures_anything,
+                names_anything: self.names_anything,
             }
         }
     }
@@ -608,6 +655,7 @@ mod tests {
         reports_subagents: bool,
         declares_usage: bool,
         measures_anything: bool,
+        names_anything: bool,
     }
 
     impl Adapter for FakeAdapter {
@@ -650,8 +698,15 @@ mod tests {
             }
         }
 
-        fn read_used_tokens(&self, _transcript_tail: &str) -> Option<u64> {
-            self.measures_anything.then_some(1)
+        fn read_turn(&self, _transcript_tail: &str) -> Option<Turn> {
+            self.measures_anything.then_some(Turn {
+                used_tokens: 1,
+                model: None,
+            })
+        }
+
+        fn model_name(&self, ran: &str, _configured: Option<&str>) -> Option<String> {
+            self.names_anything.then(|| ran.to_owned())
         }
 
         fn model_sources(&self, _cwd: Option<&Path>, _home: Option<&Path>) -> Vec<ModelSource> {
@@ -821,6 +876,55 @@ mod tests {
             report
                 .violations()
                 .contains(&Invariant::NoUsageWithoutUsageSupport),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_that_names_every_model_it_is_shown_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — la faute que la table des noms peut commettre, et que celle des fenêtres a
+        // déjà commise sous la forme d'un défaut universel : nommer un identifiant qu'aucun
+        // outil ne reconnaît. `default`, `gpt-5` ou une faute de frappe se retrouveraient
+        // alors écrits dans la barre, à côté d'un pourcentage que le même adaptateur refuse
+        // de calculer pour eux.
+        let inventive = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .declaring_usage()
+            .measuring_anything()
+            .naming_anything()
+            .build();
+
+        // When
+        let report = check_adapter_contract(&inventive, &[], None);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::AnUnknownModelHasNoName),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_a_silent_adapter_that_still_names_a_model_when_checked_then_the_contract_rejects_it() {
+        // Given — le pendant de `NoUsageWithoutUsageSupport` sur l'autre moitié de ce qu'un
+        // transcript dit : un outil dont Ash ne sait rien n'a pas de jauge, donc pas de
+        // segment de modèle à côté d'elle.
+        let silent = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .naming_anything()
+            .build();
+
+        // When
+        let report = check_adapter_contract(&silent, &[], None);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::NoModelNameWithoutUsageSupport),
             "violations : {report}"
         );
     }

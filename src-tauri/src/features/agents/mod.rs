@@ -122,5 +122,10 @@ pub use supervisor::{Presence, Supervisor, TabAgents};
 // est précisément ce qui a fait lire `ctx 28%` à une conversation qui en occupait 6 %. Ce qui
 // traverse la frontière est la mesure, et les **deux ports** qui vont la chercher — que le
 // composition root doit pouvoir brancher.
+//
+// `Turn` ne sort pas non plus, pour la même raison que `UsageSupport` : c'est ce qu'un
+// adaptateur rend au superviseur, à mi-chemin de la mesure. Le nom du modèle en ressort
+// **déjà en mots**, dans `SessionUsage::model` ; l'identifiant brut, lui, ne quitte jamais la
+// feature — le traduire est une connaissance d'outil, et il n'y en a qu'une table.
 pub use usage::{FileTranscripts, SessionUsage, SystemToolConfig, ToolConfig, Transcripts};
 pub use wire::{socket_path, EventFrame};

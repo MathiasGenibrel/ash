@@ -223,13 +223,34 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     encore vérifié reste du texte.
 - Ligne de statut en bas : `cwd` · branche et état de l'arbre · état de l'agent.
   La branche y est cliquable et ancre le popup de branches (`⌘⌃B`).
-  - **L'usage est à sa droite** — amendé le 2026-08-20. Quatre morceaux, dans cet
-    ordre, chacun affiché **seulement si sa donnée existe** : le quota de session
-    (`s 63% · 2h14`), le quota hebdomadaire (`w 28% · 3d 09h`), la jauge de
-    contexte de la conversation, et son libellé (`ctx 41%`). La jauge et son
-    libellé passent en `--ash-warning` à 70 % puis en `--ash-accent` à 90 % —
-    et **rien d'autre ne se produit** à ces seuils : ni alerte, ni modale, ni
-    bannière. Un contexte plein annonce un compactage, pas une panne.
+  - **L'usage est à sa droite** — amendé le 2026-08-20, puis le 2026-08-21. Cinq
+    morceaux, dans cet ordre, chacun affiché **seulement si sa donnée existe** :
+    le quota de session (`s 63% · 2h14`), le quota hebdomadaire
+    (`w 28% · 3d 09h`), la jauge de contexte de la conversation, son libellé
+    (`ctx 41%`), et le **modèle** qui la consomme (`Opus 5`, `Opus 5 1M`). La
+    jauge et son libellé passent en `--ash-warning` à 70 % puis en `--ash-accent`
+    à 90 % — et **rien d'autre ne se produit** à ces seuils : ni alerte, ni
+    modale, ni bannière. Un contexte plein annonce un compactage, pas une panne.
+  - **Quand la ligne se resserre, l'ordre de retrait est fixe** : le modèle part
+    le premier, les quotas ensuite, la jauge et son libellé en dernier. Le `cwd`,
+    la branche et l'état de l'agent ne partent jamais — c'est le seul contenu de
+    la ligne qui ne se discute pas. Le modèle passe avant les quotas parce qu'il
+    est le seul des trois à ne pas changer : il dit **de quoi** le pourcentage
+    voisin est le pourcentage, et cette lecture se fait une fois.
+  - **Le modèle est nommé par le transcript, sa fenêtre par la configuration** —
+    ajouté le 2026-08-21. Les deux sources se complètent exactement : le
+    transcript écrit `"model":"claude-opus-5"` à chaque tour d'assistant, donc ce
+    qui a **réellement** tourné et ce qui suit un `/model` changé en cours de
+    session — au premier tour d'agent qui suit le changement, jamais avant ; la
+    configuration, elle, porte seule le suffixe `[1m]`. Le nom court est composé
+    par l'**adaptateur** de l'outil, à côté de sa table des fenêtres : un
+    identifiant qu'il ne sait pas nommer fait disparaître le segment
+    entièrement — ni tiret, ni `unknown`, ni dernière valeur connue —, et un
+    onglet dont l'outil est muet (`UsageSupport::None`) n'en a pas du tout. Le
+    lire ne coûte **aucune** lecture de plus que la jauge : le nom se lit dans la
+    queue déjà tirée, son suffixe dans les fichiers déjà ouverts. **Le segment
+    n'ouvre rien** : changer de modèle se fait dans le terminal, par `/model`
+    ([ADR-0015](./adr/0015-ash-compose-l-utilisateur-envoie.md)).
   - **La fenêtre est lue, pas supposée — et quand elle est inconnue, la jauge
     disparaît sans emporter la mesure.** Le transcript donne le numérateur, mais
     ne dit jamais si la session tourne en 200 k ou en 1 M ; c'est la
@@ -242,8 +263,11 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     de reconnu ne vaut rien** : aucune fenêtre par défaut, donc pas de
     pourcentage, pas de barre, pas de couleur de seuil — le libellé lit alors
     `ctx 57k`, la mesure brute, parce qu'elle, elle est exacte. Un `/model`
-    changé en cours de session n'est rapporté par aucune source autorisée : la
-    configuration reste le meilleur signal, et c'est une limite assumée.
+    changé en cours de session ne déplace **pas** la fenêtre : la configuration
+    reste sa seule source, et c'est une limite assumée. Le **nom** du modèle,
+    lui, la suit désormais — le transcript le nomme à chaque tour (voir
+    l'amendement du 2026-08-21 ci-dessus), et c'est la moitié de cette limite
+    qui est tombée.
   - **Deux rythmes, et une seule ligne.** La jauge suit l'**onglet** : elle
     arrive avec sa fiche, et change quand on en change. Les deux quotas sont
     ceux du **compte** : ils ne dépendent d'aucune sélection, arrivent par

@@ -240,6 +240,16 @@
     color: var(--ash-accent);
 }
 
+/* Le modèle, à droite du libellé : le septième élément de la ligne, et le seul qui ne figure
+ * dans aucune des cinq vues de la maquette. Il se lit comme un rappel — la même teinte que le
+ * `resets` d'une pastille —, parce qu'il ne mesure rien : il dit **de quoi** le pourcentage
+ * juste à sa gauche est le pourcentage.
+ *
+ * Aucun `cursor`, aucun `:hover` : il n'ouvre rien et ne change rien (ADR-0015). */
+.terminal-status .status-usage-model {
+    color: var(--ash-fg-dim);
+}
+
 /* Le weekly est masqué par défaut dans la barre (vue 5c). Il l'est **en TypeScript**, par
  * `SHOWN_IN_STATUS_BAR` — pas ici : le popover le montre quand même, et une règle CSS ne
  * saurait pas faire la différence entre les deux endroits. */
@@ -249,13 +259,24 @@
  * La ligne ne déborde jamais : elle coupe ce qui la dépasse. Sans ces deux règles, ce serait
  * son bord droit qui serait coupé — donc l'usage, mais à moitié, un chiffre tranché en deux.
  *
- * L'ordre est explicite, et c'est un critère : les quotas partent d'abord, la jauge et son
- * libellé ensuite. Le `cwd`, la branche et l'état de l'agent ne sont visés par aucune de ces
- * règles — ils survivent, et c'est le seul contenu de la ligne qui ne se discute pas.
+ * L'ordre est explicite, et c'est un critère : le **modèle** part le premier, les quotas
+ * ensuite, la jauge et son libellé en dernier. Le `cwd`, la branche et l'état de l'agent ne
+ * sont visés par aucune de ces règles — ils survivent, et c'est le seul contenu de la ligne
+ * qui ne se discute pas.
+ *
+ * Le modèle passe avant les quotas parce qu'il est le seul des trois à ne pas changer : il
+ * dit de quoi le pourcentage voisin est le pourcentage, et cette lecture se fait une fois.
+ * Les quotas, eux, s'égrènent — c'est leur valeur du moment qu'on vient y lire.
  *
  * Une requête de conteneur, et non de fenêtre : c'est la largeur de la **ligne** qui décide,
  * et elle dépend aussi de la sidebar, dont la largeur se règle à la souris. Le conteneur est
  * déclaré sur `.terminal-status` plus haut — une seule règle par sélecteur. */
+
+@container statusline (max-width: 680px) {
+    .status-usage-model {
+        display: none;
+    }
+}
 
 @container statusline (max-width: 560px) {
     .status-usage-quota {
