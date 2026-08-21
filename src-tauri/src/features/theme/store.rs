@@ -216,6 +216,33 @@ mod tests {
     }
 
     #[test]
+    fn given_a_preference_file_whose_status_bar_is_unreadable_when_it_is_read_then_only_the_bar_is_lost(
+    ) {
+        // Given — la seule clé du fichier qui accepte n'importe quoi plutôt que d'échouer
+        // (`StatusBarLayout::Stored::Unreadable`). Le filet n'a d'intérêt que par ce qu'il
+        // **épargne**, et c'est cela qu'aucun test ne disait : la barre est un champ parmi
+        // sept, et une barre incompréhensible ne doit coûter ni le thème, ni la police, ni la
+        // colonne qui l'entourent.
+        let bar_from_elsewhere = "{\"mode\":\"dark\",\"font_size\":15,\"status_bar\":\"tout\"}";
+
+        // When
+        let read = decode(bar_from_elsewhere);
+
+        // Then — la barre repart des défauts, et **rien d'autre** ne bouge
+        assert_eq!(
+            read,
+            Some(Appearance {
+                mode: ThemeMode::Dark,
+                font_size: FontSize::DEFAULT
+                    .stepped(FontStep::Bigger)
+                    .stepped(FontStep::Bigger),
+                status_bar: StatusBarLayout::default(),
+                ..Appearance::default()
+            })
+        );
+    }
+
+    #[test]
     fn given_a_preference_file_that_says_nothing_understandable_when_it_is_read_then_ash_falls_back_to_the_system(
     ) {
         // Given — un fichier tronqué par une coupure, vidé, ou édité à la main

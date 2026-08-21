@@ -534,6 +534,31 @@ mod tests {
     }
 
     #[test]
+    fn given_a_bar_that_lost_everything_to_its_left_when_a_segment_comes_back_then_it_lands_in_front_of_its_nearest_right_hand_neighbour(
+    ) {
+        // Given — la moitié de la règle de `canonical_index` que le voisin de gauche ne
+        // couvre jamais : une barre où **rien** de ce qui précède `session` dans `FULL_ORDER`
+        // n'est resté — ni `cwd`, ni la branche, ni l'agent, ni l'élastique
+        let right_hand_only =
+            StatusBarLayout::normalized(vec![StatusBarItem::Context, StatusBarItem::Model]);
+
+        // When — le quota de session revient, du tiroir ou du menu
+        let after = right_hand_only.toggled(StatusBarSegment::Session);
+
+        // Then — devant la jauge de contexte, son plus proche voisin de droite, et **pas**
+        // au bout de la barre : c'est ce qui distingue « auprès de ses voisins » d'un simple
+        // ajout à la fin, et le seul cas où le repli sur la droite décide seul
+        assert_eq!(
+            after.items(),
+            [
+                StatusBarItem::Session,
+                StatusBarItem::Context,
+                StatusBarItem::Model,
+            ]
+        );
+    }
+
+    #[test]
     fn given_a_bar_emptied_of_everything_when_a_segment_comes_back_then_it_is_the_whole_bar() {
         // Given — le critère « une barre vidée reste récupérable » : la vider est permis
         let empty = StatusBarLayout::normalized(vec![]);
@@ -600,6 +625,27 @@ mod tests {
                 StatusBarItem::Model,
             ]
         );
+    }
+
+    #[test]
+    fn given_a_preference_file_from_before_that_says_nothing_about_the_bar_when_it_is_read_then_it_is_the_bar_of_a_first_launch(
+    ) {
+        // Given — un `status_bar` de #164 dont aucun champ ne s'applique : celui qu'écrivait
+        // une version où la barre n'avait pas encore de menu, et celui qu'un objet bricolé à
+        // la main donne — `Switches` accepte tout objet, ses sept champs ayant un défaut.
+        //
+        // Ce que ce test tient, ce n'est pas le cas limite : c'est que les défauts de #164 et
+        // ceux de #165 sont **la même barre**, alors qu'ils sont écrits à deux endroits — les
+        // `#[serde(default)]` de `Switches` d'un côté, `HIDDEN_BY_DEFAULT` de l'autre. Les
+        // faire diverger donnerait une barre à ceux qui mettent Ash à jour et une autre à
+        // ceux qui l'installent, sans qu'aucun des deux chemins ne bronche.
+        let silent = ["{}", r#"{"cursor":"bar"}"#];
+
+        // When
+        let read: Vec<StatusBarLayout> = silent.iter().map(|json| parse(json)).collect();
+
+        // Then
+        assert_eq!(read, vec![StatusBarLayout::default(); silent.len()]);
     }
 
     #[test]

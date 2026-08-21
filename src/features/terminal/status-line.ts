@@ -18,6 +18,7 @@ import {
     DEFAULT_STATUS_BAR_SEGMENTS,
     MENU_ORDER,
     SEGMENT_NAMES,
+    isSegment,
     placeStatusBar,
     shownSegments,
     type StatusBarItemId,
@@ -461,12 +462,39 @@ function quotaPreview(quota: QuotaSegment | null): string {
 }
 
 /**
+ * Les segments que la ligne peint elle-même, à chaque rendu — et, par différence, les quatre
+ * que `usage.ts` peint dans des nœuds persistants.
+ *
+ * La frontière est celle des deux rythmes : ici ce qui bat avec l'onglet et se refait à chaque
+ * rendu, là-bas ce qui bat avec le compte et ne se refait jamais. Réorganiser la barre ne la
+ * déplace pas — c'est même toute la raison pour laquelle le rang est une valeur `order` et non
+ * une place dans le DOM.
+ *
+ * **Une seule liste, et le complément déduit.** La partition était écrite deux fois — les
+ * quatre noms d'un côté, les trois cas de [`chipsOf`] de l'autre —, et rien ne les tenait
+ * ensemble : un segment ajouté à l'une et oublié dans l'autre passait par la branche par
+ * défaut, posait une enveloppe vide dans la ligne, et pouvait laisser un `│` sans voisin. La
+ * liste est celle de gauche parce que c'est celle que ce fichier peint ; `Exclude` fait le
+ * reste, et le `switch` devient exhaustif.
+ */
+type PaintedHere = "cwd" | "branch" | "agent";
+type PaintedByUsage = Exclude<StatusBarSegmentId, PaintedHere>;
+
+const PAINTED_HERE: readonly PaintedHere[] = ["cwd", "branch", "agent"];
+
+/** Cet élément est-il l'un des quatre que le groupe d'usage peint ? */
+function paintedByUsage(item: StatusBarItemId): item is PaintedByUsage {
+    return isSegment(item) && !PAINTED_HERE.some((id) => id === item);
+}
+
+/**
  * Les morceaux que porte un segment de la moitié gauche.
  *
- * Trois segments seulement — `cwd`, `branch`, `agent` : les quatre autres sont peints par
- * `usage.ts`, dans des nœuds persistants que la ligne ne reconstruit jamais.
+ * Le `switch` n'a **pas** de branche par défaut, et c'est là tout son intérêt : le type de son
+ * argument dit que les quatre autres segments ne parviennent jamais ici, et le compilateur le
+ * vérifie plutôt que de rendre une liste vide en silence.
  */
-function chipsOf(item: StatusBarItemId, model: StatusLineModel): readonly StatusChip[] {
+function chipsOf(item: PaintedHere, model: StatusLineModel): readonly StatusChip[] {
     switch (item) {
         case "cwd":
             return [model.cwd];
@@ -474,24 +502,7 @@ function chipsOf(item: StatusBarItemId, model: StatusLineModel): readonly Status
             return model.git;
         case "agent":
             return [{ text: model.agent.text, tone: model.agent.tone, title: null }];
-        default:
-            return [];
     }
-}
-
-/**
- * Les quatre segments que `usage.ts` peint, et que la ligne se contente de **placer**.
- *
- * La frontière est celle des deux rythmes : à gauche ce qui bat avec l'onglet et se refait à
- * chaque rendu, à droite ce qui bat avec le compte et ne se refait jamais. Réorganiser la
- * barre ne la déplace pas — c'est même toute la raison pour laquelle le rang est une valeur
- * `order` et non une place dans le DOM.
- */
-const PAINTED_BY_USAGE: readonly StatusBarSegmentId[] = ["session", "weekly", "context", "model"];
-
-/** Cet élément est-il l'un des quatre que le groupe d'usage peint ? */
-function paintedByUsage(item: StatusBarItemId): item is StatusBarSegmentId {
-    return PAINTED_BY_USAGE.some((id) => id === item);
 }
 
 /**
@@ -714,7 +725,7 @@ export class StatusLine {
     }
 
     /** Un segment de gauche : ses morceaux, son glyphe, dans une enveloppe qui se place. */
-    private paintSegment(item: StatusBarItemId, model: StatusLineModel): HTMLElement {
+    private paintSegment(item: PaintedHere, model: StatusLineModel): HTMLElement {
         const element = document.createElement("span");
         element.className = "status-item";
         element.dataset["item"] = item;
