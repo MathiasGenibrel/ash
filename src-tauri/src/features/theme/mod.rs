@@ -60,11 +60,12 @@
 //! `src/features/panel/layout.ts`.
 //!
 //! **Ce que la ligne de statut montre est ici aussi**, et c'est la septième préférence du
-//! fichier : les sept interrupteurs du menu contextuel de la vue 5c (spec §4.2). C'est la
-//! seule qui ne décide ni d'une couleur ni d'une place — elle décide d'un **contenu** —, et
-//! elle est rangée ici quand même parce qu'elle a tout le reste en commun avec les six
-//! autres : une fenêtre la rend, elle survit à la fermeture, elle se relit au même moment.
-//! Voir [`StatusBarSegments`]. Ce qui n'est pas ici, comme pour la colonne et le panneau,
+//! fichier : les sept interrupteurs du menu contextuel de la vue 5c, et l'**ordre** que le
+//! mode édition de la vue 5e compose (spec §4.2). C'est la seule qui ne décide ni d'une
+//! couleur ni d'une place — elle décide d'un **contenu** —, et elle est rangée ici quand même
+//! parce qu'elle a tout le reste en commun avec les six autres : une fenêtre la rend, elle
+//! survit à la fermeture, elle se relit au même moment. Voir [`StatusBarLayout`], qui porte
+//! aussi la seule migration de format du fichier. Ce qui n'est pas ici, comme pour la colonne et le panneau,
 //! c'est le **retrait automatique** de la ligne trop étroite : il dépend d'une largeur que
 //! seule la webview mesure, et vit dans les `@container` de
 //! `src/features/terminal/terminal.css`. Les deux règles cohabitent sans se connaître — l'une
@@ -102,5 +103,5 @@ pub use font_size::{FontSize, FontStep};
 pub use mode::ThemeMode;
 pub use sidebar_column::{SidebarColumn, SidebarWidth};
 pub use state::ThemeState;
-pub use status_bar::{StatusBarSegment, StatusBarSegments};
+pub use status_bar::{StatusBarItem, StatusBarLayout, StatusBarSegment};
 pub use store::{FileThemeStore, ThemeStore};

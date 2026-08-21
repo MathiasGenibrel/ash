@@ -1,4 +1,4 @@
-//! La surface de la feature vers le frontend : dix-huit commandes, sept events.
+//! La surface de la feature vers le frontend : vingt commandes, sept events.
 //!
 //! Le frontend ne connaît de l'apparence que ces noms, les trois identifiants de mode, les
 //! trois pas de taille, les deux paliers de densité et les quatre noms de vue du panneau
@@ -23,7 +23,7 @@ use super::font_size::{FontSize, FontStep};
 use super::mode::ThemeMode;
 use super::sidebar_column::{SidebarColumn, SidebarWidth};
 use super::state::ThemeState;
-use super::status_bar::{StatusBarSegment, StatusBarSegments};
+use super::status_bar::{StatusBarItem, StatusBarLayout, StatusBarSegment};
 
 /// Nom de l'event qui porte le mode choisi. Contrat avec `src/app/theme.ts`.
 pub const THEME_MODE_EVENT: &str = "ash://theme-mode";
@@ -46,9 +46,15 @@ pub const TERMINAL_FONT_EVENT: &str = "ash://terminal-font";
 /// `src/app/sidebar-density.ts`.
 pub const SIDEBAR_DENSITY_EVENT: &str = "ash://sidebar-density";
 
-/// Nom de l'event qui porte ce que la ligne de statut montre. Contrat avec
-/// `src/features/terminal/status-bar-bridge.ts`.
-pub const STATUS_BAR_SEGMENTS_EVENT: &str = "ash://status-bar-segments";
+/// Nom de l'event qui porte la barre de statut — ce qu'elle montre, et dans quel ordre.
+/// Contrat avec `src/features/terminal/status-bar-bridge.ts`.
+///
+/// **Renommé en #165**, avec la forme de ce qu'il porte : `ash://status-bar-segments`
+/// annonçait sept booléens, celui-ci annonce une suite ordonnée. Garder le nom aurait laissé
+/// une webview d'avant écouter un event dont la charge ne lui dirait plus rien — et se taire
+/// est ici pire que ne rien recevoir : la ligne resterait sur ses défauts sans qu'aucune
+/// bascule ne la bouge.
+pub const STATUS_BAR_LAYOUT_EVENT: &str = "ash://status-bar-layout";
 
 /// Le mode courant, lu par la webview en s'affichant.
 ///
@@ -312,24 +318,29 @@ pub fn choose_sidebar_density<R: Runtime>(app: AppHandle<R>, density: SidebarDen
     let _ = app.emit(SIDEBAR_DENSITY_EVENT, density);
 }
 
-/// Ce que la ligne de statut montre, lu par la webview en s'affichant (spec §4.2, vue 5c).
+/// La barre de statut, lue par la webview en s'affichant (spec §4.2, vues 5c et 5e).
 ///
-/// Ensuite, c'est [`STATUS_BAR_SEGMENTS_EVENT`] qui la tient à jour : elle ne redemande
+/// Ensuite, c'est [`STATUS_BAR_LAYOUT_EVENT`] qui la tient à jour : elle ne redemande
 /// jamais. Même contrat que [`sidebar_density`], parce que c'est la même sorte de
 /// préférence.
 #[tauri::command]
-pub fn status_bar_segments(state: tauri::State<'_, Arc<ThemeState>>) -> StatusBarSegments {
+pub fn status_bar_layout(state: tauri::State<'_, Arc<ThemeState>>) -> StatusBarLayout {
     state.status_bar()
 }
 
-/// Le clic sur une ligne du menu contextuel de la ligne de statut.
+/// Le clic sur une ligne du menu contextuel de la ligne de statut, et le `×` d'une pastille
+/// du mode édition — les deux gestes disent la même chose : « ce segment n'est plus là ».
 ///
 /// La webview demande une **bascule**, pas un état : c'est le chemin de `toggle_sidebar_column`,
 /// et pour la même raison — le menu montre ce que le backend détient, et un menu qui
 /// renverrait le booléen qu'il a lu en s'ouvrant en deviendrait le second détenteur
 /// ([ADR-0009](../../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
 ///
-/// Rien n'est rendu à l'appelante : elle apprend le nouvel état par l'event, comme pour la
+/// C'est le backend qui décide **où** revient un segment recoché — voir
+/// [`StatusBarLayout::toggled`]. Le laisser à la webview ferait dépendre la place d'un
+/// segment de ce qu'elle avait lu, donc de l'instant du clic.
+///
+/// Rien n'est rendu à l'appelante : elle apprend la nouvelle barre par l'event, comme pour la
 /// densité — c'est ce qui fait que la barre et le menu ouvert au-dessus d'elle ne peuvent
 /// pas diverger.
 #[tauri::command]
@@ -338,6 +349,47 @@ pub fn toggle_status_bar_segment<R: Runtime>(
     state: tauri::State<'_, Arc<ThemeState>>,
     segment: StatusBarSegment,
 ) {
-    let shown = state.toggle_status_bar_segment(segment);
-    let _ = app.emit(STATUS_BAR_SEGMENTS_EVENT, shown);
+    let _ = app.emit(
+        STATUS_BAR_LAYOUT_EVENT,
+        state.toggle_status_bar_segment(segment),
+    );
+}
+
+/// La disposition que le mode édition vient de composer : un glissement relâché, un spacer
+/// posé, un spacer jeté (spec §4.2, vue 5e).
+///
+/// **La seule commande de la feature à qui la webview dicte une valeur entière**, et c'est le
+/// chemin de `set_bottom_panel_height` : réordonner est de la manipulation directe, elle se
+/// mesure sous le pointeur, et un aller-retour Tauri par `dragenter` rendrait le glissement
+/// saccadé sans rien garantir de plus. Appelée au **relâchement** seulement, jamais pendant
+/// le glissement.
+///
+/// Ce qui arrive est ramené à ses invariants par `StatusBarLayout::normalized` — un segment
+/// répété, un mot inconnu : la barre est nettoyée, jamais refusée. Une suite **vide** est
+/// acceptée, parce que tout jeter est un choix, et que [`reset_status_bar_layout`] est là
+/// pour en revenir.
+#[tauri::command]
+pub fn set_status_bar_layout<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+    items: Vec<StatusBarItem>,
+) {
+    let Some(layout) = state.set_status_bar_layout(items) else {
+        return;
+    };
+    let _ = app.emit(STATUS_BAR_LAYOUT_EVENT, layout);
+}
+
+/// Le bouton `défauts` du tiroir : la barre reprend la disposition d'origine.
+///
+/// C'est le `reset all` des raccourcis (spec §4.4), appliqué à la ligne de statut — et c'est
+/// ce qui rend une barre vidée récupérable. Il annonce toujours, même si rien n'a bougé :
+/// demander les défauts en y étant déjà n'est pas un no-op à l'écran, c'est un geste dont on
+/// attend un accusé de réception.
+#[tauri::command]
+pub fn reset_status_bar_layout<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Arc<ThemeState>>,
+) {
+    let _ = app.emit(STATUS_BAR_LAYOUT_EVENT, state.reset_status_bar_layout());
 }

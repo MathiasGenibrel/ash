@@ -14,12 +14,19 @@ import {
 import { branchOf, locationLabel } from "@/shared/tab-context";
 import { activeTab, type TabsState } from "./tabs";
 import {
+    DEFAULT_STATUS_BAR_LAYOUT,
     DEFAULT_STATUS_BAR_SEGMENTS,
     MENU_ORDER,
+    SEGMENT_NAMES,
+    placeStatusBar,
+    shownSegments,
+    type StatusBarItemId,
+    type StatusBarLayout,
     type StatusBarSegmentId,
     type StatusBarSegments,
     type VisibilityRow,
 } from "./status-bar";
+import { LongPress, StatusBarEditor } from "./status-bar-editor";
 import { StatusBarMenu } from "./status-bar-menu";
 import {
     composeContextGauge,
@@ -54,11 +61,12 @@ import {
  * porte que ce qui bat au rythme de l'onglet — les quotas battent à un autre, et la frontière
  * entre les deux est un `<div class="status-main">` que `render` est seul à vider.
  *
- * **Ce que la ligne montre se règle** (spec §4.2, vue 5c) : un clic droit ouvre un menu de
- * sept interrupteurs, et un segment décoché quitte la barre. Le modèle, lui, ne change pas —
- * il porte toujours **tout**, décoché compris, parce que le menu montre l'aperçu de ce qu'il
- * cache. Le retrait se fait au rendu, par [`shownStatusGroups`], et les sept booléens
- * viennent de `features::theme` : la ligne les lit, elle ne les détient pas
+ * **Ce que la ligne montre se règle, et se réorganise** (spec §4.2, vues 5c et 5e) : un clic
+ * droit ouvre un menu de sept interrupteurs, un clic gauche maintenu 430 ms ouvre le mode
+ * édition, et la barre est une **suite ordonnée** que le backend détient. Le modèle, lui, ne
+ * change pas — il porte toujours **tout**, retiré compris, parce que le menu montre l'aperçu
+ * de ce qu'il cache. Le retrait et l'ordre se font au rendu, par [`placeStatusBar`], et la
+ * disposition vient de `features::theme` : la ligne la lit, elle ne la détient pas
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 
@@ -370,24 +378,9 @@ export function elide(path: string, max: number = MAX_CWD): string {
  * Il est composé **ici** et non dans `status-bar.ts` parce que ses aperçus se lisent sur le
  * modèle ci-dessus : ce sont les valeurs de la barre, prises au même instant, et rien n'a le
  * droit d'en fabriquer une seconde source. `status-bar.ts` reste en aval de tout — les types,
- * les défauts, et le panneau —, ce qui laisse `ports.ts` et `usage.ts` le lire sans cycle.
+ * les défauts, l'algèbre de la barre et les panneaux —, ce qui laisse `ports.ts` et `usage.ts`
+ * le lire sans cycle.
  * ------------------------------------------------------------------------------------- */
-
-/**
- * Le nom lu dans le menu — celui de la maquette, pas celui du champ.
- *
- * `context bar` et `agent state` disent ce que la ligne montre ; `context` et `agent` ne
- * diraient rien à quelqu'un qui n'a pas écrit le code.
- */
-const MENU_NAMES: Readonly<Record<StatusBarSegmentId, string>> = {
-    session: "session",
-    weekly: "weekly",
-    context: "context bar",
-    model: "model",
-    agent: "agent state",
-    branch: "branch",
-    cwd: "cwd",
-};
 
 /**
  * Le trait de la maquette : il sépare ce que la conversation **consomme** de ce qui dit
@@ -419,7 +412,7 @@ export function visibilityRows(
 ): readonly VisibilityRow[] {
     return MENU_ORDER.map((id) => ({
         id,
-        name: MENU_NAMES[id],
+        name: SEGMENT_NAMES[id],
         preview: preview(id, model, quotas),
         shown: segments[id],
         separated: id === SEPARATED,
@@ -468,43 +461,37 @@ function quotaPreview(quota: QuotaSegment | null): string {
 }
 
 /**
- * Un groupe de la moitié gauche : ce que sépare un `│`.
+ * Les morceaux que porte un segment de la moitié gauche.
  *
- * Les trois groupes sont les trois interrupteurs du menu contextuel — `cwd`, `branch`,
- * `agent` —, et c'est ce qui fait qu'un segment décoché emporte **son** séparateur : la
- * ligne pose un trait entre deux groupes montrés, jamais autour d'un groupe absent.
+ * Trois segments seulement — `cwd`, `branch`, `agent` : les quatre autres sont peints par
+ * `usage.ts`, dans des nœuds persistants que la ligne ne reconstruit jamais.
  */
-export interface StatusGroup {
-    readonly chips: readonly StatusChip[];
-    /** Le glyphe d'état, sur le seul groupe qui en porte un. */
-    readonly glyph: AgentState | null;
+function chipsOf(item: StatusBarItemId, model: StatusLineModel): readonly StatusChip[] {
+    switch (item) {
+        case "cwd":
+            return [model.cwd];
+        case "branch":
+            return model.git;
+        case "agent":
+            return [{ text: model.agent.text, tone: model.agent.tone, title: null }];
+        default:
+            return [];
+    }
 }
 
 /**
- * Les groupes que la ligne peint, une fois les segments décochés retirés (spec §4.2, vue 5c).
+ * Les quatre segments que `usage.ts` peint, et que la ligne se contente de **placer**.
  *
- * Une fonction pure, et c'est elle qui porte la seule règle que le retrait pose : les traits
- * tombent **entre** les groupes restants. Un `cwd` décoché ne doit pas laisser la ligne
- * s'ouvrir sur un `│`, ni un état d'agent décoché la laisser finir sur un.
- *
- * Le **rappel** de sidebar repliée n'est pas un groupe : il n'est pas dans le menu de la
- * maquette, et il ne dit rien de l'onglet — il dit qu'un agent attend derrière une colonne
- * repliée, ce qu'aucun réglage ne doit pouvoir cacher.
+ * La frontière est celle des deux rythmes : à gauche ce qui bat avec l'onglet et se refait à
+ * chaque rendu, à droite ce qui bat avec le compte et ne se refait jamais. Réorganiser la
+ * barre ne la déplace pas — c'est même toute la raison pour laquelle le rang est une valeur
+ * `order` et non une place dans le DOM.
  */
-export function shownStatusGroups(
-    model: StatusLineModel,
-    segments: StatusBarSegments,
-): readonly StatusGroup[] {
-    const groups: StatusGroup[] = [];
-    if (segments.cwd) groups.push({ chips: [model.cwd], glyph: null });
-    if (segments.branch) groups.push({ chips: model.git, glyph: null });
-    if (segments.agent) {
-        groups.push({
-            chips: [{ text: model.agent.text, tone: model.agent.tone, title: null }],
-            glyph: model.agent.state,
-        });
-    }
-    return groups;
+const PAINTED_BY_USAGE: readonly StatusBarSegmentId[] = ["session", "weekly", "context", "model"];
+
+/** Cet élément est-il l'un des quatre que le groupe d'usage peint ? */
+function paintedByUsage(item: StatusBarItemId): item is StatusBarSegmentId {
+    return PAINTED_BY_USAGE.some((id) => id === item);
 }
 
 /**
@@ -514,15 +501,17 @@ export function shownStatusGroups(
 export class StatusLine {
     readonly element: HTMLElement;
     /**
-     * Ce qui se refait à chaque rendu — `cwd`, git, agent, rappel.
+     * Ce qui se refait à chaque rendu — les trois segments de gauche, les `│`, les élastiques
+     * et le rappel.
      *
      * `display: contents` : il ne dessine rien, ses enfants restent les éléments du `flex` de
-     * la ligne. Ce qu'il apporte est une **frontière** — `replaceChildren` ne peut plus
-     * atteindre le groupe d'usage, donc un changement d'onglet ne peut pas détruire des
-     * pastilles de quota qui ne parlent pas d'onglets (voir `usage.ts`).
+     * la ligne — c'est ce qui leur laisse recevoir un rang. Ce qu'il apporte est une
+     * **frontière** : `replaceChildren` ne peut pas atteindre le groupe d'usage, donc un
+     * changement d'onglet ne peut pas détruire des pastilles de quota qui ne parlent pas
+     * d'onglets (voir `usage.ts`).
      */
     private readonly main: HTMLElement;
-    /** Le groupe de droite : les deux quotas, la jauge de contexte et son libellé. */
+    /** Le groupe d'usage : les deux quotas, la jauge de contexte, son libellé, le modèle. */
     private readonly usage = new UsageSegments(() => {
         this.menu.close();
     });
@@ -531,11 +520,17 @@ export class StatusLine {
      * en même temps que le popover d'usage : chacun referme l'autre en s'ouvrant.
      */
     private readonly menu: StatusBarMenu;
+    /** Le mode édition de la vue 5e — pastilles, tiroir, glissement. */
+    private readonly editor: StatusBarEditor;
+    /** Le trait de 2 px qui montre le maintien du clic. */
+    private readonly hold: HTMLElement;
     /**
-     * Ce que la ligne montre. Lu, jamais détenu : il vient de `features::theme`
-     * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et les défauts posés
-     * ici ne servent qu'au premier battement.
+     * La barre : ce qu'elle montre, et dans quel ordre. Lue, jamais détenue — elle vient de
+     * `features::theme` ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)), et
+     * les défauts posés ici ne servent qu'au premier battement.
      */
+    private layout: StatusBarLayout = DEFAULT_STATUS_BAR_LAYOUT;
+    /** Les sept booléens qu'elle implique, recalculés à chaque annonce. */
     private segments: StatusBarSegments = DEFAULT_STATUS_BAR_SEGMENTS;
     /**
      * Le dernier modèle peint — c'est lui que le menu relit pour ses aperçus.
@@ -549,9 +544,9 @@ export class StatusLine {
     /**
      * Le morceau qui porte la branche, une fois peint — l'ancre de la popup.
      *
-     * `null` quand la ligne ne montre pas de branche : hors dépôt, ou avant le premier
-     * rendu. Celui qui l'ouvre décide alors où la poser ; ce n'est pas à la ligne de statut
-     * de le savoir.
+     * `null` quand la ligne ne montre pas de branche : hors dépôt, en mode édition, ou avant
+     * le premier rendu. Celui qui l'ouvre décide alors où la poser ; ce n'est pas à la ligne
+     * de statut de le savoir.
      */
     private anchorElement: HTMLElement | null = null;
 
@@ -559,32 +554,70 @@ export class StatusLine {
      * `onAction` est un rappel et non un event : la ligne de statut ne connaît pas la popup
      * de branches, et elle n'a aucune raison de la connaître. C'est le composition root qui
      * relie les deux, comme il relie déjà la sidebar aux onglets.
+     *
+     * `bar` est le triplet de gestes que la disposition demande au backend. Un objet plutôt
+     * que trois rappels positionnels : ils partent tous les trois au même endroit, et une
+     * liste de rappels anonymes s'inverse en silence.
      */
     constructor(
         private readonly onAction: (action: StatusAction) => void = () => undefined,
-        onToggleSegment: (segment: StatusBarSegmentId) => void = () => undefined,
+        bar: StatusBarControl = silentBar,
     ) {
         this.element = document.createElement("div");
         this.element.className = "terminal-status";
         this.element.setAttribute("role", "status");
 
+        this.hold = document.createElement("span");
+        this.hold.className = "status-hold";
+        this.hold.setAttribute("aria-hidden", "true");
+
         this.menu = new StatusBarMenu(
             this.element,
             () => visibilityRows(this.segments, this.lastModel, this.lastQuotas),
-            onToggleSegment,
+            bar.toggle,
+            () => {
+                this.menu.close();
+                this.editor.show(this.layout);
+            },
         );
         // Le clic droit **n'importe où sur la ligne** ouvre le menu (spec §4.2) : la cible
         // n'est pas interrogée, parce qu'il n'y a rien à viser — le menu parle de la ligne
-        // entière, pas du mot sous le pointeur.
+        // entière, pas du mot sous le pointeur. **Sauf en édition** : là, rien n'agit, et un
+        // menu qui parlerait de visibilité pendant qu'on réorganise ferait deux surfaces pour
+        // une même barre.
         this.element.addEventListener("contextmenu", (event) => {
             event.preventDefault();
+            if (this.editor.open) return;
             this.usage.closePopover();
             this.menu.toggle(event.clientX);
         });
 
+        this.editor = new StatusBarEditor(this.element, {
+            arrange: bar.arrange,
+            toggle: bar.toggle,
+            reset: bar.reset,
+            done: () => {
+                this.editor.close();
+            },
+        });
+
+        // Le clic maintenu de 430 ms — l'autre porte du mode édition (vue 5e). Il ne s'arme
+        // pas quand on y est déjà : les pastilles se glissent, et un compteur qui courrait
+        // sous chacune n'aurait rien à ouvrir.
+        new LongPress(
+            this.element,
+            this.hold,
+            () => !this.editor.open,
+            () => {
+                this.usage.closePopover();
+                this.menu.close();
+                this.editor.show(this.layout);
+            },
+        );
+
         this.main = document.createElement("div");
         this.main.className = "status-main";
-        this.element.append(this.main, this.usage.element);
+        this.element.append(this.hold, this.main, this.usage.element, this.editor.element);
     }
 
     /** Sur quoi la popup de branches doit s'ancrer, si la ligne montre une branche. */
@@ -604,57 +637,129 @@ export class StatusLine {
     showQuotas(quotas: readonly QuotaSegment[]): void {
         this.lastQuotas = quotas;
         this.usage.showQuotas(quotas);
+        // Un quota qui apparaît ou disparaît change les **voisinages** de la ligne, donc la
+        // place des `│`. C'est la seule raison de repeindre ici.
+        this.paint();
         this.menu.refresh();
     }
 
     /**
-     * Ce que la ligne montre vient du backend — la lecture du démarrage, ou la réponse à une
-     * bascule du menu.
+     * La barre vient du backend — la lecture du démarrage, une bascule du menu, un glissement
+     * relâché, un retour aux défauts.
      *
-     * Elle ne repeint pas : le battement de la seconde s'en charge au plus tard, et
-     * l'appelante redessine tout de suite. Ce qui est réappliqué ici, c'est la moitié droite,
-     * que rien d'autre ne renverra.
+     * Elle repeint : contrairement à #164, ce qui arrive ici ne change pas seulement ce qui
+     * est visible, mais **où**. Attendre le battement de la seconde ferait sauter la barre un
+     * temps après le geste qui l'a déplacée.
      */
-    showSegments(segments: StatusBarSegments): void {
-        this.segments = segments;
-        this.usage.showSegments(segments);
+    showLayout(layout: StatusBarLayout): void {
+        this.layout = layout;
+        this.segments = shownSegments(layout);
+        this.usage.showSegments(this.segments);
+        this.paint();
+        this.editor.refresh(layout);
         this.menu.refresh();
     }
 
     render(model: StatusLineModel): void {
-        this.anchorElement = null;
         this.lastModel = model;
-        const paint = (piece: StatusChip): HTMLElement => {
-            if (piece.action === undefined) return chip(piece);
-            const opener = actionChip(piece, piece.action, this.onAction);
-            this.anchorElement = opener;
-            return opener;
-        };
+        // La jauge **avant** la peinture : c'est elle qui décide si le segment `context`
+        // occupe une place, et le placement des `│` se lit sur les places occupées.
+        this.usage.showContext(model.context);
+        this.paint();
+        this.menu.refresh();
+    }
+
+    /**
+     * Pose la ligne : un rang par élément montré, des `│` entre voisins, et le rappel au bout.
+     *
+     * Ce qui traverse cette fonction, ce sont des **rangs** et non des places : les nœuds
+     * d'usage ne bougent jamais du DOM, seul leur `order` change. Voir `placeStatusBar`.
+     */
+    private paint(): void {
+        const model = this.lastModel;
+        if (model === null) return;
+
+        this.anchorElement = null;
+        const placement = placeStatusBar(this.layout, (item) => this.occupies(item));
 
         const nodes: Node[] = [];
-        for (const group of shownStatusGroups(model, this.segments)) {
-            if (nodes.length > 0) nodes.push(rule());
-            if (group.glyph !== null) nodes.push(agentGlyph(group.glyph));
-            nodes.push(...joinChips(group.chips, paint));
+        const usage = new Map<StatusBarSegmentId, number>();
+        for (const slot of placement.slots) {
+            if (slot.item === "spacer") {
+                nodes.push(at(spacer(), slot.order));
+                continue;
+            }
+            if (paintedByUsage(slot.item)) {
+                usage.set(slot.item, slot.order);
+                continue;
+            }
+            nodes.push(at(this.paintSegment(slot.item, model), slot.order));
         }
-
-        nodes.push(spacer());
-        if (model.hint !== null) nodes.push(chip(model.hint));
+        for (const line of placement.rules) nodes.push(at(rule(), line.order));
+        if (model.hint !== null) nodes.push(at(chip(model.hint), placement.hintOrder));
 
         this.main.replaceChildren(...nodes);
-        this.usage.showContext(model.context);
-        this.menu.refresh();
+        this.usage.place(usage);
+    }
+
+    /**
+     * Cet élément occupe-t-il une place dans la ligne ?
+     *
+     * Les trois segments de gauche en occupent toujours une : ils ont un mot à écrire même
+     * quand il n'y a pas d'onglet — `~`, `no repo`, `no agents`. Les quatre segments d'usage
+     * dépendent d'une donnée qui peut manquer, et c'est le groupe qui les peint qui le sait.
+     */
+    private occupies(item: StatusBarItemId): boolean {
+        return paintedByUsage(item) ? this.usage.shows(item) : true;
+    }
+
+    /** Un segment de gauche : ses morceaux, son glyphe, dans une enveloppe qui se place. */
+    private paintSegment(item: StatusBarItemId, model: StatusLineModel): HTMLElement {
+        const element = document.createElement("span");
+        element.className = "status-item";
+        element.dataset["item"] = item;
+
+        if (item === "agent" && model.agent.state !== null) {
+            element.append(agentGlyph(model.agent.state));
+        }
+        for (const piece of chipsOf(item, model)) {
+            if (piece.action === undefined) {
+                element.append(chip(piece));
+                continue;
+            }
+            const opener = actionChip(piece, piece.action, this.onAction);
+            this.anchorElement = opener;
+            element.append(opener);
+        }
+        return element;
     }
 }
 
-/** Les morceaux d'un même segment sont séparés d'une espace, pas d'un `│`. */
-function joinChips(
-    chips: readonly StatusChip[],
-    paint: (piece: StatusChip) => HTMLElement,
-): Node[] {
-    return chips.flatMap((piece, index) =>
-        index === 0 ? [paint(piece)] : [document.createTextNode(" "), paint(piece)],
-    );
+/** Les trois gestes que la disposition demande au backend. */
+export interface StatusBarControl {
+    /** Coche ou décoche un segment — le menu contextuel, et le `×` d'une pastille. */
+    readonly toggle: (segment: StatusBarSegmentId) => void;
+    /** La barre que le mode édition vient de composer, au relâchement. */
+    readonly arrange: (layout: StatusBarLayout) => void;
+    /** Le retour à la disposition d'origine. */
+    readonly reset: () => void;
+}
+
+/**
+ * Une ligne de statut qu'on peut construire sans backend — les tests de composition, et le
+ * défaut du constructeur. Elle n'écrit nulle part, donc rien ne survit : c'est exactement ce
+ * qu'on veut d'une barre qui n'est reliée à rien.
+ */
+const silentBar: StatusBarControl = {
+    toggle: () => undefined,
+    arrange: () => undefined,
+    reset: () => undefined,
+};
+
+/** Pose le rang d'un élément dans le `flex` de la ligne. */
+function at(element: HTMLElement, order: number): HTMLElement {
+    element.style.order = String(order);
+    return element;
 }
 
 /**
@@ -698,8 +803,16 @@ function rule(): HTMLElement {
     return element;
 }
 
+/**
+ * L'élastique de la vue 5e — le `flex: 1` qui pousse ce qui suit vers la droite.
+ *
+ * Il n'y en avait qu'un, posé par le rendu ; il y en a maintenant autant que l'utilisateur en
+ * pose, et chacun vient de la disposition. Hors édition, c'est un espace : ni bordure, ni
+ * libellé, ni `×` — c'est le CSS qui le dit, sous `[data-edit]`.
+ */
 function spacer(): HTMLElement {
     const element = document.createElement("span");
     element.className = "status-spacer";
+    element.setAttribute("aria-hidden", "true");
     return element;
 }
