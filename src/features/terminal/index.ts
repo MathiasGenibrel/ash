@@ -25,7 +25,7 @@ import { StatusLine, composeStatusLine } from "./status-line";
 import { tauriStatusBar } from "./status-bar-bridge";
 import { composeQuotas } from "./usage";
 import { tauriUsage } from "./usage-bridge";
-import type { StatusBarSegments } from "./status-bar";
+import type { StatusBarLayout } from "./status-bar";
 import { activeTab, noTabs, type Step, type TabsState } from "./tabs";
 import { XtermView } from "./xterm-view";
 import { TerminalWorkbench, type Origin } from "./workbench";
@@ -223,11 +223,20 @@ export function mountTerminals(
         () => {
             for (const listener of branchListeners) listener();
         },
-        // Le clic sur une ligne du menu contextuel part en **bascule** vers le backend, et
-        // rien n'est appliqué ici : ce qui revient par l'event est ce que la barre montrera
-        // (ADR-0009). Un échec se tait — l'affichage n'a alors simplement pas bougé.
-        (segment) => {
-            void tauriStatusBar.toggle(segment).catch(() => undefined);
+        // Les trois gestes de la barre partent vers le backend, et **rien n'est appliqué
+        // ici** : ce qui revient par l'event est ce que la barre montrera (ADR-0009). Un
+        // échec se tait — l'affichage n'a alors simplement pas bougé, ce qui est la seule
+        // conduite juste : une barre de statut n'est pas un endroit où écrire une erreur.
+        {
+            toggle: (segment) => {
+                void tauriStatusBar.toggle(segment).catch(() => undefined);
+            },
+            arrange: (layout) => {
+                void tauriStatusBar.arrange(layout).catch(() => undefined);
+            },
+            reset: () => {
+                void tauriStatusBar.reset().catch(() => undefined);
+            },
         },
     );
     let shown: TabsState = noTabs;
@@ -332,20 +341,20 @@ export function mountTerminals(
     void tauriUsage.onAccountUsage(takeAccountUsage).catch(() => undefined);
 
     /**
-     * Ce que la ligne de statut montre (spec §4.2, vue 5c).
+     * La barre de statut — ce qu'elle montre, et dans quel ordre (spec §4.2, vues 5c et 5e).
      *
      * Le couple du thème, une troisième fois : on lit une fois en s'affichant, puis c'est
-     * l'event qui tient à jour. La lecture peut échouer — la ligne garde alors les défauts
-     * qu'elle s'est posés, weekly masqué et le reste visible, et rien ne le signale : un
-     * fichier de préférence n'est jamais une raison d'écrire une erreur dans une barre
-     * d'état.
+     * l'event qui tient à jour. La lecture peut échouer — la ligne garde alors la disposition
+     * par défaut qu'elle s'est posée, weekly retiré et le reste en place, et rien ne le
+     * signale : un fichier de préférence n'est jamais une raison d'écrire une erreur dans une
+     * barre d'état.
      */
-    const takeStatusBarSegments = (segments: StatusBarSegments): void => {
-        status.showSegments(segments);
+    const takeStatusBarLayout = (layout: StatusBarLayout): void => {
+        status.showLayout(layout);
         drawStatus();
     };
-    void tauriStatusBar.segments().then(takeStatusBarSegments, () => undefined);
-    void tauriStatusBar.onSegments(takeStatusBarSegments).catch(() => undefined);
+    void tauriStatusBar.layout().then(takeStatusBarLayout, () => undefined);
+    void tauriStatusBar.onLayout(takeStatusBarLayout).catch(() => undefined);
 
     const workbench = new TerminalWorkbench({
         bridge: tauriPty,

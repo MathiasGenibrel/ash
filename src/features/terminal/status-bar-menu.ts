@@ -30,6 +30,12 @@ export class StatusBarMenu {
         private readonly anchorTo: HTMLElement,
         private readonly rows: () => readonly VisibilityRow[],
         private readonly onToggle: (id: StatusBarSegmentId) => void,
+        /**
+         * La dernière ligne — `⟷ réorganiser la barre…`. Elle **referme le menu** en
+         * agissant, et c'est un critère : le mode édition prend la barre entière, et un
+         * panneau resté ouvert au-dessus la cacherait.
+         */
+        private readonly onReorder: () => void = () => undefined,
     ) {}
 
     get open(): boolean {
@@ -78,7 +84,9 @@ export class StatusBarMenu {
     }
 
     private repaint(): void {
-        this.panel?.replaceChildren(paint(composeVisibilityMenu(this.rows(), this.onToggle).build()));
+        this.panel?.replaceChildren(
+            paint(composeVisibilityMenu(this.rows(), this.onToggle, this.onReorder).build()),
+        );
     }
 
     /**

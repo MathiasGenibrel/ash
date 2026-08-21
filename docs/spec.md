@@ -289,19 +289,62 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
     ([ADR-0016](./adr/0016-ash-sort-sur-le-reseau.md), condition 3). Décocher un
     quota ne le retire **pas** du popover, qui existe précisément pour montrer
     ce que la barre cache. Le menu et le popover ne s'ouvrent jamais ensemble.
-    La ligne « réorganiser la barre… » de la maquette n'y est pas : le mode
-    édition n'existe pas, et une entrée qui n'ouvre rien vaut moins que pas
-    d'entrée du tout.
-  - **Les sept interrupteurs survivent à la fermeture, et la maquette disait
-    « par fenêtre »** — amendement du 2026-08-21. La phrase visait surtout à
-    exclure un réglage **par onglet** ; réorganiser sa barre à chaque lancement
-    n'est pas un réglage, c'est une corvée. Ils sont donc détenus par le
-    **backend**, dans `features::theme` et `~/.ash/theme.json`, comme le thème,
-    la police et la densité de la sidebar (§9) : l'écran demande une bascule, le
-    backend annonce le résultat
+    Sous un **second trait**, une dernière ligne — `⟷ réorganiser la barre…`,
+    avec `clic long` écrit à droite — ouvre le mode édition et referme le menu.
+    Elle **agit** au lieu de basculer : cocher ou décocher n'a aucun sens sur
+    elle. C'est la porte découvrable du mode édition — un clic long ne s'invente
+    pas, un menu se lit.
+  - **La barre se réorganise** — ajouté le 2026-08-21, vue 5e. Un **clic gauche
+    maintenu 430 ms** sur la ligne y fait entrer, comme sur un écran d'accueil
+    macOS ou iOS. Le maintien se voit : un trait de 2 px file sur le bord **haut**
+    de la barre pendant l'appui, en `--ash-working`, de 0 à 100 % en 420 ms.
+    Pendant l'édition, chaque élément devient une **pastille** — bordure
+    pointillée, fond relevé, rayon 4 px, curseur `grab`, et un frémissement de
+    ±0,7° décalé de 60 ms de trois en trois — qu'on **glisse pour réordonner**,
+    et que son `×` de 12 px **jette**. Un **tiroir** ancré contre la barre montre
+    ce qui a été retiré : cliquer une pastille la remet. `terminé`, `Échap` et un
+    clic ailleurs sortent tous les trois.
+  - **Le maintien et la sélection de texte ne se disputent rien** — le critère
+    demandait de trancher, et il n'y a rien à trancher : le compteur des 430 ms
+    se **désarme dès que le pointeur bouge de plus de quatre pixels**.
+    Sélectionner, c'est presser puis glisser ; entrer en édition, c'est presser
+    et ne pas bouger. Le texte de la ligne reste donc sélectionnable exactement
+    comme avant, et relâcher avant la fin ne change rien — la branche ancre son
+    popup, la pastille de quota ouvre son popover. Seul le bouton **gauche** arme
+    le compteur : le bouton droit appartient au menu.
+  - **Le spacer est un objet, et il y en a autant qu'on veut.** L'élastique qui
+    poussait l'usage à droite était une règle de CSS ; c'est désormais un élément
+    de la barre, visible en édition (largeur minimale 44 px, hauteur 17 px, fond
+    bleuté pâle, libellé `⟷ spacer` en 9 px), déplaçable, supprimable, et qu'on
+    pose en plusieurs exemplaires depuis le tiroir. **Hors édition, c'est un
+    espace** : ni bordure, ni libellé, ni `×`. Ce sont les spacers qui font les
+    groupes, comme dans la barre de menus de macOS.
+  - **En édition, rien d'autre n'agit** : ni popover d'usage, ni popup de
+    branches, ni menu contextuel. Ce n'est pas une condition posée dans le code —
+    la ligne montre alors ses **éléments** et non ses valeurs, donc l'ancre de
+    branche et les pastilles de quota ne sont pas dans le document.
+  - **La disposition survit à la fermeture, et la maquette disait « par
+    fenêtre »** — amendement du 2026-08-21. La phrase visait surtout à exclure un
+    réglage **par onglet** ; réorganiser sa barre à chaque lancement n'est pas un
+    réglage, c'est une corvée. Elle est donc détenue par le **backend**, dans
+    `features::theme` et `~/.ash/theme.json`, comme le thème, la police et la
+    densité de la sidebar (§9) : l'écran demande une bascule ou propose une
+    suite, le backend annonce le résultat
     ([ADR-0009](./adr/0009-cycle-de-vie-des-agents.md)). Un fichier absent ou
-    illisible rend les défauts — weekly masqué, le reste visible — sans rien
-    signaler.
+    illisible rend les défauts — `cwd · branch · agent · ⟷ · session · context ·
+    model`, weekly retiré — sans rien signaler.
+  - **Ce qui est retenu est une suite ordonnée, et la visibilité y est une
+    appartenance** — ajouté le 2026-08-21. Sept booléens nommés ne savent pas
+    dire où est le `cwd`, ni qu'il y a trois élastiques. Le fichier porte donc un
+    **tableau de mots** sous la même clé `status_bar`, et un segment est montré
+    s'il y figure. Un fichier écrit par la version d'avant se relit quand même :
+    ses sept booléens sont convertis en la barre qu'ils décrivaient, dans l'ordre
+    d'origine — aucun choix n'est perdu, et une mise à jour ne réorganise rien.
+  - **Une barre vidée de tout reste récupérable.** Le tiroir porte, à côté du
+    bouton `⟷ spacer`, un retour aux **défauts** — le `reset all` des raccourcis
+    (§4.4) appliqué à la ligne. Il est là parce que c'est le seul endroit qui
+    existe encore quand la barre n'a plus rien : le clic long et le menu
+    contextuel, eux, marchent toujours, la ligne restant une surface de 25 px.
   - **Deux règles de retrait cohabitent, et ne se connaissent pas.** Le
     resserrement automatique ci-dessus dit ce qui **tient** dans la largeur
     restante, et là le `cwd`, la branche et l'état de l'agent ne partent jamais.

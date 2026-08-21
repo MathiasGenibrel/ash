@@ -80,7 +80,7 @@ mod tests {
     use super::super::font_size::{FontSize, FontStep};
     use super::super::mode::ThemeMode;
     use super::super::sidebar_column::{SidebarColumn, SidebarWidth};
-    use super::super::status_bar::{StatusBarSegment, StatusBarSegments};
+    use super::super::status_bar::{StatusBarLayout, StatusBarSegment};
 
     /// L'apparence complète, telle qu'une session l'aurait réglée de bout en bout.
     fn all_seven_chosen() -> Appearance {
@@ -98,7 +98,7 @@ mod tests {
                 open: true,
                 view: PanelView::Worktrees,
             },
-            status_bar: StatusBarSegments::default().toggled(StatusBarSegment::Cwd),
+            status_bar: StatusBarLayout::default().toggled(StatusBarSegment::Cwd),
         }
     }
 
@@ -138,7 +138,7 @@ mod tests {
                 open: false,
                 view: PanelView::Graph,
             },
-            status_bar: StatusBarSegments::default(),
+            status_bar: StatusBarLayout::default(),
         };
 
         // When
@@ -245,7 +245,7 @@ mod tests {
                 collapsed: true,
             },
             panel: BottomPanel::default(),
-            status_bar: StatusBarSegments::default(),
+            status_bar: StatusBarLayout::default(),
         };
 
         // When

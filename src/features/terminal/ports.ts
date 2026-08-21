@@ -17,7 +17,7 @@ import type {
     WorktreeMetadata,
     WorktreeMetadataChanged,
 } from "@/shared/ipc";
-import type { StatusBarSegmentId, StatusBarSegments } from "./status-bar";
+import type { StatusBarLayout, StatusBarSegmentId } from "./status-bar";
 
 /**
  * `TabId` et `TabInfo` sont le contrat partagé avec le backend, pas la propriété de cette
@@ -261,9 +261,13 @@ export interface UsageBridge {
  * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
  */
 export interface StatusBarBridge {
-    /** Ce que la ligne montre, tel que la session précédente l'a laissé. */
-    segments(): Promise<StatusBarSegments>;
-    /** Coche ou décoche ce segment. Le résultat revient par [`onSegments`]. */
+    /** La barre, telle que la session précédente l'a laissée. */
+    layout(): Promise<StatusBarLayout>;
+    /** Coche ou décoche ce segment. Le résultat revient par [`onLayout`]. */
     toggle(segment: StatusBarSegmentId): Promise<void>;
-    onSegments(handler: (segments: StatusBarSegments) => void): Promise<Unsubscribe>;
+    /** La barre que le mode édition vient de composer — au relâchement seulement. */
+    arrange(items: StatusBarLayout): Promise<void>;
+    /** La disposition d'origine — le `reset all` de la spec §4.4, appliqué à la barre. */
+    reset(): Promise<void>;
+    onLayout(handler: (layout: StatusBarLayout) => void): Promise<Unsubscribe>;
 }

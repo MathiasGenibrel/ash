@@ -163,6 +163,23 @@ mieux vaut ne rien rattacher que rattacher au mauvais. **L'ouvrir ne lit rien** 
 ni réseau. Elle rapporte un souvenir que le fil de fond a laissé, parce qu'un panneau qui irait
 chercher ferait surgir un dialogue macOS sur un chemin de rendu.
 
+**La barre de statut se compose** (spec §4.2, vues 5c et 5e) : un clic droit choisit ce
+qu'elle montre, un clic gauche **maintenu 430 ms** la fait passer en mode édition — pastilles
+qu'on glisse, `×` qui jette, tiroir qui rend —, et le **spacer** y devient un objet visible,
+déplaçable, supprimable, qu'on pose en plusieurs exemplaires. Ce qui est retenu a changé de
+nature : ce n'étaient plus sept booléens nommés mais une **suite ordonnée** (`StatusBarLayout`
+dans `features::theme`, même clé `status_bar` de `~/.ash/theme.json`), où la visibilité est
+une **appartenance** — un `cwd: true` ne dit pas où est le `cwd`, et il n'y a pas de champ
+nommé pour « le troisième élastique ». Un fichier écrit par la version d'avant se relit quand
+même : ses booléens sont convertis en la barre qu'ils décrivaient, dans l'ordre d'origine.
+Le geste n'a rien retiré à personne — le compteur des 430 ms se **désarme dès que le pointeur
+bouge de plus de quatre pixels**, donc sélectionner du texte reste sélectionner du texte —, et
+en édition **rien d'autre n'agit**, non par une condition dans le code mais parce que la ligne
+montre alors ses éléments au lieu de ses valeurs. Le frontend ne détient qu'une chose, la
+disposition **en cours de glissement** : c'est le chemin de `set_bottom_panel_height`
+(ADR-0009), une image intermédiaire d'un geste continu, remplacée au relâchement par ce que le
+backend annonce.
+
 `ash-event` lit **l'entrée standard** que tout hook lui donne, et en tire `agent_id` /
 `agent_type` (ADR-0007, amendement du 2026-08-13) — les deux clés que les lignes filles
 consomment, bornées à 256 octets pour qu'une clé démesurée ne fasse jamais partir une trame
