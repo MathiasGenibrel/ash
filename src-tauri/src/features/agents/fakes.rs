@@ -165,3 +165,60 @@ impl crate::features::agents::usage::Transcripts for FakeTranscripts {
         self.tails.get(path).cloned()
     }
 }
+
+/// La configuration d'un outil qu'un scénario **décrit**, au lieu de l'écrire dans un foyer.
+///
+/// Le port [`ToolConfig`](super::usage::ToolConfig) tenu par deux tables et un dossier. C'est
+/// ce qui garantit qu'**aucun `cargo test` ne lit le vrai `~/.claude/settings.json`** : un
+/// test qui tomberait sur celui de la machine qui le lance dirait `opus[1m]` chez son auteur
+/// et rien chez le voisin.
+#[derive(Debug, Default)]
+pub(crate) struct FakeToolConfig {
+    files: std::collections::HashMap<std::path::PathBuf, String>,
+    home: Option<std::path::PathBuf>,
+}
+
+impl FakeToolConfig {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Le foyer de cet utilisateur-là — celui du scénario, jamais celui de la machine.
+    #[must_use]
+    pub(crate) fn homed_at(mut self, home: &str) -> Self {
+        self.home = Some(std::path::PathBuf::from(home));
+        self
+    }
+
+    /// Un fichier de configuration, et ce qu'il contient.
+    #[must_use]
+    pub(crate) fn holding(mut self, path: &str, contents: &str) -> Self {
+        self.files
+            .insert(std::path::PathBuf::from(path), contents.to_owned());
+        self
+    }
+
+    /// Le raccourci des scénarios qui ne parlent que du modèle — le seul cas courant.
+    #[must_use]
+    pub(crate) fn declaring_model(self, path: &str, model: &str) -> Self {
+        self.holding(path, &format!(r#"{{"model":"{model}"}}"#))
+    }
+}
+
+impl crate::features::agents::usage::ToolConfig for FakeToolConfig {
+    /// Aucune variable d'environnement dans les scénarios du superviseur.
+    ///
+    /// La priorité d'`ANTHROPIC_MODEL` se prouve là où elle est décidée — dans les tests de
+    /// `usage.rs` —, et la redire ici ne dirait rien du superviseur.
+    fn variable(&self, _name: &str) -> Option<String> {
+        None
+    }
+
+    fn read(&self, path: &std::path::Path) -> Option<String> {
+        self.files.get(path).cloned()
+    }
+
+    fn home(&self) -> Option<std::path::PathBuf> {
+        self.home.clone()
+    }
+}

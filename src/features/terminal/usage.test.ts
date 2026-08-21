@@ -53,7 +53,7 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 69%");
-        expect(gauge?.level).toBe("fresh");
+        expect(gauge?.share?.level).toBe("fresh");
     });
 
     it("Given a conversation that reaches seventy percent, when the gauge is composed, then it turns loaded", () => {
@@ -62,7 +62,7 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 70%");
-        expect(gauge?.level).toBe("loaded");
+        expect(gauge?.share?.level).toBe("loaded");
     });
 
     it("Given a conversation that reaches ninety percent, when the gauge is composed, then it announces the compaction", () => {
@@ -71,7 +71,7 @@ describe("la jauge de contexte", () => {
         const gauge = composeContextGauge({ usedTokens: 180_000, windowTokens: 200_000 });
 
         // Then
-        expect(gauge?.level).toBe("compacting");
+        expect(gauge?.share?.level).toBe("compacting");
     });
 
     it("Given a rounded percentage that crosses a threshold, when the gauge is composed, then the colour follows the number that is shown", () => {
@@ -81,26 +81,59 @@ describe("la jauge de contexte", () => {
 
         // Then
         expect(gauge?.label).toBe("ctx 70%");
-        expect(gauge?.level).toBe("loaded");
+        expect(gauge?.share?.level).toBe("loaded");
     });
 
-    it("Given a conversation past the window that was assumed, when the gauge is composed, then it stops at a hundred", () => {
-        // Given — `windowTokens` est une **supposition** : le transcript nomme le modèle sans
-        // dire si la session est de 200 k ou de 1 M. Le dépassement est donc un cas nominal,
-        // et `ctx 143%` afficherait une mesure qu'Ash n'a pas.
+    it("Given a conversation past its window, when the gauge is composed, then it stops at a hundred", () => {
+        // Given — une conversation compactée peut déclarer plus que sa fenêtre le temps d'un
+        // tour, et `ctx 143%` n'aurait aucun sens sur un cadran qui promet une part.
         const gauge = composeContextGauge({ usedTokens: 286_000, windowTokens: 200_000 });
 
         // Then
-        expect(gauge?.percent).toBe(100);
+        expect(gauge?.share?.percent).toBe(100);
         expect(gauge?.label).toBe("ctx 100%");
     });
 
-    it("Given a window announced as empty, when the gauge is composed, then nothing is drawn rather than a division by zero", () => {
-        // Given — une fenêtre à zéro n'est pas une donnée
+    it("Given a million token window, when the gauge is composed, then it reads what /context reads in that session", () => {
+        // Given — le scénario du ticket, et la raison de toute la tranche : 57 200 tokens
+        // dans une session `opus[1m]`. Le dénominateur supposé de 200 000 en faisait `ctx
+        // 29%`, à un cran du premier seuil de couleur, sur une conversation à peine entamée.
+        const gauge = composeContextGauge({ usedTokens: 57_200, windowTokens: 1_000_000 });
+
+        // Then — les 6 % que `/context` affiche, et la teinte d'une conversation fraîche.
+        expect(gauge?.label).toBe("ctx 6%");
+        expect(gauge?.share?.level).toBe("fresh");
+    });
+
+    it("Given a window Ash could not name, when the gauge is composed, then the measure is shown without being put into a ratio", () => {
+        // Given — aucune source ne nomme de modèle reconnu : ni `ANTHROPIC_MODEL`, ni le
+        // `.claude/` du dépôt, ni celui du foyer. Le numérateur, lui, est exact — et
+        // l'effacer avec le dénominateur serait perdre ce qu'Ash sait vraiment.
+        const gauge = composeContextGauge({ usedTokens: 57_200, windowTokens: null });
+
+        // Then — un compte, pas une part : ni pourcentage, ni palier, donc ni barre ni
+        // couleur de seuil quand la ligne le peindra.
+        expect(gauge?.label).toBe("ctx 57k");
+        expect(gauge?.share).toBeNull();
+    });
+
+    it("Given a small conversation whose window is unknown, when the gauge is composed, then the count is written as it is", () => {
+        // Given — sous le millier, `0k` effacerait la seule chose qu'Ash mesure. La règle est
+        // plate exprès : les milliers arrondis au-dessus de mille, le nombre tel quel dessous.
+        const gauge = composeContextGauge({ usedTokens: 900, windowTokens: null });
+
+        // Then
+        expect(gauge?.label).toBe("ctx 900");
+    });
+
+    it("Given a window announced as empty, when the gauge is composed, then the count survives the division by zero", () => {
+        // Given — une fenêtre à zéro n'est pas une donnée, et se lit donc comme une fenêtre
+        // inconnue : zéro ne se divise pas, mais 12 000 tokens ont bien été mesurés.
         const gauge = composeContextGauge({ usedTokens: 12_000, windowTokens: 0 });
 
         // Then
-        expect(gauge).toBeNull();
+        expect(gauge?.label).toBe("ctx 12k");
+        expect(gauge?.share).toBeNull();
     });
 });
 

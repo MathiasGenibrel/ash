@@ -14,7 +14,7 @@ use std::path::{Component, Path};
 
 use super::adapter::{hook_mark, Adapter, RawEvent, SubagentSupport};
 use super::state::AgentState;
-use super::usage::{SessionUsage, UsageSupport, DEFAULT_CONTEXT_WINDOW};
+use super::usage::{ModelSource, UsageSupport};
 
 /// Les invariants du contrat, un par un.
 ///
@@ -44,8 +44,11 @@ pub(crate) enum Invariant {
     NoUsageWithoutUsageSupport,
     UsageSupportReadsItsOwnTranscript,
     ReadUsageIsDeterministic,
-    UsageWindowIsNotZero,
+    UsageIsNeverZero,
     UsageSurvivesALineItCannotRead,
+    NoModelSourcesWithoutUsageSupport,
+    AnUnknownModelHasNoWindow,
+    ContextWindowIsNotZero,
 }
 
 impl Invariant {
@@ -100,18 +103,34 @@ impl Invariant {
                  ce que rien ne distingue d'un outil qui n'a rien à montrer"
             }
             Self::ReadUsageIsDeterministic => {
-                "read_usage() doit être déterministe : un adaptateur ne retient rien, et une \
-                 mesure qui varie à texte égal ferait clignoter la barre sans qu'aucun token \
-                 ait été consommé"
+                "read_used_tokens() doit être déterministe : un adaptateur ne retient rien, \
+                 et une mesure qui varie à texte égal ferait clignoter la barre sans qu'aucun \
+                 token ait été consommé"
             }
-            Self::UsageWindowIsNotZero => {
-                "une mesure doit porter une fenêtre non nulle : c'est le dénominateur du \
-                 pourcentage affiché, et zéro ne se divise pas"
+            Self::UsageIsNeverZero => {
+                "read_used_tokens() ne doit jamais rendre zéro : un tour qui déclare un \
+                 `usage` vide n'est pas une conversation vide, et le lire ainsi ferait \
+                 retomber la jauge au milieu d'une session"
             }
             Self::UsageSurvivesALineItCannotRead => {
-                "read_usage() doit sauter une ligne illisible au lieu de s'y arrêter : la \
-                 queue d'un transcript commence au milieu du fichier, et elle porte des \
+                "read_used_tokens() doit sauter une ligne illisible au lieu de s'y arrêter : \
+                 la queue d'un transcript commence au milieu du fichier, et elle porte des \
                  lignes qui ne décrivent aucun tour"
+            }
+            Self::NoModelSourcesWithoutUsageSupport => {
+                "un adaptateur qui répond `UsageSupport::None` ne doit nommer aucune source \
+                 de modèle : la fenêtre ne sert qu'à une jauge qu'il a déclaré ne pas avoir, \
+                 et la feature ouvrirait alors des fichiers pour rien"
+            }
+            Self::AnUnknownModelHasNoWindow => {
+                "context_window() doit rendre `None` sur un identifiant que l'outil ne \
+                 reconnaît pas : c'est très exactement la règle qu'un défaut universel avait \
+                 remplacée, et qui faisait lire `ctx 28%` à une conversation occupant 6 % de \
+                 sa fenêtre"
+            }
+            Self::ContextWindowIsNotZero => {
+                "une fenêtre annoncée doit être non nulle : c'est le dénominateur du \
+                 pourcentage affiché, et zéro ne se divise pas"
             }
             Self::InstrumentationIsACapability => {
                 "instrumentation() doit décrire une capacité de l'outil, pas dépendre du \
@@ -289,10 +308,10 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
         .collect();
 
     for text in &corpus {
-        let measured = adapter.read_usage(text);
+        let measured = adapter.read_used_tokens(text);
 
         report.require(
-            measured == adapter.read_usage(text),
+            measured == adapter.read_used_tokens(text),
             Invariant::ReadUsageIsDeterministic,
         );
 
@@ -302,10 +321,12 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
         );
 
         report.require(
-            measured.is_none_or(|usage| usage.window_tokens > 0),
-            Invariant::UsageWindowIsNotZero,
+            measured.is_none_or(|used| used > 0),
+            Invariant::UsageIsNeverZero,
         );
     }
+
+    check_context_window(adapter, declares, report);
 
     let Some(own) = own_transcript else {
         // Rien à promettre, donc rien de plus à vérifier : l'absence de queue propre *est*
@@ -314,7 +335,7 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
     };
 
     report.require(
-        !declares || adapter.read_usage(own).is_some(),
+        !declares || adapter.read_used_tokens(own).is_some(),
         Invariant::UsageSupportReadsItsOwnTranscript,
     );
 
@@ -323,9 +344,45 @@ fn check_usage(adapter: &dyn Adapter, own_transcript: Option<&str>, report: &mut
     // scénario réel : la queue commence au milieu du fichier.
     let noisy = format!("{}\n{own}", tempting_transcripts().join("\n"));
     report.require(
-        adapter.read_usage(&noisy) == adapter.read_usage(own),
+        adapter.read_used_tokens(&noisy) == adapter.read_used_tokens(own),
         Invariant::UsageSurvivesALineItCannotRead,
     );
+}
+
+/// Les identifiants de modèle qu'aucun outil n'a le droit de reconnaître.
+///
+/// **Le corpus qui garde la correction du bug #161.** Un `DEFAULT_CONTEXT_WINDOW` universel
+/// répondait 200 000 à chacun d'eux, et la ligne de statut affichait alors un pourcentage
+/// calculé sur un dénominateur inventé. Un adaptateur qui répond quelque chose ici a réécrit
+/// ce défaut sous un autre nom.
+///
+/// Les deux derniers sont les plus instructifs : `default` est un mot que Claude Code accepte
+/// vraiment dans un `settings.json`, et il ne dit **pas** quelle fenêtre s'applique ; le
+/// dernier est un modèle d'un autre fournisseur, que la configuration d'un outil tiers
+/// pourrait nommer.
+fn unnameable_models() -> [&'static str; 6] {
+    ["", "   ", "[1m]", "modèle-inventé", "default", "gpt-5"]
+}
+
+/// Ce que la table modèle → fenêtre doit garantir avant qu'un pourcentage n'atteigne l'écran.
+fn check_context_window(adapter: &dyn Adapter, declares: bool, report: &mut ContractReport) {
+    report.require(
+        declares
+            || adapter
+                .model_sources(Some(Path::new("/dev/ash")), Some(Path::new("/home/x")))
+                .is_empty(),
+        Invariant::NoModelSourcesWithoutUsageSupport,
+    );
+
+    for model in unnameable_models() {
+        let window = adapter.context_window(model);
+
+        report.require(window.is_none(), Invariant::AnUnknownModelHasNoWindow);
+        report.require(
+            window.is_none_or(|tokens| tokens > 0),
+            Invariant::ContextWindowIsNotZero,
+        );
+    }
 }
 
 /// L'identifiant est une clé : il indexe la configuration reconnue (ADR-0006) et
@@ -593,11 +650,16 @@ mod tests {
             }
         }
 
-        fn read_usage(&self, _transcript_tail: &str) -> Option<SessionUsage> {
-            self.measures_anything.then_some(SessionUsage {
-                used_tokens: 1,
-                window_tokens: DEFAULT_CONTEXT_WINDOW,
-            })
+        fn read_used_tokens(&self, _transcript_tail: &str) -> Option<u64> {
+            self.measures_anything.then_some(1)
+        }
+
+        fn model_sources(&self, _cwd: Option<&Path>, _home: Option<&Path>) -> Vec<ModelSource> {
+            Vec::new()
+        }
+
+        fn context_window(&self, _model: &str) -> Option<u64> {
+            None
         }
     }
 

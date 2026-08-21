@@ -4,7 +4,7 @@ use crate::features::agents::adapter::{
     Adapter, ChildEvent, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
-use crate::features::agents::usage::{SessionUsage, UsageSupport};
+use crate::features::agents::usage::{ModelSource, UsageSupport};
 
 /// Le socle : l'adaptateur d'un outil dont on ne sait rien
 /// ([ADR-0008](../../../../../docs/adr/0008-abstraction-adapter.md)).
@@ -70,7 +70,22 @@ impl Adapter for GenericAdapter {
     /// C'est ce que `UsageSupport::None` promet, et la suite contractuelle le vérifie sur un
     /// vrai transcript de Claude Code : le socle ne doit pas se mettre à lire le format d'un
     /// autre outil « en attendant » son adaptateur.
-    fn read_usage(&self, _transcript_tail: &str) -> Option<SessionUsage> {
+    fn read_used_tokens(&self, _transcript_tail: &str) -> Option<u64> {
+        None
+    }
+
+    /// Aucune configuration à consulter, donc aucun fichier ouvert.
+    ///
+    /// C'est le pendant exact de la promesse ci-dessus : un outil dont Ash ne sait rien n'a
+    /// pas de `settings.json` connu, et une liste vide est ce qui garantit qu'un onglet servi
+    /// par le socle ne fait ouvrir aucun fichier — pas même pour se voir répondre `None`.
+    fn model_sources(&self, _cwd: Option<&Path>, _home: Option<&Path>) -> Vec<ModelSource> {
+        Vec::new()
+    }
+
+    /// Et aucune fenêtre pour aucun identifiant : la table des modèles est la connaissance
+    /// d'un outil, et le socle n'en est pas un.
+    fn context_window(&self, _model: &str) -> Option<u64> {
         None
     }
 }
