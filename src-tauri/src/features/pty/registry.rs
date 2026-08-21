@@ -1657,6 +1657,7 @@ mod tests {
         agents.declare_usage(SessionUsage {
             used_tokens: 146_273,
             window_tokens: Some(200_000),
+            model: Some("Opus 5".to_owned()),
         });
         let discovered = registry.changes().unwrap(); // la passe qui découvre l'onglet
 
@@ -1673,7 +1674,7 @@ mod tests {
         assert_eq!(
             discovered
                 .iter()
-                .map(|tab| (tab.state_since, tab.subagents.len(), tab.usage))
+                .map(|tab| (tab.state_since, tab.subagents.len(), tab.usage.clone()))
                 .collect::<Vec<_>>(),
             vec![(
                 0,
@@ -1681,6 +1682,7 @@ mod tests {
                 Some(SessionUsage {
                     used_tokens: 146_273,
                     window_tokens: Some(200_000),
+                    model: Some("Opus 5".to_owned()),
                 })
             )]
         );

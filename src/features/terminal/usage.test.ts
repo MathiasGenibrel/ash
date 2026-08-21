@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 
 import { AccountUsageBuilder, noAccountUsage } from "@/shared/ipc/builders";
+import type { SessionUsage } from "@/shared/ipc";
 import { findAll, plainText } from "@/shared/ui";
 
 import {
@@ -34,6 +35,20 @@ function quotas(usage = new AccountUsageBuilder().build()): readonly QuotaSegmen
     return composeQuotas(usage, NOW);
 }
 
+/**
+ * Une mesure telle que le backend l'envoie.
+ *
+ * Le modèle a un défaut **absent** et non un nom plausible : les scénarios de pourcentage ne
+ * parlent pas de lui, et leur en donner un ferait passer sous silence les cas où il manque.
+ */
+function measured(
+    usedTokens: number,
+    windowTokens: number | null,
+    model: string | null = null,
+): SessionUsage {
+    return { usedTokens, windowTokens, model };
+}
+
 /** La feuille de la feature, lue comme un texte : c'est tout ce que `bun test` peut en faire. */
 const SHEET = readFileSync(new URL("./terminal.css", import.meta.url), "utf8");
 
@@ -49,7 +64,7 @@ describe("la jauge de contexte", () => {
 
     it("Given a conversation below the first threshold, when the gauge is composed, then it reads fresh", () => {
         // Given — 138 k sur 200 k, soit 69 % : un cran sous le palier
-        const gauge = composeContextGauge({ usedTokens: 138_000, windowTokens: 200_000 });
+        const gauge = composeContextGauge(measured(138_000, 200_000));
 
         // Then
         expect(gauge?.label).toBe("ctx 69%");
@@ -58,7 +73,7 @@ describe("la jauge de contexte", () => {
 
     it("Given a conversation that reaches seventy percent, when the gauge is composed, then it turns loaded", () => {
         // Given — le seuil est atteint, pas dépassé : c'est le cas qui décide de `>=`
-        const gauge = composeContextGauge({ usedTokens: 140_000, windowTokens: 200_000 });
+        const gauge = composeContextGauge(measured(140_000, 200_000));
 
         // Then
         expect(gauge?.label).toBe("ctx 70%");
@@ -68,7 +83,7 @@ describe("la jauge de contexte", () => {
     it("Given a conversation that reaches ninety percent, when the gauge is composed, then it announces the compaction", () => {
         // Given — la maquette est formelle : corail, et aucune alerte modale. Un contexte
         // plein n'est pas une panne, et ce n'est pas un état d'agent (ADR-0007).
-        const gauge = composeContextGauge({ usedTokens: 180_000, windowTokens: 200_000 });
+        const gauge = composeContextGauge(measured(180_000, 200_000));
 
         // Then
         expect(gauge?.share?.level).toBe("compacting");
@@ -77,7 +92,7 @@ describe("la jauge de contexte", () => {
     it("Given a rounded percentage that crosses a threshold, when the gauge is composed, then the colour follows the number that is shown", () => {
         // Given — 139 400 / 200 000 fait 69,7 %, qui s'écrit `70%`. Une jauge qui resterait
         // bleue en affichant `ctx 70%` se lirait comme un bug : c'est le chiffre qui promet.
-        const gauge = composeContextGauge({ usedTokens: 139_400, windowTokens: 200_000 });
+        const gauge = composeContextGauge(measured(139_400, 200_000));
 
         // Then
         expect(gauge?.label).toBe("ctx 70%");
@@ -87,7 +102,7 @@ describe("la jauge de contexte", () => {
     it("Given a conversation past its window, when the gauge is composed, then it stops at a hundred", () => {
         // Given — une conversation compactée peut déclarer plus que sa fenêtre le temps d'un
         // tour, et `ctx 143%` n'aurait aucun sens sur un cadran qui promet une part.
-        const gauge = composeContextGauge({ usedTokens: 286_000, windowTokens: 200_000 });
+        const gauge = composeContextGauge(measured(286_000, 200_000));
 
         // Then
         expect(gauge?.share?.percent).toBe(100);
@@ -98,7 +113,7 @@ describe("la jauge de contexte", () => {
         // Given — le scénario du ticket, et la raison de toute la tranche : 57 200 tokens
         // dans une session `opus[1m]`. Le dénominateur supposé de 200 000 en faisait `ctx
         // 29%`, à un cran du premier seuil de couleur, sur une conversation à peine entamée.
-        const gauge = composeContextGauge({ usedTokens: 57_200, windowTokens: 1_000_000 });
+        const gauge = composeContextGauge(measured(57_200, 1_000_000));
 
         // Then — les 6 % que `/context` affiche, et la teinte d'une conversation fraîche.
         expect(gauge?.label).toBe("ctx 6%");
@@ -109,7 +124,7 @@ describe("la jauge de contexte", () => {
         // Given — aucune source ne nomme de modèle reconnu : ni `ANTHROPIC_MODEL`, ni le
         // `.claude/` du dépôt, ni celui du foyer. Le numérateur, lui, est exact — et
         // l'effacer avec le dénominateur serait perdre ce qu'Ash sait vraiment.
-        const gauge = composeContextGauge({ usedTokens: 57_200, windowTokens: null });
+        const gauge = composeContextGauge(measured(57_200, null));
 
         // Then — un compte, pas une part : ni pourcentage, ni palier, donc ni barre ni
         // couleur de seuil quand la ligne le peindra.
@@ -120,7 +135,7 @@ describe("la jauge de contexte", () => {
     it("Given a small conversation whose window is unknown, when the gauge is composed, then the count is written as it is", () => {
         // Given — sous le millier, `0k` effacerait la seule chose qu'Ash mesure. La règle est
         // plate exprès : les milliers arrondis au-dessus de mille, le nombre tel quel dessous.
-        const gauge = composeContextGauge({ usedTokens: 900, windowTokens: null });
+        const gauge = composeContextGauge(measured(900, null));
 
         // Then
         expect(gauge?.label).toBe("ctx 900");
@@ -129,11 +144,50 @@ describe("la jauge de contexte", () => {
     it("Given a window announced as empty, when the gauge is composed, then the count survives the division by zero", () => {
         // Given — une fenêtre à zéro n'est pas une donnée, et se lit donc comme une fenêtre
         // inconnue : zéro ne se divise pas, mais 12 000 tokens ont bien été mesurés.
-        const gauge = composeContextGauge({ usedTokens: 12_000, windowTokens: 0 });
+        const gauge = composeContextGauge(measured(12_000, 0));
 
         // Then
         expect(gauge?.label).toBe("ctx 12k");
         expect(gauge?.share).toBeNull();
+    });
+});
+
+describe("le modèle qui tourne", () => {
+    it("Given a session whose backend named its model, when the gauge is composed, then the name travels beside the label", () => {
+        // Given — le scénario du ticket : 57 200 tokens dans une session `opus[1m]`, dont le
+        // transcript nomme `claude-opus-5`. Le nom est **déjà** en mots quand il arrive : la
+        // table qui traduit `claude-opus-5` vit dans l'adaptateur, à côté de celle des
+        // fenêtres, et n'a aucune copie ici.
+        const gauge = composeContextGauge(measured(57_200, 1_000_000, "Opus 5 1M"));
+
+        // Then — le nom se lit à droite du libellé, et le libellé n'a pas changé pour autant.
+        expect(gauge?.label).toBe("ctx 6%");
+        expect(gauge?.model).toBe("Opus 5 1M");
+    });
+
+    it("Given a model the backend could not name, when the gauge is composed, then the segment disappears without touching the gauge", () => {
+        // Given — un identifiant que l'adaptateur ne reconnaît pas, sur une fenêtre
+        // parfaitement connue. Les deux absences sont indépendantes : celle du nom ne doit pas
+        // emporter le pourcentage, et un tiret à sa place occuperait la barre pour dire qu'on
+        // ne sait pas.
+        const gauge = composeContextGauge(measured(140_000, 200_000, null));
+
+        // Then
+        expect(gauge?.model).toBeNull();
+        expect(gauge?.label).toBe("ctx 70%");
+        expect(gauge?.share?.level).toBe("loaded");
+    });
+
+    it("Given a window Ash could not name but a model it could, when the gauge is composed, then the name survives the missing ratio", () => {
+        // Given — l'absence inverse, et elle existe vraiment : le transcript nomme ce qui a
+        // tourné, et aucune configuration ne dit dans quelle fenêtre. Effacer le nom avec le
+        // dénominateur serait perdre ce qu'Ash sait.
+        const gauge = composeContextGauge(measured(57_200, null, "Opus 5"));
+
+        // Then
+        expect(gauge?.label).toBe("ctx 57k");
+        expect(gauge?.share).toBeNull();
+        expect(gauge?.model).toBe("Opus 5");
     });
 });
 
@@ -250,23 +304,29 @@ describe("la mise en forme des segments d'usage", () => {
         expect(painted).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     });
 
-    it("Given a line too narrow to hold everything, when the segments withdraw, then the quotas go before the gauge and what says where we are never goes", () => {
-        // Given — l'ordre de retrait est un critère : les quotas d'abord, la jauge et son
-        // libellé ensuite, et jamais le `cwd` ni l'état de l'agent.
+    it("Given a line too narrow to hold everything, when the segments withdraw, then the model goes before the quotas, the quotas before the gauge, and what says where we are never goes", () => {
+        // Given — l'ordre de retrait est un critère : le modèle d'abord, les quotas ensuite,
+        // la jauge et son libellé en dernier, et jamais le `cwd` ni l'état de l'agent.
         const blocks = [
             ...SHEET.matchAll(/@container statusline \(max-width: (\d+)px\) \{\n([\s\S]*?)\n\}/g),
         ].map((match) => ({ width: Number(match[1]), body: match[2] ?? "" }));
 
         // When — les seuils sont cherchés par ce qu'ils **retirent**, jamais par leur rang
-        // dans la feuille : deux `@container` disjoints se lisent pareil dans n'importe quel
+        // dans la feuille : trois `@container` disjoints se lisent pareil dans n'importe quel
         // ordre, et un test qui dépendrait de leur rang tomberait sur un déplacement qui ne
         // change rien à l'écran.
+        const modelGoes = blocks.find((block) => block.body.includes(".status-usage-model"));
         const quotasGo = blocks.find((block) => block.body.includes(".status-usage-quota"));
-        const groupGoes = blocks.find((block) => !block.body.includes(".status-usage-quota"));
+        const groupGoes = blocks.find(
+            (block) =>
+                !block.body.includes(".status-usage-model") &&
+                !block.body.includes(".status-usage-quota"),
+        );
 
         // Then — le seuil qui emporte tout le groupe est le plus étroit : on n'y arrive
-        // qu'après avoir retiré les pastilles.
+        // qu'après avoir retiré le modèle, puis les pastilles.
         expect(groupGoes?.body).toContain(".status-usage");
+        expect(modelGoes?.width).toBeGreaterThan(quotasGo?.width ?? 0);
         expect(quotasGo?.width).toBeGreaterThan(groupGoes?.width ?? 0);
         // Rien de ce qui dit **où l'on est** n'est visé par un retrait.
         const survivors = ["status-path", "status-text", "ash-glyph", "status-main"];

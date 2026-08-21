@@ -4,7 +4,7 @@ use crate::features::agents::adapter::{
     hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
-use crate::features::agents::usage::{ModelSource, UsageSupport};
+use crate::features::agents::usage::{ModelSource, Turn, UsageSupport};
 
 /// La version du bloc que cet adaptateur compose.
 ///
@@ -102,12 +102,25 @@ const LONG_CONTEXT_SUFFIX: &str = "[1m]";
 /// La fenêtre d'une session portant [`LONG_CONTEXT_SUFFIX`].
 const LONG_CONTEXT_WINDOW: u64 = 1_000_000;
 
+/// Ce que le nom court ajoute quand la session tourne en un million de tokens.
+///
+/// `Opus 5 1M` plutôt que `Opus 5[1m]` : le suffixe est une syntaxe de fichier de réglages,
+/// pas un mot à lire dans une barre d'état.
+const LONG_CONTEXT_MARK: &str = "1M";
+
 /// La fenêtre d'un modèle reconnu qui ne porte pas ce suffixe.
 ///
 /// **C'est la valeur d'un modèle nommé, et plus un défaut universel.** C'est toute la
 /// différence avec le `DEFAULT_CONTEXT_WINDOW` qu'elle remplace : elle ne s'applique qu'à un
 /// identifiant qu'on a reconnu, et un identifiant inconnu n'y retombe pas.
 const STANDARD_CONTEXT_WINDOW: u64 = 200_000;
+
+/// Le nombre de chiffres au-delà duquel un segment de l'identifiant est une **date**.
+///
+/// `claude-haiku-4-5-20251001` porte sa version *et* son millésime, séparés de la même façon.
+/// La version est faite de nombres courts (`4`, `5`, `8`) ; huit chiffres d'affilée ne sont
+/// pas un numéro de version, et les écrire dans la barre donnerait `Haiku 4.5.20251001`.
+const DATE_DIGITS: usize = 4;
 
 /// Les familles de modèles dont Claude Code connaît la fenêtre.
 ///
@@ -289,11 +302,36 @@ impl Adapter for ClaudeCodeAdapter {
     /// Une ligne qu'on ne sait pas lire est **sautée**, pas fatale : la queue commence au
     /// milieu du fichier, elle porte des `attachment` et des `user` qui n'ont pas d'usage, et
     /// un format qui gagne un champ ne doit pas éteindre la jauge.
-    fn read_used_tokens(&self, transcript_tail: &str) -> Option<u64> {
+    ///
+    /// **Le modèle sort du même objet que les tokens**, et c'est ce qui rend la lecture
+    /// gratuite : `"model":"claude-opus-5"` est écrit à côté de l'`usage` du tour, donc le
+    /// nommer ne coûte pas une ligne de plus, encore moins un fichier de plus. C'est aussi ce
+    /// qui garantit qu'on ne rapporte jamais le modèle d'un tour avec la mesure d'un autre.
+    fn read_turn(&self, transcript_tail: &str) -> Option<Turn> {
         transcript_tail
             .lines()
             .rev()
-            .find_map(|line| tokens_of(line.trim()))
+            .find_map(|line| turn_of(line.trim()))
+    }
+
+    /// L'identifiant du transcript, ramené aux deux ou trois mots de la barre.
+    ///
+    /// Le nom vient du **transcript** et le suffixe de la **configuration**, parce que c'est
+    /// ainsi qu'ils sont écrits : `/model sonnet` fait changer le premier au tour suivant sans
+    /// toucher au second, et `[1m]` ne figure que dans le second.
+    ///
+    /// Un identifiant dont aucune famille connue ne ressort ne se nomme pas — pas plus qu'il
+    /// ne se mesure ([`Self::context_window`]). C'est la même porte, et il n'y en a pas
+    /// d'autre : `claude-fable-5` est un identifiant réel qu'Ash ne connaît pas, et le segment
+    /// disparaît plutôt que d'inventer un mot.
+    fn model_name(&self, ran: &str, configured: Option<&str>) -> Option<String> {
+        let short = short_name(ran)?;
+        Some(match configured {
+            Some(configured) if is_long_context(configured) => {
+                format!("{short} {LONG_CONTEXT_MARK}")
+            }
+            _ => short,
+        })
     }
 
     /// Les quatre endroits où Claude Code nomme son modèle, dans **son** ordre de priorité.
@@ -342,15 +380,12 @@ impl Adapter for ClaudeCodeAdapter {
     /// faute de frappe — vaut `None`. C'est la règle qui remplace `DEFAULT_CONTEXT_WINDOW`, et
     /// elle est le cœur de la correction : **rien de reconnu ne vaut rien**.
     fn context_window(&self, model: &str) -> Option<u64> {
-        let model = model.trim().to_ascii_lowercase();
-        let (family, long) = model
-            .strip_suffix(LONG_CONTEXT_SUFFIX)
-            .map_or((model.as_str(), false), |family| (family, true));
+        let family = without_suffix(model);
 
         KNOWN_FAMILIES
             .iter()
             .any(|known| family.contains(known))
-            .then_some(if long {
+            .then_some(if is_long_context(model) {
                 LONG_CONTEXT_WINDOW
             } else {
                 STANDARD_CONTEXT_WINDOW
@@ -358,13 +393,80 @@ impl Adapter for ClaudeCodeAdapter {
     }
 }
 
-/// Les tokens qu'une ligne de transcript déclare, si c'est un tour qui en déclare.
+/// L'identifiant sans ce qui n'appartient pas à la famille : espaces, casse, suffixe `[1m]`.
+fn without_suffix(model: &str) -> String {
+    let model = model.trim().to_ascii_lowercase();
+    model
+        .strip_suffix(LONG_CONTEXT_SUFFIX)
+        .unwrap_or(&model)
+        .to_owned()
+}
+
+/// Cet identifiant demande-t-il la fenêtre du million ?
 ///
-/// Séparée de [`Adapter::read_usage`] parce que c'est la seule moitié qui connaît la forme
+/// Une seule lecture du suffixe pour les deux questions qu'il tranche — la taille de la
+/// fenêtre et le `1M` du nom court. Deux tests séparés finiraient par diverger, et la barre
+/// dirait alors `Opus 5` sur un pourcentage calculé en 1 M.
+fn is_long_context(model: &str) -> bool {
+    model
+        .trim()
+        .to_ascii_lowercase()
+        .ends_with(LONG_CONTEXT_SUFFIX)
+}
+
+/// L'identifiant ramené à sa famille et à sa version — `claude-opus-5` → `Opus 5`.
+///
+/// **La famille est la porte, la version n'est qu'une transcription.** C'est ce qui distingue
+/// ce nom d'une devinette : rien ne sort d'ici sans qu'une famille connue ait été reconnue,
+/// exactement comme rien ne sort de [`Adapter::context_window`] sans elle. Les chiffres qui
+/// suivent sont recopiés, pas interprétés — ce sont ceux que l'identifiant porte.
+///
+/// La version s'arrête au premier segment qui n'est pas un nombre court : `4`, puis `5`, puis
+/// le millésime `20251001` qu'aucune barre d'état n'a à montrer (voir [`DATE_DIGITS`]). Un
+/// identifiant sans version — l'alias `opus`, que Claude Code accepte — rend la famille seule.
+fn short_name(model: &str) -> Option<String> {
+    let model = without_suffix(model);
+    let (family, at) = KNOWN_FAMILIES
+        .iter()
+        .find_map(|known| model.find(known).map(|at| (*known, at)))?;
+
+    let version = model[at + family.len()..]
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .take_while(|part| is_version_part(part))
+        .collect::<Vec<_>>()
+        .join(".");
+
+    let family = capitalized(family);
+    Some(if version.is_empty() {
+        family
+    } else {
+        format!("{family} {version}")
+    })
+}
+
+/// Un nombre assez court pour être un numéro de version, et non un millésime.
+fn is_version_part(part: &str) -> bool {
+    part.len() < DATE_DIGITS && part.chars().all(|digit| digit.is_ascii_digit())
+}
+
+/// `opus` → `Opus`. Les familles sont ascii et minuscules par construction.
+fn capitalized(word: &str) -> String {
+    let mut letters = word.chars();
+    match letters.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + letters.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Ce qu'une ligne de transcript déclare, si c'est un tour qui déclare quelque chose.
+///
+/// Séparée de [`Adapter::read_turn`] parce que c'est la seule moitié qui connaît la forme
 /// du JSON de Claude Code — l'autre ne fait que choisir *quelle* ligne lire.
-fn tokens_of(line: &str) -> Option<u64> {
+fn turn_of(line: &str) -> Option<Turn> {
     let entry: serde_json::Value = serde_json::from_str(line).ok()?;
-    let usage = entry.get("message")?.get("usage")?;
+    let message = entry.get("message")?;
+    let usage = message.get("usage")?;
 
     // `as_u64().unwrap_or(0)` sur chacun, et pas un `?` : un compteur absent vaut zéro, et
     // exiger les quatre ferait perdre toute la mesure le jour où l'un d'eux disparaît.
@@ -381,8 +483,20 @@ fn tokens_of(line: &str) -> Option<u64> {
         + counted("output_tokens");
 
     // Un objet `usage` présent mais entièrement vide ne mesure rien — le lire comme « zéro
-    // token » ferait retomber la jauge à vide au milieu d'une conversation.
-    (total > 0).then_some(total)
+    // token » ferait retomber la jauge à vide au milieu d'une conversation. C'est l'`usage`
+    // qui fait le tour, et non le modèle : une ligne qui nomme un modèle sans rien mesurer
+    // n'est pas un tour d'assistant.
+    (total > 0).then(|| Turn {
+        used_tokens: total,
+        // `message.model`, et non une clé de premier niveau : c'est l'objet du message qui
+        // porte le modèle, à côté de son `usage`. Une chaîne vide ne nomme rien.
+        model: message
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned),
+    })
 }
 
 impl ClaudeCodeAdapter {
@@ -656,7 +770,9 @@ mod tests {
         let adapter = adapter();
 
         // When
-        let used = adapter.read_used_tokens(OWN_TRANSCRIPT);
+        let used = adapter
+            .read_turn(OWN_TRANSCRIPT)
+            .map(|turn| turn.used_tokens);
 
         // Then — 2 + 2196 + 143801 + 274. Ne lire qu'`input_tokens` afficherait une
         // conversation vide sur une session pleine aux trois quarts.
@@ -672,7 +788,9 @@ mod tests {
         let later = r#"{"type":"assistant","message":{"usage":{"input_tokens":900}}}"#;
 
         // When
-        let used = adapter.read_used_tokens(&format!("{earlier}\n{later}\n"));
+        let used = adapter
+            .read_turn(&format!("{earlier}\n{later}\n"))
+            .map(|turn| turn.used_tokens);
 
         // Then
         assert_eq!(used, Some(900));
@@ -687,10 +805,10 @@ mod tests {
         let tail = r#"{"type":"user","message":{"role":"user","content":"encore"}}"#;
 
         // When
-        let used = adapter.read_used_tokens(tail);
+        let read = adapter.read_turn(tail);
 
         // Then — une absence de mesure, pas un zéro : l'onglet gardera ce qu'il savait.
-        assert_eq!(used, None);
+        assert_eq!(read, None);
     }
 
     #[test]
@@ -702,10 +820,10 @@ mod tests {
         let tail = r#"{"type":"assistant","message":{"usage":{"input_tokens":0}}}"#;
 
         // When
-        let used = adapter.read_used_tokens(tail);
+        let read = adapter.read_turn(tail);
 
         // Then
-        assert_eq!(used, None);
+        assert_eq!(read, None);
     }
 
     #[test]
@@ -767,5 +885,124 @@ mod tests {
                 ModelSource::json_key("/Users/x/.claude/settings.json", "model"),
             ]
         );
+    }
+
+    #[test]
+    fn given_a_turn_naming_its_model_when_the_adapter_reads_it_then_the_name_and_the_tokens_come_from_the_same_line(
+    ) {
+        // Given — un tour d'assistant réel : `"model"` et `"usage"` sont écrits côte à côte,
+        // dans le même objet `message`. C'est ce voisinage qui rend le nom gratuit — le
+        // chercher ailleurs demanderait une seconde lecture.
+        let adapter = adapter();
+
+        // When
+        let read = adapter.read_turn(OWN_TRANSCRIPT);
+
+        // Then
+        assert_eq!(
+            read,
+            Some(Turn {
+                used_tokens: 146_273,
+                model: Some("claude-opus-5".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_session_whose_model_changed_mid_way_when_the_adapter_reads_the_tail_then_the_last_turn_names_it(
+    ) {
+        // Given — l'utilisateur a tapé `/model` et choisi Sonnet, puis l'agent a produit un
+        // tour. Le tour précédent, lui, est toujours dans le transcript et nomme encore Opus :
+        // c'est très exactement le piège d'une lecture qui partirait du début.
+        let adapter = adapter();
+        let before = r#"{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":10}}}"#;
+        let after = r#"{"type":"assistant","message":{"model":"claude-sonnet-5","usage":{"input_tokens":900}}}"#;
+
+        // When
+        let read = adapter.read_turn(&format!("{before}\n{after}\n"));
+
+        // Then — le modèle suit la mesure, parce que les deux viennent du même tour.
+        assert_eq!(
+            read,
+            Some(Turn {
+                used_tokens: 900,
+                model: Some("claude-sonnet-5".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_transcript_model_and_a_configuration_carrying_the_long_context_suffix_when_it_is_named_then_it_reads_opus_five_one_m(
+    ) {
+        // Given — les deux sources, et chacune ce qu'elle est seule à savoir : le transcript
+        // dit **ce qui a tourné**, la configuration dit **dans quelle fenêtre**. Aucune des
+        // deux ne pourrait répondre seule.
+        let adapter = adapter();
+
+        // When
+        let name = adapter.model_name("claude-opus-5", Some("opus[1m]"));
+
+        // Then
+        assert_eq!(name.as_deref(), Some("Opus 5 1M"));
+    }
+
+    #[test]
+    fn given_no_long_context_suffix_in_the_configuration_when_the_model_is_named_then_it_reads_opus_five(
+    ) {
+        // Given — la même session, sur une configuration ordinaire : le transcript écrit le
+        // même `claude-opus-5` dans les deux cas, et rien d'autre ne distingue les deux
+        // fenêtres.
+        let adapter = adapter();
+
+        // When
+        let named: Vec<Option<String>> = [None, Some("opus"), Some("claude-opus-5")]
+            .into_iter()
+            .map(|configured| adapter.model_name("claude-opus-5", configured))
+            .collect();
+
+        // Then
+        assert_eq!(named, vec![Some("Opus 5".to_owned()); 3]);
+    }
+
+    #[test]
+    fn given_a_dated_identifier_when_it_is_named_then_the_date_is_not_read_as_a_version() {
+        // Given — les identifiants réels portent parfois leur millésime après leur version, et
+        // avec le même séparateur. Le recopier donnerait `Haiku 4.5.20251001` dans une barre
+        // de 12 px.
+        let adapter = adapter();
+
+        // When
+        let named: Vec<Option<String>> = ["claude-haiku-4-5-20251001", "claude-opus-4-8", "opus"]
+            .into_iter()
+            .map(|ran| adapter.model_name(ran, None))
+            .collect();
+
+        // Then — la version est recopiée, le millésime écarté, et un alias sans version rend
+        // sa famille seule.
+        assert_eq!(
+            named,
+            vec![
+                Some("Haiku 4.5".to_owned()),
+                Some("Opus 4.8".to_owned()),
+                Some("Opus".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn given_an_identifier_of_an_unknown_family_when_it_is_named_then_nothing_is_named() {
+        // Given — un identifiant parfaitement réel dont Ash ne connaît pas la famille. C'est
+        // la même porte que pour la fenêtre : reconnaître, ou se taire.
+        let adapter = adapter();
+
+        // When
+        let named: Vec<Option<String>> = ["claude-fable-5", "gpt-5", "default", ""]
+            .into_iter()
+            .map(|ran| adapter.model_name(ran, Some("opus[1m]")))
+            .collect();
+
+        // Then — et surtout pas `Fable 5` : la barre annoncerait un modèle dont Ash ignore
+        // tout, à commencer par la fenêtre qu'elle mesure juste à côté.
+        assert_eq!(named, vec![None; 4]);
     }
 }

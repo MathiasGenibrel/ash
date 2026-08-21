@@ -323,7 +323,7 @@ impl AgentStates for FakeAgentStates {
         TabAgents {
             status,
             subagents: self.children.lock().unwrap().clone(),
-            usage: *self.usage.lock().unwrap(),
+            usage: self.usage.lock().unwrap().clone(),
         }
     }
 

@@ -4,9 +4,10 @@ import type { AccountUsage, Quota, SessionUsage } from "@/shared/ipc";
 /**
  * L'usage, à droite de la ligne de statut (spec §4.2, vues 5 et 5b de la maquette).
  *
- * Quatre morceaux, dans cet ordre : le quota de **session** (`s 63% · 2h14`), le quota
- * **hebdomadaire** (`w 28% · 3d 09h`), la **jauge de contexte** de la conversation, et son
- * libellé (`ctx 41%`). Chacun n'apparaît que si sa donnée existe, et une donnée absente ne
+ * Cinq morceaux, dans cet ordre : le quota de **session** (`s 63% · 2h14`), le quota
+ * **hebdomadaire** (`w 28% · 3d 09h`), la **jauge de contexte** de la conversation, son
+ * libellé (`ctx 41%`), et le **modèle** qui tourne (`Opus 5 1M`). Chacun n'apparaît que si sa
+ * donnée existe, et une donnée absente ne
  * laisse **rien** derrière elle — ni tiret, ni zéro, ni dernière valeur connue
  * ([ADR-0016](../../../docs/adr/0016-ash-sort-sur-le-reseau.md), condition 3). L'écran ne
  * signale pas d'erreur non plus : il ne sait pas laquelle des quatre raisons s'applique.
@@ -80,6 +81,22 @@ export const SHOWN_IN_STATUS_BAR: Readonly<Record<QuotaKind, boolean>> = {
 export interface ContextGauge {
     /** `ctx 41%` quand la fenêtre est connue, `ctx 57k` sinon. */
     readonly label: string;
+    /**
+     * Le nom court du modèle qui a produit le dernier tour — `Opus 5`, `Opus 5 1M`.
+     *
+     * **Il est ici, et pas à côté**, parce qu'il bat au rythme de la jauge : les deux
+     * arrivent avec la fiche de l'onglet, et changent quand on en change. Le porter à part
+     * ferait deux entrées pour un même rythme, donc deux façons de les désynchroniser.
+     *
+     * `null` quand l'adaptateur ne sait pas nommer ce qui a tourné, ou que rien ne l'a nommé.
+     * Le segment disparaît alors entièrement — ni tiret, ni `unknown`, ni dernière valeur
+     * connue. C'est la règle de [`share`], appliquée à l'autre absence.
+     *
+     * **Il n'ouvre rien** ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)) :
+     * changer de modèle se fait dans le terminal, par `/model`, et un segment de barre d'état
+     * qui prendrait cette décision la prendrait à la place de l'utilisateur.
+     */
+    readonly model: string | null;
     /**
      * La part de la fenêtre que la conversation occupe, ou `null` quand la fenêtre est
      * inconnue — aucune source ne nomme de modèle reconnu.
@@ -170,12 +187,20 @@ export function composeContextGauge(usage: SessionUsage | null): ContextGauge | 
 
     const window = usage.windowTokens;
     if (window === null || window <= 0) {
-        return { label: `ctx ${abbreviate(usage.usedTokens)}`, share: null };
+        return {
+            label: `ctx ${abbreviate(usage.usedTokens)}`,
+            model: usage.model,
+            share: null,
+        };
     }
 
     const percent = clamp((usage.usedTokens / window) * 100);
     return {
         label: `ctx ${String(percent)}%`,
+        // Le nom traverse tel quel : le backend l'a déjà mis en mots, et il n'y a rien à en
+        // dériver. Les deux absences sont **indépendantes** — une fenêtre inconnue n'efface
+        // pas le nom, et un modèle qu'on ne sait pas nommer n'efface pas le pourcentage.
+        model: usage.model,
         share: {
             percent,
             level:
@@ -322,6 +347,7 @@ export class UsageSegments {
     private readonly gauge: HTMLElement;
     private readonly fill: HTMLElement;
     private readonly label: HTMLElement;
+    private readonly model: HTMLElement;
 
     /** Les deux quotas tels qu'ils ont été composés — le popover les relit à l'ouverture. */
     private quotas: readonly QuotaSegment[] = [];
@@ -354,7 +380,14 @@ export class UsageSegments {
         this.label = document.createElement("span");
         this.label.className = "status-usage-label";
 
-        this.element.append(this.gauge, this.label);
+        // Un `<span>`, et non un bouton comme les pastilles de quota : il n'ouvre rien, donc
+        // il n'a rien à faire sur le chemin de `tab` ni dans l'arbre d'accessibilité comme un
+        // élément actionnable. Changer de modèle se dit `/model`, dans le terminal, et Ash
+        // n'appuie sur rien à la place de l'utilisateur (ADR-0015).
+        this.model = document.createElement("span");
+        this.model.className = "status-usage-model";
+
+        this.element.append(this.gauge, this.label, this.model);
         this.showContext(null);
     }
 
@@ -396,10 +429,16 @@ export class UsageSegments {
         const share = gauge?.share ?? null;
         this.gauge.hidden = share === null;
         this.label.hidden = gauge === null;
+        // Le **troisième** masquage, et la troisième absence : Ash peut mesurer sans connaître
+        // la fenêtre, et connaître la fenêtre sans savoir nommer le modèle. Les trois se
+        // décident séparément parce qu'elles disent trois choses différentes.
+        const named = gauge?.model ?? null;
+        this.model.hidden = named === null;
         this.shownGauge = gauge !== null;
         this.fold();
 
         if (gauge !== null) write(this.label, gauge.label);
+        if (named !== null) write(this.model, named);
 
         if (share === null) {
             // Le palier part avec le rapport — qu'il n'y ait rien du tout, ou une mesure sans
