@@ -71,7 +71,17 @@ export interface QuotaSegment {
  * pourcentage, ni un seuil sans son rapport.
  */
 export interface ContextGauge {
-    /** `ctx 41%` quand la fenêtre est connue, `ctx 57k` sinon. */
+    /**
+     * Ce que la conversation occupe, sans le mot qui le nomme — `41%`, `57k`.
+     *
+     * C'est **la** valeur ; [`label`] n'en est que la mise en mots. Les deux sont posées
+     * ensemble par [`composeContextGauge`], et dans ce sens-là : la ligne de statut écrit le
+     * libellé entier, la colonne de droite du menu contextuel n'écrit que la mesure — le nom
+     * du segment y est déjà dans la colonne du milieu, et `context bar    ctx 41%` se lirait
+     * deux fois. Aucune des deux ne se retrouve à partir de l'autre.
+     */
+    readonly measure: string;
+    /** `ctx 41%` quand la fenêtre est connue, `ctx 57k` sinon — [`measure`] et son mot. */
     readonly label: string;
     /**
      * Le nom court du modèle qui a produit le dernier tour — `Opus 5`, `Opus 5 1M`.
@@ -114,21 +124,6 @@ export interface ContextShare {
  * plein n'est pas une panne : il annonce un compactage, que l'outil fera tout seul.
  */
 export type ContextLevel = "fresh" | "loaded" | "compacting";
-
-/**
- * Le mot qui ouvre le libellé de la jauge, et la seule chose qui le sépare de sa **mesure**.
- *
- * Il est nommé parce que deux endroits l'écrivent d'un côté et le retirent de l'autre : la
- * ligne montre `ctx 41%`, l'aperçu du menu montre `41%` — le nom de la ligne y est déjà dans
- * la colonne du milieu, et le redire dans la colonne de droite ferait lire `context bar
- * ctx 41%`.
- */
-const CONTEXT_PREFIX = "ctx ";
-
-/** La mesure seule, sans le mot qui la nomme — `41%`, `57k`. */
-export function contextMeasure(gauge: ContextGauge): string {
-    return gauge.label.slice(CONTEXT_PREFIX.length);
-}
 
 /** `≥ 70 %` : chargé. */
 export const LOADED_AT = 70;
@@ -203,16 +198,23 @@ export function composeContextGauge(usage: SessionUsage | null): ContextGauge | 
 
     const window = usage.windowTokens;
     if (window === null || window <= 0) {
+        const measure = abbreviate(usage.usedTokens);
         return {
-            label: `${CONTEXT_PREFIX}${abbreviate(usage.usedTokens)}`,
+            measure,
+            label: `ctx ${measure}`,
             model: usage.model,
             share: null,
         };
     }
 
     const percent = clamp((usage.usedTokens / window) * 100);
+    const measure = `${String(percent)}%`;
     return {
-        label: `${CONTEXT_PREFIX}${String(percent)}%`,
+        measure,
+        // Le libellé est composé **à partir de** la mesure, et jamais l'inverse : la retrouver
+        // en retirant `ctx ` d'un texte déjà écrit ferait deux règles à tenir d'accord, dont
+        // l'une se lirait à l'envers.
+        label: `ctx ${measure}`,
         // Le nom traverse tel quel : le backend l'a déjà mis en mots, et il n'y a rien à en
         // dériver. Les deux absences sont **indépendantes** — une fenêtre inconnue n'efface
         // pas le nom, et un modèle qu'on ne sait pas nommer n'efface pas le pourcentage.
@@ -466,14 +468,20 @@ export class UsageSegments {
         // manquer, ou l'utilisateur peut avoir décoché le segment. La seconde ne s'écrit
         // qu'ici — le popover, lui, ne connaît que la première.
         const share = gauge?.share ?? null;
-        this.gauge.hidden = share === null || !this.segments.context;
-        this.label.hidden = gauge === null || !this.segments.context;
         // Le **troisième** masquage, et la troisième absence : Ash peut mesurer sans connaître
         // la fenêtre, et connaître la fenêtre sans savoir nommer le modèle. Les trois se
         // décident séparément parce qu'elles disent trois choses différentes.
         const named = gauge?.model ?? null;
-        this.model.hidden = named === null || !this.segments.model;
-        this.shownGauge = (gauge !== null && this.segments.context) || !this.model.hidden;
+        // Les deux segments que porte ce groupe, décidés **avant** d'être posés : ce que
+        // `fold` doit savoir, c'est ce qui a été décidé, et le relire sur un `hidden` déjà
+        // écrit reviendrait à demander au DOM ce qu'on vient de lui dire.
+        const showsContext = gauge !== null && this.segments.context;
+        const showsModel = named !== null && this.segments.model;
+
+        this.gauge.hidden = share === null || !this.segments.context;
+        this.label.hidden = !showsContext;
+        this.model.hidden = !showsModel;
+        this.shownGauge = showsContext || showsModel;
         this.fold();
 
         if (gauge !== null) write(this.label, gauge.label);

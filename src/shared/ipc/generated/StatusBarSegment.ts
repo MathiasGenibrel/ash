@@ -3,8 +3,11 @@
 /**
  * Les sept segments de la ligne, dans l'ordre du menu de la vue 5c.
  *
- * L'ordre de cette énumération **est** celui du menu, et le frontend le suit sans le
- * redéclarer : `session`, `weekly`, `context`, `model`, puis — après le trait — `agent`,
+ * L'ordre est écrit ici **et** dans `MENU_ORDER` (`src/features/terminal/status-bar.ts`), et
+ * rien ne les apparie : ce qui traverse la frontière est un identifiant, et le miroir de
+ * `mirror.ts` garantit l'**ensemble** des sept noms, jamais leur suite. L'ordre du menu est
+ * une décision de présentation, et c'est le frontend qui la porte ; celui-ci n'existe que
+ * pour se lire — `session`, `weekly`, `context`, `model`, puis — après le trait — `agent`,
  * `branch`, `cwd`. Les quatre premiers parlent de ce que la conversation consomme, les
  * trois derniers d'où l'on est et de ce que l'agent fait.
  */

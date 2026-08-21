@@ -23,7 +23,6 @@ import {
 import { StatusBarMenu } from "./status-bar-menu";
 import {
     composeContextGauge,
-    contextMeasure,
     UsageSegments,
     type ContextGauge,
     type QuotaSegment,
@@ -365,7 +364,6 @@ export function elide(path: string, max: number = MAX_CWD): string {
     return path.length <= max ? path : `…${path.slice(path.length - max + 1)}`;
 }
 
-
 /* ------------------------------------------------------------------------------------- *
  * Le menu contextuel (vue 5c) — ce qu'il liste, et l'aperçu de chaque valeur.
  *
@@ -437,10 +435,11 @@ function preview(
         case "session":
         case "weekly":
             return quotaPreview(quotas.find((quota) => quota.kind === id) ?? null);
-        case "context": {
-            const gauge = model?.context ?? null;
-            return gauge === null ? "" : contextMeasure(gauge);
-        }
+        case "context":
+            // La mesure seule : le nom du segment est déjà dans la colonne du milieu, et
+            // `context bar    ctx 41%` le dirait deux fois. Elle est portée par la jauge,
+            // pas retrouvée en découpant son libellé.
+            return model?.context?.measure ?? "";
         case "model":
             return model?.context?.model ?? "";
         case "agent":
