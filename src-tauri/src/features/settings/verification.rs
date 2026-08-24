@@ -406,8 +406,10 @@ impl Verifier {
     pub fn first_pass(&self, command: &Command, adapter: &str, config: Option<&str>) -> FirstPass {
         let Some(profile) = self.profiles.iter().find(|p| p.id == adapter) else {
             // La composition root n'assemble que des adaptateurs connus, et `declare` les
-            // refuse autrement : ce cas n'arrive qu'à un `config.toml` édité à la main, que
-            // la spec §9 autorise. Le dire vaut mieux que de le faire passer.
+            // refuse autrement : ce cas n'arrive qu'à un `~/.ash/tools.json` édité à la main
+            // — ou écrit par une version d'Ash qui embarquait cet adaptateur —, et
+            // `NewTool::restore` garde l'entrée exprès pour qu'on la voie. Le dire vaut mieux
+            // que de le faire passer.
             return FirstPass::Settled(
                 invalid(
                     ToolTest::AdapterSignature,

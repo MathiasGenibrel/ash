@@ -678,7 +678,7 @@
 }
 
 /* « Modifié, non enregistré » — l'entrée n'a pas passé les quatre tests, donc rien n'est
- * dans `~/.ash/config.toml`. Ronde et pleine : c'est une marque, pas un mot. */
+ * dans le `settings.json` de l'outil. Ronde et pleine : c'est une marque, pas un mot. */
 .settings-unsaved {
     flex: none;
     width: 6px;

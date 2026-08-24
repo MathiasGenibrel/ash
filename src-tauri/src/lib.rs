@@ -90,8 +90,8 @@ use features::pty::{
     AgentStates, PtyRegistry, RepoRef, SystemPtySpawner, TabId, TabLocation, WorktreeLocator,
 };
 use features::settings::{
-    AdapterProfile, BlockAt, ConfigTarget, HookBlocks, SystemCommands, SystemConfigFiles,
-    ToolRecognition, ToolRegistry, Verifier,
+    AdapterProfile, BlockAt, ConfigTarget, FileToolStore, HookBlocks, SystemCommands,
+    SystemConfigFiles, ToolRecognition, ToolRegistry, ToolStore, Verifier,
 };
 use features::shortcuts::{BindingStore, Bindings, FileBindingStore};
 use features::sidebar::{
@@ -821,7 +821,13 @@ pub fn run() -> tauri::Result<()> {
         menu::action_bindings(),
     ));
 
-    let tools = Arc::new(ToolRegistry::new(
+    // Les outils déclarés, **relus de la session précédente** (`~/.ash/tools.json`). Relus
+    // avant la fenêtre, comme l'apparence et la sidebar, mais pour une raison de plus : la
+    // reconnaissance d'ADR-0006 les consulte à chaque passe de la boucle de sonde, donc dès
+    // le premier onglet — un outil déclaré doit être reconnu sans que personne n'ait ouvert
+    // les réglages. Rien n'est vérifié ici : les quatre tests de la spec §9.1 lisent des
+    // dossiers et lancent une commande, et une entrée relue repart *non vérifiée*.
+    let tools = Arc::new(ToolRegistry::restore(
         Arc::new(Verifier::new(
             Arc::new(SystemConfigFiles),
             Arc::new(SystemCommands),
@@ -831,6 +837,7 @@ pub fn run() -> tauri::Result<()> {
             adapters,
             files: Arc::new(features::hooks::SystemConfigFiles),
         }),
+        Arc::new(FileToolStore::in_home()) as Arc<dyn ToolStore>,
     ));
 
     // Ce que la colonne garde d'une session à l'autre : les worktrees épinglés et les lignes

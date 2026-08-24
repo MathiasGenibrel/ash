@@ -160,7 +160,8 @@ pub struct RecognizedAgent {
 
 /// L'outil que ce programme est, ou rien.
 ///
-/// `declared` est ce que l'utilisateur a écrit à la main dans `~/.ash/config.toml` (spec §9),
+/// `declared` est ce que l'utilisateur a déclaré dans la fenêtre de réglages — ou écrit à la
+/// main dans `~/.ash/tools.json` (spec §9) —,
 /// et il **l'emporte** sur la table embarquée : c'est lui qui décide de l'adaptateur et du
 /// dossier de configuration, et c'est ce qui permet de reconnaître un outil qu'Ash ne connaît
 /// pas — ou d'en corriger un qu'il connaît mal. Une entrée déclarée qui répète un outil de la
@@ -411,7 +412,7 @@ mod tests {
 
     #[test]
     fn given_an_entry_declared_by_hand_when_a_program_carries_its_name_then_the_declaration_wins() {
-        // Given — la spec §9 autorise à écrire `~/.ash/config.toml` à la main, et ADR-0006
+        // Given — la spec §9 autorise à écrire `~/.ash/tools.json` à la main, et ADR-0006
         // en fait la source qui l'emporte : c'est ainsi qu'on corrige un outil qu'Ash
         // connaît mal, ou qu'on en ajoute un qu'il ne connaît pas
         let program = ProgramBuilder::at("/Users/ash/.local/share/claude/versions/2.1.234").build();

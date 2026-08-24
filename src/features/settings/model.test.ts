@@ -15,6 +15,7 @@ import {
     captureIntent,
     focusedDraft,
     groupShortcuts,
+    needsVerifying,
     NOTHING_VERIFIED_YET,
     parseDiff,
     readStroke,
@@ -591,5 +592,40 @@ describe("l'outil que la sidebar désigne", () => {
 
         // Then
         expect(prefilled?.adapter).toBe("generic");
+    });
+});
+
+describe("ce que la fenêtre relance en s'ouvrant", () => {
+    it("Given a list read back from ~/.ash/tools.json, when the window asks whether it must verify, then it says yes", () => {
+        // Given — au redémarrage, la déclaration revient du fichier sans ce qu'elle avait
+        // prouvé : la vérification est un fait daté sur la machine (ADR-0007). Sans cette
+        // relance, la ligne `hooks` d'un outil instrumenté depuis des mois resterait éteinte
+        // jusqu'à ce que quelqu'un pense à cliquer `re-verify all`
+        const restored = [
+            aTool({ command: "claude", verification: aVerification("unverified") }),
+            aTool({ command: "claude-perso", verification: aVerification("valid") }),
+        ];
+
+        // When
+        const relaunch = needsVerifying(restored);
+
+        // Then
+        expect(relaunch).toBe(true);
+    });
+
+    it("Given a list every entry of which has already been judged, when the window asks whether it must verify, then nothing is relaunched", () => {
+        // Given — le test 4 **lance une commande** : la relancer sur une liste que la
+        // séquence vient de juger ferait partir un processus par entrée pour un verdict
+        // qu'on a déjà sous les yeux
+        const judged = [
+            aTool({ command: "claude", verification: aVerification("valid") }),
+            aTool({ command: "kimi", verification: aVerification("invalid") }),
+        ];
+
+        // When
+        const relaunch = needsVerifying(judged);
+
+        // Then
+        expect(relaunch).toBe(false);
     });
 });

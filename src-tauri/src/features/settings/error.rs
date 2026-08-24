@@ -98,6 +98,13 @@ pub enum SettingsError {
     /// [`HooksReport`](super::hooks::HooksReport) — et traverse ici **sans être retouchée** :
     /// la reformuler ferait lire un second refus à côté de celui que la ligne annonçait.
     HooksRefused(String),
+    /// Ce qui a été déclaré n'a pas pu être gardé dans `~/.ash/tools.json`.
+    ///
+    /// Elle ne remet **pas** le geste en cause : l'entrée est ajoutée, retirée ou déplacée
+    /// dans le registre, elle ne survivra simplement pas au redémarrage. Refuser une
+    /// déclaration parce que le disque est plein serait incompréhensible — c'est la même
+    /// conduite que `features::theme` tient pour le thème.
+    NotSaved(String),
     /// Le registre a été empoisonné par la panique d'un autre fil.
     Poisoned,
 }
@@ -131,6 +138,9 @@ impl fmt::Display for SettingsError {
                 write!(f, "{command} points at no configuration folder")
             }
             SettingsError::HooksRefused(why) => write!(f, "{why}"),
+            SettingsError::NotSaved(why) => {
+                write!(f, "could not save the declared tools: {why}")
+            }
             SettingsError::Poisoned => write!(f, "tool registry poisoned"),
         }
     }

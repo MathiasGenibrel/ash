@@ -187,9 +187,13 @@ function pathField(
     }
 
     if (!tool.verified) {
-        // La pastille « modifié, non enregistré » de la maquette. Tant qu'une entrée n'a pas
-        // prouvé son dossier, elle vit en mémoire et n'est **pas** dans `~/.ash/config.toml`.
-        const unsaved = "not verified — nothing written to config.toml";
+        // La pastille « modifié, non enregistré » de la maquette. Ce qu'elle dit a changé
+        // avec la persistance : la déclaration, elle, est bien gardée dans
+        // `~/.ash/tools.json` dès qu'elle est faite — ce qui n'est pas écrit tant que les
+        // quatre tests n'ont pas parlé, c'est le bloc de hooks dans le fichier de
+        // l'utilisateur ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)). C'est la
+        // seule écriture que la vérification garde, et donc la seule qu'elle puisse annoncer.
+        const unsaved = "not verified — no hooks written for this entry";
         line.add(tag("span", "settings-unsaved").title(unsaved).attr("aria-label", unsaved));
     }
 
