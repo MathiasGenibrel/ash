@@ -389,6 +389,18 @@ mod tests {
                 hook_mark(instrumentation.version)
             )
         );
+        // Le septième, celui de l'ouverture de session : lui non plus n'écrit pas un état,
+        // et c'est le seul dont l'absence reproduirait le bug sans qu'aucune autre garde ne
+        // bronche — le fichier resterait du JSON valide, Ash lirait sa version comme à jour,
+        // et Claude Code ne déclencherait simplement jamais l'événement. L'onglet d'un agent
+        // qui vient d'ouvrir repasserait `working` (ADR-0007, précision du 2026-08-24).
+        assert_eq!(
+            parsed["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            format!(
+                "'/Applications/Ash.app/Contents/MacOS/ash-event' session-start --tab \"$ASH_TAB_ID\" {}",
+                hook_mark(instrumentation.version)
+            )
+        );
     }
 
     #[test]
