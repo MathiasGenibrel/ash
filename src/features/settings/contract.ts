@@ -66,6 +66,35 @@ export type HookState = "installed" | "missing" | "outdated" | "conflict" | "blo
 export type HookAction = "install" | "update" | "remove" | "seeTheDiff";
 
 /**
+ * Un outil qu'Ash a **vu tourner** et que personne n'a déclaré — la ligne qu'un clic
+ * transforme en carte (ADR-0006).
+ *
+ * Miroir de `ToolSuggestion` en Rust, et elle porte exactement ce que la ligne montre : pas
+ * d'action, pas de diff, pas de bouton allumé. Un outil non déclaré n'ouvre **aucun** droit
+ * d'écriture, et le seul geste de sa ligne est de se déclarer — ce qui ne touche à aucun
+ * fichier de l'utilisateur ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+ *
+ * Rien n'est deviné ici : la source est ce que la sonde a reconnu dans l'avant-plan des
+ * onglets ouverts. Un outil installé mais jamais lancé n'apparaît pas, et l'ajout à la main
+ * reste là pour lui.
+ */
+export interface ToolSuggestion {
+    /** Le nom de l'outil — `claude`, et non `2.1.234`. */
+    command: string;
+    adapter: string;
+    /**
+     * Ce que sa configuration porte, dans les **cinq** états de la ligne `hooks`.
+     *
+     * Cinq et non les trois d'`Instrumented` : un conflit ne se corrige pas comme une
+     * absence, et les confondre ferait lire une panne là où l'utilisateur a simplement ses
+     * propres hooks.
+     */
+    hooks: HookState;
+    summary: string;
+    file: string | null;
+}
+
+/**
  * Une issue offerte depuis le diff, avec son libellé et sa conséquence.
  *
  * Le mot vient du backend : « merge » et « install » sont le même geste pour lui, et deux
@@ -604,6 +633,19 @@ export interface ToolDraft {
  */
 export interface SettingsPorts {
     tools(): Promise<SettingsSnapshot>;
+    /**
+     * Les outils qu'Ash a vus tourner et que personne n'a déclarés (ADR-0006).
+     *
+     * **Hors de [`SettingsSnapshot`], et c'est une décision du backend** : l'instantané
+     * traverse à chaque geste, et y glisser les suggestions ferait relire un fichier de
+     * configuration à chaque frappe dans un champ de chemin. Elles se redemandent donc après
+     * chaque geste qui change la liste — déclarer un outil en retire une.
+     *
+     * **Elle ne découvre rien** : ni parcours du `PATH`, ni scan de disque, ni autorisation
+     * macOS. La seule lecture est celle du fichier de configuration de chaque outil suggéré,
+     * et le backend la borne à une fois toutes les cinq secondes.
+     */
+    suggestions(): Promise<readonly ToolSuggestion[]>;
     /**
      * Ce que la section `notifications` affiche (spec §8).
      *

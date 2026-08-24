@@ -1,4 +1,4 @@
-//! Les doubles des deux ports, pour les tests de la feature.
+//! Les doubles des ports de la feature, et l'horloge que ses scénarios avancent.
 //!
 //! Même forme que `features/git/fakes.rs` : un arbre décrit à la main plutôt qu'un
 //! `tempdir`, et un lanceur qui **enregistre ce qu'on lui a demandé de lancer sans rien
@@ -8,16 +8,20 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use super::error::SettingsError;
 use super::hooks::BlockAt;
 use super::persisted::{PersistedTool, PersistedTools};
-use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, HookBlocks, Launch};
+use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, HookBlocks, Launch, RunningTools};
 use super::store::ToolStore;
 use super::values::{Command, ConfigTarget};
+use crate::features::agents::RecognizedProvider;
 use crate::features::hooks::Presence;
 use crate::features::hooks::{Removal, Withdrawal};
+use crate::shared::time::{Clock, UnixMillis};
 
 /// Un système de fichiers en mémoire : ce qu'on trouve à chaque chemin, et le foyer.
 pub struct FakeFolders {
@@ -335,5 +339,58 @@ impl ToolStore for FakeToolStore {
             *count += 1;
         }
         Ok(())
+    }
+}
+
+/// Une horloge que le scénario avance lui-même — aucun test ne dort.
+///
+/// Elle est ici et non dans un module de tests parce que **deux** scénarios de la feature
+/// mesurent la même chose avec elle : la mémoire courte de [`super::recognition`], qui borne
+/// la relecture d'un `settings.json` à `FRESHNESS`, et le budget de lecture des suggestions,
+/// qui en dépend. Deux horloges pour une seule règle finiraient par ne pas avancer pareil.
+pub struct TestClock {
+    origin: Instant,
+    elapsed: AtomicU64,
+}
+
+impl TestClock {
+    pub fn new() -> Self {
+        Self {
+            origin: Instant::now(),
+            elapsed: AtomicU64::new(0),
+        }
+    }
+
+    /// Avance l'horloge de tant de secondes, sans dormir.
+    pub fn tick(&self, seconds: u64) {
+        self.elapsed.fetch_add(seconds, Ordering::SeqCst);
+    }
+}
+
+impl Clock for TestClock {
+    fn now(&self) -> Instant {
+        self.origin + Duration::from_secs(self.elapsed.load(Ordering::SeqCst))
+    }
+
+    fn wall(&self) -> UnixMillis {
+        0
+    }
+}
+
+/// Ce que la sonde a reconnu dans l'avant-plan des onglets, décrit par le scénario.
+///
+/// Le double du quatrième port, que le composition root branche sur le registre de PTY : ici,
+/// c'est le scénario qui dit ce qu'Ash a vu tourner, et **rien** ne le découvre (ADR-0006).
+pub struct FakeRunning(Vec<RecognizedProvider>);
+
+impl FakeRunning {
+    pub fn seeing(found: Vec<RecognizedProvider>) -> Self {
+        Self(found)
+    }
+}
+
+impl RunningTools for FakeRunning {
+    fn running(&self) -> Vec<RecognizedProvider> {
+        self.0.clone()
     }
 }

@@ -182,6 +182,10 @@ pub struct BlockAt {
 ///
 /// `taken_by` est l'entrée qui a déjà ce dossier, s'il y en a une ; `found` est ce que le
 /// port a vu, ou `None` quand l'adaptateur n'instrumente rien.
+///
+/// Les deux premières marches sont ici, et **les deux dernières sont dans [`foreseen`]** :
+/// ce sont celles qui ne parlent que du fichier, donc les seules qu'un outil non déclaré
+/// puisse emprunter.
 pub fn report(
     verification: &Verification,
     adapter: &str,
@@ -210,6 +214,26 @@ pub fn report(
         );
     }
 
+    foreseen(adapter, found)
+}
+
+/// Les cinq états d'un outil **que personne n'a déclaré** — les marches 3 et 4, seules.
+///
+/// C'est la ligne d'une suggestion : un outil qu'Ash a vu tourner (ADR-0006), lu sur le
+/// dossier par défaut de son adaptateur. Les deux premières marches de [`report`] n'ont rien
+/// à y dire, et c'est le point :
+///
+/// - **il n'y a pas de vérification à consulter**, parce qu'il n'y a pas d'entrée. Ouvrir la
+///   fenêtre ne doit rien vérifier — le test 3 parcourt le `PATH` et le test 4 lance la
+///   commande —, et une suggestion n'autorise aucune écriture : le seul geste qu'elle offre
+///   est de se déclarer, ce qui ne touche à aucun fichier de l'utilisateur (ADR-0007) ;
+/// - **il n'y a pas de doublon possible**, parce qu'un outil déjà déclaré n'est plus une
+///   suggestion (voir [`super::suggestions`]).
+///
+/// Ce qui reste est donc exactement ce que la ligne d'une carte déclarée dirait du même
+/// fichier — les **cinq** états, et non les trois d'`Instrumented` : un conflit s'y distingue
+/// d'une absence, ce qui est toute la raison d'être de cette lecture.
+pub fn foreseen(adapter: &str, found: Option<BlockAt>) -> HooksReport {
     // 3 — l'adaptateur de repli n'a pas de hooks, et c'est sa définition
     // (ADR-0008) : il est l'adaptateur de l'outil dont on ne sait rien.
     let Some(BlockAt { file, presence }) = found else {
@@ -565,6 +589,27 @@ mod tests {
         assert!(!line.enabled);
         assert_eq!(line.summary, "the generic adapter has no hooks to install");
         assert!(line.note.contains("never shows as waiting"));
+    }
+
+    #[test]
+    fn given_a_tool_no_one_declared_when_its_line_is_built_then_the_file_alone_decides_and_no_verification_is_consulted(
+    ) {
+        // Given — la ligne d'une suggestion (ADR-0006) : ouvrir la fenêtre ne doit rien
+        // vérifier, et le test 3 parcourt le `PATH` quand le test 4 lance la commande. Ce
+        // qu'il reste est le fichier — et il donne les **cinq** états, pas les trois
+        // d'`Instrumented` : `conflict` n'en fait pas partie
+        let file = at(missing(1));
+
+        // When
+        let line = foreseen("claude-code", file);
+
+        // Then — exactement ce qu'une carte déclarée dirait du même fichier
+        assert_eq!(line.state, HookState::Conflict);
+        assert_eq!(line.summary, "1 hook here is not ash's");
+        assert_eq!(
+            line.file.as_deref(),
+            Some("/home/someone/.claude/settings.json")
+        );
     }
 
     #[test]

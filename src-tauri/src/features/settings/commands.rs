@@ -27,6 +27,7 @@ use super::error::SettingsError;
 use super::hooks::HooksReport;
 use super::notifications::{self, NotificationsReport};
 use super::registry::{Changed, SecondPass, ToolRegistry};
+use super::suggestions::{ToolSuggestion, ToolSuggestions};
 use super::tool::{NewTool, ToolDeclaration};
 use super::usage::{self, UsageReport};
 use super::values::Command;
@@ -357,6 +358,25 @@ pub fn settings_tools(
     registry: tauri::State<'_, Arc<ToolRegistry>>,
 ) -> Result<SettingsSnapshot, SettingsError> {
     SettingsSnapshot::of(&registry)
+}
+
+/// Les outils qu'Ash a vus tourner et que personne n'a déclarés (ADR-0006).
+///
+/// **Hors de [`SettingsSnapshot`], et c'est une décision.** L'instantané est ce que le
+/// registre vient de produire, et il traverse à chaque geste : y glisser les suggestions
+/// ferait relire un fichier de configuration à chaque frappe dans un champ de chemin. Elles
+/// sont donc demandées à part — à l'ouverture, et après chaque geste qui change la liste,
+/// puisque déclarer un outil en retire une.
+///
+/// **Elle ne découvre rien, et ne vérifie rien** : la source est ce que la sonde a déjà
+/// reconnu, et la seule lecture est celle du fichier de configuration de chaque outil
+/// suggéré — au plus une fois par `FRESHNESS`. Ni parcours du `PATH`, ni scan de disque, ni
+/// autorisation macOS.
+#[tauri::command]
+pub fn settings_suggestions(
+    suggestions: tauri::State<'_, Arc<ToolSuggestions>>,
+) -> Vec<ToolSuggestion> {
+    suggestions.suggest()
 }
 
 /// Ajoute une entrée — le bouton `add` du formulaire.

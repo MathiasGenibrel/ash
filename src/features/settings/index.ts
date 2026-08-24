@@ -26,6 +26,7 @@ import type {
     SettingsSnapshot,
     ShortcutsReport,
     ToolDraft,
+    ToolSuggestion,
     UsageReport,
     Verification,
     WindowPorts,
@@ -118,6 +119,15 @@ export function mountSettings(
     let section: SettingsSection = "tools";
     let snapshot: SettingsSnapshot = { tools: [], adapters: [], tests: [] };
     let draft: ToolDraft | null = null;
+    /**
+     * Les outils qu'Ash a vus tourner et que personne n'a déclarés (ADR-0006).
+     *
+     * Ce n'est pas un état de la fenêtre : c'est ce que le backend vient de dire, rendu ici
+     * comme `journal` et `usage`. Relus après **chaque** geste qui change la liste, parce que
+     * déclarer un outil en retire une — et parce que ce que porte son `settings.json` a pu
+     * changer entre-temps ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    let suggestions: readonly ToolSuggestion[] = [];
     let draftVerification: Verification | null = null;
     let failure: string | null = null;
     /** L'entrée dont on regarde le conflit — un écran, pas un état d'outil. */
@@ -308,6 +318,20 @@ export function mountSettings(
         },
         removeHooks: (command) => {
             void apply(ports.removeHooks(command));
+        },
+        declareSuggestion: (suggestion) => {
+            // Le **même** chemin que le bouton `add` du formulaire, et pas un second : ce qui
+            // se déclare ici est une entrée ordinaire, qui repart dans la vérification en
+            // deux temps. Le dossier reste vide — c'est celui de l'adaptateur, et c'est déjà
+            // celui sur lequel la suggestion a lu son état de hooks.
+            void apply(
+                ports.declareTool({
+                    command: suggestion.command,
+                    label: "",
+                    adapter: suggestion.adapter,
+                    config: "",
+                }),
+            );
         },
         openConflict: (command) => {
             // `see the diff` n'écrit rien : elle ouvre un écran, et c'est ce qui la
@@ -504,6 +528,22 @@ export function mountSettings(
         draw();
     }
 
+    /**
+     * Relit ce qu'Ash a vu tourner. Un refus laisse la liste à ce qu'elle montrait.
+     *
+     * **Elle ne déclenche aucune découverte** : le backend rend ce que la sonde a déjà
+     * reconnu, et ne relit le `settings.json` d'un outil suggéré qu'une fois toutes les cinq
+     * secondes (ADR-0006).
+     */
+    async function askSuggestions(): Promise<void> {
+        try {
+            suggestions = await ports.suggestions();
+        } catch {
+            return;
+        }
+        draw();
+    }
+
     /** Relit la section `usage`. Un refus la laisse à ce qu'elle montrait. */
     async function askUsage(): Promise<void> {
         try {
@@ -680,6 +720,7 @@ export function mountSettings(
         view.render({
             section,
             snapshot,
+            suggestions,
             draft,
             draftVerification,
             failure,
@@ -715,6 +756,11 @@ export function mountSettings(
             failure = error instanceof Error ? error.message : String(error);
         }
         draw();
+        // Déclarer un outil en retire une suggestion, et l'oublier en rend une : la liste
+        // des deux se lit du backend, jamais d'un retrait fait ici (ADR-0009). Le second
+        // aller-retour est gratuit — le fichier vient d'être lu, et la mémoire courte du
+        // backend le sait.
+        void askSuggestions();
     }
 
     // Deux raccourcis, et deux seulement : `⌥↑↓` change de section, `esc` abandonne un
