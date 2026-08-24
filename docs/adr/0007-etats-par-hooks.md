@@ -1,6 +1,7 @@
 # ADR-0007 — Les états viennent des hooks de l'outil, pas de la sortie
 
-- **Statut** : accepté (2026-08-07), précisé le 2026-08-11, amendé le 2026-08-12, précisé le 2026-08-24
+- **Statut** : accepté (2026-08-07), précisé le 2026-08-11, amendé le 2026-08-12, amendé le
+  2026-08-13, précisé le 2026-08-24
 - **Complété par** : [ADR-0008](./0008-abstraction-adapter.md)
 
 ## Contexte

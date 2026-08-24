@@ -126,20 +126,23 @@ mod tests {
         .unwrap_or_else(|| panic!("claude-code instrumente toujours"))
     }
 
-    /// Ce que l'Ash **d'avant les sous-agents** avait écrit : les cinq mêmes entrées, sans
-    /// `SubagentStop`, et marquées de la version qui les portait.
+    /// Ce que l'Ash **de la version précédente** avait écrit : les mêmes entrées, sans celle
+    /// que la version courante ajoute, et marquées de la version qui les portait.
     ///
-    /// C'est le seul moyen honnête de jouer le parcours de réinstallation du sixième hook :
-    /// il ne se rejoue pas en changeant un nombre, il se rejoue en écrivant ce que la version
-    /// précédente écrivait.
-    fn five_hook_version(config_dir: &str) -> Instrumentation {
+    /// C'est le seul moyen honnête de jouer le parcours de réinstallation : il ne se rejoue
+    /// pas en changeant un nombre, il se rejoue en écrivant ce que la version précédente
+    /// écrivait. **Le nom de l'entrée retirée suit donc le compteur** — c'était
+    /// `SubagentStop` du temps de la v2, c'est `SessionStart` depuis la v3 (précision du
+    /// 2026-08-24 à ADR-0007). Le laisser en arrière décrirait un fichier qu'aucun Ash n'a
+    /// jamais écrit, et ne prouverait plus rien du dernier hook posé.
+    fn previous_version(config_dir: &str) -> Instrumentation {
         let current = instrumentation(config_dir);
         let previous = current.version - 1;
         Instrumentation {
             entries: current
                 .entries
                 .iter()
-                .filter(|entry| entry.path.last().map(String::as_str) != Some("SubagentStop"))
+                .filter(|entry| entry.path.last().map(String::as_str) != Some("SessionStart"))
                 .map(|entry| crate::features::agents::HookEntry {
                     path: entry.path.clone(),
                     item: entry
@@ -153,18 +156,18 @@ mod tests {
     }
 
     #[test]
-    fn given_a_file_instrumented_before_the_subagent_hook_when_ash_looks_at_it_then_it_offers_the_missing_entry_in_a_diff(
+    fn given_a_file_instrumented_before_the_session_hook_when_ash_looks_at_it_then_it_offers_the_missing_entry_in_a_diff(
     ) {
-        // Given — l'utilisateur avait installé les hooks avec un Ash d'avant les lignes
-        // filles. Le sixième hook change la **forme** du bloc, donc la version : sans elle,
-        // ses cinq entrées se liraient comme une édition à la main, et Ash refuserait de
-        // toucher au fichier au lieu de le mettre à jour.
+        // Given — l'utilisateur avait installé les hooks avec l'Ash de la version
+        // précédente, celui d'avant `SessionStart`. Un hook de plus change la **forme** du
+        // bloc, donc la version : sans elle, ses entrées se liraient comme une édition à la
+        // main, et Ash refuserait de toucher au fichier au lieu de le mettre à jour.
         let config_dir = "/home/someone/.claude";
         let files = FakeConfigFiles::new().carrying(
             "/home/someone/.claude/settings.json",
             "{\n  \"model\": \"opus\"\n}\n",
         );
-        install(&files, &five_hook_version(config_dir)).unwrap_or_else(|why| panic!("{why}"));
+        install(&files, &previous_version(config_dir)).unwrap_or_else(|why| panic!("{why}"));
 
         // When — l'Ash d'aujourd'hui regarde, sans rien écrire
         let seen = inspect(&files, &instrumentation(config_dir));
@@ -181,10 +184,10 @@ mod tests {
         );
         let diff = seen.diff().unwrap_or_default();
         assert!(
-            diff.contains("SubagentStop"),
-            "le diff n'annonce pas le sixième hook :\n{diff}"
+            diff.contains("SessionStart"),
+            "le diff n'annonce pas le dernier hook posé :\n{diff}"
         );
-        assert!(diff.contains("subagent-stop"), "{diff}");
+        assert!(diff.contains("session-start"), "{diff}");
     }
 
     #[test]

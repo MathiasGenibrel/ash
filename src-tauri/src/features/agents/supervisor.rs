@@ -279,14 +279,15 @@ impl Supervisor {
     /// adaptateur ne reconnaît ne produit rien du tout — ni état, ni erreur. Deviner serait
     /// exactement ce qu'ADR-0007 écarte.
     pub fn on_hook(&self, event: &EventFrame) {
-        // Les deux lectures du même mot brut, et elles ne se recouvrent jamais : un verbe
-        // d'état n'est pas un verbe d'enfant, et la suite contractuelle le vérifie sur chaque
-        // adaptateur (ADR-0007, amendement du 2026-08-13).
+        // Les **trois** lectures du même mot brut, et elles ne se recouvrent jamais : un
+        // verbe d'état n'est ni un verbe d'enfant ni un verbe de session, et la suite
+        // contractuelle le vérifie sur chaque adaptateur (ADR-0007, amendement du
+        // 2026-08-13, précision du 2026-08-24).
         let declared = self.translate(&event.kind);
         let child = self.child_event(&event.kind);
-        // La troisième lecture, et la seule qui ne dise rien de ce que l'agent fait : elle
-        // annonce qu'une session existe. Ce qu'elle produit est la **machine** de l'onglet,
-        // et c'est par là que la présence cesse d'y répondre (précision du 2026-08-24).
+        // La troisième est la seule qui ne dise rien de ce que l'agent fait : elle annonce
+        // qu'une session existe. Ce qu'elle produit est la **machine** de l'onglet, et c'est
+        // par là que la présence cesse d'y répondre.
         let session = self.session_event(&event.kind);
 
         // La lecture du transcript se fait **avant** le verrou, et c'est sa place : c'est le
