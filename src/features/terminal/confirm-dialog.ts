@@ -26,8 +26,14 @@ import {
     type UiComponent,
 } from "@/shared/ui";
 
-/** La réponse de l'utilisateur : `true` détruit le PTY, `false` ne touche à rien. */
-export type CloseAnswer = (closeIt: boolean) => void;
+/**
+ * La réponse de l'utilisateur : `true` va au bout du geste, `false` ne touche à rien.
+ *
+ * Le nom ne dit plus « fermer » depuis que la boîte sert aussi à quitter (issue #177) : ce
+ * qu'un `true` détruit dépend de la question — un PTY pour `Cmd+W`, l'application entière
+ * pour `Cmd+Q` —, et seul le composeur de la boîte le sait.
+ */
+export type ConfirmAnswer = (goAhead: boolean) => void;
 
 /**
  * La clé du bouton qui reçoit le focus à l'ouverture.
@@ -45,6 +51,9 @@ const CANCEL_CLASS = "ash-confirm-cancel";
 /** La classe du geste destructeur — `is-danger`, comme la maquette la nomme. */
 const DANGER_CLASS = "is-danger";
 
+/** La classe d'une ligne d'énumération sous la question. Lue par `terminal.css`. */
+const ITEM_CLASS = "ash-confirm-item";
+
 /**
  * La forme commune des deux questions d'Ash : ce qu'elle dit, puis les deux réponses.
  *
@@ -58,7 +67,7 @@ const DANGER_CLASS = "is-danger";
 export function composeConfirmBox(
     message: readonly UiChild[],
     dangerLabel: string,
-    answer: CloseAnswer,
+    answer: ConfirmAnswer,
 ): UiComponent {
     // Le défaut est le choix qui ne détruit rien : la touche entrée sur un dialogue qui
     // vient d'apparaître ne doit pas tuer un processus — ni fermer un onglet, ni quitter
@@ -81,6 +90,18 @@ export function composeConfirmBox(
 }
 
 /**
+ * Une ligne d'énumération sous la question — ce qu'on va perdre, un par ligne.
+ *
+ * Publiée avec la boîte, et pas seulement peinte par elle : `.ash-confirm-item` est dans
+ * `terminal.css`, donc elle appartient à cette feature. La laisser écrire au composeur d'à
+ * côté mettait le même nom de classe des deux côtés d'une frontière, qu'un renommage de la
+ * feuille de style aurait cassé sans que rien ne le dise.
+ */
+export function confirmLine(line: string): UiComponent {
+    return row(text(line)).class(ITEM_CLASS);
+}
+
+/**
  * La boîte de `Cmd+W` : la question, puis les deux réponses.
  *
  * Elle n'est plus qu'un habillage de [`composeConfirmBox`] — le voile, le focus, `Échap` et
@@ -88,7 +109,7 @@ export function composeConfirmBox(
  * dépôt n'a qu'un dialogue. Ce qui lui reste en propre est ce qu'elle dit et ce que son
  * bouton rouge promet.
  */
-export function composeCloseBox(what: string, answer: CloseAnswer): UiComponent {
+export function composeCloseBox(what: string, answer: ConfirmAnswer): UiComponent {
     return composeConfirmBox(
         [text(`Quelque chose tourne dans « ${what} ». Fermer l'onglet ?`)],
         "Fermer l'onglet",
@@ -115,7 +136,7 @@ export function askToClose(host: HTMLElement, what: string): Promise<boolean> {
  */
 export function askForConfirmation(
     host: HTMLElement,
-    box: (answer: CloseAnswer) => UiComponent,
+    box: (answer: ConfirmAnswer) => UiComponent,
 ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
         const overlay = document.createElement("div");
