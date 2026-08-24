@@ -33,6 +33,7 @@ import {
     worktreeInView,
     type MenuAction,
 } from "./menu";
+import { onConfirmQuit } from "./confirm-quit";
 import { onSelectTab } from "./select-tab";
 import { installShortcuts } from "./shortcuts";
 import { followSidebarDensity } from "./sidebar-density";
@@ -554,6 +555,11 @@ function mount(
     onSelectTab((tabId) => {
         void terminals.selectTab(tabId);
     }).catch(fail);
+    // Quitter Ash quand un agent est reconnu demande confirmation (issue #177). La question
+    // vient du backend — c'est lui qui détient les onglets et leurs agents (ADR-0009) —, et
+    // elle se pose dans le même hôte que celle de `⌘W` : c'est la seule zone de la fenêtre
+    // qui porte le contexte d'empilement où le dialogue reste cliquable.
+    onConfirmQuit(host, appName).catch(fail);
     // `⌃⇥` et `⌃⇧⇥` arrivent par le clavier de la webview, faute d'être captées par le
     // menu natif — voir `shortcuts.ts`. Ce qu'elles jouent est **demandé au backend** : la
     // webview arrête la frappe, le backend nomme l'action, et la table de `dispatch` la joue.

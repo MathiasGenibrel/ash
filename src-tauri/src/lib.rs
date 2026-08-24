@@ -1005,6 +1005,7 @@ pub fn run() -> tauri::Result<()> {
             features::pty::commands::pty_ack,
             features::pty::commands::pty_close,
             features::pty::commands::pty_tabs,
+            features::quit::commands::quit_now,
             tabs::tabs,
             features::merge::commands::merge_open,
             features::merge::commands::merge_close,
@@ -1294,7 +1295,83 @@ pub fn run() -> tauri::Result<()> {
         }
     };
 
+    // Quitter Ash quand un agent est reconnu demande confirmation (issue #177). Assemblé
+    // ici, dans le même créneau que le socket et la surveillance git, et pour la même
+    // raison : il faut le handle de l'application pour émettre, et nous sommes sur le fil
+    // principal, avant `app.run`.
+    //
+    // La feature ne connaît ni registre ni fenêtre : elle reçoit un port qui lui rend les
+    // onglets, et une fonction qui pose la question à l'écran.
+    let gate = Arc::new(features::quit::QuitGate::default());
+    {
+        use tauri::Manager;
+        app.manage(Arc::clone(&gate));
+    }
+
+    /// Les onglets, relus au moment du geste — jamais un souvenir : un agent apparu depuis
+    /// le dernier rendu doit figurer dans la question.
+    struct LiveTabs(Arc<features::pty::PtyRegistry>);
+
+    impl features::quit::ObservedTabs for LiveTabs {
+        fn tabs(&self) -> Vec<features::pty::TabInfo> {
+            // **Un registre qui ne répond pas laisse partir.** C'est la seule règle tenable :
+            // un terminal qu'on ne peut plus quitter parce qu'un verrou est empoisonné est
+            // un piège bien pire qu'une question ratée, et l'utilisateur n'aurait aucun
+            // recours — le geste qu'on lui refuse est précisément celui de s'en aller.
+            self.0.tabs().unwrap_or_default()
+        }
+    }
+
+    let asking = app.handle().clone();
+    let quitting = Arc::new(features::quit::QuitQuestion::new(
+        Arc::new(LiveTabs(Arc::clone(&ptys))),
+        Arc::clone(&gate),
+        Box::new(move |running| {
+            use tauri::Emitter;
+            let _ = asking.emit(features::quit::commands::CONFIRM_QUIT_EVENT, running);
+        }),
+    ));
+
+    // `⌘Q`, `Ash ▸ Quitter` et le menu du Dock sont **le même** chemin — `terminate:` —, et
+    // aucun `RunEvent` de Tauri ne le voit passer. Voir `features/quit/macos.rs` : c'est la
+    // seule raison d'être de son `unsafe`.
+    if !features::quit::intercept_terminate({
+        let quitting = Arc::clone(&quitting);
+        move || quitting.may_leave()
+    }) {
+        eprintln!("ash: ⌘Q ne demandera rien : la méthode de terminaison n'a pas pu être posée");
+    }
+
     app.run(move |_app, event| match event {
+        // La quatrième demande de sortie : fermer la dernière fenêtre. Elle ne passe pas par
+        // `terminate:`, donc pas par le délégué — et elle est interceptée **ici**, sur la
+        // fermeture, plutôt que sur l'`ExitRequested` que Tauri émet ensuite : à ce
+        // moment-là la fenêtre est déjà détruite, et « annuler » laisserait une application
+        // sans rien à l'écran. Annuler doit tout laisser intact.
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } => {
+            if !quitting.may_leave() {
+                api.prevent_close();
+            }
+        }
+        // Ce qui arrive après `quit_now` — donc avec le laissez-passer ouvert, qui se consomme
+        // ici. C'est aussi ce que `AppHandle::exit` déclencherait de partout ailleurs, et la
+        // question y est reposée telle quelle : aucun appel à `exit` n'échappe à la règle.
+        //
+        // **`code: None` est exclu, et c'est la seule subtilité du branchement.** Tauri émet
+        // cette forme-là dans un seul cas — la dernière fenêtre vient d'être *détruite* —, et
+        // la question a déjà été posée un instant plus tôt, sur `CloseRequested`. La reposer
+        // ici arriverait après coup : il n'y aurait plus de fenêtre pour montrer la modale, et
+        // empêcher la sortie laisserait une application qu'on ne peut ni voir ni quitter.
+        tauri::RunEvent::ExitRequested {
+            api, code: Some(_), ..
+        } => {
+            if !quitting.may_leave() {
+                api.prevent_exit();
+            }
+        }
         // Un dépôt peut avoir bougé pendant qu'Ash était derrière une autre fenêtre.
         //
         // **Sur un fil à part, et c'est indispensable** : ce rappel-ci arrive sur le fil de
