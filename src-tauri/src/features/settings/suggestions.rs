@@ -135,56 +135,19 @@ impl ToolSuggestions {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::features::hooks::Presence;
-    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders, FakeToolStore};
+    use crate::features::settings::fakes::{
+        FakeBlocks, FakeCommands, FakeFolders, FakeRunning, FakeToolStore, TestClock,
+    };
     use crate::features::settings::ports::HookBlocks;
     use crate::features::settings::store::ToolStore;
     use crate::features::settings::tool::NewTool;
     use crate::features::settings::values::ConfigTarget;
     use crate::features::settings::verification::{AdapterProfile, Verifier};
     use crate::features::settings::{BlockAt, FRESHNESS};
-    use crate::shared::time::{Clock, UnixMillis};
-
-    /// Une horloge que le scénario avance lui-même — aucun test ne dort.
-    struct TestClock {
-        origin: Instant,
-        elapsed: AtomicUsize,
-    }
-
-    impl TestClock {
-        fn new() -> Self {
-            Self {
-                origin: Instant::now(),
-                elapsed: AtomicUsize::new(0),
-            }
-        }
-
-        fn tick(&self, seconds: u64) {
-            self.elapsed.fetch_add(seconds as usize, Ordering::SeqCst);
-        }
-    }
-
-    impl Clock for TestClock {
-        fn now(&self) -> Instant {
-            self.origin + Duration::from_secs(self.elapsed.load(Ordering::SeqCst) as u64)
-        }
-
-        fn wall(&self) -> UnixMillis {
-            0
-        }
-    }
-
-    /// Ce que la sonde a reconnu dans l'avant-plan des onglets, décrit par le scénario.
-    struct FakeRunning(Vec<RecognizedProvider>);
-
-    impl RunningTools for FakeRunning {
-        fn running(&self) -> Vec<RecognizedProvider> {
-            self.0.clone()
-        }
-    }
+    use crate::shared::time::Clock;
 
     /// Le port des blocs, **et le compte des fichiers ouverts** : c'est le budget de lecture
     /// qui est la règle, et un commentaire ne le garde pas.
@@ -332,7 +295,7 @@ mod tests {
             let suggestions = ToolSuggestions::new(
                 tools,
                 recognition,
-                Arc::new(FakeRunning(self.running)) as Arc<dyn RunningTools>,
+                Arc::new(FakeRunning::seeing(self.running)) as Arc<dyn RunningTools>,
             );
             (suggestions, blocks, clock)
         }
