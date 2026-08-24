@@ -6,15 +6,20 @@ use super::verification::{Verification, VerificationState};
 /// Une commande reconnue, telle que la spec §9 et
 /// [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) la décrivent.
 ///
-/// C'est le `[[command]]` de `~/.ash/config.toml`, un pour un :
+/// C'est l'entrée de `~/.ash/tools.json`, un pour un :
 ///
-/// ```toml
-/// [[command]]
-/// match   = "claude-perso"
-/// label   = "Perso"
-/// adapter = "claude-code"
-/// config  = "~/.claude-perso"
+/// ```json
+/// {
+///   "command": "claude-perso",
+///   "label": "Perso",
+///   "adapter": "claude-code",
+///   "config": "~/.claude-perso"
+/// }
 /// ```
+///
+/// Ce qui est écrit dans le fichier est la **déclaration seule**, plus le dernier dossier
+/// valide ; ce qu'elle a prouvé, ses homonymes et l'état de ses hooks se relisent à chaque
+/// session — voir [`super::persisted`].
 ///
 /// **`command` est l'identité**, et il n'y a pas d'autre identifiant : c'est le `match` du
 /// fichier, c'est-à-dire le nom de processus que la sonde compare. Poser un ulid à côté
@@ -40,7 +45,7 @@ pub struct ToolDeclaration {
     ///
     /// **Dérivé, jamais posé à la main** : c'est exactement
     /// [`Verification::allows_hooks`], recopié pour que les lecteurs qui ne veulent que ce
-    /// oui/non — l'écriture dans `~/.ash/config.toml`, le compteur de l'en-tête — n'aient
+    /// oui/non — le compteur de l'en-tête — n'aient
     /// pas à traverser la structure entière. [`ToolDeclaration::verified_by`] est le seul
     /// endroit où les deux sont écrits, donc le seul endroit où ils pourraient diverger.
     pub verified: bool,
@@ -117,6 +122,20 @@ impl ToolDeclaration {
         self
     }
 
+    /// L'entrée avec la mémoire qu'un fichier lui rend.
+    ///
+    /// Le second chemin par lequel [`Self::last_valid_config`] se remplit, et le seul qui ne
+    /// vienne pas d'une vérification : `~/.ash/tools.json` garde ce dossier parce que sans
+    /// lui, « réinitialiser une entrée » ramènerait après un redémarrage au défaut de
+    /// l'adaptateur — c'est-à-dire à l'entrée d'à côté (spec §9.1). Il ne dit pas que
+    /// l'entrée est vérifiée : elle ne l'est pas, et elle le reste jusqu'à ce que les quatre
+    /// tests soient relancés.
+    #[must_use]
+    pub fn remembering(mut self, folder: Option<ConfigTarget>) -> Self {
+        self.last_valid_config = folder;
+        self
+    }
+
     /// L'entrée après une modification quelconque de sa cible.
     ///
     /// Elle oublie la réinitialisation : « annuler la réinitialisation » ne veut plus rien
@@ -160,17 +179,48 @@ impl NewTool {
         adapters: &[String],
         declared: &[ToolDeclaration],
     ) -> Result<ToolDeclaration, SettingsError> {
+        let adapter = self.adapter.trim().to_owned();
+        if !adapters.iter().any(|known| known == &adapter) {
+            return Err(SettingsError::UnknownAdapter(adapter));
+        }
+        self.retained(&adapter, declared)
+    }
+
+    /// La même saisie, **relue d'un fichier** plutôt que tapée dans le formulaire.
+    ///
+    /// Les mêmes règles, sauf une : l'adaptateur n'a pas à être embarqué par cette
+    /// compilation. Une entrée qui en nomme un que cette version d'Ash ne connaît pas est
+    /// **gardée et montrée invalide**, avec la correction qui a une chance — c'est ce que
+    /// [`first_pass`](super::verification::Verifier::first_pass) compose déjà pour ce cas
+    /// précis, et c'est la conduite que la feature tient partout ailleurs : Ash n'empêche
+    /// pas de déclarer, il refuse d'écrire. La faire disparaître ferait perdre sans un mot
+    /// un chemin que l'utilisateur avait tapé, en revenant d'une version à la précédente ou
+    /// en éditant le fichier à la main (spec §9).
+    ///
+    /// Ce qu'elle refuse est ce qui ne désigne rien : un nom qui n'est pas un nom de
+    /// processus, une entrée sans adaptateur, et un doublon de commande — la clé est le
+    /// `command`, et deux entrées homonymes laisseraient Ash sans savoir laquelle
+    /// instrumenter.
+    pub fn restore(self, declared: &[ToolDeclaration]) -> Result<ToolDeclaration, SettingsError> {
+        let adapter = self.adapter.trim().to_owned();
+        if adapter.is_empty() {
+            return Err(SettingsError::UnknownAdapter(adapter));
+        }
+        self.retained(&adapter, declared)
+    }
+
+    /// Le corps commun des deux : ce qui vaut pour une saisie vaut pour une relecture.
+    fn retained(
+        self,
+        adapter: &str,
+        declared: &[ToolDeclaration],
+    ) -> Result<ToolDeclaration, SettingsError> {
         // Un `match` est comparé au nom du processus en avant-plan (ADR-0005/0006) : la
         // règle vit dans [`Command`], donc elle est vérifiée ici **et portée ensuite** par
         // tout ce que ce nom traverse.
         let command = Command::parse(&self.command)?;
         if declared.iter().any(|tool| tool.command == command) {
             return Err(SettingsError::DuplicateCommand(command));
-        }
-
-        let adapter = self.adapter.trim();
-        if !adapters.iter().any(|known| known == adapter) {
-            return Err(SettingsError::UnknownAdapter(adapter.to_owned()));
         }
 
         Ok(ToolDeclaration {

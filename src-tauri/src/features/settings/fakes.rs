@@ -10,8 +10,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use super::error::SettingsError;
 use super::hooks::BlockAt;
+use super::persisted::{PersistedTool, PersistedTools};
 use super::ports::{Answer, CommandRunner, ConfigFiles, Folder, HookBlocks, Launch};
+use super::store::ToolStore;
 use super::values::{Command, ConfigTarget};
 use crate::features::hooks::Presence;
 use crate::features::hooks::{Removal, Withdrawal};
@@ -231,5 +234,84 @@ impl CommandRunner for FakeCommands {
             }),
             None => Err("le scénario n'a pas dit ce que la commande répond".to_owned()),
         }
+    }
+}
+
+/// Un `~/.ash/tools.json` en mémoire : ce qu'il portait, et ce qu'on y a écrit.
+///
+/// Ce qui compte ici n'est pas seulement l'état final, c'est **combien de fois** Ash a
+/// écrit : une vérification qui réécrirait le fichier à chaque passe le rendrait bruyant
+/// sans rien y changer, et un double qui ne garderait que le dernier contenu ne le dirait
+/// pas.
+pub struct FakeToolStore {
+    content: Mutex<PersistedTools>,
+    writes: Mutex<usize>,
+}
+
+impl FakeToolStore {
+    pub fn empty() -> Self {
+        Self {
+            content: Mutex::new(PersistedTools::default()),
+            writes: Mutex::new(0),
+        }
+    }
+
+    /// Ce que la session précédente a laissé.
+    #[must_use]
+    pub fn carrying(entries: Vec<PersistedTool>) -> Self {
+        let store = Self::empty();
+        if let Ok(mut content) = store.content.lock() {
+            content.tools = entries;
+        }
+        store
+    }
+
+    /// Une entrée telle qu'un fichier la porte — Test Data Builder des tests du registre.
+    pub fn entry(command: &str, adapter: &str, config: Option<&str>) -> PersistedTool {
+        PersistedTool {
+            command: command.to_owned(),
+            label: None,
+            adapter: adapter.to_owned(),
+            config: config.map(str::to_owned),
+            last_valid_config: None,
+        }
+    }
+
+    /// Ce que le fichier porte à cet instant.
+    pub fn content(&self) -> PersistedTools {
+        self.content
+            .lock()
+            .map(|kept| kept.clone())
+            .unwrap_or_default()
+    }
+
+    /// Les commandes gardées, dans leur ordre.
+    pub fn commands(&self) -> Vec<String> {
+        self.content()
+            .tools
+            .into_iter()
+            .map(|tool| tool.command)
+            .collect()
+    }
+
+    /// Combien de fois Ash a écrit le fichier.
+    pub fn writes(&self) -> usize {
+        self.writes.lock().map(|count| *count).unwrap_or_default()
+    }
+}
+
+impl ToolStore for FakeToolStore {
+    fn load(&self) -> PersistedTools {
+        self.content()
+    }
+
+    fn save(&self, tools: &PersistedTools) -> Result<(), SettingsError> {
+        if let Ok(mut content) = self.content.lock() {
+            content.clone_from(tools);
+        }
+        if let Ok(mut count) = self.writes.lock() {
+            *count += 1;
+        }
+        Ok(())
     }
 }

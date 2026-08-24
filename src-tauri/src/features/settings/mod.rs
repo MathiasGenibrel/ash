@@ -23,6 +23,7 @@
 //! | `ConfigFiles` | `SystemConfigFiles` | `FakeFolders` |
 //! | `CommandRunner` | `SystemCommands` | `FakeCommands` |
 //! | `HookBlocks` | `AdapterHooks` (composition root) | `FakeBlocks` |
+//! | `ToolStore` | `FileToolStore` — `~/.ash/tools.json` | `FakeToolStore` |
 //!
 //! **L'installation des hooks passe par le troisième**, et c'est ce qui fait que la feature
 //! écrit chez l'utilisateur sans connaître un seul adaptateur ni un seul format de fichier
@@ -55,11 +56,16 @@
 //! qu'il dit quand macOS ne laisse rien savoir de son autorisation (spec §8). Le geste de
 //! l'interrupteur traverse ici et repart aussitôt à `agents` : `settings` n'en garde rien.
 //!
-//! **Ce qui n'y est pas encore, et pourquoi :** l'**écriture dans `~/.ash/config.toml`**,
-//! qui n'a lieu que pour une entrée vérifiée. La vérification l'a débloquée ; la persistance
-//! appartient à la tâche qui la porte, et un registre en mémoire dit exactement la vérité du
-//! produit d'ici là. Les hooks, eux, sont déjà écrits sur le disque de l'utilisateur : ils
-//! ne se déduisent pas d'un souvenir, mais du fichier, relu à chaque affichage.
+//! **Ce qui est déclaré survit au redémarrage** ([`store`], [`persisted`]) : les entrées
+//! sont gardées dans `~/.ash/tools.json` — et non dans le `config.toml` que la spec §9
+//! décrivait, corrigée depuis : les quatre magasins qui existaient déjà sont en JSON, et un
+//! cinquième format aurait coûté une dépendance pour quatre champs.
+//!
+//! **Ce qui n'est pas gardé, et pourquoi :** le résultat des quatre tests, et l'état des
+//! hooks. Une vérification est un fait daté sur la machine — un dossier peut avoir disparu
+//! entre deux lancements — donc une entrée relue repart *non vérifiée* et se revérifie comme
+//! une entrée saisie. Les hooks, eux, sont écrits sur le disque de l'utilisateur : ils ne se
+//! déduisent pas d'un souvenir, mais du fichier, relu à chaque affichage (ADR-0007).
 
 // `commands` est public pour la même raison que dans les autres features : les macros de
 // `#[tauri::command]` ne survivent pas à un `pub use`.
@@ -71,9 +77,11 @@ mod fakes;
 mod hooks;
 mod notifications;
 mod permits;
+mod persisted;
 mod ports;
 mod recognition;
 mod registry;
+mod store;
 mod system;
 mod tool;
 mod usage;
@@ -89,6 +97,10 @@ pub use notifications::{
 pub use ports::{CommandRunner, ConfigFiles, HookBlocks};
 pub use recognition::{ToolRecognition, FRESHNESS};
 pub use registry::ToolRegistry;
+// `PersistedTools` — la forme du fichier — n'est **pas** réexportée, comme `Persisted` ne
+// l'est pas par `features::sidebar` : rien hors de cette feature n'a à fabriquer ce qui sera
+// écrit dans `~/.ash/tools.json`.
+pub use store::{FileToolStore, ToolStore};
 pub use system::{SystemCommands, SystemConfigFiles};
 pub use tool::{NewTool, ToolDeclaration};
 pub use usage::{UsageReport, KEYCHAIN_PATH};

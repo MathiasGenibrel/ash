@@ -8,15 +8,20 @@ import type { Verification } from "./Verification";
  * Une commande reconnue, telle que la spec §9 et
  * [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) la décrivent.
  *
- * C'est le `[[command]]` de `~/.ash/config.toml`, un pour un :
+ * C'est l'entrée de `~/.ash/tools.json`, un pour un :
  *
- * ```toml
- * [[command]]
- * match   = "claude-perso"
- * label   = "Perso"
- * adapter = "claude-code"
- * config  = "~/.claude-perso"
+ * ```json
+ * {
+ *   "command": "claude-perso",
+ *   "label": "Perso",
+ *   "adapter": "claude-code",
+ *   "config": "~/.claude-perso"
+ * }
  * ```
+ *
+ * Ce qui est écrit dans le fichier est la **déclaration seule**, plus le dernier dossier
+ * valide ; ce qu'elle a prouvé, ses homonymes et l'état de ses hooks se relisent à chaque
+ * session — voir [`super::persisted`].
  *
  * **`command` est l'identité**, et il n'y a pas d'autre identifiant : c'est le `match` du
  * fichier, c'est-à-dire le nom de processus que la sonde compare. Poser un ulid à côté
@@ -49,7 +54,7 @@ config: string | null,
  *
  * **Dérivé, jamais posé à la main** : c'est exactement
  * [`Verification::allows_hooks`], recopié pour que les lecteurs qui ne veulent que ce
- * oui/non — l'écriture dans `~/.ash/config.toml`, le compteur de l'en-tête — n'aient
+ * oui/non — le compteur de l'en-tête — n'aient
  * pas à traverser la structure entière. [`ToolDeclaration::verified_by`] est le seul
  * endroit où les deux sont écrits, donc le seul endroit où ils pourraient diverger.
  */

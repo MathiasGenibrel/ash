@@ -43,7 +43,7 @@
 //! configuration. Elle sait descendre un chemin de clés dans du JSON, reconnaître ses
 //! propres entrées, et compter celles des autres. Symétriquement, elle ne
 //! lit **aucune** configuration d'Ash : quels dossiers instrumenter est une question de
-//! `~/.ash/config.toml` (spec §9), que l'écran de réglages posera (#14, #16).
+//! `~/.ash/tools.json` (spec §9), que l'écran de réglages pose.
 //!
 //! **Les effets système de la feature**, avec ses deux adaptateurs :
 //!
