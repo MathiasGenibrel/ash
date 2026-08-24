@@ -246,6 +246,8 @@ impl CommandRunner for FakeCommands {
 pub struct FakeToolStore {
     content: Mutex<PersistedTools>,
     writes: Mutex<usize>,
+    /// Un disque qui refuse — `~/.ash` non inscriptible, disque plein.
+    refuses: Mutex<bool>,
 }
 
 impl FakeToolStore {
@@ -253,6 +255,23 @@ impl FakeToolStore {
         Self {
             content: Mutex::new(PersistedTools::default()),
             writes: Mutex::new(0),
+            refuses: Mutex::new(false),
+        }
+    }
+
+    /// Le même, sur un disque qui n'écrit pas.
+    #[must_use]
+    pub fn refusing(self) -> Self {
+        if let Ok(mut refuses) = self.refuses.lock() {
+            *refuses = true;
+        }
+        self
+    }
+
+    /// Le disque revient.
+    pub fn accepting(&self) {
+        if let Ok(mut refuses) = self.refuses.lock() {
+            *refuses = false;
         }
     }
 
@@ -306,6 +325,9 @@ impl ToolStore for FakeToolStore {
     }
 
     fn save(&self, tools: &PersistedTools) -> Result<(), SettingsError> {
+        if self.refuses.lock().map(|refuses| *refuses).unwrap_or(false) {
+            return Err(SettingsError::NotSaved("read-only test disk".to_owned()));
+        }
         if let Ok(mut content) = self.content.lock() {
             content.clone_from(tools);
         }

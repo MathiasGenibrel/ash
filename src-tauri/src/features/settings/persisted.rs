@@ -20,7 +20,7 @@
 
 use serde::Deserialize;
 
-use super::tool::ToolDeclaration;
+use super::tool::{NewTool, ToolDeclaration};
 use super::values::ConfigTarget;
 
 /// Le contenu du fichier : les entrées déclarées, dans leur ordre.
@@ -73,6 +73,26 @@ impl PersistedTools {
 }
 
 impl PersistedTool {
+    /// La saisie que cette entrée redonne — le chemin de retour de [`Self::of`].
+    ///
+    /// **Les deux sens du fichier vivent ici**, champ pour champ. La clé qui s'ajoutera un
+    /// jour se lit et s'écrit alors dans le même module, au lieu d'être écrite ici et
+    /// relue dans le registre : la moitié qu'on oublie est celle qu'on ne voit pas en
+    /// modifiant l'autre.
+    ///
+    /// Elle rend une [`NewTool`] et non une déclaration, et c'est le point : une entrée
+    /// relue **n'est pas** plus digne de confiance qu'une saisie du formulaire — le
+    /// fichier s'édite à la main (spec §9). Ce qui la juge est
+    /// [`NewTool::restore`](super::tool::NewTool::restore), avec les mêmes règles.
+    pub fn draft(&self) -> NewTool {
+        NewTool {
+            command: self.command.clone(),
+            label: self.label.clone(),
+            adapter: self.adapter.clone(),
+            config: self.config.clone(),
+        }
+    }
+
     fn of(tool: &ToolDeclaration) -> Self {
         Self {
             command: tool.command.as_str().to_owned(),
