@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { aDraft, aShortcut, aSnapshot, aTool, aVerification } from "./builders";
+import { aDraft, aShortcut, aSnapshot, aSuggestion, aTool, aVerification } from "./builders";
 import {
     ADAPTER_DEFAULT,
     countProblems,
@@ -13,11 +13,13 @@ import {
     describeTool,
     describeToolCount,
     captureIntent,
+    emptyToolsProse,
     focusedDraft,
     groupShortcuts,
     needsVerifying,
     NOTHING_VERIFIED_YET,
     parseDiff,
+    pendingSuggestions,
     readStroke,
 } from "./model";
 
@@ -627,5 +629,55 @@ describe("ce que la fenêtre relance en s'ouvrant", () => {
 
         // Then
         expect(relaunch).toBe(false);
+    });
+});
+
+describe("ce qu'ash a vu tourner", () => {
+    it("Given a tool ash saw running that no one declared, when the section filters what it shows, then it stays proposed", () => {
+        // Given — la fenêtre ouvrait sur « no tools declared » pendant qu'ash savait très
+        // bien que `claude` tenait l'avant-plan d'un onglet (ADR-0006)
+        const suggestions = [aSuggestion({ command: "claude" })];
+
+        // When
+        const shown = pendingSuggestions(suggestions, []);
+
+        // Then
+        expect(shown.map((one) => one.command)).toEqual(["claude"]);
+    });
+
+    it("Given a tool that has just been declared, when the list comes back before the suggestions do, then it is not shown twice", () => {
+        // Given — les deux valeurs n'arrivent pas par le même aller-retour : la carte est
+        // déjà là quand la suggestion l'est encore. Sans cette garde, déclarer laisserait le
+        // même outil deux fois à l'écran, dont une sous un geste que le backend refuserait
+        const suggestions = [aSuggestion({ command: "claude" }), aSuggestion({ command: "codex" })];
+
+        // When
+        const shown = pendingSuggestions(suggestions, [aTool({ command: "claude" })]);
+
+        // Then
+        expect(shown.map((one) => one.command)).toEqual(["codex"]);
+    });
+
+    it("Given nothing declared but a tool seen running, when the empty state speaks, then it names what ash saw instead of only what is missing", () => {
+        // Given — « no tools declared » reste vrai et devient trompeur : il fallait deviner
+        // qu'on passait par le marqueur de la sidebar pour déclarer un outil
+        const suggestions = [aSuggestion({ command: "claude" })];
+
+        // When
+        const prose = emptyToolsProse(suggestions);
+
+        // Then — ce qu'ash a vu, et la promesse que le clic ne pose rien (ADR-0007)
+        expect(prose).toContain("claude");
+        expect(prose).toContain("writes nothing");
+    });
+
+    it("Given nothing seen running, when the empty state speaks, then it keeps saying what the emptiness costs", () => {
+        // Given — la machine où aucun agent n'a jamais été lancé. Inventer une phrase sur ce
+        // qu'ash aurait vu serait un mensonge, et il n'a rien à proposer
+        // When
+        const prose = emptyToolsProse([]);
+
+        // Then — `null` : l'appelant garde la phrase d'origine
+        expect(prose).toBeNull();
     });
 });

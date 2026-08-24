@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use super::hooks::BlockAt;
 use super::values::{Command, ConfigTarget};
+use crate::features::agents::RecognizedProvider;
 use crate::features::hooks::{Removal, Withdrawal};
 
 /// Ce qu'on trouve à un chemin de configuration — le test 1, en entier.
@@ -169,6 +170,33 @@ pub trait HookBlocks: Send + Sync {
     /// C'est ce qui rend « retirer Ash de tous les fichiers » annonçable avant d'être posé
     /// (spec §10). `None` : il n'y a rien d'Ash dans ce fichier, ou rien de lisible.
     fn foresee_removal(&self, adapter: &str, config_dir: &ConfigTarget) -> Option<Withdrawal>;
+}
+
+/// Les outils qu'Ash a **vus tourner**, et rien d'autre (ADR-0006).
+///
+/// C'est le quatrième port de la feature, et le seul qui ne touche pas au disque : il rend
+/// ce que la sonde a déjà reconnu dans l'avant-plan des onglets ouverts. Aucune découverte
+/// ne s'y cache — ni parcours du `PATH`, ni scan de dossier, ni autorisation macOS. Un outil
+/// installé mais jamais lancé n'en sort pas, et c'est assumé : l'ajout à la main reste là
+/// pour lui.
+///
+/// **Il est ici, possédé par `settings`, pour éviter un cycle entre features.** `pty` dépend
+/// déjà de `settings` par son port
+/// [`AgentRecognition`](crate::features::pty::AgentRecognition), que
+/// [`ToolRecognition`](super::ToolRecognition) implémente : faire dépendre `settings` de
+/// `pty` en retour ferait se tenir les deux features par les deux bouts. La conduite du
+/// dépôt est celle de [`HookBlocks`] et de `AgentStates` — un trait chez celui qui demande,
+/// branché depuis la composition root sur celui qui détient.
+///
+/// Ce qui traverse est un [`RecognizedProvider`] et non un `RecognizedAgent` : ce que la
+/// sonde a retenu de l'instrumentation d'un onglet est un résumé à trois valeurs, et la
+/// fenêtre de réglages en veut cinq (voir [`super::HookState`]). Elle les relit elle-même,
+/// du fichier, plutôt que de recycler une réponse qui ne sait pas distinguer un conflit
+/// d'une absence.
+pub trait RunningTools: Send + Sync {
+    /// Les outils reconnus dans l'avant-plan des onglets, sans doublon, dans l'ordre des
+    /// onglets.
+    fn running(&self) -> Vec<RecognizedProvider>;
 }
 
 /// Résout le `~` de tête d'un chemin de configuration.

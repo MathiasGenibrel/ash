@@ -14,9 +14,10 @@ import type {
     SidebarDensity,
     ThemeMode,
     ToolDraft,
+    ToolSuggestion,
     Verification,
 } from "./contract";
-import { describeToolCount } from "./model";
+import { describeToolCount, emptyToolsProse, pendingSuggestions } from "./model";
 import { type SettingsSection } from "./sections";
 import {
     addForm,
@@ -33,6 +34,7 @@ import {
     scaleNote,
     sectionHeader,
     shortcutsSection,
+    suggestionList,
     tag,
     toolCard,
     uninstallRow,
@@ -95,6 +97,15 @@ export interface SettingsViewActions {
     removeHooks(command: string): void;
     /** `see the diff` — **n'écrit rien**, ouvre le diff de ce qu'Ash écrirait. */
     openConflict(command: string): void;
+    /**
+     * Le `declare` d'un outil qu'Ash a vu tourner (ADR-0006).
+     *
+     * **Aucun hook n'est posé** : elle ajoute l'entrée, qui repart dans le flux qui existe
+     * déjà — vérification en deux temps, puis bouton d'installation. Rien n'est écrit chez
+     * l'utilisateur tant que ce bouton-là n'a pas été pressé
+     * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)).
+     */
+    declareSuggestion(suggestion: ToolSuggestion): void;
     /** `← back to the list`. */
     closeConflict(): void;
     /**
@@ -190,6 +201,16 @@ export interface SettingsRendering extends SettingsViewActions {
 export interface SettingsScene {
     section: SettingsSection;
     snapshot: SettingsSnapshot;
+    /**
+     * Les outils qu'Ash a vus tourner et que personne n'a déclarés (ADR-0006).
+     *
+     * Ils ne sont **pas** dans `snapshot`, et c'est le backend qui le décide : l'instantané
+     * traverse à chaque geste, et y glisser les suggestions ferait relire un fichier de
+     * configuration à chaque frappe dans un champ de chemin. Ils arrivent donc par un second
+     * aller-retour, comme `journal` et `usage` — et comme eux, ils sont rendus, jamais
+     * détenus ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+     */
+    suggestions: readonly ToolSuggestion[];
     /** La saisie en cours, ou `null` quand on n'ajoute pas. */
     draft: ToolDraft | null;
     /** Ce que les quatre tests disent de cette saisie, ou `null` s'ils n'ont pas répondu. */
@@ -386,6 +407,9 @@ function toolsPanel(scene: SettingsScene, actions: SettingsRendering): readonly 
 function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonly UiChild[] {
     const tools = scene.snapshot.tools;
     const empty = tools.length === 0;
+    // Le filtre est un fait d'affichage : le backend applique déjà la règle, mais la liste et
+    // les suggestions n'arrivent pas par le même aller-retour — voir `pendingSuggestions`.
+    const suggested = pendingSuggestions(scene.suggestions, tools);
 
     const controls: UiChild[] = [];
     if (!empty) {
@@ -408,7 +432,7 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
     // Le corps ne défile pas quand il est vide — il se centre : il n'y a rien à parcourir.
     const body = tag("div", "settings-body", empty ? "is-empty" : "").add(
         ...(empty
-            ? [noToolsYet()]
+            ? [noToolsYet(emptyToolsProse(suggested))]
             : tools.map((tool) =>
                   toolCard(
                       tool,
@@ -427,6 +451,9 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
         scaleNote(scene.snapshot.tests),
         ...duplicateBanner(tools, actions),
         body,
+        // **Sous** les cartes, et hors du corps qui défile centré quand il est vide : ce
+        // qu'Ash a vu tourner n'est pas une entrée, et la liste déclarée reste la liste.
+        ...suggestionList(suggested, actions),
         // Sans entrée déclarée, il n'y a aucun fichier à énumérer : le geste n'aurait rien
         // à annoncer, et un bouton qui ne peut rien dire ne se propose pas.
         ...(empty ? [] : [uninstallRow(actions)]),

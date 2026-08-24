@@ -12,6 +12,7 @@ import type {
     SettingsPorts,
     SettingsSnapshot,
     ToolDraft,
+    ToolSuggestion,
     UsageReport,
     Verification,
     Verified,
@@ -58,6 +59,7 @@ function folder(config: string): string | null {
 
 export const tauriSettings: SettingsPorts = {
     tools: () => invoke<SettingsSnapshot>("settings_tools"),
+    suggestions: () => invoke<readonly ToolSuggestion[]>("settings_suggestions"),
     notifications: () => invoke<NotificationsReport>("settings_notifications"),
     setNotification: (state: AgentState, enabled: boolean) =>
         invoke<NotificationsReport>("settings_set_notification", { state, enabled }),
