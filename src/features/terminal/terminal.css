@@ -762,6 +762,23 @@
     box-shadow: 0 8px 32px rgb(0 0 0 / 35%);
 }
 
+/* La question, puis une ligne par agent : quitter Ash est la seule des deux confirmations
+ * du dépôt à dire plus d'une phrase (issue #177). `Cmd+W` n'a qu'un enfant, et la grille ne
+ * lui coûte rien. */
+.ash-confirm-message {
+    display: grid;
+    gap: 6px;
+}
+
+/* Une ligne nommée par la question — un agent et son état. Elle est en retrait et en encre
+ * atténuée : c'est une énumération de ce qu'on va perdre, pas la question elle-même. Un
+ * chemin de worktree est long, et il se coupe où il peut plutôt que d'élargir la boîte. */
+.ash-confirm-item {
+    padding-left: 8px;
+    color: var(--ash-fg-muted);
+    overflow-wrap: anywhere;
+}
+
 .ash-confirm-actions {
     display: flex;
     justify-content: flex-end;
