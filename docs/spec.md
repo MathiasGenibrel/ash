@@ -389,6 +389,7 @@ sous une TUI plein écran est un point à vérifier au jalon J5.
 | `Cmd+T` | Nouvel onglet dans le worktree courant |
 | `Cmd+Shift+T` | Nouvel onglet à `~` (donc, jusqu'au premier `cd`, un worktree `~`) |
 | `Cmd+W` | Ferme l'onglet (confirmation si un agent y tourne) |
+| `Cmd+Q` | Quitte Ash (confirmation si un agent est reconnu dans un onglet) |
 | `Cmd+B` | Replie / déplie la sidebar |
 | `Cmd+K` | Efface le scrollback de l'onglet courant |
 | `Cmd+Ctrl+B` | Popup de branches |
@@ -431,6 +432,17 @@ est sous les yeux — la fenêtre le rapporte, elle seule le sait — et si quel
 arrêté, qu'il **demande** à `features::merge`, par la lecture même que l'ouverture consulte.
 La surveillance de `.git` rouvre la question quand un rebase commence ou se termine, sans
 quoi le raccourci ne s'allumerait qu'au prochain changement d'onglet.
+
+**`Cmd+Q` et `Cmd+W` ne demandent pas la même chose** — écrit le 2026-08-24, avec l'issue
+#177. `Cmd+W` demande quand **quelque chose tourne** dans l'onglet ; `Cmd+Q` demande quand
+**un agent est reconnu** dans un onglet (§6, ADR-0006), quel que soit son état — un Claude
+Code `idle` à son invite compte, parce que le quitter perd sa session, et un `vim` ou un
+`tail -f` ne comptent pas. Les deux gestes ne perdent pas la même chose : fermer un onglet
+tue un processus, quitter Ash les tue tous, et poser la question sur le second critère à
+chaque sortie l'userait jusqu'à ce qu'on la réponde sans la lire. La question vaut pour
+**toutes** les demandes de sortie — `Cmd+Q`, `Ash ▸ Quitter`, le menu du Dock, la fermeture
+de la dernière fenêtre —, et `Cmd+Q` reste l'entrée prédéfinie de macOS : elle n'est pas
+rebindable, et n'apparaît pas dans la liste des raccourcis réglables.
 
 **Un raccourci est un caractère, pas une position de touche** — écrit le 2026-08-19, après
 l'issue #133. Ces combinaisons se lisent comme macOS les apparie : `Cmd+W` est la touche qui

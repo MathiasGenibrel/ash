@@ -13,6 +13,7 @@ pub mod merge;
 pub mod notifications;
 pub mod probe;
 pub mod pty;
+pub mod quit;
 pub mod settings;
 pub mod shortcuts;
 pub mod sidebar;

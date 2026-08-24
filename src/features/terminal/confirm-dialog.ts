@@ -16,7 +16,15 @@
  * seule chose qui marchait encore quand ses boutons avalaient la souris.
  */
 
-import { button, FOCUS_KEY, paint, row, text, type UiComponent } from "@/shared/ui";
+import {
+    button,
+    FOCUS_KEY,
+    paint,
+    row,
+    text,
+    type UiChild,
+    type UiComponent,
+} from "@/shared/ui";
 
 /** La réponse de l'utilisateur : `true` détruit le PTY, `false` ne touche à rien. */
 export type CloseAnswer = (closeIt: boolean) => void;
@@ -38,14 +46,23 @@ const CANCEL_CLASS = "ash-confirm-cancel";
 const DANGER_CLASS = "is-danger";
 
 /**
- * La boîte : la question, puis les deux réponses.
+ * La forme commune des deux questions d'Ash : ce qu'elle dit, puis les deux réponses.
  *
  * Le clic de chaque bouton et la touche `Échap` mènent au **même** port : il n'y a qu'un
  * chemin de sortie, donc la souris et le clavier ne peuvent pas se répondre différemment.
+ *
+ * `message` est une **suite** de composants et non une chaîne : `Cmd+W` n'a qu'une phrase à
+ * dire, mais quitter Ash doit nommer chaque agent sur sa ligne (issue #177), et une boîte
+ * par question aurait été deux voiles, deux `Échap` et deux focus initiaux à tenir d'accord.
  */
-export function composeCloseBox(what: string, answer: CloseAnswer): UiComponent {
+export function composeConfirmBox(
+    message: readonly UiChild[],
+    dangerLabel: string,
+    answer: CloseAnswer,
+): UiComponent {
     // Le défaut est le choix qui ne détruit rien : la touche entrée sur un dialogue qui
-    // vient d'apparaître ne doit pas tuer un processus.
+    // vient d'apparaître ne doit pas tuer un processus — ni fermer un onglet, ni quitter
+    // l'application.
     const cancel = button("Annuler")
         .class(CANCEL_CLASS)
         .focusKey(CANCEL_FOCUS_KEY)
@@ -53,33 +70,53 @@ export function composeCloseBox(what: string, answer: CloseAnswer): UiComponent 
             answer(false);
         });
 
-    const destroy = button("Fermer l'onglet")
-        .class(DANGER_CLASS)
-        .onClick(() => {
-            answer(true);
-        });
+    const destroy = button(dangerLabel).class(DANGER_CLASS).onClick(() => {
+        answer(true);
+    });
 
     return row(
-        row(text(`Quelque chose tourne dans « ${what} ». Fermer l'onglet ?`)).class(
-            "ash-confirm-message",
-        ),
+        row(...message).class("ash-confirm-message"),
         row(cancel, destroy).class("ash-confirm-actions"),
     ).class("ash-confirm-box");
 }
 
 /**
- * Pose la boîte dans `host`, et rend la réponse.
+ * La boîte de `Cmd+W` : la question, puis les deux réponses.
+ *
+ * Elle n'est plus qu'un habillage de [`composeConfirmBox`] — le voile, le focus, `Échap` et
+ * la place du geste destructeur sont les mêmes pour les deux questions que pose Ash, et le
+ * dépôt n'a qu'un dialogue. Ce qui lui reste en propre est ce qu'elle dit et ce que son
+ * bouton rouge promet.
+ */
+export function composeCloseBox(what: string, answer: CloseAnswer): UiComponent {
+    return composeConfirmBox(
+        [text(`Quelque chose tourne dans « ${what} ». Fermer l'onglet ?`)],
+        "Fermer l'onglet",
+        answer,
+    );
+}
+
+/** Pose la boîte de `Cmd+W` dans `host`, et rend la réponse. */
+export function askToClose(host: HTMLElement, what: string): Promise<boolean> {
+    return askForConfirmation(host, (answer) => composeCloseBox(what, answer));
+}
+
+/**
+ * Pose une boîte — n'importe laquelle — dans `host`, et rend la réponse.
  *
  * C'est la moitié qui touche le DOM, et elle ne décide rien : le voile, l'écoute d'`Échap`,
  * le focus initial et le retrait. Elle se vérifie à la main — il n'y a pas de `document`
  * sous `bun test`.
  *
  * **Un clic à côté de la boîte ne répond pas.** Le voile n'a aucun gestionnaire, et ce n'est
- * pas un oubli : un geste imprécis ne peut pas valoir « ferme l'onglet », et le faire valoir
- * « annuler » ferait disparaître la question sous une souris qui a glissé. Il n'y a donc que
- * trois issues, toutes explicites : les deux boutons et `Échap`.
+ * pas un oubli : un geste imprécis ne peut pas valoir « ferme l'onglet » ni « quitte Ash »,
+ * et le faire valoir « annuler » ferait disparaître la question sous une souris qui a
+ * glissé. Il n'y a donc que trois issues, toutes explicites : les deux boutons et `Échap`.
  */
-export function askToClose(host: HTMLElement, what: string): Promise<boolean> {
+export function askForConfirmation(
+    host: HTMLElement,
+    box: (answer: CloseAnswer) => UiComponent,
+): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
         const overlay = document.createElement("div");
         overlay.className = "ash-confirm";
@@ -104,7 +141,7 @@ export function askToClose(host: HTMLElement, what: string): Promise<boolean> {
             }
         }
 
-        overlay.append(paint(composeCloseBox(what, answer).build()));
+        overlay.append(paint(box(answer).build()));
         document.addEventListener("keydown", onKey, true);
         host.append(overlay);
 
