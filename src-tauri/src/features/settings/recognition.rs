@@ -127,46 +127,17 @@ impl AgentRecognition for ToolRecognition {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
     use crate::features::agents::Instrumented;
     use crate::features::hooks::Presence;
-    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders, FakeToolStore};
+    use crate::features::settings::fakes::{
+        FakeBlocks, FakeCommands, FakeFolders, FakeToolStore, TestClock,
+    };
     use crate::features::settings::persisted::PersistedTool;
     use crate::features::settings::store::ToolStore;
     use crate::features::settings::tool::NewTool;
     use crate::features::settings::verification::{AdapterProfile, Verifier};
-    use crate::shared::time::UnixMillis;
-
-    /// Une horloge que le scénario avance lui-même — aucun test ne dort.
-    struct TestClock {
-        origin: Instant,
-        elapsed: AtomicU64,
-    }
-
-    impl TestClock {
-        fn new() -> Self {
-            Self {
-                origin: Instant::now(),
-                elapsed: AtomicU64::new(0),
-            }
-        }
-
-        fn tick(&self, seconds: u64) {
-            self.elapsed.fetch_add(seconds, Ordering::SeqCst);
-        }
-    }
-
-    impl Clock for TestClock {
-        fn now(&self) -> Instant {
-            self.origin + Duration::from_secs(self.elapsed.load(Ordering::SeqCst))
-        }
-
-        fn wall(&self) -> UnixMillis {
-            0
-        }
-    }
 
     fn profiles() -> Vec<AdapterProfile> {
         vec![
