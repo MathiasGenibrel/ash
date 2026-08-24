@@ -134,6 +134,28 @@ pub enum ChildEvent {
     Ended,
 }
 
+/// Ce qu'un événement dit de la **session** de l'outil, et rien de ce qu'elle fait.
+///
+/// La troisième lecture du même mot brut, à côté d'[`Adapter::interpret`] et
+/// d'[`Adapter::child_event`], et elle existe pour la même raison que la deuxième : une
+/// session qui s'ouvre n'est pas un état de travail. Un outil qui vient de démarrer n'est
+/// **rien** en train de faire — il attend un prompt — et le traduire en `working` serait la
+/// déduction qu'ADR-0007 refuse, cette fois par le vocabulaire plutôt que par la sortie du
+/// PTY (précision du 2026-08-24).
+///
+/// Ce qu'elle apporte au cœur est pourtant décisif : tant qu'aucun événement n'est arrivé
+/// d'un onglet, c'est la **présence** vue par la sonde qui y répond, donc `claude` à son
+/// invite s'y montre `working`. Un verbe qui dit « une session existe » fait naître la
+/// machine à états de l'onglet sans rien y déclarer, et la présence cesse d'y parler.
+///
+/// **Une seule variante**, et c'est un choix : la fin d'une session, elle, est un état —
+/// `SessionEnd` se traduit en `done` par [`Adapter::interpret`], et n'a rien à faire ici.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEvent {
+    /// Une session de l'outil vient de s'ouvrir dans cet onglet — démarrage ou reprise.
+    Opened,
+}
+
 /// Un outil expose-t-il des sous-tâches ?
 ///
 /// La notion n'existe pas partout, et c'est la seule chose que le cœur a besoin de savoir
@@ -208,6 +230,18 @@ pub trait Adapter: Send + Sync {
     /// `None` est la réponse normale, y compris chez un outil qui a des sous-tâches : la
     /// grande majorité des événements ne parlent que de l'agent principal.
     fn child_event(&self, raw: &RawEvent) -> Option<ChildEvent>;
+
+    /// Ce que cet événement dit de la **session**, ou rien.
+    ///
+    /// La troisième porte du trait, distincte des deux autres pour la raison qui les a déjà
+    /// séparées : les trois lisent le même mot brut et n'en tirent pas la même chose, et un
+    /// mot ne peut pas passer par deux portes à la fois — la suite contractuelle le vérifie.
+    ///
+    /// `None` est la réponse normale, y compris chez un outil qui annonce ses sessions : la
+    /// quasi-totalité des événements parlent de ce que l'agent fait, pas de son ouverture.
+    /// Un adaptateur sans instrumentation répond toujours `None` — il n'a fait installer
+    /// aucun hook, donc rien ne peut lui parvenir.
+    fn session_event(&self, raw: &RawEvent) -> Option<SessionEvent>;
 
     /// L'outil expose-t-il des sous-tâches ?
     fn subagents(&self) -> SubagentSupport;

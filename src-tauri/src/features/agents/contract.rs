@@ -31,6 +31,8 @@ pub(crate) enum Invariant {
     InterpretNeverAnswersIdle,
     ChildEventsNeverBecomeTabState,
     NoChildEventsWithoutSubagentSupport,
+    SessionEventsNeverBecomeTabState,
+    NoSessionEventsWithoutInstrumentation,
     SubagentSupportNamesAChildVerb,
     NoWorkingNorWaitingWithoutInstrumentation,
     InstrumentationIsACapability,
@@ -78,6 +80,18 @@ impl Invariant {
                 "un événement de sous-agent ne doit produire aucun état d'onglet : un enfant \
                  qui finit ne rend pas l'outil disponible, et le traduire serait la déduction \
                  qu'ADR-0007 refuse (amendement du 2026-08-13)"
+            }
+            Self::SessionEventsNeverBecomeTabState => {
+                "un événement de session ne doit produire ni état d'onglet ni événement \
+                 d'enfant : une session qui s'ouvre n'est pas un travail en cours, et la \
+                 traduire en `working` remettrait à la sonde ce que les hooks sont seuls à \
+                 dire (ADR-0007, précision du 2026-08-24)"
+            }
+            Self::NoSessionEventsWithoutInstrumentation => {
+                "un adaptateur sans instrumentation ne doit reconnaître aucun verbe de \
+                 session : il n'a fait installer aucun hook, donc rien ne peut lui parvenir, \
+                 et le cœur cesserait de laisser la sonde répondre pour un onglet qui n'a \
+                 pourtant rien annoncé"
             }
             Self::NoChildEventsWithoutSubagentSupport => {
                 "un adaptateur qui répond `SubagentSupport::None` ne doit reconnaître aucun \
@@ -240,6 +254,12 @@ fn tempting_events() -> Vec<RawEvent> {
         "PreToolUse",
         "PostToolUse",
         "SubagentStop",
+        "SessionStart",
+        // Le verbe canonique du septième hook, à côté du nom que Claude Code lui donne. Il
+        // est ici pour la même raison que `subagent-stop` : c'est **le** mot qu'un adaptateur
+        // serait tenté de traduire en `working`, et la précision du 2026-08-24 dit qu'il n'en
+        // est pas un.
+        "session-start",
         // Le verbe canonique du sixième hook, à côté du nom que Claude Code lui donne. Il
         // est ici pour la même raison que les autres : c'est **le** mot qu'un adaptateur
         // serait tenté de traduire en `done`, et l'amendement du 2026-08-13 à ADR-0007 dit
@@ -485,6 +505,19 @@ fn check_interpretation(adapter: &dyn Adapter, corpus: &[RawEvent], report: &mut
             Invariant::NoChildEventsWithoutSubagentSupport,
         );
 
+        // La même garde, pour la troisième porte : le mot qui dit qu'une session s'ouvre ne
+        // doit rien dire de ce que l'agent fait. C'est ce qui empêche un `SessionStart` de
+        // repasser en `working` le jour où quelqu'un l'ajoutera « pour que la ligne bouge ».
+        let session = adapter.session_event(event);
+        report.require(
+            session.is_none() || (interpreted.is_none() && child.is_none()),
+            Invariant::SessionEventsNeverBecomeTabState,
+        );
+        report.require(
+            session.is_none() || instruments,
+            Invariant::NoSessionEventsWithoutInstrumentation,
+        );
+
         if !instruments {
             report.require(
                 !matches!(
@@ -564,7 +597,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::features::agents::adapter::{ChildEvent, HookEntry, Instrumentation};
+    use crate::features::agents::adapter::{ChildEvent, HookEntry, Instrumentation, SessionEvent};
 
     /// Un adaptateur de test, réglable défaut par défaut — c'est ce qui permet de vérifier
     /// que la suite contractuelle **attrape** ce qu'elle prétend attraper.
@@ -574,6 +607,7 @@ mod tests {
         instrumented_file: Option<PathBuf>,
         always: Option<AgentState>,
         child_verb: Option<String>,
+        session_verb: Option<String>,
         reports_subagents: bool,
         declares_usage: bool,
         measures_anything: bool,
@@ -604,6 +638,12 @@ mod tests {
         /// Ce mot-là annonce la fin d'un enfant.
         fn ending_children_on(mut self, verb: &str) -> Self {
             self.child_verb = Some(verb.to_owned());
+            self
+        }
+
+        /// Ce mot-là annonce qu'une session s'ouvre.
+        fn opening_sessions_on(mut self, verb: &str) -> Self {
+            self.session_verb = Some(verb.to_owned());
             self
         }
 
@@ -639,6 +679,7 @@ mod tests {
                 instrumented_file: self.instrumented_file,
                 always: self.always,
                 child_verb: self.child_verb,
+                session_verb: self.session_verb,
                 reports_subagents: self.reports_subagents,
                 declares_usage: self.declares_usage,
                 measures_anything: self.measures_anything,
@@ -652,6 +693,7 @@ mod tests {
         instrumented_file: Option<PathBuf>,
         always: Option<AgentState>,
         child_verb: Option<String>,
+        session_verb: Option<String>,
         reports_subagents: bool,
         declares_usage: bool,
         measures_anything: bool,
@@ -680,6 +722,10 @@ mod tests {
 
         fn child_event(&self, raw: &RawEvent) -> Option<ChildEvent> {
             (self.child_verb.as_deref() == Some(raw.kind())).then_some(ChildEvent::Ended)
+        }
+
+        fn session_event(&self, raw: &RawEvent) -> Option<SessionEvent> {
+            (self.session_verb.as_deref() == Some(raw.kind())).then_some(SessionEvent::Opened)
         }
 
         fn subagents(&self) -> SubagentSupport {
@@ -756,6 +802,54 @@ mod tests {
             report
                 .violations()
                 .contains(&Invariant::InterpretNeverAnswersIdle),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_that_reads_the_same_word_as_a_session_and_as_a_state_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — la faute que la troisième porte rend possible : le mot qui annonce une
+        // session ouverte est aussi traduit en état. Un agent qui vient d'ouvrir serait
+        // montré `working` alors qu'il attend un prompt, et la précision du 2026-08-24
+        // n'aurait rien changé.
+        let confused = AdapterBuilder::new()
+            .hardcoded_file("/ash-contract/alpha/settings.json")
+            .always_answering(AgentState::Working)
+            .opening_sessions_on("session-start")
+            .build();
+
+        // When
+        let report = check_adapter_contract(&confused, &[], None);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::SessionEventsNeverBecomeTabState),
+            "violations : {report}"
+        );
+    }
+
+    #[test]
+    fn given_an_adapter_without_instrumentation_that_claims_a_session_when_checked_then_the_contract_rejects_it(
+    ) {
+        // Given — un adaptateur qui n'installe aucun hook, donc à qui rien ne peut parvenir,
+        // et qui reconnaît pourtant un verbe de session. Le cœur ferait naître une machine à
+        // états pour son onglet, et cesserait d'y laisser parler la sonde — un outil non
+        // instrumenté perdrait son `working` de présence (spec §6.2).
+        let mute = AdapterBuilder::new()
+            .opening_sessions_on("session-start")
+            .build();
+
+        // When
+        let report = check_adapter_contract(&mute, &[], None);
+
+        // Then
+        assert!(
+            report
+                .violations()
+                .contains(&Invariant::NoSessionEventsWithoutInstrumentation),
             "violations : {report}"
         );
     }

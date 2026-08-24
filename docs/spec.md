@@ -506,8 +506,11 @@ fg_proc   = nom de l'exécutable de fg_pgid
 cwd       = proc_pidinfo(fg_pgid, PROC_PIDVNODEPATHINFO)   # macOS libproc
 ```
 
-- `fg_proc` figure dans les commandes reconnues → l'onglet **devient** un agent, et
-  la sonde suffit à le montrer `working`.
+- `fg_proc` figure dans les commandes reconnues → l'onglet **devient** un agent. Ce qu'il
+  montre alors dépend de ce que l'outil sait dire : pour un outil **sans hooks**, la sonde
+  suffit à le montrer `working` ; pour un outil **instrumenté**, ce sont ses hooks qui
+  disent ce qu'il fait, et un agent qui vient d'ouvrir sans avoir reçu de prompt est `idle`
+  (précision du 2026-08-24 à [ADR-0007](./adr/0007-etats-par-hooks.md)).
 - `fg_proc` redevient le shell → l'agent passe en `done` ou en `error` selon son code
   de sortie, puis la ligne redevient un simple onglet shell après un délai d'affichage
   (voir §6.4).
@@ -546,18 +549,25 @@ passe jamais de l'un à l'autre. Les deux mènent au retour à `idle` (§6.4).
 
 | État | Sens | Source |
 |---|---|---|
-| `idle` | shell sans agent | sonde |
-| `working` | un agent tient l'avant-plan | sonde, ou hook |
+| `idle` | rien n'est en cours : un shell sans agent, ou un agent qui n'a rien en vol | sonde, ou hook d'ouverture de session |
+| `working` | un agent travaille | hook ; **ou** sonde, pour un outil sans hooks |
 | `waiting` | l'agent attend une réponse de l'utilisateur | **hook, et rien d'autre** |
 | `done` | l'agent a rendu la main | hook, ou disparition avec un code 0 |
 | `error` | l'agent s'est terminé anormalement | hook, ou code de sortie non nul |
 
-`working` a **deux** producteurs, et c'est voulu : la sonde répond à une question de
-présence — quelque chose d'autre que le shell tient l'avant-plan — tandis que le hook
-répond de ce que l'agent fait. Un outil sans instrumentation n'a que le premier, et
-reste utilisable. Voir la précision du 2026-08-11 dans
-[ADR-0007](./adr/0007-etats-par-hooks.md) et l'amendement d'
-[ADR-0008](./adr/0008-abstraction-adapter.md).
+`working` a **deux** producteurs, et ils ne s'appliquent pas au même onglet : la sonde
+répond à une question de présence — quelque chose d'autre que le shell tient l'avant-plan —
+tandis que le hook répond de ce que l'agent fait. **Dès qu'un outil est instrumenté, le
+second l'emporte et le premier se tait pour cet onglet** : son hook d'ouverture de session
+dit qu'un agent est là sans rien déclarer, et la présence ne produit plus `working`. Un
+outil sans instrumentation n'a que le premier, garde son `working` de présence, et reste
+utilisable — c'est la raison d'être des deux producteurs, et elle ne bouge pas. Voir la
+précision du 2026-08-11 dans [ADR-0007](./adr/0007-etats-par-hooks.md), celle du
+2026-08-24, et l'amendement d'[ADR-0008](./adr/0008-abstraction-adapter.md).
+
+`idle` ne veut donc plus dire « shell sans agent » mais « rien n'est en cours ». Un agent
+présent qui n'a rien en vol est `idle`, et la ligne garde par ailleurs tout ce qui dit
+qu'il est là : le nom de son outil, et sa jauge de contexte.
 
 `waiting` est l'état qui compte : c'est le seul qui justifie d'interrompre
 l'utilisateur.
@@ -594,6 +604,11 @@ sur `/tmp`, cette fenêtre reste ouverte. Il survit enfin au nettoyage de `/tmp`
 ### 6.4 Règles de transition
 
 - Un événement de hook fait autorité sur la sonde.
+- **Pour un outil instrumenté, la présence ne produit pas `working`.** L'ouverture de sa
+  session est elle-même un événement : elle ne déclare aucun état, elle dit qu'un agent est
+  là. À partir de là, et jusqu'à ce que cet agent finisse, ce sont ses hooks qui parlent —
+  un onglet où `claude` attend un prompt est `idle`, et son glyphe ne tourne pas. La sonde
+  garde ce qu'elle sait faire : la **disparition** du processus, qui referme la session.
 - Un agent en `working` y reste tant qu'un hook ou la disparition du processus n'en
   décide autrement. **Aucun silence, si long soit-il, ne change son état** — un agent
   met couramment bien plus d'une minute à faire une tâche, et Ash ne devine pas. La
