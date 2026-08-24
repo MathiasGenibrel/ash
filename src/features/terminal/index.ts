@@ -81,6 +81,25 @@ export { TERMINAL_THEME_TOKENS } from "./theme";
  */
 export { tauriPty as tauriPtyBridge } from "./pty-bridge";
 
+/**
+ * Le dialogue de confirmation, sans ce qu'il demande.
+ *
+ * Publié pour l'unique usage du composition root : quitter Ash quand un agent est reconnu
+ * pose la **même** boîte que `Cmd+W` (issue #177) — même voile, même `Échap`, même bouton
+ * `Annuler` au focus, même geste rouge à droite. Le dépôt n'a qu'un dialogue, et il vit ici
+ * parce que sa feuille de style y vit : `.ash-confirm*` est dans `terminal.css`, à côté du
+ * `isolation: isolate` sans lequel le canevas de xterm.js avale ses boutons.
+ *
+ * Ce qui n'est **pas** publié, c'est ce qu'une boîte dit : `composeCloseBox` reste interne,
+ * et quitter Ash compose la sienne dans `app/confirm-quit.ts`.
+ */
+export {
+    askForConfirmation,
+    composeConfirmBox,
+    CANCEL_FOCUS_KEY,
+    type CloseAnswer,
+} from "./confirm-dialog";
+
 /** Ce que la feature annonce de ses onglets à qui les affiche autrement — la sidebar. */
 export type TabsListener = (tabs: readonly Tab[], activeTabId: TabId | null) => void;
 
