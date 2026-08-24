@@ -409,7 +409,7 @@ fn check_model_tables(adapter: &dyn Adapter, declares: bool, report: &mut Contra
     );
 
     for model in unnameable_models() {
-        let window = adapter.context_window(model);
+        let window = adapter.context_window(None, Some(model));
 
         report.require(window.is_none(), Invariant::AnUnknownModelHasNoWindow);
         report.require(
@@ -759,7 +759,7 @@ mod tests {
             Vec::new()
         }
 
-        fn context_window(&self, _model: &str) -> Option<u64> {
+        fn context_window(&self, _ran: Option<&str>, _configured: Option<&str>) -> Option<u64> {
             None
         }
     }

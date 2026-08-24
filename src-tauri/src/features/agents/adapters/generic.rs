@@ -96,7 +96,7 @@ impl Adapter for GenericAdapter {
 
     /// Et aucune fenêtre pour aucun identifiant : la table des modèles est la connaissance
     /// d'un outil, et le socle n'en est pas un.
-    fn context_window(&self, _model: &str) -> Option<u64> {
+    fn context_window(&self, _ran: Option<&str>, _configured: Option<&str>) -> Option<u64> {
         None
     }
 
