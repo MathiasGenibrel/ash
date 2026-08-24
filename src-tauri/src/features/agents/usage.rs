@@ -35,7 +35,7 @@
 //! [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) : aucun fichier
 //! écrit, aucune autorisation macOS, aucun scan de disque, aucun appel réseau.
 //!
-//! Trois règles en découlent, et elles gouvernent tout ce module :
+//! Quatre règles en découlent, et elles gouvernent tout ce module :
 //!
 //! 1. **La table modèle → fenêtre appartient à l'adaptateur**
 //!    ([`Adapter::context_window`]) : c'est lui, et lui seul, qui sait ce qu'`opus[1m]` veut
@@ -47,7 +47,11 @@
 //!    configuration : quand les deux ne nomment pas le même modèle, aucune fenêtre n'est
 //!    posée. Un `settings.json` qui annonce `opus[1m]` pendant qu'un autre modèle tourne
 //!    décrirait une session qui n'est pas celle qu'on mesure, et le pourcentage serait faux
-//!    d'un facteur cinq — le bug de #162 sous un autre nom.
+//!    d'un facteur cinq — le bug de #162 sous un autre nom. C'est encore l'adaptateur qui
+//!    arbitre, et **jusqu'où** il sait le faire lui appartient aussi : une configuration qui
+//!    ne nomme qu'un alias (`opus[1m]`) n'a pas de version à confronter, et l'accord se fait
+//!    alors sur la famille seule — la limite est écrite là où la règle vit, sur
+//!    [`Adapter::context_window`].
 //! 4. **Rien de reconnu ne vaut rien.** [`SessionUsage::window_tokens`] est une `Option`, et
 //!    c'est elle qui rend « je ne sais pas » représentable. Sans elle, l'absence retomberait
 //!    sur un défaut supposé, c'est-à-dire exactement sur le bug qu'on vient de corriger.
@@ -109,8 +113,9 @@ pub struct SessionUsage {
     /// `None` veut dire « Ash ne sait pas sur combien », et c'est une réponse à part entière.
     /// Deux chemins y mènent, que l'écran ne distingue pas : aucune source ne nomme de modèle
     /// reconnu, ou la configuration ne nomme **pas le modèle qui a tourné** — auquel cas sa
-    /// fenêtre est celle d'une autre session que celle qu'on mesure. Dans les deux cas : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`),
-    /// sans barre et sans couleur de seuil. C'est le seul champ de tout le contrat dont
+    /// fenêtre est celle d'une autre session que celle qu'on mesure. Dans les deux cas,
+    /// l'écran montre la mesure sans la mettre en rapport (`ctx 57k`), sans barre et sans
+    /// couleur de seuil. C'est le seul champ de tout le contrat dont
     /// l'absence a coûté un bug — un dénominateur supposé à 200 000 faisait lire `ctx 28%`
     /// sur une conversation qui occupait 6 % de sa fenêtre.
     ///

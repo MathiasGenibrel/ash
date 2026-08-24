@@ -365,9 +365,11 @@ impl Adapter for ClaudeCodeAdapter {
     /// Le nom vient du **transcript** et le suffixe de la **configuration**, parce que c'est
     /// ainsi qu'ils sont écrits : `/model sonnet` fait changer le premier au tour suivant sans
     /// toucher au second, et `[1m]` ne figure que dans le second. Le suffixe ne se recopie
-    /// toutefois que d'une configuration qui nomme le modèle qui a tourné — c'est la
-    /// condition de [`Adapter::context_window`], et les deux tables la partagent : un nom en
-    /// `1M` à côté d'une jauge sans fenêtre serait la même contradiction, écrite deux fois.
+    /// toutefois pas de la configuration : il se **relit de la fenêtre**, par la porte qui
+    /// vient déjà d'arbitrer l'accord des deux sources ([`Adapter::context_window`]). Un nom
+    /// en `1M` à côté d'une jauge sans fenêtre serait la même contradiction écrite deux fois,
+    /// et la seule façon qu'elle ne s'écrive jamais est qu'il n'y ait **qu'une** condition —
+    /// pas deux qui se ressemblent.
     ///
     /// Un identifiant dont aucune famille connue ne ressort ne se nomme pas — pas plus qu'il
     /// ne se mesure ([`Self::context_window`]). C'est la même porte, et il n'y en a pas
@@ -376,15 +378,12 @@ impl Adapter for ClaudeCodeAdapter {
     fn model_name(&self, ran: &str, configured: Option<&str>) -> Option<String> {
         let short = short_name(ran)?;
 
-        // Le suffixe ne se recopie que d'une configuration qui **parle de ce modèle-là** : la
-        // même condition que pour la fenêtre, et pour la même raison. Écrire `Sonnet 5 1M`
-        // parce qu'un `opus[1m]` traîne dans un fichier de réglages annoncerait une fenêtre
-        // qu'on vient justement de refuser de calculer.
-        let long_context = configured.is_some_and(|configured| {
-            let configured = identifier(configured);
-            configured.long_context
-                && names_the_same_model(&identifier(ran).named, &configured.named)
-        });
+        // Le `1M` du nom **est** la fenêtre du million, dite en toutes lettres : il se lit
+        // donc là où elle se décide, et nulle part ailleurs. Écrire `Sonnet 5 1M` parce qu'un
+        // `opus[1m]` traîne dans un fichier de réglages annoncerait une fenêtre qu'on vient
+        // justement de refuser de calculer — et c'est ce que l'accord des deux sources refuse
+        // déjà, une seule fois, pour les deux tables.
+        let long_context = self.context_window(Some(ran), configured) == Some(LONG_CONTEXT_WINDOW);
 
         Some(if long_context {
             format!("{short} {LONG_CONTEXT_MARK}")
@@ -443,6 +442,11 @@ impl Adapter for ClaudeCodeAdapter {
     ///   des identifiants qui pourraient le porter. Il ne vit que dans la configuration : le
     ///   transcript écrit `claude-opus-5` qu'on tourne en 200 k ou en 1 M.
     ///
+    /// C'est aussi d'ici que sort le `1M` du nom court : [`Self::model_name`] ne relit pas la
+    /// configuration, il regarde **la fenêtre que cette porte a rendue**. Le nom et le
+    /// pourcentage ne peuvent donc pas se contredire, non parce qu'on y veille à deux endroits
+    /// mais parce qu'il n'y a qu'un endroit.
+    ///
     /// Un transcript qui ne nomme **rien** ne contredit rien : la configuration répond seule,
     /// comme avant cette porte. Tout le reste — `default`, un alias interne, un identifiant
     /// d'un autre fournisseur, une faute de frappe — vaut `None`. C'est la règle qui remplace
@@ -496,18 +500,25 @@ fn identifier(model: &str) -> Identifier {
     }
 }
 
-/// La famille connue que cet identifiant contient, et l'endroit où elle commence.
+/// La famille connue que cet identifiant contient, et **ce qui la suit**.
 ///
 /// **La porte des deux tables**, celle de la fenêtre ([`Adapter::context_window`]) et celle du
 /// nom ([`short_name`]) : ce que Claude Code ne sait pas mesurer, il ne sait pas non plus le
 /// nommer, et une seconde recherche sur la même liste finirait par répondre autrement — une
 /// barre qui écrirait `Opus 5` à côté d'un pourcentage qu'elle refuse de calculer.
 ///
+/// Ce qui suit la famille est rendu **découpé**, et non sous forme d'indice : l'appelant n'a
+/// alors rien à recalculer, là où trois `at + famille.len()` recopiés à la main sont trois
+/// occasions de se tromper d'une longueur — et de lire une version qui commencerait au milieu
+/// d'un mot.
+///
 /// Cherchée **dans** l'identifiant, jamais comparée à lui — voir [`KNOWN_FAMILIES`].
-fn family_of(named: &str) -> Option<(&'static str, usize)> {
-    KNOWN_FAMILIES
-        .iter()
-        .find_map(|known| named.find(known).map(|at| (*known, at)))
+fn family_of(named: &str) -> Option<(&'static str, &str)> {
+    KNOWN_FAMILIES.iter().find_map(|known| {
+        named
+            .find(known)
+            .map(|at| (*known, &named[at + known.len()..]))
+    })
 }
 
 /// L'identifiant ramené à sa famille et à sa version — `claude-opus-5` → `Opus 5`.
@@ -522,9 +533,9 @@ fn family_of(named: &str) -> Option<(&'static str, usize)> {
 /// identifiant sans version — l'alias `opus`, que Claude Code accepte — rend la famille seule.
 fn short_name(model: &str) -> Option<String> {
     let model = identifier(model).named;
-    let (family, at) = family_of(&model)?;
+    let (family, after) = family_of(&model)?;
 
-    let version = version_after(&model, at + family.len());
+    let version = version_after(after);
     let family = capitalized(family);
     Some(if version.is_empty() {
         family
@@ -552,7 +563,7 @@ fn short_name(model: &str) -> Option<String> {
 /// ne sait pas lequel c'est. Il accorde alors sur la famille seule, et c'est une limite
 /// documentée — la même nature que le `/model` tapé en cours de session.
 fn names_the_same_model(ran: &str, configured: &str) -> bool {
-    let (Some((ran_family, ran_at)), Some((configured_family, configured_at))) =
+    let (Some((ran_family, after_ran)), Some((configured_family, after_configured))) =
         (family_of(ran), family_of(configured))
     else {
         return false;
@@ -562,12 +573,11 @@ fn names_the_same_model(ran: &str, configured: &str) -> bool {
         return false;
     }
 
-    let configured_version = version_after(configured, configured_at + configured_family.len());
-    configured_version.is_empty()
-        || configured_version == version_after(ran, ran_at + ran_family.len())
+    let configured_version = version_after(after_configured);
+    configured_version.is_empty() || configured_version == version_after(after_ran)
 }
 
-/// La version qu'un identifiant écrit après sa famille — `claude-opus-4-7` → `4.7`.
+/// La version qu'un identifiant écrit après sa famille — le `-4-7` de `claude-opus-4-7` → `4.7`.
 ///
 /// Elle s'arrête au premier segment qui n'est pas un nombre court : `4`, puis `5`, puis le
 /// millésime `20251001` qu'aucune barre d'état n'a à montrer (voir [`DATE_DIGITS`]). Vide
@@ -576,8 +586,8 @@ fn names_the_same_model(ran: &str, configured: &str) -> bool {
 /// **Une seule lecture pour les deux questions** qui s'en servent, le nom court et l'accord
 /// des deux sources : deux extractions divergeraient, et la barre finirait par nommer un
 /// modèle dont elle a refusé la fenêtre.
-fn version_after(named: &str, at: usize) -> String {
-    named[at..]
+fn version_after(after_family: &str) -> String {
+    after_family
         .split('-')
         .filter(|part| !part.is_empty())
         .take_while(|part| is_version_part(part))
