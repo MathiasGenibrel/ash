@@ -317,7 +317,8 @@ pub trait Adapter: Send + Sync {
     /// la réponse normale d'un outil qui répond [`UsageSupport::None`].
     fn model_sources(&self, cwd: Option<&Path>, home: Option<&Path>) -> Vec<ModelSource>;
 
-    /// La fenêtre de contexte de ce modèle, si l'outil sait ce que cet identifiant désigne.
+    /// La fenêtre dans laquelle cette session tourne, si l'outil peut le dire **des deux
+    /// identifiants à la fois**.
     ///
     /// **C'est ici que vit la table, et nulle part ailleurs** : `opus[1m]` ne veut rien dire
     /// pour le cœur, et un identifiant que l'outil ne reconnaît pas ne doit surtout pas
@@ -325,7 +326,15 @@ pub trait Adapter: Send + Sync {
     /// `DEFAULT_CONTEXT_WINDOW = 200_000` a produit : un pourcentage cinq fois trop haut,
     /// affiché avec l'aplomb d'une mesure.
     ///
-    /// `None` est donc la bonne réponse pour tout ce qui n'est pas reconnu, et la jauge
-    /// disparaît alors sans que la mesure disparaisse avec elle.
-    fn context_window(&self, model: &str) -> Option<u64>;
+    /// Les deux entrées sont celles de [`Self::model_name`], et pour une raison plus forte
+    /// que la symétrie : **le numérateur et le dénominateur ne viennent pas de la même
+    /// source**. `ran` est ce que le transcript a écrit — c'est de cette conversation-là que
+    /// vient la mesure —, `configured` ce que la configuration annonce, et c'est elle seule
+    /// qui porte le suffixe `[1m]`. Quand les deux ne parlent pas du même modèle, l'outil
+    /// répond `None` : mieux vaut aucune jauge qu'un pourcentage calculé sur la fenêtre d'un
+    /// autre modèle. Un `ran` absent ne contredit rien, et la configuration répond seule.
+    ///
+    /// `None` est donc la bonne réponse pour tout ce qui n'est pas reconnu — ou pas
+    /// d'accord —, et la jauge disparaît alors sans que la mesure disparaisse avec elle.
+    fn context_window(&self, ran: Option<&str>, configured: Option<&str>) -> Option<u64>;
 }
