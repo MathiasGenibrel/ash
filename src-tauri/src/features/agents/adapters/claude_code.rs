@@ -336,10 +336,14 @@ impl Adapter for ClaudeCodeAdapter {
     /// depuis la fin s'arrête donc au premier tour trouvé, au lieu de parcourir une
     /// conversation entière pour ne garder que son dernier élément.
     ///
-    /// Les quatre compteurs s'**additionnent**, et c'est ce qui rend la mesure juste après un
-    /// cache : Claude Code range les tokens déjà envoyés sous `cache_read_input_tokens` dès
-    /// que le préfixe est mis en cache, si bien que `input_tokens` tombe à deux ou trois. Ne
-    /// lire que `input_tokens` afficherait une conversation vide sur une session pleine.
+    /// Les **trois compteurs d'entrée** s'additionnent, et c'est ce qui rend la mesure juste
+    /// après un cache : Claude Code range les tokens déjà envoyés sous
+    /// `cache_read_input_tokens` dès que le préfixe est mis en cache, si bien que
+    /// `input_tokens` tombe à deux ou trois. Ne lire que `input_tokens` afficherait une
+    /// conversation vide sur une session pleine.
+    ///
+    /// `output_tokens`, lui, est **dehors** : c'est la réponse à la requête qu'on mesure, pas
+    /// ce que la requête occupait — voir [`turn_of`].
     ///
     /// Une ligne qu'on ne sait pas lire est **sautée**, pas fatale : la queue commence au
     /// milieu du fichier, elle porte des `attachment` et des `user` qui n'ont pas d'usage, et
@@ -360,7 +364,12 @@ impl Adapter for ClaudeCodeAdapter {
     ///
     /// Le nom vient du **transcript** et le suffixe de la **configuration**, parce que c'est
     /// ainsi qu'ils sont écrits : `/model sonnet` fait changer le premier au tour suivant sans
-    /// toucher au second, et `[1m]` ne figure que dans le second.
+    /// toucher au second, et `[1m]` ne figure que dans le second. Le suffixe ne se recopie
+    /// toutefois pas de la configuration : il se **relit de la fenêtre**, par la porte qui
+    /// vient déjà d'arbitrer l'accord des deux sources ([`Adapter::context_window`]). Un nom
+    /// en `1M` à côté d'une jauge sans fenêtre serait la même contradiction écrite deux fois,
+    /// et la seule façon qu'elle ne s'écrive jamais est qu'il n'y ait **qu'une** condition —
+    /// pas deux qui se ressemblent.
     ///
     /// Un identifiant dont aucune famille connue ne ressort ne se nomme pas — pas plus qu'il
     /// ne se mesure ([`Self::context_window`]). C'est la même porte, et il n'y en a pas
@@ -368,7 +377,13 @@ impl Adapter for ClaudeCodeAdapter {
     /// disparaît plutôt que d'inventer un mot.
     fn model_name(&self, ran: &str, configured: Option<&str>) -> Option<String> {
         let short = short_name(ran)?;
-        let long_context = configured.is_some_and(|configured| identifier(configured).long_context);
+
+        // Le `1M` du nom **est** la fenêtre du million, dite en toutes lettres : il se lit
+        // donc là où elle se décide, et nulle part ailleurs. Écrire `Sonnet 5 1M` parce qu'un
+        // `opus[1m]` traîne dans un fichier de réglages annoncerait une fenêtre qu'on vient
+        // justement de refuser de calculer — et c'est ce que l'accord des deux sources refuse
+        // déjà, une seule fois, pour les deux tables.
+        let long_context = self.context_window(Some(ran), configured) == Some(LONG_CONTEXT_WINDOW);
 
         Some(if long_context {
             format!("{short} {LONG_CONTEXT_MARK}")
@@ -404,34 +419,56 @@ impl Adapter for ClaudeCodeAdapter {
         sources
     }
 
-    /// Ce qu'un identifiant de modèle dit de la taille de la fenêtre — **et rien quand il ne
-    /// dit rien**.
+    /// Ce que ces deux identifiants disent de la taille de la fenêtre — **et rien quand ils
+    /// se contredisent**.
     ///
-    /// Deux questions, dans cet ordre : le suffixe, puis la famille.
+    /// Trois questions, dans cet ordre : la famille, l'accord, puis le suffixe.
     ///
+    /// - La famille est cherchée **dans** l'identifiant plutôt que comparée à lui, pour la
+    ///   raison qui a déjà tranché ADR-0006 : les identifiants réels sont datés
+    ///   (`claude-sonnet-4-5-20250929`), et une table d'égalités serait périmée à la
+    ///   prochaine version. Une famille inconnue des deux côtés vaut `None`.
+    /// - **L'accord** est ce que cette porte est venue ajouter : le numérateur vient du
+    ///   transcript et le dénominateur de la configuration, donc de deux sources qui peuvent
+    ///   parler de deux modèles. Un `~/.claude/settings.json` qui annonce `opus[1m]` pendant
+    ///   qu'un `claude-sonnet-5` tourne ne décrit pas la session qu'on mesure, et le
+    ///   pourcentage serait alors calculé sur une fenêtre qui n'est pas la sienne — faux d'un
+    ///   facteur cinq dans le cas observé. En désaccord, la fenêtre disparaît, et la mesure
+    ///   reste ([`super::super::usage::SessionUsage::window_tokens`]).
     /// - Le suffixe `[1m]` est ce qui distingue une session d'un million de tokens, et il se
     ///   porte aussi bien sur un alias court (`opus[1m]`) que sur un identifiant complet
     ///   (`claude-opus-5[1m]`). Les deux formes existent réellement dans les fichiers des
     ///   utilisateurs, donc la reconnaissance porte sur le **suffixe**, jamais sur la liste
-    ///   des identifiants qui pourraient le porter.
-    /// - La famille est cherchée **dans** l'identifiant plutôt que comparée à lui, pour la
-    ///   raison qui a déjà tranché ADR-0006 : les identifiants réels sont datés
-    ///   (`claude-sonnet-4-5-20250929`), et une table d'égalités serait périmée à la
-    ///   prochaine version.
+    ///   des identifiants qui pourraient le porter. Il ne vit que dans la configuration : le
+    ///   transcript écrit `claude-opus-5` qu'on tourne en 200 k ou en 1 M.
     ///
-    /// Tout le reste — `default`, un alias interne, un identifiant d'un autre fournisseur, une
-    /// faute de frappe — vaut `None`. C'est la règle qui remplace `DEFAULT_CONTEXT_WINDOW`, et
-    /// elle est le cœur de la correction : **rien de reconnu ne vaut rien**.
-    fn context_window(&self, model: &str) -> Option<u64> {
-        let model = identifier(model);
+    /// C'est aussi d'ici que sort le `1M` du nom court : [`Self::model_name`] ne relit pas la
+    /// configuration, il regarde **la fenêtre que cette porte a rendue**. Le nom et le
+    /// pourcentage ne peuvent donc pas se contredire, non parce qu'on y veille à deux endroits
+    /// mais parce qu'il n'y a qu'un endroit.
+    ///
+    /// Un transcript qui ne nomme **rien** ne contredit rien : la configuration répond seule,
+    /// comme avant cette porte. Tout le reste — `default`, un alias interne, un identifiant
+    /// d'un autre fournisseur, une faute de frappe — vaut `None`. C'est la règle qui remplace
+    /// `DEFAULT_CONTEXT_WINDOW`, et elle est le cœur de la correction : **rien de reconnu ne
+    /// vaut rien**.
+    fn context_window(&self, ran: Option<&str>, configured: Option<&str>) -> Option<u64> {
+        let configured = identifier(configured?);
+        family_of(&configured.named)?;
 
-        family_of(&model.named)
-            .is_some()
-            .then_some(if model.long_context {
-                LONG_CONTEXT_WINDOW
-            } else {
-                STANDARD_CONTEXT_WINDOW
-            })
+        if let Some(ran) = ran {
+            let ran = identifier(ran);
+            family_of(&ran.named)?;
+            if !names_the_same_model(&ran.named, &configured.named) {
+                return None;
+            }
+        }
+
+        Some(if configured.long_context {
+            LONG_CONTEXT_WINDOW
+        } else {
+            STANDARD_CONTEXT_WINDOW
+        })
     }
 }
 
@@ -463,18 +500,25 @@ fn identifier(model: &str) -> Identifier {
     }
 }
 
-/// La famille connue que cet identifiant contient, et l'endroit où elle commence.
+/// La famille connue que cet identifiant contient, et **ce qui la suit**.
 ///
 /// **La porte des deux tables**, celle de la fenêtre ([`Adapter::context_window`]) et celle du
 /// nom ([`short_name`]) : ce que Claude Code ne sait pas mesurer, il ne sait pas non plus le
 /// nommer, et une seconde recherche sur la même liste finirait par répondre autrement — une
 /// barre qui écrirait `Opus 5` à côté d'un pourcentage qu'elle refuse de calculer.
 ///
+/// Ce qui suit la famille est rendu **découpé**, et non sous forme d'indice : l'appelant n'a
+/// alors rien à recalculer, là où trois `at + famille.len()` recopiés à la main sont trois
+/// occasions de se tromper d'une longueur — et de lire une version qui commencerait au milieu
+/// d'un mot.
+///
 /// Cherchée **dans** l'identifiant, jamais comparée à lui — voir [`KNOWN_FAMILIES`].
-fn family_of(named: &str) -> Option<(&'static str, usize)> {
-    KNOWN_FAMILIES
-        .iter()
-        .find_map(|known| named.find(known).map(|at| (*known, at)))
+fn family_of(named: &str) -> Option<(&'static str, &str)> {
+    KNOWN_FAMILIES.iter().find_map(|known| {
+        named
+            .find(known)
+            .map(|at| (*known, &named[at + known.len()..]))
+    })
 }
 
 /// L'identifiant ramené à sa famille et à sa version — `claude-opus-5` → `Opus 5`.
@@ -489,21 +533,66 @@ fn family_of(named: &str) -> Option<(&'static str, usize)> {
 /// identifiant sans version — l'alias `opus`, que Claude Code accepte — rend la famille seule.
 fn short_name(model: &str) -> Option<String> {
     let model = identifier(model).named;
-    let (family, at) = family_of(&model)?;
+    let (family, after) = family_of(&model)?;
 
-    let version = model[at + family.len()..]
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .take_while(|part| is_version_part(part))
-        .collect::<Vec<_>>()
-        .join(".");
-
+    let version = version_after(after);
     let family = capitalized(family);
     Some(if version.is_empty() {
         family
     } else {
         format!("{family} {version}")
     })
+}
+
+/// Les deux identifiants nomment-ils le **même** modèle ?
+///
+/// La question que la fenêtre pose avant de se laisser calculer, et elle appartient à
+/// l'adaptateur : c'est Claude Code, et lui seul, qui sait qu'`opus[1m]` et `claude-opus-5`
+/// sont deux écritures d'une même chose, et que `sonnet` et `claude-opus-5` n'en sont pas.
+///
+/// Deux comparaisons, et **rien au-delà de ce qui est écrit** :
+///
+/// - les familles doivent être la même — un `sonnet` configuré ne décrit pas un opus qui
+///   tourne, et c'est le désaccord le plus courant (`/model` changé en cours de session) ;
+/// - les versions doivent s'accorder **quand les deux en portent une** : `claude-opus-5[1m]`
+///   configuré contre un `claude-opus-4-7` qui tourne est un désaccord, et il est réel — les
+///   sessions de revue de sécurité tournent sur un modèle que la configuration n'annonce pas.
+///
+/// Un alias de configuration sans version (`opus[1m]`) ne peut **pas** être confronté à la
+/// version qui a tourné : Claude Code le résout vers le dernier modèle de la famille, et Ash
+/// ne sait pas lequel c'est. Il accorde alors sur la famille seule, et c'est une limite
+/// documentée — la même nature que le `/model` tapé en cours de session.
+fn names_the_same_model(ran: &str, configured: &str) -> bool {
+    let (Some((ran_family, after_ran)), Some((configured_family, after_configured))) =
+        (family_of(ran), family_of(configured))
+    else {
+        return false;
+    };
+
+    if ran_family != configured_family {
+        return false;
+    }
+
+    let configured_version = version_after(after_configured);
+    configured_version.is_empty() || configured_version == version_after(after_ran)
+}
+
+/// La version qu'un identifiant écrit après sa famille — le `-4-7` de `claude-opus-4-7` → `4.7`.
+///
+/// Elle s'arrête au premier segment qui n'est pas un nombre court : `4`, puis `5`, puis le
+/// millésime `20251001` qu'aucune barre d'état n'a à montrer (voir [`DATE_DIGITS`]). Vide
+/// quand l'identifiant n'en porte pas — l'alias `opus`, que Claude Code accepte.
+///
+/// **Une seule lecture pour les deux questions** qui s'en servent, le nom court et l'accord
+/// des deux sources : deux extractions divergeraient, et la barre finirait par nommer un
+/// modèle dont elle a refusé la fenêtre.
+fn version_after(after_family: &str) -> String {
+    after_family
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .take_while(|part| is_version_part(part))
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 /// Un nombre assez court pour être un numéro de version, et non un millésime.
@@ -538,10 +627,15 @@ fn turn_of(line: &str) -> Option<Turn> {
             .unwrap_or(0)
     };
 
+    // **Les trois compteurs d'entrée, et pas le quatrième.** Ce que `/context` affiche est la
+    // taille du *prompt* de la dernière requête — ce que la conversation occupe au moment où
+    // le modèle répond. `output_tokens` est la réponse à cette requête : elle n'entrera dans
+    // la fenêtre qu'à la requête suivante, où elle sera comptée par les trois autres. L'y
+    // ajouter ici avance donc d'un tour sur `/context`, de 69 à 4 899 tokens sur les
+    // transcripts réels — jusqu'à 2,4 points de pourcentage sur une fenêtre de 200 k.
     let total = counted("input_tokens")
         + counted("cache_creation_input_tokens")
-        + counted("cache_read_input_tokens")
-        + counted("output_tokens");
+        + counted("cache_read_input_tokens");
 
     // Un objet `usage` présent mais entièrement vide ne mesure rien — le lire comme « zéro
     // token » ferait retomber la jauge à vide au milieu d'une conversation. C'est l'`usage`
@@ -897,9 +991,11 @@ mod tests {
             .read_turn(OWN_TRANSCRIPT)
             .map(|turn| turn.used_tokens);
 
-        // Then — 2 + 2196 + 143801 + 274. Ne lire qu'`input_tokens` afficherait une
-        // conversation vide sur une session pleine aux trois quarts.
-        assert_eq!(used, Some(146_273));
+        // Then — 2 + 2196 + 143801, et **pas** les 274 d'`output_tokens` : ce que `/context`
+        // affiche est la taille du prompt de la requête, pas celle de la réponse. Ne lire
+        // qu'`input_tokens` afficherait, à l'inverse, une conversation vide sur une session
+        // pleine aux trois quarts.
+        assert_eq!(used, Some(145_999));
     }
 
     #[test]
@@ -954,14 +1050,15 @@ mod tests {
     ) {
         // Given — les deux formes qui existent réellement dans les fichiers des utilisateurs :
         // l'alias court, et l'identifiant complet. Le transcript, lui, écrit `claude-opus-5`
-        // dans les deux cas — c'est bien la configuration, et elle seule, qui distingue.
+        // dans les deux cas — c'est bien la configuration, et elle seule, qui distingue. Ici
+        // il ne nomme rien du tout : une ligne d'usage sans `model`, qui ne contredit rien.
         let adapter = adapter();
         let declared = ["opus[1m]", "claude-opus-5[1m]", "sonnet[1m]", "OPUS[1M]"];
 
         // When
         let windows: Vec<Option<u64>> = declared
             .iter()
-            .map(|model| adapter.context_window(model))
+            .map(|model| adapter.context_window(None, Some(model)))
             .collect();
 
         // Then
@@ -980,11 +1077,72 @@ mod tests {
         // When
         let windows: Vec<Option<u64>> = declared
             .iter()
-            .map(|model| adapter.context_window(model))
+            .map(|model| adapter.context_window(None, Some(model)))
             .collect();
 
         // Then
         assert_eq!(windows, vec![Some(200_000); 4]);
+    }
+
+    #[test]
+    fn given_a_configuration_alias_and_the_full_identifier_it_resolved_to_when_the_window_is_asked_then_they_agree(
+    ) {
+        // Given — le cas de tous les jours : `~/.claude/settings.json` porte `opus[1m]`, et le
+        // transcript écrit l'identifiant complet vers lequel l'alias s'est résolu. Les deux
+        // écritures nomment la même chose, et seule la configuration porte le suffixe.
+        let adapter = adapter();
+
+        // When
+        let window = adapter.context_window(Some("claude-opus-5"), Some("opus[1m]"));
+
+        // Then
+        assert_eq!(window, Some(1_000_000));
+    }
+
+    #[test]
+    fn given_a_configuration_naming_another_family_than_the_one_that_ran_when_the_window_is_asked_then_there_is_none(
+    ) {
+        // Given — la configuration annonce un million de tokens d'opus, et c'est un sonnet qui
+        // a tourné : un `/model` changé en cours de session, ou une session que la
+        // configuration ne décrit pas. Le numérateur vient de ce transcript-là, et le
+        // dénominateur d'un modèle qui n'y est pour rien — cinq fois trop grand.
+        let adapter = adapter();
+
+        // When
+        let window = adapter.context_window(Some("claude-sonnet-5"), Some("opus[1m]"));
+
+        // Then — pas de fenêtre plutôt qu'une fenêtre d'emprunt.
+        assert_eq!(window, None);
+    }
+
+    #[test]
+    fn given_a_configuration_naming_another_version_than_the_one_that_ran_when_the_window_is_asked_then_there_is_none(
+    ) {
+        // Given — la configuration est précise (`claude-opus-5[1m]`), et un autre opus a
+        // tourné. C'est le cas réel des sessions de revue de sécurité, qui choisissent leur
+        // modèle sans passer par la configuration de l'utilisateur.
+        let adapter = adapter();
+
+        // When
+        let window = adapter.context_window(Some("claude-opus-4-7"), Some("claude-opus-5[1m]"));
+
+        // Then
+        assert_eq!(window, None);
+    }
+
+    #[test]
+    fn given_a_transcript_naming_a_family_the_adapter_does_not_know_when_the_window_is_asked_then_there_is_none(
+    ) {
+        // Given — `claude-fable-5` est un identifiant qui existe vraiment dans des transcripts,
+        // et qu'aucune table ne reconnaît. La configuration, elle, est parfaitement lisible :
+        // c'est exactement la situation où poser sa fenêtre serait la poser sur autre chose.
+        let adapter = adapter();
+
+        // When
+        let window = adapter.context_window(Some("claude-fable-5"), Some("opus[1m]"));
+
+        // Then
+        assert_eq!(window, None);
     }
 
     #[test]
@@ -1025,7 +1183,7 @@ mod tests {
         assert_eq!(
             read,
             Some(Turn {
-                used_tokens: 146_273,
+                used_tokens: 145_999,
                 model: Some("claude-opus-5".to_owned()),
             })
         );
@@ -1085,6 +1243,22 @@ mod tests {
 
         // Then
         assert_eq!(named, vec![Some("Opus 5".to_owned()); 3]);
+    }
+
+    #[test]
+    fn given_a_configuration_that_does_not_name_the_model_that_ran_when_it_is_named_then_the_one_million_mark_is_not_borrowed(
+    ) {
+        // Given — un `opus[1m]` dans les réglages, un sonnet dans le transcript. Le suffixe
+        // décrit la fenêtre d'une session qui n'est pas celle-ci, et c'est la fenêtre que la
+        // jauge vient de refuser de calculer : l'écrire dans le nom la ferait rentrer par la
+        // porte de derrière, en toutes lettres.
+        let adapter = adapter();
+
+        // When
+        let name = adapter.model_name("claude-sonnet-5", Some("opus[1m]"));
+
+        // Then
+        assert_eq!(name.as_deref(), Some("Sonnet 5"));
     }
 
     #[test]
