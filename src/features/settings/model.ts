@@ -109,6 +109,26 @@ export function countProblems(tools: readonly ToolDeclaration[]): number {
 }
 
 /**
+ * La liste porte-t-elle une entrée que rien n'a jugée ?
+ *
+ * C'est le cas d'un **redémarrage** : `~/.ash/tools.json` garde la déclaration et le dernier
+ * dossier valide, jamais le résultat des quatre tests — une vérification est un fait daté sur
+ * la machine, et un dossier peut avoir disparu entre deux lancements
+ * ([ADR-0007](../../../docs/adr/0007-etats-par-hooks.md)). Les entrées relues arrivent donc
+ * *non vérifiées*, et la fenêtre relance la séquence en s'ouvrant : sans ça, la ligne `hooks`
+ * d'un outil instrumenté depuis des mois resterait éteinte jusqu'à ce que quelqu'un pense à
+ * cliquer `re-verify all`.
+ *
+ * Une question, pas une liste de commandes : la séquence se relance **d'un bloc**
+ * (`verifyAll`), parce qu'un aller-retour par entrée ferait autant de réponses concurrentes
+ * qui se remplaceraient les unes les autres à l'écran. La règle reste en Rust — l'écran
+ * demande, il ne juge pas (ADR-0009).
+ */
+export function needsVerifying(tools: readonly ToolDeclaration[]): boolean {
+    return tools.some((tool) => tool.verification.state === "unverified");
+}
+
+/**
  * Où la chaîne s'est arrêtée, quand c'est une information et non un détail.
  *
  * La séquence pose `stoppedAt` dès qu'elle s'arrête, **y compris sur une réserve** — et une

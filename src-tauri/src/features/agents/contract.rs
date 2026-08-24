@@ -959,7 +959,7 @@ mod tests {
 
     #[test]
     fn given_an_adapter_whose_id_is_not_a_slug_when_checked_then_the_contract_rejects_it() {
-        // Given — un identifiant qui finira dans `~/.ash/config.toml` et dans le journal
+        // Given — un identifiant qui finira dans `~/.ash/tools.json` et dans le journal
         let shouted = AdapterBuilder::new().id("Claude Code").build();
 
         // When

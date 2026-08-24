@@ -274,7 +274,7 @@ fn path(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Le dossier privé d'Ash, celui d'`~/.ash/config.toml`
+/// Le dossier privé d'Ash, celui d'`~/.ash/tools.json` et du socket
 /// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
 pub fn ash_directory() -> PathBuf {
     std::env::var_os("HOME")

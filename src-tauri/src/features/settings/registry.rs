@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use super::error::SettingsError;
 use super::hooks::{report, BlockAt, HookAction};
+use super::persisted::PersistedTools;
 use super::ports::{HookBlocks, Launch};
+use super::store::ToolStore;
 use super::tool::{NewTool, ToolDeclaration};
 use super::values::{optional, Command, ConfigTarget};
 use super::verification::{FirstPass, Verification, Verifier};
@@ -24,15 +26,31 @@ use crate::features::hooks::{Presence, Removal};
 /// oui/non qui autorise les hooks est calculé par [`Verifier`] et transporté tel quel ; la
 /// fenêtre l'annonce sans le rejouer.
 ///
-/// **Rien n'est encore lu ni écrit dans `~/.ash/config.toml`.** L'écriture attend d'avoir
-/// un déclencheur, et c'est cette vérification qui le devient : la persistance viendra avec
-/// la tâche qui la porte, pas au milieu de celle qui la débloque.
+/// **Ce qui est déclaré est gardé dans `~/.ash/tools.json`**, et relu au lancement suivant.
+/// Déclarer un outil est le geste qui fait qu'un onglet devient un agent (ADR-0006) et qui
+/// décide où poser les hooks (ADR-0007) : le perdre au redémarrage laissait l'écran dire
+/// « no tools declared » pendant que les hooks, eux, étaient toujours posés sur le disque.
+///
+/// **Ce qui est gardé est la déclaration, jamais ce qu'elle a prouvé.** Une entrée relue
+/// repart *non vérifiée* et se revérifie comme une entrée saisie : un dossier peut avoir
+/// disparu entre deux lancements, et la ligne `hooks` relit le fichier de l'utilisateur à
+/// chaque affichage plutôt que de s'en souvenir (ADR-0007). Ce que le fichier porte en plus
+/// de la saisie est le **dernier dossier valide**, sans lequel « réinitialiser une entrée »
+/// ramènerait après un redémarrage au défaut de l'adaptateur (spec §9.1).
 pub struct ToolRegistry {
     verifier: Arc<Verifier>,
     /// Le seul chemin par lequel Ash écrit chez l'utilisateur, et il est derrière un trait :
     /// la feature ne connaît aucun adaptateur concret (ADR-0008).
     blocks: Arc<dyn HookBlocks>,
+    /// Là où les déclarations survivent à la fermeture de la fenêtre.
+    store: Arc<dyn ToolStore>,
     tools: Mutex<Vec<ToolDeclaration>>,
+    /// Ce que le disque porte déjà, tel que ce registre l'a écrit ou relu.
+    ///
+    /// Il évite de réécrire le fichier à chaque vérification : les quatre tests changent
+    /// l'entrée en mémoire sans rien changer de ce qui est gardé, et `re-verify all` sur
+    /// six entrées ne doit pas produire six écritures identiques.
+    saved: Mutex<PersistedTools>,
 }
 
 /// Ce qu'il reste à lancer après un premier temps, et pour quelle entrée.
@@ -70,11 +88,52 @@ pub struct Changed {
 }
 
 impl ToolRegistry {
-    pub fn new(verifier: Arc<Verifier>, blocks: Arc<dyn HookBlocks>) -> Self {
+    /// Le registre tel que la session précédente l'a laissé.
+    ///
+    /// **Rien n'est vérifié ici, et rien n'est lancé.** Les quatre tests de la spec §9.1
+    /// lisent des dossiers et lancent une commande ; les faire au démarrage retarderait
+    /// l'ouverture de la fenêtre pour un résultat que personne ne regarde encore, et
+    /// afficherait un verdict daté du lancement. Les entrées relues sont *non vérifiées*,
+    /// et c'est la fenêtre qui relance la séquence en s'ouvrant.
+    ///
+    /// Les entrées passent par les **mêmes constructeurs** qu'une saisie du formulaire —
+    /// [`NewTool::restore`], donc [`Command`] et [`Verifier::target`] : un fichier édité à
+    /// la main ne peut pas faire entrer dans le registre ce que le formulaire aurait refusé.
+    /// Ce qui ne passe pas est ignoré ; ce qui est à côté est chargé.
+    pub fn restore(
+        verifier: Arc<Verifier>,
+        blocks: Arc<dyn HookBlocks>,
+        store: Arc<dyn ToolStore>,
+    ) -> Self {
+        let found = store.load();
+        let mut tools: Vec<ToolDeclaration> = Vec::new();
+        for stored in &found.tools {
+            let restored = NewTool {
+                command: stored.command.clone(),
+                label: stored.label.clone(),
+                adapter: stored.adapter.clone(),
+                config: stored.config.clone(),
+            }
+            .restore(&tools);
+            let Ok(tool) = restored else {
+                continue;
+            };
+            // La mémoire est un **dossier**, et il n'y a qu'un producteur de ce type :
+            // le chemin gardé est relu comme s'il venait du champ de l'entrée, `~` compris.
+            let remembered = optional(stored.last_valid_config.as_deref())
+                .and_then(|raw| verifier.target(&tool.adapter, Some(&raw)));
+            tools.push(tool.remembering(remembered));
+        }
+        // Ce qu'on vient de lire fait foi : une entrée ignorée ne disparaît du fichier qu'au
+        // prochain geste qui l'écrit, et jamais parce qu'Ash s'est lancé.
+        let saved = PersistedTools::of(&tools);
+
         Self {
             verifier,
             blocks,
-            tools: Mutex::new(Vec::new()),
+            store,
+            tools: Mutex::new(tools),
+            saved: Mutex::new(saved),
         }
     }
 
@@ -400,6 +459,7 @@ impl ToolRegistry {
             let pending = verify_at(&self.verifier, &mut tools, index);
             (tools.clone(), pending.into_iter().collect())
         };
+        self.persist(&stored);
         Ok(Changed {
             tools: self.enrich(stored),
             pending,
@@ -421,6 +481,7 @@ impl ToolRegistry {
             }
             (tools.clone(), pending)
         };
+        self.persist(&stored);
         Ok(Changed {
             tools: self.enrich(stored),
             pending,
@@ -458,6 +519,7 @@ impl ToolRegistry {
             *tool = tool.clone().verified_by(verification, declared);
             tools.clone()
         };
+        self.persist(&stored);
         Ok(Some(self.enrich(stored)))
     }
 
@@ -503,6 +565,10 @@ impl ToolRegistry {
             }
             tools.clone()
         };
+        // Oubliée du registre **et** du fichier : une entrée qui reviendrait au redémarrage
+        // ferait d'un `✕` un geste sans effet, et c'est justement ce geste qui rend l'état
+        // vide atteignable après une faute de frappe.
+        self.persist(&stored);
         // La liste enrichie, et pas la liste stockée : oublier une entrée peut lever le
         // doublon d'une autre, et sa ligne `hooks` avec.
         Ok(self.enrich(stored))
@@ -560,6 +626,29 @@ impl ToolRegistry {
         tools
     }
 
+    /// Garde ces déclarations pour la prochaine session, **si elles ont changé**.
+    ///
+    /// Un échec d'écriture ne remet pas le geste en cause — disque plein, `~/.ash` non
+    /// inscriptible : l'entrée est déclarée, elle ne survivra simplement pas au redémarrage.
+    /// Refuser une déclaration pour cette raison serait incompréhensible, et c'est la même
+    /// conduite que `features::theme` tient pour le thème.
+    ///
+    /// La comparaison n'est pas une optimisation prématurée : c'est ce qui fait que
+    /// `re-verify all` n'écrit rien. Une vérification ne change que ce qui n'est pas gardé,
+    /// à une exception près — le dernier dossier valide, qu'un test réussi met à jour.
+    fn persist(&self, tools: &[ToolDeclaration]) {
+        let now = PersistedTools::of(tools);
+        let Ok(mut saved) = self.saved.lock() else {
+            return;
+        };
+        if *saved == now {
+            return;
+        }
+        saved.clone_from(&now);
+        drop(saved);
+        let _ = self.store.save(&now);
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Vec<ToolDeclaration>>, SettingsError> {
         self.tools.lock().map_err(|_| SettingsError::Poisoned)
     }
@@ -597,7 +686,7 @@ mod tests {
     use crate::features::agents::{hook_mark, HookEntry, Instrumentation};
     use crate::features::hooks::fakes::FakeConfigFiles;
     use crate::features::hooks::Presence;
-    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders};
+    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders, FakeToolStore};
     use crate::features::settings::hooks::HookState;
     use crate::features::settings::verification::{AdapterProfile, VerificationState};
 
@@ -625,6 +714,7 @@ mod tests {
         files: FakeFolders,
         commands: FakeCommands,
         blocks: FakeBlocks,
+        store: Arc<FakeToolStore>,
     }
 
     impl RegistryBuilder {
@@ -635,7 +725,14 @@ mod tests {
                 // `generic` n'instrumente rien, ici comme dans l'application : c'est ce qui
                 // fait qu'une entrée sur cet adaptateur ne se voit jamais proposer `install`.
                 blocks: FakeBlocks::new().without_hooks("generic"),
+                store: Arc::new(FakeToolStore::empty()),
             }
+        }
+
+        /// Ce qu'un `~/.ash/tools.json` de la session précédente porte.
+        fn stored(mut self, store: Arc<FakeToolStore>) -> Self {
+            self.store = store;
+            self
         }
 
         fn folder(mut self, path: &str, entries: &[&str]) -> Self {
@@ -664,12 +761,14 @@ mod tests {
                 files,
                 commands,
                 blocks,
+                store,
             } = self;
             let blocks = Arc::new(blocks);
             let registry = Self {
                 files,
                 commands,
                 blocks: FakeBlocks::new(),
+                store,
             }
             .over(Arc::clone(&blocks) as Arc<dyn HookBlocks>);
             (registry, blocks)
@@ -686,13 +785,15 @@ mod tests {
         }
 
         fn over(self, blocks: Arc<dyn HookBlocks>) -> ToolRegistry {
-            ToolRegistry::new(
+            let store = Arc::clone(&self.store) as Arc<dyn ToolStore>;
+            ToolRegistry::restore(
                 Arc::new(Verifier::new(
                     Arc::new(self.files),
                     Arc::new(self.commands),
                     profiles(),
                 )),
                 blocks,
+                store,
             )
         }
     }
@@ -766,7 +867,17 @@ mod tests {
 
     /// Les deux comptes de la spec §9, chacun avec son `settings.json` bien à lui.
     fn two_instrumented_accounts(files: &Arc<FakeConfigFiles>) -> ToolRegistry {
-        let registry = two_claude_accounts().on_real_files(Arc::clone(files));
+        two_instrumented_accounts_stored(files, &Arc::new(FakeToolStore::empty()))
+    }
+
+    /// Les mêmes, sur un `~/.ash/tools.json` que le scénario garde sous la main.
+    fn two_instrumented_accounts_stored(
+        files: &Arc<FakeConfigFiles>,
+        store: &Arc<FakeToolStore>,
+    ) -> ToolRegistry {
+        let registry = two_claude_accounts()
+            .stored(Arc::clone(store))
+            .on_real_files(Arc::clone(files));
         for (command, folder) in [
             ("claude", "/home/.claude"),
             ("claude-perso", "/home/.claude-perso"),
@@ -1283,6 +1394,273 @@ mod tests {
         );
     }
 
+    /// Le même monde, une session plus tard : un registre neuf sur le même fichier.
+    fn restarted(store: &Arc<FakeToolStore>) -> ToolRegistry {
+        two_claude_accounts().stored(Arc::clone(store)).build()
+    }
+
+    #[test]
+    fn given_a_tool_declared_in_one_session_when_ash_starts_again_then_its_card_is_there_without_a_new_typing(
+    ) {
+        // Given — le geste qui fait qu'un onglet devient un agent (ADR-0006) était perdu au
+        // redémarrage : l'écran disait « no tools declared » pendant que les hooks, eux,
+        // étaient toujours posés sur le disque de l'utilisateur
+        let store = Arc::new(FakeToolStore::empty());
+        let first_session = two_claude_accounts().stored(Arc::clone(&store)).build();
+        first_session
+            .declare(NewTool {
+                command: "claude-perso".to_owned(),
+                label: Some("Perso".to_owned()),
+                adapter: "claude-code".to_owned(),
+                config: Some("/home/.claude-perso".to_owned()),
+            })
+            .expect("la saisie est valide");
+
+        // When
+        let tools = restarted(&store).tools().expect("le registre répond");
+
+        // Then
+        let tool = tools.first().expect("l'entrée a survécu");
+        assert_eq!(
+            (
+                tool.command.as_str(),
+                tool.label.as_deref(),
+                tool.adapter.as_str(),
+                tool.config.as_deref()
+            ),
+            (
+                "claude-perso",
+                Some("Perso"),
+                "claude-code",
+                Some("/home/.claude-perso")
+            )
+        );
+    }
+
+    #[test]
+    fn given_an_entry_read_back_from_the_file_when_it_is_shown_then_it_is_unverified_and_writes_nothing(
+    ) {
+        // Given — une vérification est un fait **daté sur la machine** : le dossier a pu être
+        // renommé entre les deux lancements. La relire du fichier serait un souvenir présenté
+        // comme une lecture, et c'est ce souvenir-là qui autoriserait une écriture chez
+        // l'utilisateur (ADR-0007)
+        let store = Arc::new(FakeToolStore::carrying(vec![FakeToolStore::entry(
+            "claude",
+            "claude-code",
+            Some("/home/.claude"),
+        )]));
+        let (registry, blocks) = two_claude_accounts()
+            .stored(Arc::clone(&store))
+            .carrying("/home/.claude", Presence::Current { version: 1 })
+            .assemble();
+
+        // When
+        let tools = registry.tools().expect("le registre répond");
+
+        // Then — le bouton reste visible et éteint, avec sa raison (spec §9.1)
+        let tool = tools.first().expect("l'entrée a survécu");
+        assert_eq!(tool.verification.state, VerificationState::Unverified);
+        assert!(!tool.verified);
+        assert!(!tool.hooks.enabled);
+        assert!(!tool.hooks.summary.is_empty());
+        assert_eq!(blocks.written(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn given_an_entry_read_back_from_the_file_when_its_sequence_runs_again_then_its_hooks_line_says_what_the_file_carries(
+    ) {
+        // Given — le scénario de la tâche : l'entrée dit `installed` parce qu'elle a **relu
+        // le fichier**, et non parce qu'elle s'en souvenait. Rien de l'état des hooks n'est
+        // gardé dans `~/.ash/tools.json`
+        let store = Arc::new(FakeToolStore::carrying(vec![FakeToolStore::entry(
+            "claude",
+            "claude-code",
+            Some("/home/.claude"),
+        )]));
+        let registry = two_claude_accounts()
+            .stored(Arc::clone(&store))
+            .carrying("/home/.claude", Presence::Current { version: 1 })
+            .build();
+
+        // When — ce que la fenêtre lance en s'ouvrant sur des entrées que rien n'a jugées
+        let changed = registry.verify_all().expect("le registre répond");
+
+        // Then
+        let tool = changed.tools.first().expect("l'entrée a survécu");
+        assert_eq!(tool.hooks.state, HookState::Installed);
+    }
+
+    #[test]
+    fn given_an_entry_whose_folder_was_removed_between_two_launches_when_it_is_verified_then_it_fails_the_first_test(
+    ) {
+        // Given — le second scénario de la tâche : ce que le fichier garde est une
+        // déclaration, pas une promesse. Le dossier a disparu depuis
+        let store = Arc::new(FakeToolStore::carrying(vec![FakeToolStore::entry(
+            "claude",
+            "claude-code",
+            Some("/home/.gone"),
+        )]));
+        let registry = two_claude_accounts().stored(Arc::clone(&store)).build();
+
+        // When
+        let changed = registry.verify_all().expect("le registre répond");
+
+        // Then — et il dit **quel** dossier manque
+        let tool = changed.tools.first().expect("l'entrée a survécu");
+        assert_eq!(tool.verification.state, VerificationState::Invalid);
+        assert_eq!(tool.verification.stopped_at, Some(1));
+        assert!(
+            tool.verification.summary.contains("/home/.gone"),
+            "{}",
+            tool.verification.summary
+        );
+    }
+
+    #[test]
+    fn given_an_entry_that_proved_a_folder_before_a_restart_when_it_is_reset_then_it_goes_back_to_that_folder(
+    ) {
+        // Given — « réinitialiser ramène à la dernière valeur valide, pas au défaut de
+        // l'adaptateur » (spec §9.1). Sans la mémoire dans le fichier, le geste ramènerait
+        // après un redémarrage `claude-perso` sur `~/.claude`, c'est-à-dire sur l'entrée d'à
+        // côté — le doublon deviendrait la conséquence mécanique du geste
+        let store = Arc::new(FakeToolStore::empty());
+        let first_session = two_claude_accounts().stored(Arc::clone(&store)).build();
+        let changed = first_session
+            .declare(draft(
+                "claude-perso",
+                "claude-code",
+                Some("/home/.claude-perso"),
+            ))
+            .expect("la saisie est valide");
+        let pending = changed
+            .pending
+            .first()
+            .cloned()
+            .expect("le test 4 reste à lancer");
+        let verification = first_session.second_pass(&pending);
+        first_session
+            .settle(&pending, verification)
+            .expect("le registre répond");
+
+        // When — une session plus tard, l'entrée est déplacée puis réinitialisée
+        let next_session = restarted(&store);
+        next_session
+            .retarget(&named("claude-perso"), "claude-code", Some("/home/notes"))
+            .expect("l'entrée existe");
+        let after = next_session
+            .reset(&named("claude-perso"))
+            .expect("elle a été valide avant le redémarrage");
+
+        // Then
+        let tool = after.tools.first().expect("l'entrée est là");
+        assert_eq!(tool.config.as_deref(), Some("/home/.claude-perso"));
+    }
+
+    #[test]
+    fn given_a_declared_tool_when_it_is_forgotten_then_it_does_not_come_back_at_the_next_launch() {
+        // Given — un `✕` qui laisserait l'entrée dans le fichier ferait d'une suppression un
+        // geste sans effet, et l'utilisateur découvrirait au redémarrage ce qu'il croyait
+        // avoir retiré
+        let store = Arc::new(FakeToolStore::empty());
+        let session = two_claude_accounts().stored(Arc::clone(&store)).build();
+        session
+            .declare(draft("claude", "claude-code", Some("/home/.claude")))
+            .expect("la saisie est valide");
+        session
+            .declare(draft(
+                "claude-perso",
+                "claude-code",
+                Some("/home/.claude-perso"),
+            ))
+            .expect("la saisie est valide");
+
+        // When
+        session.forget(&named("claude")).expect("elle est déclarée");
+
+        // Then — le fichier ne la nomme plus, et l'autre est intacte
+        assert_eq!(store.commands(), vec!["claude-perso".to_owned()]);
+        assert_eq!(
+            restarted(&store)
+                .declarations()
+                .expect("le registre répond")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn given_a_tools_file_one_entry_of_which_says_nothing_usable_when_ash_starts_then_the_others_are_loaded(
+    ) {
+        // Given — le fichier s'édite à la main (spec §9), et on revient d'une version à la
+        // précédente en changeant de branche. Une entrée qui ne désigne rien — un nom qui
+        // n'est pas un nom de processus, une entrée sans adaptateur, un doublon de commande —
+        // ne doit pas coûter celles d'à côté
+        let store = Arc::new(FakeToolStore::carrying(vec![
+            FakeToolStore::entry("/usr/local/bin/claude", "claude-code", None),
+            FakeToolStore::entry("claude", "claude-code", Some("/home/.claude")),
+            FakeToolStore::entry("kimi", "", None),
+            FakeToolStore::entry("claude", "generic", Some("/home/notes")),
+            FakeToolStore::entry("claude-perso", "claude-code", Some("/home/.claude-perso")),
+        ]));
+
+        // When
+        let registry = two_claude_accounts().stored(Arc::clone(&store)).build();
+
+        // Then
+        assert_eq!(
+            registry
+                .declarations()
+                .expect("le registre répond")
+                .iter()
+                .map(|tool| tool.command.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["claude".to_owned(), "claude-perso".to_owned()]
+        );
+    }
+
+    #[test]
+    fn given_an_entry_naming_an_adapter_this_build_does_not_embed_when_ash_starts_then_it_is_kept_and_shown_invalid(
+    ) {
+        // Given — la même conduite que pour une saisie : Ash n'empêche pas de déclarer, il
+        // refuse d'écrire. Faire disparaître l'entrée perdrait sans un mot le chemin que
+        // l'utilisateur avait tapé, et `first_pass` compose justement la correction qui a une
+        // chance pour ce cas
+        let store = Arc::new(FakeToolStore::carrying(vec![FakeToolStore::entry(
+            "kimi",
+            "kimi-code",
+            Some("/home/.claude"),
+        )]));
+        let registry = two_claude_accounts().stored(Arc::clone(&store)).build();
+
+        // When
+        let changed = registry.verify_all().expect("le registre répond");
+
+        // Then
+        let tool = changed.tools.first().expect("l'entrée a survécu");
+        assert_eq!(tool.adapter, "kimi-code");
+        assert_eq!(tool.verification.state, VerificationState::Invalid);
+        assert!(!tool.verified);
+    }
+
+    #[test]
+    fn given_entries_read_back_from_the_file_when_the_whole_list_is_re_verified_then_nothing_is_written_to_the_file(
+    ) {
+        // Given — ce qui est gardé est la déclaration, et une vérification n'en change
+        // aucune. `re-verify all` sur des entrées relues réécrirait sinon le même fichier une
+        // fois par entrée, à chaque ouverture de la fenêtre
+        let store = Arc::new(FakeToolStore::carrying(vec![
+            FakeToolStore::entry("claude", "claude-code", Some("/home/.claude")),
+            FakeToolStore::entry("kimi", "generic", Some("/home/notes")),
+        ]));
+        let registry = two_claude_accounts().stored(Arc::clone(&store)).build();
+
+        // When
+        registry.verify_all().expect("le registre répond");
+
+        // Then
+        assert_eq!(store.writes(), 0);
+    }
+
     #[test]
     fn given_a_command_that_was_never_declared_when_it_is_forgotten_then_it_is_refused() {
         // Given — se taire ferait croire à une suppression qui n'a pas eu lieu
@@ -1332,6 +1710,38 @@ mod tests {
                 "{folder} n'a pas été rendu tel quel"
             );
         }
+    }
+
+    #[test]
+    fn given_two_instrumented_accounts_when_ash_is_removed_from_every_file_then_the_declarations_stay_declared(
+    ) {
+        // Given — « retirer Ash de tous les fichiers » (spec §10) reprend ce qu'Ash a écrit
+        // **chez l'utilisateur**. Ce n'est pas le geste qui oublie un outil — celui-là est le
+        // `✕` d'une carte — et emporter la liste au passage ferait disparaître de l'écran les
+        // cartes sur lesquelles on vient de cliquer, sans que personne ne l'ait demandé
+        let files = Arc::new(
+            FakeConfigFiles::new()
+                .carrying("/home/.claude/settings.json", THEIRS)
+                .carrying("/home/.claude-perso/settings.json", THEIRS),
+        );
+        let store = Arc::new(FakeToolStore::empty());
+        let registry = two_instrumented_accounts_stored(&files, &store);
+
+        // When
+        registry.remove_everything().expect("le registre répond");
+
+        // Then — le fichier d'Ash dit toujours ce qui reste déclaré, ni plus ni moins
+        assert_eq!(
+            store.commands(),
+            vec!["claude".to_owned(), "claude-perso".to_owned()]
+        );
+        assert_eq!(
+            restarted(&store)
+                .declarations()
+                .expect("le registre répond")
+                .len(),
+            2
+        );
     }
 
     #[test]

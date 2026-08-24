@@ -19,11 +19,10 @@
 //!
 //! `~/.ash/notifications.json`, et c'est **le mécanisme du thème** — un petit fichier dans le
 //! dossier privé d'Ash, relu au démarrage, tolérant à tout, derrière un trait que la feature
-//! possède (`features/theme/store.rs`). La spec §9 dessine ces trois booléens dans
-//! `~/.ash/config.toml` ; rien du dépôt ne lit ni n'écrit encore de TOML, et fabriquer un
-//! second mécanisme de persistance pour trois booléens coûterait plus que de suivre celui qui
-//! existe. Le jour où `config.toml` sera lu, c'est ce fichier-là qui y sera versé — un seul
-//! point de lecture à déplacer, celui-ci.
+//! possède (`features/theme/store.rs`). La spec §9 dessinait ces trois booléens dans un
+//! `~/.ash/config.toml` ; ce fichier n'a jamais existé, et il n'existera pas — les outils
+//! déclarés, derniers à l'attendre, sont partis dans `~/.ash/tools.json` (spec §9, corrigée).
+//! Rien du dépôt ne lit ni n'écrit de TOML, et chaque magasin porte ce qui le concerne.
 //!
 //! | Port | Système | Tests |
 //! |---|---|---|
