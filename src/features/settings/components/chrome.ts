@@ -48,11 +48,19 @@ export function foot(sentence: string): UiComponent {
  * L'état vide de la liste : le constat, et ce qu'il coûte.
  *
  * Le titre seul serait un cul-de-sac — c'est la raison d'être de `prose` dans le socle.
+ *
+ * **`seen` change ce qu'il dit, pas ce qu'il est** (ADR-0006). « no tools declared » reste
+ * vrai quand Ash a vu `claude` tourner dans trois onglets, et devient trompeur : l'écran
+ * laissait deviner qu'il fallait passer par le marqueur de la sidebar pour le lui dire. Quand
+ * quelque chose a été vu, l'état vide dit donc **ce qu'Ash a vu et ce qu'un clic ferait**, et
+ * les suggestions sont juste dessous. La phrase vient du modèle, comme les autres phrases de
+ * cet écran.
  */
-export function noToolsYet(): UiComponent {
+export function noToolsYet(seen: string | null = null): UiComponent {
     return emptyState("no tools declared")
         .class("settings-empty")
         .prose(
-            "ash already shows your tabs, but it doesn't know which ones are agents. until a tool is declared, everything stays idle — no waiting, no notifications.",
+            seen ??
+                "ash already shows your tabs, but it doesn't know which ones are agents. until a tool is declared, everything stays idle — no waiting, no notifications.",
         );
 }

@@ -43,6 +43,7 @@ import type { ThemeMode as RustThemeMode } from "@/shared/ipc/generated/ThemeMod
 import type { TestDescription as RustTestDescription } from "@/shared/ipc/generated/TestDescription";
 import type { TestOutcome as RustTestOutcome } from "@/shared/ipc/generated/TestOutcome";
 import type { ToolDeclaration as RustToolDeclaration } from "@/shared/ipc/generated/ToolDeclaration";
+import type { ToolSuggestion as RustToolSuggestion } from "@/shared/ipc/generated/ToolSuggestion";
 import type { Verification as RustVerification } from "@/shared/ipc/generated/Verification";
 import type { VerificationState as RustVerificationState } from "@/shared/ipc/generated/VerificationState";
 import type { Verified as RustVerified } from "@/shared/ipc/generated/Verified";
@@ -86,6 +87,7 @@ import type {
     ThemeMode,
     ToolDeclaration,
     ToolDraft,
+    ToolSuggestion,
     Verification,
     VerificationState,
     Verified,
@@ -93,6 +95,9 @@ import type {
 
 /** L'outil que la sidebar désigne — une demande d'affichage, jamais une écriture. */
 export type FocusedToolStillMirrorsRust = Assert<Mirrors<RustFocusedTool, FocusedTool>>;
+
+/** L'outil qu'Ash a vu tourner et qu'un clic déclare — il ne porte aucun geste. */
+export type ToolSuggestionStillMirrorsRust = Assert<Mirrors<RustToolSuggestion, ToolSuggestion>>;
 
 export type HookStateStillMirrorsRust = Assert<Mirrors<RustHookState, HookState>>;
 export type HookActionStillMirrorsRust = Assert<Mirrors<RustHookAction, HookAction>>;

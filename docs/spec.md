@@ -809,6 +809,34 @@ Tant qu'une entrée n'a jamais été valide, elle n'a rien à restaurer : le bou
 `~/.ash/tools.json` (les commandes reconnues, cf. §9), `~/.ash/state.json` (worktrees
 épinglés, état replié) et `~/.ash/journal/<repo>.jsonl` (attribution, cf. §3.1).
 
+### 9.3 Ce qu'Ash a vu tourner se déclare d'un clic
+
+Sous les entrées déclarées, la section `tools` montre les outils **qu'Ash a reconnus dans
+l'avant-plan d'un onglet ouvert** et que personne n'a déclarés. La source est la
+reconnaissance du §6 ([ADR-0006](./adr/0006-decouverte-automatique-des-agents.md)) : la
+sonde rend le chemin, le nom et l'`argv[0]`, et la table embarquée les nomme. **Rien n'est
+découvert** — ni parcours du `PATH`, ni scan de disque, ni autorisation macOS. Un outil
+installé mais jamais lancé n'apparaît donc pas, et l'ajout à la main reste là pour lui.
+Trois onglets sur `claude` sont **un** outil proposé, pas trois.
+
+Chaque ligne porte son nom, son adaptateur, et **ce que sa configuration porte** : les
+mêmes cinq états que la ligne `hooks` d'une entrée déclarée — *installés*, *absents*,
+*d'une version antérieure*, *en conflit*, *impossibles* —, lus sur le dossier par défaut
+de son adaptateur, celui que la déclaration visera. Cinq et non trois : un conflit ne se
+corrige pas comme une absence, et un adaptateur qui n'instrumente rien le dit plutôt que
+de laisser lire une panne. Cette lecture est celle du §6, partagée : le fichier d'un outil
+proposé n'est rouvert qu'une fois toutes les cinq secondes.
+
+**Le clic déclare, il n'écrit pas.** L'outil rejoint les entrées, dossier prérempli, *non
+vérifié*, et repart dans le flux du §9.1 — vérification en deux temps, puis bouton
+d'installation. Rien n'est écrit dans le `settings.json` de l'outil tant que ce
+bouton-là n'a pas été pressé ([ADR-0007](./adr/0007-etats-par-hooks.md)). Un outil déclaré
+n'est plus une suggestion.
+
+L'état vide de la section suit la même règle : « no tools declared » reste vrai quand Ash
+voit `claude` tourner dans trois onglets, et devient trompeur. Quand quelque chose a été
+vu, il dit ce qu'Ash a vu, et ce qu'un clic ferait.
+
 ---
 
 ## 10. Empreinte sur le système

@@ -31,10 +31,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::registry::ToolRegistry;
-use crate::features::agents::{
-    recognize, DeclaredProvider, Instrumented, ProgramIdentity, RecognizedAgent,
-};
+use super::hooks::BlockAt;
+use super::registry::{instrumented, ToolRegistry};
+use crate::features::agents::{recognize, DeclaredProvider, ProgramIdentity, RecognizedAgent};
 use crate::features::pty::AgentRecognition;
 use crate::shared::time::Clock;
 
@@ -49,7 +48,12 @@ pub struct ToolRecognition {
     tools: Arc<ToolRegistry>,
     clock: Arc<dyn Clock>,
     /// Ce qu'on a lu du disque, par outil, avec l'instant de la lecture.
-    seen: Mutex<HashMap<String, (Instrumented, Instant)>>,
+    ///
+    /// La lecture **entière** et non son résumé : la sidebar n'en veut que trois valeurs,
+    /// la fenêtre de réglages en tire les cinq états d'une suggestion (voir
+    /// [`super::suggestions`]). Deux mémoires pour un même fichier finiraient par ne pas
+    /// dire la même chose de lui à la même seconde.
+    seen: Mutex<HashMap<String, (Option<BlockAt>, Instant)>>,
 }
 
 impl ToolRecognition {
@@ -61,25 +65,30 @@ impl ToolRecognition {
         }
     }
 
-    /// L'état d'instrumentation d'un outil, relu au plus une fois par [`FRESHNESS`].
+    /// Ce que la configuration d'un outil porte, **relu au plus une fois par [`FRESHNESS`]**.
+    ///
+    /// C'est le portillon unique devant le disque, et il sert les deux lecteurs : la boucle
+    /// de sonde, qui pose la question trois fois par seconde et par onglet, et la fenêtre de
+    /// réglages, qui la pose une fois par suggestion en s'affichant. Le second profite donc
+    /// de la lecture du premier — ouvrir la fenêtre ne rouvre en général aucun fichier.
     ///
     /// Un registre empoisonné se lit comme « on n'en sait rien » : la reconnaissance d'un
     /// outil ne doit pas dépendre de la santé d'un verrou de la fenêtre de réglages.
-    fn instrumentation(&self, adapter: &str, config: Option<&str>) -> Instrumented {
+    pub fn presence(&self, adapter: &str, config: Option<&str>) -> Option<BlockAt> {
         let key = format!("{adapter}\u{0}{}", config.unwrap_or_default());
         let now = self.clock.now();
 
         if let Ok(seen) = self.seen.lock() {
             if let Some((known, at)) = seen.get(&key) {
                 if now.duration_since(*at) < FRESHNESS {
-                    return *known;
+                    return known.clone();
                 }
             }
         }
 
-        let found = self.tools.instrumentation(adapter, config);
+        let found = self.tools.presence(adapter, config);
         if let Ok(mut seen) = self.seen.lock() {
-            seen.insert(key, (found, now));
+            seen.insert(key, (found.clone(), now));
         }
         found
     }
@@ -108,7 +117,7 @@ impl AgentRecognition for ToolRecognition {
             .and_then(|tool| tool.config.clone());
 
         Some(RecognizedAgent {
-            instrumented: self.instrumentation(&found.adapter, config.as_deref()),
+            instrumented: instrumented(self.presence(&found.adapter, config.as_deref()).as_ref()),
             command: found.command,
             adapter: found.adapter,
         })
@@ -118,45 +127,17 @@ impl AgentRecognition for ToolRecognition {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::features::agents::Instrumented;
     use crate::features::hooks::Presence;
-    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders, FakeToolStore};
+    use crate::features::settings::fakes::{
+        FakeBlocks, FakeCommands, FakeFolders, FakeToolStore, TestClock,
+    };
     use crate::features::settings::persisted::PersistedTool;
     use crate::features::settings::store::ToolStore;
     use crate::features::settings::tool::NewTool;
     use crate::features::settings::verification::{AdapterProfile, Verifier};
-    use crate::shared::time::UnixMillis;
-
-    /// Une horloge que le scénario avance lui-même — aucun test ne dort.
-    struct TestClock {
-        origin: Instant,
-        elapsed: AtomicU64,
-    }
-
-    impl TestClock {
-        fn new() -> Self {
-            Self {
-                origin: Instant::now(),
-                elapsed: AtomicU64::new(0),
-            }
-        }
-
-        fn tick(&self, seconds: u64) {
-            self.elapsed.fetch_add(seconds, Ordering::SeqCst);
-        }
-    }
-
-    impl Clock for TestClock {
-        fn now(&self) -> Instant {
-            self.origin + Duration::from_secs(self.elapsed.load(Ordering::SeqCst))
-        }
-
-        fn wall(&self) -> UnixMillis {
-            0
-        }
-    }
 
     fn profiles() -> Vec<AdapterProfile> {
         vec![

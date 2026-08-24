@@ -6,6 +6,7 @@ import type {
     ShortcutRow,
     ToolDeclaration,
     ToolDraft,
+    ToolSuggestion,
     Verification,
 } from "./contract";
 
@@ -385,6 +386,43 @@ export function groupShortcuts(shortcuts: readonly ShortcutRow[]): readonly Shor
         else opened.shortcuts.push(shortcut);
     }
     return grouped;
+}
+
+/**
+ * Les suggestions qu'il reste à montrer, une fois la liste déclarée sous les yeux.
+ *
+ * **Le backend applique déjà cette règle**, et c'est lui qui la détient : une suggestion est
+ * par définition un outil que personne n'a déclaré. Ce filtre-là est un fait d'affichage, et
+ * il existe parce que les deux valeurs n'arrivent pas ensemble — la liste revient de la
+ * commande qu'on vient d'appeler, les suggestions d'un second aller-retour. Déclarer un outil
+ * laisserait donc, le temps d'une image, sa carte **et** sa suggestion à l'écran : le même
+ * outil deux fois, dont une sous un geste qui serait refusé.
+ *
+ * C'est exactement la garde de [`focusedDraft`], sur la même règle et pour la même raison :
+ * l'écran ne juge pas, il évite de montrer ce que le backend vient de rendre faux
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)).
+ */
+export function pendingSuggestions(
+    suggestions: readonly ToolSuggestion[],
+    tools: readonly ToolDeclaration[],
+): readonly ToolSuggestion[] {
+    return suggestions.filter(
+        (suggestion) => !tools.some((tool) => tool.command === suggestion.command),
+    );
+}
+
+/**
+ * Ce que l'état vide dit quand Ash a vu tourner quelque chose.
+ *
+ * « no tools declared » reste vrai, et devient trompeur : Ash sait très bien que `claude`
+ * tourne dans trois onglets, et l'écran laissait deviner qu'il fallait passer par la sidebar
+ * pour le lui dire (ADR-0006). Quand il y a des suggestions, l'état vide n'est donc plus un
+ * constat mais **ce qu'un clic ferait**.
+ */
+export function emptyToolsProse(suggestions: readonly ToolSuggestion[]): string | null {
+    if (suggestions.length === 0) return null;
+    const names = suggestions.map((suggestion) => suggestion.command).join(", ");
+    return `ash has seen ${names} running in your tabs. declaring one writes nothing — it starts the checks, and the hooks stay yours to install.`;
 }
 
 /**

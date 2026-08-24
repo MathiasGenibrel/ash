@@ -27,6 +27,7 @@ export { hooksNote, hooksRow, type HooksRowActions } from "./hooks-row";
 export { journalRow, type JournalActions } from "./journal-row";
 export { navColumn } from "./nav";
 export { notificationsSection } from "./notifications";
+export { suggestionList, type SuggestionActions } from "./suggestions";
 export {
     shortcutsSection,
     type ShortcutCapture,

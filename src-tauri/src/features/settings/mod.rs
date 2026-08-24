@@ -24,6 +24,7 @@
 //! | `CommandRunner` | `SystemCommands` | `FakeCommands` |
 //! | `HookBlocks` | `AdapterHooks` (composition root) | `FakeBlocks` |
 //! | `ToolStore` | `FileToolStore` — `~/.ash/tools.json` | `FakeToolStore` |
+//! | `RunningTools` | le registre de PTY (composition root) | `FakeRunning` |
 //!
 //! **L'installation des hooks passe par le troisième**, et c'est ce qui fait que la feature
 //! écrit chez l'utilisateur sans connaître un seul adaptateur ni un seul format de fichier
@@ -56,6 +57,13 @@
 //! qu'il dit quand macOS ne laisse rien savoir de son autorisation (spec §8). Le geste de
 //! l'interrupteur traverse ici et repart aussitôt à `agents` : `settings` n'en garde rien.
 //!
+//! **Ce qu'Ash a vu tourner se déclare d'un clic** ([`suggestions`]) : sous les cartes, la
+//! section `tools` propose les outils que la sonde a reconnus dans l'avant-plan d'un onglet
+//! et que personne n'a déclarés (ADR-0006). C'est **le quatrième port** qui les apporte —
+//! `settings` ne connaît pas `pty`, qui dépend déjà d'elle par sa reconnaissance — et rien
+//! n'y est découvert : ni `PATH`, ni disque, ni autorisation. Un clic déclare, et ne pose
+//! aucun hook.
+//!
 //! **Ce qui est déclaré survit au redémarrage** ([`store`], [`persisted`]) : les entrées
 //! sont gardées dans `~/.ash/tools.json` — et non dans le `config.toml` que la spec §9
 //! décrivait, corrigée depuis : les quatre magasins qui existaient déjà sont en JSON, et un
@@ -82,6 +90,7 @@ mod ports;
 mod recognition;
 mod registry;
 mod store;
+mod suggestions;
 mod system;
 mod tool;
 mod usage;
@@ -94,13 +103,14 @@ pub use hooks::{BlockAt, HookAction, HookChoice, HookState, HooksReport};
 pub use notifications::{
     NotificationPermission, NotificationSwitch, NotificationsReport, GRANT_PATH,
 };
-pub use ports::{CommandRunner, ConfigFiles, HookBlocks};
+pub use ports::{CommandRunner, ConfigFiles, HookBlocks, RunningTools};
 pub use recognition::{ToolRecognition, FRESHNESS};
 pub use registry::ToolRegistry;
 // `PersistedTools` — la forme du fichier — n'est **pas** réexportée, comme `Persisted` ne
 // l'est pas par `features::sidebar` : rien hors de cette feature n'a à fabriquer ce qui sera
 // écrit dans `~/.ash/tools.json`.
 pub use store::{FileToolStore, ToolStore};
+pub use suggestions::{ToolSuggestion, ToolSuggestions};
 pub use system::{SystemCommands, SystemConfigFiles};
 pub use tool::{NewTool, ToolDeclaration};
 pub use usage::{UsageReport, KEYCHAIN_PATH};

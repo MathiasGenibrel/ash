@@ -10,6 +10,7 @@ import type {
     TestDescription,
     ToolDeclaration,
     ToolDraft,
+    ToolSuggestion,
     UsageReadability,
     UsageReport,
     Verification,
@@ -85,6 +86,18 @@ export function aHooksReport(overrides: Partial<HooksReport> = {}): HooksReport 
         ],
         diff: null,
         backup: "/home/someone/.claude/settings.json.bak",
+        ...overrides,
+    };
+}
+
+/** Un outil qu'Ash a vu tourner, dont la configuration ne porte rien de lui. */
+export function aSuggestion(overrides: Partial<ToolSuggestion> = {}): ToolSuggestion {
+    return {
+        command: "claude",
+        adapter: "claude-code",
+        hooks: "missing",
+        summary: "no ash hooks in this file",
+        file: "/home/someone/.claude/settings.json",
         ...overrides,
     };
 }

@@ -1593,3 +1593,69 @@
     line-height: 1.65;
     color: var(--ash-fg-subtle);
 }
+
+/* ── Ce qu'Ash a vu tourner ─────────────────────────────────────────────────────────── */
+
+/* Sous les cartes, et visuellement en retrait d'elles : ce ne sont pas des entrées. Le
+ * liseré à gauche dit « ça vient d'ailleurs » — d'un onglet, pas d'une déclaration. */
+.settings-suggest {
+    padding: 4px 16px 12px;
+}
+
+.settings-suggest-head {
+    display: flex;
+    align-items: center;
+    padding-bottom: 6px;
+}
+
+.settings-suggest-title {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ash-fg-dim);
+}
+
+.settings-suggest-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.settings-suggest-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    border: 1px solid var(--ash-border-soft);
+    border-left: 2px solid var(--ash-border);
+    border-radius: 5px;
+    background: var(--ash-bg);
+    line-height: 1;
+}
+
+.settings-suggest-name {
+    font-size: 12.5px;
+    color: var(--ash-fg);
+}
+
+.settings-suggest-adapter {
+    font-size: 11px;
+    color: var(--ash-fg-dim);
+}
+
+/* L'état des hooks au milieu de la ligne, dans la même teinte que sur une carte : c'est la
+ * même information, lue sur le même fichier. */
+.settings-suggest-state {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1;
+}
+
+.settings-suggest-note {
+    padding-top: 8px;
+    font-size: 11px;
+    line-height: 1.65;
+    color: var(--ash-fg-subtle);
+}
