@@ -35,7 +35,7 @@
 //! [ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md) : aucun fichier
 //! écrit, aucune autorisation macOS, aucun scan de disque, aucun appel réseau.
 //!
-//! Trois règles en découlent, et elles gouvernent tout ce module :
+//! Quatre règles en découlent, et elles gouvernent tout ce module :
 //!
 //! 1. **La table modèle → fenêtre appartient à l'adaptateur**
 //!    ([`Adapter::context_window`]) : c'est lui, et lui seul, qui sait ce qu'`opus[1m]` veut
@@ -43,7 +43,16 @@
 //! 2. **Où le modèle est nommé appartient aussi à l'adaptateur**
 //!    ([`Adapter::model_sources`]), et l'**ouverture** des fichiers à la feature
 //!    ([`ToolConfig`]) — le partage exact d'`Instrumentation` et de [`Transcripts`].
-//! 3. **Rien de reconnu ne vaut rien.** [`SessionUsage::window_tokens`] est une `Option`, et
+//! 3. **Deux sources, un seul modèle.** La mesure vient du transcript et la fenêtre de la
+//!    configuration : quand les deux ne nomment pas le même modèle, aucune fenêtre n'est
+//!    posée. Un `settings.json` qui annonce `opus[1m]` pendant qu'un autre modèle tourne
+//!    décrirait une session qui n'est pas celle qu'on mesure, et le pourcentage serait faux
+//!    d'un facteur cinq — le bug de #162 sous un autre nom. C'est encore l'adaptateur qui
+//!    arbitre, et **jusqu'où** il sait le faire lui appartient aussi : une configuration qui
+//!    ne nomme qu'un alias (`opus[1m]`) n'a pas de version à confronter, et l'accord se fait
+//!    alors sur la famille seule — la limite est écrite là où la règle vit, sur
+//!    [`Adapter::context_window`].
+//! 4. **Rien de reconnu ne vaut rien.** [`SessionUsage::window_tokens`] est une `Option`, et
 //!    c'est elle qui rend « je ne sais pas » représentable. Sans elle, l'absence retomberait
 //!    sur un défaut supposé, c'est-à-dire exactement sur le bug qu'on vient de corriger.
 //!
@@ -85,8 +94,14 @@ pub const TRANSCRIPT_TAIL_BYTES: u64 = 256 * 1024;
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUsage {
-    /// Les tokens que la conversation occupe — entrée, cache lu, cache écrit, et la sortie
-    /// du dernier tour.
+    /// Les tokens que la conversation occupe — entrée, cache lu, cache écrit.
+    ///
+    /// **La sortie du dernier tour n'y est pas**, et c'est ce qui aligne ce nombre sur ce que
+    /// `/context` affiche : la mesure est la taille du *prompt* de la dernière requête, pas
+    /// celle de la réponse qui l'a suivie. Cette réponse entrera dans la fenêtre à la
+    /// requête d'après, et sera comptée par les trois compteurs d'entrée. Il reste donc un
+    /// **décalage d'un tour** — ce qui a été tapé et répondu depuis la dernière requête n'est
+    /// pas encore mesuré —, et il se rattrape tout seul au tour suivant.
     ///
     /// **`number` et non `bigint`**, pour la raison écrite au long sur `state_since` : c'est
     /// un nombre JSON que la webview lit en `number`, et un compte de tokens ne s'approche
@@ -95,9 +110,12 @@ pub struct SessionUsage {
     pub used_tokens: u64,
     /// La fenêtre dans laquelle ces tokens tiennent — **quand on la connaît**.
     ///
-    /// `None` veut dire « aucune source ne nomme de modèle reconnu », et c'est une réponse à
-    /// part entière : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`),
-    /// sans barre et sans couleur de seuil. C'est le seul champ de tout le contrat dont
+    /// `None` veut dire « Ash ne sait pas sur combien », et c'est une réponse à part entière.
+    /// Deux chemins y mènent, que l'écran ne distingue pas : aucune source ne nomme de modèle
+    /// reconnu, ou la configuration ne nomme **pas le modèle qui a tourné** — auquel cas sa
+    /// fenêtre est celle d'une autre session que celle qu'on mesure. Dans les deux cas,
+    /// l'écran montre la mesure sans la mettre en rapport (`ctx 57k`), sans barre et sans
+    /// couleur de seuil. C'est le seul champ de tout le contrat dont
     /// l'absence a coûté un bug — un dénominateur supposé à 200 000 faisait lire `ctx 28%`
     /// sur une conversation qui occupait 6 % de sa fenêtre.
     ///
@@ -136,7 +154,10 @@ pub struct SessionUsage {
 /// est une unité ; il se lit comme telle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
-    /// Les tokens que la conversation occupait à la fin de ce tour.
+    /// Les tokens que la conversation occupait **au moment où ce tour a été demandé**.
+    ///
+    /// Le prompt de la requête, et non la réponse : voir
+    /// [`SessionUsage::used_tokens`], qui porte le raisonnement.
     pub used_tokens: u64,
     /// L'identifiant **brut** du modèle qui a produit ce tour, tel que l'outil l'a écrit.
     ///
@@ -358,12 +379,14 @@ pub(super) fn measure(
 
     Some(SessionUsage {
         used_tokens: turn.used_tokens,
-        // La fenêtre vient de la **configuration**, et d'elle seule : le transcript nomme le
-        // modèle sans jamais dire s'il tourne en 200 k ou en 1 M, et c'est le suffixe `[1m]`
-        // d'un fichier de réglages qui tranche.
-        window_tokens: configured
-            .as_deref()
-            .and_then(|model| adapter.context_window(model)),
+        // La fenêtre se lit dans la configuration — le transcript nomme le modèle sans jamais
+        // dire s'il tourne en 200 k ou en 1 M, et c'est le suffixe `[1m]` d'un fichier de
+        // réglages qui tranche —, mais elle se lit **contre** le modèle qui a réellement
+        // tourné : les deux moitiés du pourcentage viennent de deux sources, et rien
+        // n'oblige les deux à parler du même modèle. C'est l'adaptateur qui arbitre, parce
+        // que lui seul sait qu'`opus[1m]` et `claude-opus-5` sont deux écritures d'une même
+        // chose ([ADR-0008]).
+        window_tokens: adapter.context_window(turn.model.as_deref(), configured.as_deref()),
         // Le nom, lui, vient d'abord du **transcript** : c'est ce qui a réellement tourné, donc
         // ce qui suit un `/model` changé en cours de session — au tour suivant, quand la
         // configuration, elle, n'aurait rien vu passer.
@@ -841,25 +864,52 @@ mod tests {
     }
 
     #[test]
-    fn given_a_transcript_naming_a_model_ash_cannot_name_when_the_tab_is_measured_then_the_segment_disappears_without_the_gauge(
+    fn given_a_transcript_naming_a_model_ash_cannot_name_when_the_tab_is_measured_then_neither_the_name_nor_the_window_is_borrowed(
     ) {
         // Given — la configuration nomme un modèle parfaitement connu, et le transcript un
-        // modèle qui ne l'est pas. Retomber sur la configuration pour le **nom** annoncerait
-        // un modèle qui n'a pas tourné : c'est ce qui a réellement tourné qui se lit dans la
-        // barre, ou rien.
+        // modèle qui ne l'est pas — `claude-fable-5` existe vraiment dans des transcripts.
+        // Retomber sur la configuration annoncerait un modèle qui n'a pas tourné : ni son nom,
+        // ni sa fenêtre ne décrivent la conversation qu'on est en train de mesurer.
         let config = configured("~/.claude/settings.json", "opus[1m]");
 
         // When
         let measured = measured_with(&config, &turn_by("claude-fable-5", 57_200));
 
-        // Then — ni tiret, ni `unknown`, ni repli sur la configuration ; la fenêtre, elle,
-        // vient toujours de la configuration et reste donc lisible.
+        // Then — ni tiret, ni `unknown`, ni pourcentage calculé sur la fenêtre d'un autre ; la
+        // mesure, elle, reste — c'est la seule chose qu'Ash sache vraiment.
         assert_eq!(
             measured,
             Some(SessionUsage {
                 used_tokens: 57_200,
-                window_tokens: Some(1_000_000),
+                window_tokens: None,
                 model: None,
+            })
+        );
+    }
+
+    #[test]
+    fn given_a_session_running_a_model_the_configuration_does_not_announce_when_the_tab_is_measured_then_the_gauge_disappears(
+    ) {
+        // Given — le désaccord observé en vrai : le `~/.claude/settings.json` annonce
+        // `opus[1m]`, et le transcript que le hook a nommé tourne en `claude-sonnet-5`. Ça
+        // arrive à chaque session que l'utilisateur n'a pas configurée lui-même — une revue
+        // de sécurité, un agent qui choisit son modèle — et à chaque `/model` changé en cours
+        // de route. Les deux moitiés du pourcentage parlent alors de deux modèles.
+        let config = configured("~/.claude/settings.json", "opus[1m]");
+
+        // When
+        let measured = measured_with(&config, &turn_by("claude-sonnet-5", 133_670));
+
+        // Then — pas de dénominateur : `133 670 / 1 000 000` aurait affiché `ctx 13%` là où
+        // `/context` en montre 67. La mesure et le nom du modèle qui a tourné, eux, restent.
+        assert_eq!(
+            measured,
+            Some(SessionUsage {
+                used_tokens: 133_670,
+                window_tokens: None,
+                // Et le nom ne porte pas de `1M` : ce suffixe vient d'une configuration qui
+                // ne parle pas de ce modèle, exactement comme la fenêtre qu'il décrit.
+                model: Some("Sonnet 5".to_owned()),
             })
         );
     }

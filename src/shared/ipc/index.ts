@@ -112,10 +112,18 @@ export interface RecognizedAgent {
  * **Deux nombres, et pas un pourcentage** : le calcul est un fait d'affichage, et le garder
  * ici laisse l'écran libre de dire `128k / 200k` plutôt qu'un `73 %`.
  *
- * `windowTokens` vaut `null` quand **aucune source ne nomme de modèle reconnu** — ni
- * `ANTHROPIC_MODEL`, ni le `.claude/` du dépôt, ni celui du foyer. C'est une réponse, pas une
- * panne : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`), sans barre et
- * sans couleur de seuil.
+ * `windowTokens` vaut `null` dans deux cas, et l'écran ne les distingue pas : quand **aucune
+ * source ne nomme de modèle reconnu** — ni `ANTHROPIC_MODEL`, ni le `.claude/` du dépôt, ni
+ * celui du foyer —, et quand la configuration **ne nomme pas le modèle qui a tourné**. Le
+ * second est le plus courant : une session que l'utilisateur n'a pas configurée lui-même, ou
+ * un `/model` changé en cours de route, mesure alors une conversation dont la fenêtre est
+ * celle d'un autre modèle. C'est une réponse, pas une panne : l'écran montre la mesure sans
+ * la mettre en rapport (`ctx 57k`), sans barre et sans couleur de seuil.
+ *
+ * `usedTokens` est la taille du **prompt** du dernier tour — entrée, cache lu, cache écrit —,
+ * et c'est ce que `/context` affiche. La réponse du modèle n'y est pas : elle entrera dans la
+ * fenêtre au tour suivant, où les trois compteurs la porteront. Il reste donc un décalage
+ * d'un tour, qui se rattrape tout seul.
  *
  * Ce champ portait auparavant une **supposition** — 200 000, quel que soit le modèle —, et
  * elle mentait d'un facteur cinq sur une session d'un million : `ctx 28%` là où `/context`

@@ -11,8 +11,14 @@
  */
 export type SessionUsage = { 
 /**
- * Les tokens que la conversation occupe — entrée, cache lu, cache écrit, et la sortie
- * du dernier tour.
+ * Les tokens que la conversation occupe — entrée, cache lu, cache écrit.
+ *
+ * **La sortie du dernier tour n'y est pas**, et c'est ce qui aligne ce nombre sur ce que
+ * `/context` affiche : la mesure est la taille du *prompt* de la dernière requête, pas
+ * celle de la réponse qui l'a suivie. Cette réponse entrera dans la fenêtre à la
+ * requête d'après, et sera comptée par les trois compteurs d'entrée. Il reste donc un
+ * **décalage d'un tour** — ce qui a été tapé et répondu depuis la dernière requête n'est
+ * pas encore mesuré —, et il se rattrape tout seul au tour suivant.
  *
  * **`number` et non `bigint`**, pour la raison écrite au long sur `state_since` : c'est
  * un nombre JSON que la webview lit en `number`, et un compte de tokens ne s'approche
@@ -22,9 +28,12 @@ usedTokens: number,
 /**
  * La fenêtre dans laquelle ces tokens tiennent — **quand on la connaît**.
  *
- * `None` veut dire « aucune source ne nomme de modèle reconnu », et c'est une réponse à
- * part entière : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`),
- * sans barre et sans couleur de seuil. C'est le seul champ de tout le contrat dont
+ * `None` veut dire « Ash ne sait pas sur combien », et c'est une réponse à part entière.
+ * Deux chemins y mènent, que l'écran ne distingue pas : aucune source ne nomme de modèle
+ * reconnu, ou la configuration ne nomme **pas le modèle qui a tourné** — auquel cas sa
+ * fenêtre est celle d'une autre session que celle qu'on mesure. Dans les deux cas,
+ * l'écran montre la mesure sans la mettre en rapport (`ctx 57k`), sans barre et sans
+ * couleur de seuil. C'est le seul champ de tout le contrat dont
  * l'absence a coûté un bug — un dénominateur supposé à 200 000 faisait lire `ctx 28%`
  * sur une conversation qui occupait 6 % de sa fenêtre.
  *
