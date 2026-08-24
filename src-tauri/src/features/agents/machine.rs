@@ -107,6 +107,17 @@ impl Exit {
 pub enum AgentEvent {
     /// Un hook a déclaré l'état de l'agent. Fait autorité.
     Hook(Declared),
+    /// Un hook a annoncé qu'une **session** de l'outil existe dans cet onglet.
+    ///
+    /// Ce n'est pas un état, et ça n'en produit aucun : une session qui s'ouvre n'a rien en
+    /// vol, et un agent qui vient de démarrer attend un prompt. Ce qu'elle change est
+    /// ailleurs — la machine **existe** désormais pour cet onglet, donc la présence vue par
+    /// la sonde n'y répond plus ([`AgentMachine::holds_a_session`]).
+    ///
+    /// C'est la précision du 2026-08-24 à ADR-0007 : pour un outil instrumenté, ce sont les
+    /// hooks qui disent ce que l'agent fait, et la présence seule ne produit plus `working`.
+    /// Un outil **sans** hooks n'a jamais cet événement, donc rien ne lui est retiré.
+    SessionOpened,
     /// La sonde a vu une commande reconnue prendre l'avant-plan de l'onglet (spec §6.1).
     ///
     /// **C'est un front, pas un niveau** : à émettre quand l'avant-plan *devient* un agent,
@@ -149,6 +160,18 @@ pub struct AgentMachine {
     /// `None` sur un état actif, et `None` aussi sur un `done` qui n'a pas encore été
     /// regardé : c'est ce second cas qui porte le « indéfiniment » de la spec §6.4.
     seen_since: Option<Instant>,
+    /// Une session de l'outil est ouverte dans cet onglet.
+    ///
+    /// **Ce n'est pas un sixième état**, et ça ne se voit nulle part à l'écran : c'est ce qui
+    /// distingue un `idle` qui veut dire « un agent est là, il n'a rien en vol » d'un `idle`
+    /// qui veut dire « plus personne ici ». Les deux se montrent de la même façon — c'est le
+    /// même mot, et rien ne tourne dans les deux cas —, mais seul le second rend l'onglet à
+    /// la sonde ([`Self::holds_a_session`]).
+    ///
+    /// Elle s'ouvre sur [`AgentEvent::SessionOpened`] et se ferme dès que quelque chose
+    /// **finit** : un état terminal déclaré, ou la disparition du processus. Une session ne
+    /// survit donc jamais à l'agent qui la tenait.
+    session_open: bool,
 }
 
 impl AgentMachine {
@@ -163,11 +186,23 @@ impl AgentMachine {
             state: AgentState::Idle,
             window_focused: false,
             seen_since: None,
+            session_open: false,
         }
     }
 
     pub fn state(&self) -> AgentState {
         self.state
+    }
+
+    /// Un agent est-il **là**, même sans rien avoir en vol ?
+    ///
+    /// C'est la question que le superviseur pose avant de rendre un onglet à la sonde : une
+    /// machine dont l'état est retombé à `idle` n'a plus rien à dire *sauf* si la session de
+    /// l'outil est toujours ouverte. Sans elle, un agent instrumenté qui attend un prompt
+    /// serait rendu à la sonde à la passe suivante, et remontré `working` par sa seule
+    /// présence — ce que la précision du 2026-08-24 écarte.
+    pub fn holds_a_session(&self) -> bool {
+        self.session_open
     }
 
     /// Il s'est passé quelque chose. Rend le nouvel état s'il a changé, `None` sinon.
@@ -178,6 +213,7 @@ impl AgentMachine {
         let now = self.clock.now();
         match event {
             AgentEvent::Hook(declared) => self.enter(state_of(declared), now),
+            AgentEvent::SessionOpened => self.session_opened(now),
             AgentEvent::AgentStarted => self.started(now),
             AgentEvent::ProcessVanished(exit) => self.vanished(exit, now),
             AgentEvent::WindowFocus(focused) => {
@@ -212,6 +248,27 @@ impl AgentMachine {
         Some(AgentState::Idle)
     }
 
+    /// Une session vient de s'ouvrir dans cet onglet (précision du 2026-08-24 à ADR-0007).
+    ///
+    /// Elle n'ouvre **aucun** état de travail, et c'est tout l'intérêt : le hook dit qu'un
+    /// agent est là, pas qu'il fait quelque chose.
+    ///
+    /// Deux cas, et ils vont dans le même sens :
+    ///
+    /// - un onglet en `working` ou en `waiting` n'est pas interrompu. `SessionStart` part
+    ///   aussi sur un `/clear` et sur un compactage, c'est-à-dire **au milieu d'un tour** :
+    ///   y écrire `idle` afficherait un agent au repos pendant qu'il travaille ;
+    /// - partout ailleurs — un onglet neuf, ou la ligne d'un agent fini qu'on relance —
+    ///   l'onglet repart d'`idle`. C'est un vrai changement d'état sur une ligne `done` :
+    ///   la session qui s'ouvre n'est pas celle qui vient de finir.
+    fn session_opened(&mut self, now: Instant) -> Option<AgentState> {
+        self.session_open = true;
+        match self.state {
+            AgentState::Working | AgentState::Waiting => None,
+            _ => self.enter(AgentState::Idle, now),
+        }
+    }
+
     /// La sonde a vu un agent démarrer.
     ///
     /// Elle n'a le droit de parler que quand aucun hook ne tient l'état : un agent en
@@ -243,7 +300,17 @@ impl AgentMachine {
             }
             // Un shell sans agent qui perd un processus n'a rien à annoncer, et la ligne
             // d'un agent déjà fini a son état.
-            _ => None,
+            //
+            // Une session ouverte, en revanche, se **ferme** ici, et sans rien annoncer : un
+            // agent qui attendait un prompt et dont le processus disparaît n'a rien raté —
+            // dire `error` d'un agent qu'on vient de quitter serait un échec inventé, et la
+            // notification qui va avec. L'onglet redevient une ligne shell, donc la sonde
+            // reprend la main : sans cette fermeture, un onglet resterait `idle` pour
+            // toujours et le `vim` qu'on y lance ensuite n'y montrerait plus rien.
+            _ => {
+                self.session_open = false;
+                None
+            }
         }
     }
 
@@ -252,6 +319,10 @@ impl AgentMachine {
             return None;
         }
         self.state = state;
+        // Un agent qui finit emporte sa session : `SessionEnd` → `done`, un échec déclaré,
+        // ou un processus disparu. Ce qui suivra dans cet onglet — une commande ordinaire,
+        // ou un agent relancé qui rouvrira sa session — retrouve donc la sonde.
+        self.session_open &= !has_finished(state);
         // La ligne d'un agent fini obtenue pendant que l'utilisateur regarde a été vue :
         // son compte à rebours part tout de suite. Sinon il attend le focus.
         self.seen_since = (has_finished(state) && self.window_focused).then_some(now);
@@ -312,6 +383,12 @@ mod tests {
             self
         }
 
+        /// Un hook de session a annoncé qu'un agent vient d'ouvrir dans cet onglet.
+        fn opened(mut self) -> Self {
+            self.events.push(AgentEvent::SessionOpened);
+            self
+        }
+
         /// Un hook a déclaré cet état.
         fn declared(mut self, declared: Declared) -> Self {
             self.events.push(AgentEvent::Hook(declared));
@@ -340,6 +417,121 @@ mod tests {
         // Then
         assert_eq!(announced, Some(AgentState::Working));
         assert_eq!(machine.state(), AgentState::Working);
+    }
+
+    #[test]
+    fn given_an_instrumented_agent_that_just_opened_when_nothing_else_happens_then_it_is_idle_and_holds_its_session(
+    ) {
+        // Given — `claude` vient d'être tapé, ses hooks sont posés, aucun prompt n'a été
+        // envoyé. C'est la tranche entière en un test : la session existe, donc la machine
+        // existe, donc la présence vue par la sonde ne répond plus pour cet onglet — et
+        // pourtant rien n'est en cours (ADR-0007, précision du 2026-08-24).
+        let (mut machine, _clock) = AgentBuilder::new().build();
+
+        // When
+        let announced = machine.on(AgentEvent::SessionOpened);
+
+        // Then — `idle` sans changement à annoncer, et une session qui retient la machine
+        assert_eq!(announced, None);
+        assert_eq!(machine.state(), AgentState::Idle);
+        assert!(machine.holds_a_session());
+    }
+
+    #[test]
+    fn given_a_session_that_just_opened_when_the_user_sends_a_prompt_and_the_turn_ends_then_the_transitions_are_unchanged(
+    ) {
+        // Given — la séquence complète d'un tour, depuis l'ouverture : `SessionStart`, puis
+        // `UserPromptSubmit`, puis `Stop`. Ouvrir la session ne doit rien changer aux deux
+        // flèches du diagramme §6.2 qui suivent.
+        let (mut machine, _clock) = AgentBuilder::new().opened().build();
+
+        // When
+        let prompted = machine.on(AgentEvent::Hook(Declared::Working));
+        let ended = machine.on(AgentEvent::Hook(Declared::Waiting));
+
+        // Then
+        assert_eq!(prompted, Some(AgentState::Working));
+        assert_eq!(ended, Some(AgentState::Waiting));
+    }
+
+    #[test]
+    fn given_a_working_agent_when_a_compaction_reopens_its_session_then_the_turn_is_not_interrupted(
+    ) {
+        // Given — `SessionStart` ne part pas qu'au démarrage : un `/clear` et un compactage
+        // le déclenchent **au milieu d'un tour**. Y écrire `idle` afficherait un agent au
+        // repos pendant qu'il travaille, et le glyphe s'arrêterait de tourner sous les yeux
+        // de l'utilisateur.
+        let (mut machine, _clock) = AgentBuilder::new()
+            .opened()
+            .declared(Declared::Working)
+            .build();
+
+        // When
+        let announced = machine.on(AgentEvent::SessionOpened);
+
+        // Then
+        assert_eq!(announced, None);
+        assert_eq!(machine.state(), AgentState::Working);
+    }
+
+    #[test]
+    fn given_a_done_line_when_a_new_session_opens_in_the_same_tab_then_the_line_goes_back_to_idle()
+    {
+        // Given — on relance `claude` dans l'onglet qu'on vient de lire. La session qui
+        // s'ouvre n'est pas celle qui vient de finir : garder `done` afficherait la fin d'un
+        // agent pendant qu'un autre attend un prompt.
+        let (mut machine, clock) = AgentBuilder::new()
+            .watched()
+            .opened()
+            .declared(Declared::Working)
+            .declared(Declared::Done)
+            .build();
+        clock.advance(5);
+
+        // When
+        let announced = machine.on(AgentEvent::SessionOpened);
+
+        // Then — et plus rien n'expire : le compte à rebours des 30 s de la ligne finie est
+        // oublié avec elle.
+        clock.advance(3600);
+        assert_eq!(announced, Some(AgentState::Idle));
+        assert_eq!(machine.tick(), None);
+        assert!(machine.holds_a_session());
+    }
+
+    #[test]
+    fn given_an_open_session_when_the_agent_declares_its_end_then_the_session_closes_with_it() {
+        // Given — `SessionEnd` → `done`. La session ne survit pas à l'agent qui la tenait :
+        // sans cette fermeture, l'onglet resterait accroché à sa machine pour toujours, et
+        // le `vim` qu'on y lancerait ensuite n'y montrerait plus rien.
+        let (mut machine, _clock) = AgentBuilder::new()
+            .opened()
+            .declared(Declared::Working)
+            .build();
+
+        // When
+        machine.on(AgentEvent::Hook(Declared::Done));
+
+        // Then
+        assert!(!machine.holds_a_session());
+    }
+
+    #[test]
+    fn given_an_open_session_with_nothing_in_flight_when_its_process_vanishes_then_no_failure_is_invented(
+    ) {
+        // Given — l'utilisateur quitte `claude` à son invite, sans qu'aucun hook de fin ne
+        // soit parti. Rien n'était en vol : dire `error` inventerait un échec, et poserait
+        // la notification qui va avec (spec §8). Ce qui doit se passer est plus simple —
+        // l'onglet redevient une ligne shell, donc la sonde reprend la main.
+        let (mut machine, _clock) = AgentBuilder::new().opened().build();
+
+        // When
+        let announced = machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
+
+        // Then
+        assert_eq!(announced, None);
+        assert_eq!(machine.state(), AgentState::Idle);
+        assert!(!machine.holds_a_session());
     }
 
     #[test]
