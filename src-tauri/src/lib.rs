@@ -90,8 +90,8 @@ use features::pty::{
     AgentStates, PtyRegistry, RepoRef, SystemPtySpawner, TabId, TabLocation, WorktreeLocator,
 };
 use features::settings::{
-    AdapterProfile, BlockAt, ConfigTarget, FileToolStore, HookBlocks, SystemCommands,
-    SystemConfigFiles, ToolRecognition, ToolRegistry, ToolStore, Verifier,
+    AdapterProfile, BlockAt, ConfigTarget, FileToolStore, HookBlocks, RunningTools, SystemCommands,
+    SystemConfigFiles, ToolRecognition, ToolRegistry, ToolStore, ToolSuggestions, Verifier,
 };
 use features::shortcuts::{BindingStore, Bindings, FileBindingStore};
 use features::sidebar::{
@@ -261,6 +261,24 @@ impl WorktreePlaces for GitPins {
                 name: repo.name,
             }),
         })
+    }
+}
+
+/// Relie le port « ce qu'Ash a vu tourner » de `settings` au registre des onglets.
+///
+/// C'est le sens **inverse** de la reconnaissance, et c'est pour ça qu'il passe par ici :
+/// `pty` demande déjà à `settings` de reconnaître un programme, et faire dépendre `settings`
+/// de `pty` en retour ferait se tenir les deux features par les deux bouts. Chacune garde
+/// donc son trait, et le seul objet qui connaît les deux est celui qui les assemble
+/// ([ADR-0006](../../docs/adr/0006-decouverte-automatique-des-agents.md)).
+///
+/// Rien n'est découvert ici : `recognized_tools()` rend ce que la dernière passe de sonde a
+/// annoncé — aucun `PATH`, aucun disque, aucune autorisation.
+struct TabTools(Arc<PtyRegistry>);
+
+impl RunningTools for TabTools {
+    fn running(&self) -> Vec<features::agents::RecognizedProvider> {
+        self.0.recognized_tools().unwrap_or_default()
     }
 }
 
@@ -849,6 +867,14 @@ pub fn run() -> tauri::Result<()> {
         Arc::new(GitPins),
     ));
 
+    // La reconnaissance d'ADR-0006, nommée parce qu'elle a **deux** lecteurs : le registre
+    // de PTY, qui la reçoit par son port, et les suggestions de la fenêtre de réglages, qui
+    // partagent sa mémoire courte — donc son unique lecture du `settings.json` d'un outil.
+    let recognition = Arc::new(ToolRecognition::new(
+        Arc::clone(&tools),
+        Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
+    ));
+
     let ptys = Arc::new(PtyRegistry::new(
         Box::new(SystemPtySpawner),
         Arc::new(SystemProbe),
@@ -857,10 +883,7 @@ pub fn run() -> tauri::Result<()> {
         // déclarées de `settings`, et la précédence des secondes sur la première. C'est ici
         // — et seulement ici — que les trois features se rejoignent ; aucune ne connaît les
         // deux autres.
-        Arc::new(ToolRecognition::new(
-            Arc::clone(&tools),
-            Arc::clone(&clock) as Arc<dyn shared::time::Clock>,
-        )),
+        Arc::clone(&recognition) as Arc<dyn features::pty::AgentRecognition>,
         Arc::new(SupervisedTabs(Arc::clone(&agents))),
         // La même `SystemProbe` que la sonde : c'est la feature qui connaît les processus au
         // sens du système, et la seule où l'`unsafe` est confiné. La pause d'ADR-0015 est
@@ -941,6 +964,11 @@ pub fn run() -> tauri::Result<()> {
         .manage(Arc::clone(&fonts))
         .manage(Arc::clone(&shortcuts))
         .manage(Arc::clone(&tools))
+        .manage(Arc::new(ToolSuggestions::new(
+            Arc::clone(&tools),
+            Arc::clone(&recognition),
+            Arc::new(TabTools(Arc::clone(&ptys))) as Arc<dyn RunningTools>,
+        )))
         .manage(Arc::clone(&sidebar_rows))
         .manage(Arc::clone(&notification_preferences))
         .manage(Arc::clone(&usage_preferences))
@@ -1049,6 +1077,7 @@ pub fn run() -> tauri::Result<()> {
             features::settings::commands::settings_notifications,
             features::settings::commands::settings_set_notification,
             features::settings::commands::settings_tools,
+            features::settings::commands::settings_suggestions,
             features::settings::commands::settings_reveal_tool,
             features::settings::commands::settings_pending_focus,
             features::settings::commands::settings_proposed_config,

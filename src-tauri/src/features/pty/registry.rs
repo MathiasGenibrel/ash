@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::features::agents::{
-    AgentState, Presence, ProgramIdentity, RecognizedAgent, SessionUsage, Subagent,
+    AgentState, Presence, ProgramIdentity, RecognizedAgent, RecognizedProvider, SessionUsage,
+    Subagent,
 };
 use crate::shared::time::UnixMillis;
 
@@ -448,6 +449,42 @@ impl PtyRegistry {
         roots.sort();
         roots.dedup();
         Ok(roots)
+    }
+
+    /// Les outils reconnus dans l'avant-plan des onglets, **tels que la dernière passe de
+    /// sonde les a annoncés** (ADR-0006).
+    ///
+    /// Elle ne sonde rien, comme [`Self::worktree_roots`] et pour la même raison de fond :
+    /// ce qu'elle rend est déjà là. La sonde pose la question trois fois par seconde et
+    /// range la réponse dans la fiche qu'elle a annoncée ; la redemander ici ferait deux
+    /// appels système par onglet **sur le fil de l'interface**, pour une réponse que le
+    /// registre vient d'écrire. Un onglet ouvert il y a moins d'une passe n'y figure pas
+    /// encore, et c'est sans conséquence : la passe suivante l'y met.
+    ///
+    /// Ce qui en sort est le couple nom + adaptateur, sans l'instrumentation que la fiche
+    /// porte : celui qui demande relit le fichier lui-même, et en tire cinq états là où la
+    /// fiche n'en porte que trois (voir `settings::RunningTools`).
+    ///
+    /// Sans doublon, dans l'ordre des onglets : trois onglets sur `claude` sont **un** outil
+    /// reconnu, et l'ordre est celui de la colonne — donc stable d'un appel à l'autre.
+    pub fn recognized_tools(&self) -> Result<Vec<RecognizedProvider>, PtyError> {
+        let mut found: Vec<RecognizedProvider> = Vec::new();
+        for tab in self.snapshot()? {
+            let Ok(announced) = tab.announced.lock() else {
+                continue;
+            };
+            let Some(agent) = announced.as_ref().and_then(|info| info.agent.as_ref()) else {
+                continue;
+            };
+            if found.iter().any(|seen| seen.command == agent.command) {
+                continue;
+            }
+            found.push(RecognizedProvider {
+                command: agent.command.clone(),
+                adapter: agent.adapter.clone(),
+            });
+        }
+        Ok(found)
     }
 
     /// Cet onglet existe-t-il encore ?
@@ -1362,6 +1399,52 @@ mod tests {
 
         // Then
         assert_eq!(again, Vec::new());
+    }
+
+    #[test]
+    fn given_three_tabs_running_the_same_tool_when_the_settings_window_asks_what_runs_then_it_is_named_once(
+    ) {
+        // Given — la fenêtre de réglages propose de déclarer ce qu'Ash a vu tourner
+        // (ADR-0006). Trois onglets sur `claude` sont **un** outil, pas trois suggestions
+        let (registry, probe, _locator, _agents, recognition) = recognizing_registry("/dev/ash");
+        let binary = "/Users/ash/.local/share/claude/versions/2.1.234";
+        recognition.knows(binary, "claude", Instrumented::Missing);
+        for id in ["A", "B", "C"] {
+            registry.open(spec(), id.to_owned()).unwrap();
+        }
+        probe.hand_over_to_binary(binary);
+        // La boucle de sonde est passée : c'est elle qui range la reconnaissance dans la
+        // fiche annoncée, et c'est cette fiche-là qu'on relit — sans resonder.
+        registry.changes().unwrap();
+
+        // When
+        let running = registry.recognized_tools().unwrap();
+
+        // Then
+        assert_eq!(
+            running,
+            vec![RecognizedProvider {
+                command: "claude".to_owned(),
+                adapter: "claude-code".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn given_tabs_where_no_tool_has_ever_been_seen_when_the_settings_window_asks_what_runs_then_nothing_is_proposed(
+    ) {
+        // Given — des shells à leur invite. Rien ne doit sortir d'ici : la fenêtre ne
+        // propose que ce qu'Ash a **vu**, et jamais ce qu'un parcours du `PATH` trouverait
+        let (registry, _probe, _locator, _agents, recognition) = recognizing_registry("/dev/ash");
+        recognition.knows("/opt/claude", "claude", Instrumented::Installed);
+        registry.open(spec(), "A".to_owned()).unwrap();
+        registry.changes().unwrap();
+
+        // When
+        let running = registry.recognized_tools().unwrap();
+
+        // Then
+        assert_eq!(running, Vec::new());
     }
 
     #[test]

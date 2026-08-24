@@ -9,6 +9,7 @@ import {
     aNotificationsReport,
     aShortcutsReport,
     aSnapshot,
+    aSuggestion,
     aJournalReport,
     aTool,
     aVerification,
@@ -29,6 +30,7 @@ function scene(overrides: Partial<SettingsScene> = {}): SettingsScene {
     return {
         section: "tools",
         snapshot: aSnapshot(),
+        suggestions: [],
         draft: null,
         draftVerification: null,
         failure: null,
@@ -70,6 +72,40 @@ describe("le panneau de la fenêtre de réglages", () => {
         expect(said(composed)).toContain(
             "ash writes to no file until you declare a tool and install its hooks.",
         );
+    });
+
+    it("Given nothing declared but a tool ash saw running, when the panel is composed, then the empty state says what ash saw and offers to declare it", () => {
+        // Given — « no tools declared » restait vrai pendant qu'ash savait que `claude`
+        // tournait dans trois onglets, et l'écran laissait deviner qu'il fallait passer par
+        // le marqueur de la sidebar (ADR-0006)
+        const current = scene({ suggestions: [aSuggestion({ command: "claude" })] });
+
+        // When
+        const composed = settingsPanel(current, IDLE_ACTIONS);
+
+        // Then — le geste est là, et la promesse qu'il n'écrit rien avec lui (ADR-0007)
+        const buttons = composed.flatMap((child) => findAll(child, "ui-button")).map(plainText);
+        expect(buttons).toEqual(["add", "declare"]);
+        expect(said(composed)).toContain("ash has seen claude running in your tabs");
+        expect(said(composed)).toContain("no ash hooks in this file");
+    });
+
+    it("Given a tool that is both declared and still running, when the panel is composed, then it appears once, as a card", () => {
+        // Given — les deux valeurs n'arrivent pas par le même aller-retour : la carte revient
+        // de la commande qu'on vient d'appeler, la suggestion d'un second appel. Sans la
+        // garde, déclarer laisserait le même outil deux fois à l'écran, le temps d'une image
+        const current = scene({
+            snapshot: aSnapshot({ tools: [aTool({ command: "claude" })] }),
+            suggestions: [aSuggestion({ command: "claude" })],
+        });
+
+        // When
+        const composed = settingsPanel(current, IDLE_ACTIONS);
+
+        // Then
+        const buttons = composed.flatMap((child) => findAll(child, "ui-button")).map(plainText);
+        expect(buttons).not.toContain("declare");
+        expect(composed.flatMap((child) => findAll(child, "settings-suggest"))).toEqual([]);
     });
 
     it("Given a list with an invalid entry, when the header and the column are composed, then both announce the same number of problems", () => {

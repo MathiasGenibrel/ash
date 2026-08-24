@@ -156,37 +156,23 @@ impl ToolRegistry {
         Ok(self.lock()?.clone())
     }
 
-    /// La configuration de cet outil porte-t-elle le marqueur d'Ash ?
+    /// Ce que la configuration de cet outil porte, **lu du fichier** (ADR-0007).
     ///
-    /// **Trois réponses et non un oui/non**, parce que « rien n'est posé » et « rien ne peut
-    /// l'être » ne se corrigent pas du tout de la même façon : la première mène au flux
-    /// d'installation qui existe déjà, la seconde n'a pas de geste — aucun adaptateur de
-    /// cette version ne sait instrumenter cet outil (ADR-0008). Les confondre ferait
-    /// proposer un bouton qui n'écrirait jamais rien.
+    /// C'est la lecture brute, et elle a deux consommateurs qui n'en tirent pas la même
+    /// chose : la sidebar veut savoir *pourquoi* un onglet ne montrera jamais `waiting`, et
+    /// trois valeurs lui suffisent ([`instrumented`]) ; la fenêtre de réglages, elle, doit
+    /// distinguer un conflit d'une absence, et en tire les **cinq** états de la ligne `hooks`
+    /// ([`super::hooks::foreseen`]). Rendre le [`BlockAt`] plutôt qu'un résumé est ce qui
+    /// laisse les deux partager une seule lecture.
     ///
-    /// La question est bien « le marqueur est-il là ? » et pas « le bloc est-il celui qu'on
-    /// écrirait » : un bloc d'une version antérieure, ou modifié à la main, **est** une
-    /// instrumentation — l'outil parle, et c'est la fenêtre de réglages qui dit dans quel
-    /// état elle est. La sidebar, elle, ne signale que ce qui explique une absence de
-    /// `waiting` ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+    /// `None` dans les deux cas où il n'y a rien à lire : cet adaptateur n'instrumente rien,
+    /// ou il ne nomme aucun dossier et l'entrée n'en désigne pas.
     ///
     /// **Elle lit un fichier** : son appelant est seul responsable de ne pas la poser trois
     /// fois par seconde (voir [`super::recognition`]).
-    pub fn instrumentation(&self, adapter: &str, config: Option<&str>) -> Instrumented {
-        let Some(target) = self.verifier.target(adapter, config) else {
-            return Instrumented::Unsupported;
-        };
-        match self.blocks.inspect(adapter, &target) {
-            None => Instrumented::Unsupported,
-            Some(BlockAt { presence, .. }) => match presence {
-                Presence::Current { .. }
-                | Presence::Superseded { .. }
-                | Presence::HandEdited { .. } => Instrumented::Installed,
-                Presence::Missing { .. } | Presence::NotAnObject | Presence::Unreadable { .. } => {
-                    Instrumented::Missing
-                }
-            },
-        }
+    pub fn presence(&self, adapter: &str, config: Option<&str>) -> Option<BlockAt> {
+        let target = self.verifier.target(adapter, config)?;
+        self.blocks.inspect(adapter, &target)
     }
 
     pub fn tools(&self) -> Result<Vec<ToolDeclaration>, SettingsError> {
@@ -656,6 +642,32 @@ impl ToolRegistry {
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Vec<ToolDeclaration>>, SettingsError> {
         self.tools.lock().map_err(|_| SettingsError::Poisoned)
+    }
+}
+
+/// Ce que la sidebar retient d'une lecture de configuration — **trois valeurs, pas cinq**.
+///
+/// « Rien n'est posé » et « rien ne peut l'être » ne se corrigent pas du tout de la même
+/// façon : la première mène au flux d'installation qui existe déjà, la seconde n'a pas de
+/// geste — aucun adaptateur de cette version ne sait instrumenter cet outil (ADR-0008). Les
+/// confondre ferait proposer un marqueur qui n'ouvrirait sur rien.
+///
+/// La question est bien « le marqueur est-il là ? » et pas « le bloc est-il celui qu'on
+/// écrirait » : un bloc d'une version antérieure, ou modifié à la main, **est** une
+/// instrumentation — l'outil parle, et c'est la fenêtre de réglages qui dit dans quel état
+/// elle est. La sidebar, elle, ne signale que ce qui explique une absence de `waiting`
+/// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+pub fn instrumented(found: Option<&BlockAt>) -> Instrumented {
+    match found {
+        None => Instrumented::Unsupported,
+        Some(BlockAt { presence, .. }) => match presence {
+            Presence::Current { .. }
+            | Presence::Superseded { .. }
+            | Presence::HandEdited { .. } => Instrumented::Installed,
+            Presence::Missing { .. } | Presence::NotAnObject | Presence::Unreadable { .. } => {
+                Instrumented::Missing
+            }
+        },
     }
 }
 
