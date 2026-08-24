@@ -31,7 +31,7 @@ import type {
     WindowPorts,
 } from "./contract";
 import type { RemovalStage, ShortcutCapture } from "./components";
-import { captureIntent, focusedDraft, GENERIC_ADAPTER, readStroke } from "./model";
+import { captureIntent, focusedDraft, GENERIC_ADAPTER, needsVerifying, readStroke } from "./model";
 import { createRelaunch, type Timer, windowTimer } from "./relaunch";
 import { moveSection, sectionStep, type SettingsSection } from "./sections";
 import { SettingsView } from "./view";
@@ -775,7 +775,18 @@ export function mountSettings(
 
     draw();
     // La demande de la sidebar se lit **après** la liste : voir [`focusTool`].
-    void apply(ports.tools()).then(askFocus);
+    //
+    // Puis la séquence, **si la liste porte une entrée que rien n'a jugée** : c'est le cas
+    // au redémarrage, où les déclarations reviennent de `~/.ash/tools.json` sans ce
+    // qu'elles avaient prouvé. La liste s'affiche d'abord telle que le backend la tient —
+    // *non vérifiée*, bouton d'installation visible et éteint avec sa raison (spec §9.1) —
+    // et les quatre tests la remplacent quand ils ont parlé.
+    void apply(ports.tools())
+        .then(askFocus)
+        .then(() => {
+            if (!needsVerifying(snapshot.tools)) return;
+            void apply(ports.verifyAll());
+        });
     void askNotifications();
     // Le journal est lu au montage comme l'apparence, et non à l'ouverture d'une section :
     // sa ligne vit sous la liste des outils, qui est la première chose affichée.

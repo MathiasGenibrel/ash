@@ -585,7 +585,7 @@ Ash ◀──unix socket──────────────────�
 `ash-event <state> --tab <id>` est la **forme canonique**, celle qu'Ash écrit dans le
 bloc de hooks. C'est elle que le `settings.json` de l'utilisateur portera.
 
-Le socket vit dans `~/.ash/`, avec `config.toml` et `theme.json`, et non dans `/tmp`.
+Le socket vit dans `~/.ash/`, avec `tools.json` et `theme.json`, et non dans `/tmp`.
 Le suffixe `<uid>` que dessinait la première rédaction n'existait que pour contourner le
 fait que `/tmp` est partagé — un problème qu'on peut ne pas avoir. Un dossier personnel
 en `0700` ferme en outre la fenêtre entre le `bind` et la pose du `0600` sur le socket ;
@@ -718,31 +718,46 @@ theme     = "system"              # system | light | dark
 font      = "JetBrains Mono"      # défaut ; liste des monospace installées
 font_size = 13
 
-[[command]]
-match   = "claude"
-label   = "Pro"                   # libellé d'affichage, optionnel
-adapter = "claude-code"
-config  = "~/.claude"
-
-[[command]]
-match   = "claude-perso"
-label   = "Perso"
-adapter = "claude-code"
-config  = "~/.claude-perso"
-
-[[command]]
-match   = "codex"
-adapter = "codex"
-
-[[command]]
-match   = "kimi"
-adapter = "generic"        # aucun état fin, seulement idle/done/error
-
 [notifications]
 waiting = true
 error   = true
 done    = false
 ```
+
+**Amendement du 2026-08-24 — les commandes reconnues ne sont pas dans ce fichier.** La
+rédaction d'origine y dessinait des `[[command]]` ; ils vivent dans `~/.ash/tools.json`,
+éditable à la main **et** par l'écran de réglages, comme le reste de cette section le
+promet :
+
+```json
+{
+  "tools": [
+    {
+      "command": "claude",
+      "label": "Pro",
+      "adapter": "claude-code",
+      "config": "~/.claude",
+      "last_valid_config": "~/.claude"
+    },
+    { "command": "claude-perso", "label": "Perso", "adapter": "claude-code", "config": "~/.claude-perso" },
+    { "command": "codex", "adapter": "codex" },
+    { "command": "kimi", "adapter": "generic" }
+  ]
+}
+```
+
+`command` est le `match` d'origine — le nom du processus, et l'identité de l'entrée. Le
+format est JSON parce que les quatre magasins déjà écrits le sont (`theme.json`,
+`notifications.json`, `shortcuts.json`, `state.json`) : un cinquième format aurait demandé
+une dépendance de plus pour quatre champs. Aucun fichier `config.toml` n'existe, et les
+sections `[ui]`, `[appearance]` et `[notifications]` ci-dessus sont elles aussi portées
+aujourd'hui par leurs magasins respectifs.
+
+`last_valid_config` est le seul champ que la rédaction d'origine n'avait pas : c'est la
+mémoire qu'exige le §9.1, sans laquelle « réinitialiser une entrée » ramènerait après un
+redémarrage au défaut de l'adaptateur. Ce qui n'y est **pas**, en revanche, est le résultat
+des quatre tests : une vérification est un fait daté sur la machine, donc une entrée relue
+repart *non vérifiée* et se revérifie comme une entrée saisie.
 
 ### 9.1 Vérification d'une entrée
 
@@ -791,8 +806,8 @@ Tant qu'une entrée n'a jamais été valide, elle n'a rien à restaurer : le bou
 
 ### 9.2 Fichiers écrits par Ash
 
-`~/.ash/state.json` (worktrees épinglés, état replié) et
-`~/.ash/journal/<repo>.jsonl` (attribution, cf. §3.1).
+`~/.ash/tools.json` (les commandes reconnues, cf. §9), `~/.ash/state.json` (worktrees
+épinglés, état replié) et `~/.ash/journal/<repo>.jsonl` (attribution, cf. §3.1).
 
 ---
 
@@ -806,7 +821,8 @@ fiches de branche dans les dépôts où il a servi — c'est assumé, et c'est l
 | `settings.json` de chaque commande reconnue | poser les hooks | Oui — une entrée par événement, chacune marquée et versionnée (`# ash:hook v1`), fusionnée avec les hooks déjà là, sauvegarde `.bak` avant écriture, désinstallation en un geste qui rend le fichier à l'octet près |
 | `<worktree>/.ash/worktree.md` | la fiche de branche, committée avec la branche | Oui — suppression du fichier, mais **elle est passée dans l'historique git** ([ADR-0013](./adr/0013-fiche-de-branche-dans-le-depot.md)) |
 | Environnement des bash qu'il crée | `ASH_TAB_ID`, `ASH_SOCK` | Oui — n'existe que dans les process enfants d'Ash |
-| `~/.ash/` | config, état, journal d'attribution | Oui — suppression du dossier |
+| `~/.ash/tools.json` | les commandes reconnues : leur libellé, leur adaptateur, leur dossier de configuration et le dernier dossier valide (§9) | Oui — suppression du fichier, ou le `✕` d'une carte pour une entrée |
+| `~/.ash/` | le reste : préférences, état, journal d'attribution | Oui — suppression du dossier |
 | **Rien d'autre** | pas de `.zshrc`, pas de `PATH`, pas de shim, pas de hook git dans le dépôt | — |
 
 Le suivi du `cwd` se fait par sonde système précisément pour éviter de toucher à la

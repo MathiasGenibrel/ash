@@ -103,7 +103,7 @@ describe("la carte d'une entrée déclarée", () => {
         expect(reset[0]?.attrs["title"]).toBe("back to ~/.claude");
     });
 
-    it("Given an entry that has not been verified since it changed, when its card is described, then the dot says nothing is written to config.toml", () => {
+    it("Given an entry that has not been verified since it changed, when its card is described, then the dot says no hooks are written for it", () => {
         // Given — tant qu'une entrée n'a pas prouvé son dossier, elle vit en mémoire. La
         // pastille est la seule chose qui le dit
         const tool = aTool({ verification: aVerification("invalid"), verified: false });
@@ -112,7 +112,7 @@ describe("la carte d'une entrée déclarée", () => {
         const dot = find(toolCard(tool, context(), recorder()).build(), "settings-unsaved");
 
         // Then
-        expect(dot?.attrs["aria-label"]).toBe("not verified — nothing written to config.toml");
+        expect(dot?.attrs["aria-label"]).toBe("not verified — no hooks written for this entry");
     });
 
     it("Given an entry whose adapter is picked from the menu, when the menu changes, then the card asks for the entry to be retargeted", () => {

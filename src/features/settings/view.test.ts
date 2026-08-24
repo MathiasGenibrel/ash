@@ -143,7 +143,7 @@ describe("le panneau de la fenêtre de réglages", () => {
 
     it("Given the appearance section, when the panel is composed, then it settles the theme here instead of sending the user to the menu", () => {
         // Given — c'était la section qui renvoyait à `View ▸ Theme`, et la fenêtre de réglages
-        // est censée être l'autre façon d'éditer `~/.ash/config.toml` (spec §9) : envoyer
+        // est censée être l'autre façon d'éditer ce que `~/.ash` garde (spec §9) : envoyer
         // l'utilisateur ailleurs est un aveu, pas une réponse (#110)
         const composed = settingsPanel(scene({ section: "appearance" }), IDLE_ACTIONS);
 

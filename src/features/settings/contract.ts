@@ -14,7 +14,7 @@
 import type { AgentState } from "@/shared/ipc";
 
 /**
- * Une commande reconnue — le `[[command]]` de `~/.ash/config.toml` (spec §9).
+ * Une commande reconnue — une entrée de `~/.ash/tools.json` (spec §9).
  *
  * Miroir de `ToolDeclaration` en Rust. `command` est l'identité : c'est le `match` du
  * fichier, donc le nom de processus que la sonde compare.

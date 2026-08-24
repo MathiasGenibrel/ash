@@ -3,7 +3,7 @@
 //! Le pendant exact de [`super::agent_states`] : `pty` tient les onglets et la sonde, il ne
 //! décide pas de ce qu'est un agent. La table des outils connus vit dans `features/agents`
 //! ([ADR-0006](../../../../docs/adr/0006-decouverte-automatique-des-agents.md)), et la
-//! conciliation entre cette table et les entrées de `~/.ash/config.toml` vit dans
+//! conciliation entre cette table et les entrées de `~/.ash/tools.json` vit dans
 //! `features/settings`, qui possède la liste des commandes reconnues.
 //!
 //! Le registre **demande**, il ne déduit pas — c'est ce qui lui évite de connaître un seul

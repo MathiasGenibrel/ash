@@ -122,7 +122,9 @@ mod tests {
 
     use super::*;
     use crate::features::hooks::Presence;
-    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders};
+    use crate::features::settings::fakes::{FakeBlocks, FakeCommands, FakeFolders, FakeToolStore};
+    use crate::features::settings::persisted::PersistedTool;
+    use crate::features::settings::store::ToolStore;
     use crate::features::settings::tool::NewTool;
     use crate::features::settings::verification::{AdapterProfile, Verifier};
     use crate::shared::time::UnixMillis;
@@ -179,6 +181,7 @@ mod tests {
     struct RecognitionBuilder {
         blocks: FakeBlocks,
         declared: Vec<(&'static str, &'static str)>,
+        stored: Vec<PersistedTool>,
     }
 
     impl RecognitionBuilder {
@@ -186,6 +189,7 @@ mod tests {
             Self {
                 blocks: FakeBlocks::new().without_hooks("generic"),
                 declared: Vec::new(),
+                stored: Vec::new(),
             }
         }
 
@@ -207,9 +211,17 @@ mod tests {
             self
         }
 
-        /// Une entrée écrite à la main dans `~/.ash/config.toml` (spec §9).
+        /// Une entrée déclarée dans la fenêtre de réglages, pendant cette session.
         fn declaring(mut self, command: &'static str, adapter: &'static str) -> Self {
             self.declared.push((command, adapter));
+            self
+        }
+
+        /// Une entrée que `~/.ash/tools.json` porte **avant** qu'Ash ne démarre — celle de
+        /// la session précédente, ou celle qu'une main a écrite (spec §9).
+        fn stored(mut self, command: &str, adapter: &str) -> Self {
+            self.stored
+                .push(FakeToolStore::entry(command, adapter, None));
             self
         }
 
@@ -222,7 +234,11 @@ mod tests {
                 Arc::new(FakeCommands::new()),
                 profiles(),
             ));
-            let tools = Arc::new(ToolRegistry::new(verifier, Arc::new(self.blocks)));
+            let tools = Arc::new(ToolRegistry::restore(
+                verifier,
+                Arc::new(self.blocks),
+                Arc::new(FakeToolStore::carrying(self.stored)) as Arc<dyn ToolStore>,
+            ));
             for (command, adapter) in self.declared {
                 tools
                     .declare(NewTool {
@@ -247,6 +263,33 @@ mod tests {
             name: "2.1.234".to_owned(),
             argv0: Some("claude".to_owned()),
         }
+    }
+
+    #[test]
+    fn given_a_tool_declared_in_an_earlier_session_when_a_tab_runs_it_then_it_is_recognized_without_opening_the_window(
+    ) {
+        // Given — la reconnaissance est posée à chaque passe de la boucle de sonde, dès le
+        // premier onglet, et la fenêtre de réglages n'est qu'un des lecteurs du registre
+        // (ADR-0006/0009). Une déclaration qui n'arriverait au registre qu'à l'ouverture de
+        // la fenêtre laisserait un outil déclaré la veille inconnu tant que personne n'a
+        // cliqué. `kimi-mien` n'est dans aucune table embarquée : seul le fichier le nomme
+        let (recognition, _) = RecognitionBuilder::new()
+            .stored("kimi-mien", "generic")
+            .build();
+        let mine = ProgramIdentity {
+            executable: PathBuf::from("/opt/bin/kimi-mien"),
+            name: "kimi-mien".to_owned(),
+            argv0: Some("kimi-mien".to_owned()),
+        };
+
+        // When
+        let found = recognition.recognize(&mine);
+
+        // Then
+        assert_eq!(
+            found.map(|agent| (agent.command, agent.adapter)),
+            Some(("kimi-mien".to_owned(), "generic".to_owned()))
+        );
     }
 
     #[test]
