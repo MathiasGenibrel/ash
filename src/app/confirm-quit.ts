@@ -1,10 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { askForConfirmation, composeConfirmBox, type CloseAnswer } from "@/features/terminal";
+import {
+    askForConfirmation,
+    composeConfirmBox,
+    confirmLine,
+    type ConfirmAnswer,
+} from "@/features/terminal";
 import { presentAgentState } from "@/shared/agent-state";
 import type { TabInfo } from "@/shared/ipc";
-import { row, text, type UiComponent } from "@/shared/ui";
+import { text, type UiComponent } from "@/shared/ui";
 
 /**
  * La question posée quand `⌘Q` arrive et qu'un agent tourne (issue #177, spec §4.4).
@@ -27,9 +32,6 @@ import { row, text, type UiComponent } from "@/shared/ui";
  */
 const CONFIRM_QUIT_EVENT = "ash://confirm-quit";
 
-/** La classe d'une ligne d'agent, peinte par `features/terminal/terminal.css`. */
-const ITEM_CLASS = "ash-confirm-item";
-
 /**
  * Ce que la boîte dit : combien d'agents, puis lesquels — un par ligne.
  *
@@ -43,7 +45,7 @@ const ITEM_CLASS = "ash-confirm-item";
 export function composeQuitBox(
     appName: string,
     running: readonly TabInfo[],
-    answer: CloseAnswer,
+    answer: ConfirmAnswer,
 ): UiComponent {
     const count = running.length;
     const headline =
@@ -55,7 +57,7 @@ export function composeQuitBox(
         [
             text(headline),
             ...running.map((tab) =>
-                row(text(`${tab.cwd} — ${presentAgentState(tab.state).label}`)).class(ITEM_CLASS),
+                confirmLine(`${tab.cwd} — ${presentAgentState(tab.state).label}`),
             ),
         ],
         "Quitter",

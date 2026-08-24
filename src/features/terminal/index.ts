@@ -96,8 +96,9 @@ export { tauriPty as tauriPtyBridge } from "./pty-bridge";
 export {
     askForConfirmation,
     composeConfirmBox,
+    confirmLine,
     CANCEL_FOCUS_KEY,
-    type CloseAnswer,
+    type ConfirmAnswer,
 } from "./confirm-dialog";
 
 /** Ce que la feature annonce de ses onglets à qui les affiche autrement — la sidebar. */

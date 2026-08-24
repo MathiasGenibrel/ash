@@ -47,4 +47,4 @@ mod macos;
 mod question;
 
 pub use macos::intercept_terminate;
-pub use question::{ObservedTabs, QuitGate, QuitQuestion};
+pub use question::{AskToQuit, ObservedTabs, QuitGate, QuitQuestion};
