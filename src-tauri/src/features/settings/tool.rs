@@ -183,7 +183,7 @@ impl NewTool {
         if !adapters.iter().any(|known| known == &adapter) {
             return Err(SettingsError::UnknownAdapter(adapter));
         }
-        self.retained(&adapter, declared)
+        self.accepted(&adapter, declared)
     }
 
     /// La même saisie, **relue d'un fichier** plutôt que tapée dans le formulaire.
@@ -206,11 +206,15 @@ impl NewTool {
         if adapter.is_empty() {
             return Err(SettingsError::UnknownAdapter(adapter));
         }
-        self.retained(&adapter, declared)
+        self.accepted(&adapter, declared)
     }
 
     /// Le corps commun des deux : ce qui vaut pour une saisie vaut pour une relecture.
-    fn retained(
+    ///
+    /// Le nom dit la décision qu'elle porte — « ce qu'Ash accepte de retenir » — et non le
+    /// fait de garder sur le disque : ce qui la traverse n'est pas encore écrit nulle part,
+    /// et c'est [`super::store`] qui garde.
+    fn accepted(
         self,
         adapter: &str,
         declared: &[ToolDeclaration],

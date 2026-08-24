@@ -108,14 +108,7 @@ impl ToolRegistry {
         let found = store.load();
         let mut tools: Vec<ToolDeclaration> = Vec::new();
         for stored in &found.tools {
-            let restored = NewTool {
-                command: stored.command.clone(),
-                label: stored.label.clone(),
-                adapter: stored.adapter.clone(),
-                config: stored.config.clone(),
-            }
-            .restore(&tools);
-            let Ok(tool) = restored else {
+            let Ok(tool) = stored.draft().restore(&tools) else {
                 continue;
             };
             // La mémoire est un **dossier**, et il n'y a qu'un producteur de ce type :
@@ -644,9 +637,21 @@ impl ToolRegistry {
         if *saved == now {
             return;
         }
-        saved.clone_from(&now);
-        drop(saved);
-        let _ = self.store.save(&now);
+        // Le verrou est **gardé pendant l'écriture**, et il le reste pour que le fichier
+        // dise ce que `saved` prétend. `settle` est appelée depuis les fils des seconds
+        // temps (`commands.rs` les lance par `std::thread::spawn`, `permits` les borne) :
+        // deux persistances se croisent donc pour de vrai. Relâcher ici laisserait la plus
+        // ancienne écrire en dernier pendant que `saved` porterait la plus récente — et la
+        // comparaison ci-dessus, qui compare au souvenir et non au disque, ne corrigerait
+        // alors plus jamais l'écart. Une déclaration serait perdue au redémarrage sans que
+        // rien ne l'ait dit.
+        if self.store.save(&now).is_ok() {
+            // Gardé **seulement si le disque l'a pris** : un `~/.ash` momentanément
+            // inscriptible ne doit pas faire tenir pour écrit ce qui ne l'est pas. Le
+            // geste suivant réessaie, au lieu de sauter l'écriture parce que le souvenir,
+            // lui, avait avancé.
+            *saved = now;
+        }
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Vec<ToolDeclaration>>, SettingsError> {
@@ -1710,6 +1715,31 @@ mod tests {
                 "{folder} n'a pas été rendu tel quel"
             );
         }
+    }
+
+    #[test]
+    fn given_a_disk_that_refused_the_write_when_a_later_gesture_persists_then_ash_writes_again() {
+        // Given — `~/.ash` momentanément non inscriptible, un disque plein. L'échec ne remet
+        // pas le geste en cause : l'entrée est déclarée. Mais tenir pour écrit ce qui ne
+        // l'est pas ferait sauter toutes les écritures suivantes qui portent le même
+        // contenu — la comparaison de `persist` compare au souvenir, pas au disque —, et la
+        // déclaration serait perdue au redémarrage sans que rien ne l'ait dit
+        let store = Arc::new(FakeToolStore::empty().refusing());
+        let registry = RegistryBuilder::new().stored(Arc::clone(&store)).build();
+        registry
+            .declare(draft("claude", "claude-code", Some("/home/.nowhere")))
+            .expect("la saisie est valide");
+        assert_eq!(store.commands(), Vec::<String>::new());
+
+        // When — le disque revient, et le geste suivant ne change **rien** à ce qui est
+        // gardé : c'est exactement le cas que le souvenir avancé trop tôt ferait sauter
+        store.accepting();
+        registry
+            .verify(&named("claude"))
+            .expect("le registre répond");
+
+        // Then
+        assert_eq!(store.commands(), vec!["claude".to_owned()]);
     }
 
     #[test]
