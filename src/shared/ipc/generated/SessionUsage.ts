@@ -31,8 +31,9 @@ usedTokens: number,
  * `None` veut dire « Ash ne sait pas sur combien », et c'est une réponse à part entière.
  * Deux chemins y mènent, que l'écran ne distingue pas : aucune source ne nomme de modèle
  * reconnu, ou la configuration ne nomme **pas le modèle qui a tourné** — auquel cas sa
- * fenêtre est celle d'une autre session que celle qu'on mesure. Dans les deux cas : l'écran montre alors la mesure sans la mettre en rapport (`ctx 57k`),
- * sans barre et sans couleur de seuil. C'est le seul champ de tout le contrat dont
+ * fenêtre est celle d'une autre session que celle qu'on mesure. Dans les deux cas,
+ * l'écran montre la mesure sans la mettre en rapport (`ctx 57k`), sans barre et sans
+ * couleur de seuil. C'est le seul champ de tout le contrat dont
  * l'absence a coûté un bug — un dénominateur supposé à 200 000 faisait lire `ctx 28%`
  * sur une conversation qui occupait 6 % de sa fenêtre.
  *
