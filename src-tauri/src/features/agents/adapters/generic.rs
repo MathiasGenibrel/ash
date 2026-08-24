@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::features::agents::adapter::{
-    Adapter, ChildEvent, Instrumentation, RawEvent, SubagentSupport,
+    Adapter, ChildEvent, Instrumentation, RawEvent, SessionEvent, SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
 use crate::features::agents::usage::{ModelSource, Turn, UsageSupport};
@@ -48,6 +48,17 @@ impl Adapter for GenericAdapter {
     /// **aucune ligne fille ne peut apparaître** sous un onglet de cet outil, et rien
     /// n'ira suggérer à l'utilisateur qu'il en manque (spec §6.5).
     fn child_event(&self, _raw: &RawEvent) -> Option<ChildEvent> {
+        None
+    }
+
+    /// Rien du côté des sessions non plus, et pour la troisième fois la même raison : un
+    /// outil dont Ash n'a rien instrumenté ne dit pas qu'une session s'ouvre.
+    ///
+    /// C'est ce qui lui laisse le `working` de **présence** de la sonde (spec §6.2) : sans
+    /// verbe de session, aucune machine à états ne naît dans son onglet, et c'est la sonde
+    /// qui continue d'y répondre — exactement comme avant. Un outil non instrumenté ne perd
+    /// rien à ce que les outils instrumentés y gagnent.
+    fn session_event(&self, _raw: &RawEvent) -> Option<SessionEvent> {
         None
     }
 

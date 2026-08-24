@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::features::agents::adapter::{
-    hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SubagentSupport,
+    hook_mark, Adapter, ChildEvent, HookEntry, Instrumentation, RawEvent, SessionEvent,
+    SubagentSupport,
 };
 use crate::features::agents::state::AgentState;
 use crate::features::agents::usage::{ModelSource, Turn, UsageSupport};
@@ -14,17 +15,17 @@ use crate::features::agents::usage::{ModelSource, Turn, UsageSupport};
 /// plus ancien et de le réécrire, sans avoir à comparer deux textes ni à se demander si
 /// l'utilisateur y a touché.
 ///
-/// **Elle vaut 2 depuis le sixième hook.** La v1 installait cinq entrées ; `SubagentStop`
-/// en fait une sixième (spec §6.5), donc un `settings.json` instrumenté par un Ash antérieur
-/// ne porte pas ce qu'Ash écrirait aujourd'hui. C'est exactement ce que la version existe
-/// pour dire : la feature `hooks` classe alors le fichier en `Superseded`, montre le diff de
-/// l'entrée manquante, et réécrit sans rien demander — le parcours d'ADR-0007, sans cas
-/// particulier à ajouter.
+/// **Elle vaut 3 depuis le septième hook.** La v1 installait cinq entrées ; `SubagentStop`
+/// en a fait une sixième (spec §6.5), et `SessionStart` une septième — donc un
+/// `settings.json` instrumenté par un Ash antérieur ne porte pas ce qu'Ash écrirait
+/// aujourd'hui. C'est exactement ce que la version existe pour dire : la feature `hooks`
+/// classe alors le fichier en `Superseded`, montre le diff de l'entrée manquante, et réécrit
+/// sans rien demander — le parcours d'ADR-0007, sans cas particulier à ajouter.
 ///
 /// La spec §10 écrit `ash block v3` : ce `v3` est une illustration de la *forme* du
-/// marqueur, rédigée avant la moindre ligne de code. Le nombre est le compteur réel, pas
-/// celui de la spec.
-const BLOCK_VERSION: u32 = 2;
+/// marqueur, rédigée avant la moindre ligne de code. Que le compteur réel vaille aujourd'hui
+/// le même nombre est une coïncidence — c'est le compteur qui fait foi, et lui seul.
+const BLOCK_VERSION: u32 = 3;
 
 /// Les hooks de Claude Code qu'Ash installe, et l'état que chacun déclare.
 ///
@@ -75,6 +76,28 @@ const HOOKS: [(&str, AgentState); 5] = [
 /// `Stop`, et il n'a aucun chemin vers l'état de l'onglet. Il ne se lit que par
 /// [`Adapter::child_event`].
 const CHILD_HOOK: (&str, &str) = ("SubagentStop", "subagent-stop");
+
+/// Le septième hook, et le second qui n'annonce **aucun état**.
+///
+/// `SessionStart` part quand une session s'ouvre — au démarrage de `claude`, à sa reprise
+/// (`--continue`, `--resume`), après un `/clear` ou un compactage. Il dit qu'une session
+/// **existe** dans cet onglet, et rien de ce qu'elle fait : un agent qui vient d'ouvrir
+/// n'a reçu aucun prompt, donc il ne travaille pas.
+///
+/// Il vaut pourtant les six autres, et pour deux raisons qui tiennent ensemble
+/// (ADR-0007, précision du 2026-08-24) :
+///
+/// - il fait naître la machine à états de l'onglet, donc la **présence** vue par la sonde
+///   cesse d'y répondre. Sans lui, `claude` à son invite se montre `working` avec un glyphe
+///   qui tourne, alors qu'il attend un prompt ;
+/// - son entrée standard porte un `transcript_path`, comme celle des six autres. C'est ce
+///   qui donne sa jauge de contexte à une session **reprise** dès la première seconde, sans
+///   attendre qu'un prompt soit envoyé.
+///
+/// **Il écrit un verbe qui n'est pas un état**, comme [`CHILD_HOOK`] : `session-start` ne
+/// figure dans aucune table d'états, donc [`Adapter::interpret`] le refuse, et il n'a aucun
+/// chemin vers l'état de l'onglet. Il ne se lit que par [`Adapter::session_event`].
+const SESSION_HOOK: (&str, &str) = ("SessionStart", "session-start");
 
 /// La variable d'environnement qui l'emporte sur toute la configuration de Claude Code.
 const MODEL_VARIABLE: &str = "ANTHROPIC_MODEL";
@@ -206,7 +229,7 @@ impl Adapter for ClaudeCodeAdapter {
     /// d'`ash-event` finit dans une chaîne JSON, et c'est le sérialiseur qui doit décider
     /// comment y échapper un guillemet ou un antislash.
     fn instrumentation(&self, config_dir: &Path) -> Option<Instrumentation> {
-        let mut entries = Vec::with_capacity(HOOKS.len() + 1);
+        let mut entries = Vec::with_capacity(HOOKS.len() + 2);
         for (hook, state) in HOOKS {
             entries.push(HookEntry {
                 // `settings.json` range les hooks de Claude Code sous `hooks`, une clé par
@@ -218,11 +241,19 @@ impl Adapter for ClaudeCodeAdapter {
             });
         }
 
-        // Le sixième, en dernier : il ne déclare pas un état, il nomme un enfant qui finit.
+        // Le sixième : il ne déclare pas un état, il nomme un enfant qui finit.
         let (child_hook, child_word) = CHILD_HOOK;
         entries.push(HookEntry {
             path: vec!["hooks".to_owned(), child_hook.to_owned()],
             item: self.item_for(child_hook, child_word)?,
+        });
+
+        // Le septième, en dernier : il ne déclare pas un état non plus, il dit qu'une
+        // session existe — et il porte son transcript, donc sa mesure.
+        let (session_hook, session_word) = SESSION_HOOK;
+        entries.push(HookEntry {
+            path: vec!["hooks".to_owned(), session_hook.to_owned()],
+            item: self.item_for(session_hook, session_word)?,
         });
 
         Some(Instrumentation {
@@ -265,6 +296,17 @@ impl Adapter for ClaudeCodeAdapter {
     fn child_event(&self, raw: &RawEvent) -> Option<ChildEvent> {
         let (_, child_word) = CHILD_HOOK;
         (raw.kind() == child_word).then_some(ChildEvent::Ended)
+    }
+
+    /// Le verbe du septième hook, et lui seul.
+    ///
+    /// Il ne passe **jamais** par [`Self::interpret`] : une session qui s'ouvre n'est pas un
+    /// état, et un agent qui vient de démarrer n'a rien en vol. C'est le même partage que
+    /// pour [`Self::child_event`] — trois méthodes lisent le même mot brut, et aucune ne
+    /// répond quand une autre a répondu.
+    fn session_event(&self, raw: &RawEvent) -> Option<SessionEvent> {
+        let (_, session_word) = SESSION_HOOK;
+        (raw.kind() == session_word).then_some(SessionEvent::Opened)
     }
 
     /// Claude Code a des sous-tâches, et Ash les entend désormais.
@@ -684,6 +726,68 @@ mod tests {
     }
 
     #[test]
+    fn given_the_seventh_hook_when_its_verb_comes_back_from_the_socket_then_it_opens_a_session_and_declares_nothing(
+    ) {
+        // Given — le bloc installe `SessionStart`, dont la commande écrit `session-start`.
+        // Ce verbe doit faire exactement une chose : dire qu'une session existe. Le traduire
+        // aussi en état remettrait un agent qui attend un prompt en `working`, ce que la
+        // précision du 2026-08-24 à ADR-0007 écarte.
+        let adapter = adapter();
+        let written = written(&adapter);
+        let raw = RawEvent::new("session-start");
+
+        // When
+        let opened = adapter.session_event(&raw);
+        let declared = adapter.interpret(&raw);
+        let child = adapter.child_event(&raw);
+
+        // Then — et le verbe part bien dans le fichier de l'utilisateur : sans l'entrée,
+        // l'adaptateur saurait relire un mot que rien n'enverrait jamais.
+        assert!(
+            written.contains(r#"ash-event' session-start --tab \"$ASH_TAB_ID\""#),
+            "les entrées n'écrivent pas « session-start » :\n{written}"
+        );
+        assert_eq!(opened, Some(SessionEvent::Opened));
+        assert_eq!(declared, None);
+        assert_eq!(child, None);
+    }
+
+    #[test]
+    fn given_the_instrumented_block_when_it_is_read_as_json_then_session_start_is_one_of_its_events(
+    ) {
+        // Given — c'est Claude Code qui lit ce fichier, et il ne déclenche que les
+        // événements qu'il y trouve. Une entrée rangée sous un autre nom serait ignorée sans
+        // un mot, et l'onglet d'un agent qui vient d'ouvrir resterait `working`.
+        let adapter = adapter();
+
+        // When
+        let events: Vec<String> = adapter
+            .instrumentation(Path::new("/home/someone/.claude"))
+            .map(|instrumentation| {
+                instrumentation
+                    .entries
+                    .iter()
+                    .filter_map(|entry| entry.path.get(1).cloned())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Then — les sept, dans l'ordre où l'adaptateur les pose
+        assert_eq!(
+            events,
+            vec![
+                "UserPromptSubmit",
+                "PreToolUse",
+                "Notification",
+                "Stop",
+                "SessionEnd",
+                "SubagentStop",
+                "SessionStart",
+            ]
+        );
+    }
+
+    #[test]
     fn given_two_claude_accounts_when_each_config_dir_is_instrumented_then_they_get_two_separate_files(
     ) {
         // Given — `claude` et `claude-perso`, le cas nommé par ADR-0007. C'est la seule
@@ -720,7 +824,7 @@ mod tests {
         // seule apostrophe présente est celle, échappée, du nom du dossier.
         assert_eq!(
             line,
-            r#"'/Users/x/Ash'\''; rm -rf ~; '\''/ash-event' waiting --tab "$ASH_TAB_ID" # ash:hook v2"#
+            r#"'/Users/x/Ash'\''; rm -rf ~; '\''/ash-event' waiting --tab "$ASH_TAB_ID" # ash:hook v3"#
         );
     }
 

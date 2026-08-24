@@ -23,7 +23,16 @@
 //! | Source | Ce qu'elle produit |
 //! |---|---|
 //! | Un hook, traduit par [`Adapter::interpret`] | `working`, `waiting`, `done`, `error` |
+//! | Un hook de session, par [`Adapter::session_event`] | **rien** — mais l'onglet cesse d'être servi par la sonde |
 //! | La sonde ([`Presence`]) | la **présence** d'un programme, et sa disparition |
+//!
+//! La deuxième ligne est la précision du 2026-08-24 à ADR-0007, et c'est tout ce qu'elle
+//! change : **pour un outil instrumenté, ce sont les hooks qui disent ce que l'agent fait**.
+//! Un `SessionStart` fait naître la machine de l'onglet sans y déclarer quoi que ce soit,
+//! donc `claude` qui attend un prompt s'y montre `idle` au lieu de `working`. Un outil
+//! **sans** hooks n'envoie jamais ce verbe : aucune machine ne naît dans son onglet, et la
+//! sonde continue d'y répondre `working` sur la seule présence (spec §6.2) — c'est
+//! exactement la raison d'être des deux producteurs de `working`, et elle ne bouge pas.
 //!
 //! ## Ce qui date un état
 //!
@@ -42,7 +51,8 @@
 //!
 //! ## Un onglet devient un agent, puis redevient un shell
 //!
-//! Une machine ne naît qu'au premier hook, et meurt dès que son verdict retombe sur `idle`.
+//! Une machine ne naît qu'au premier hook, et meurt dès que son verdict retombe sur `idle`
+//! **sans qu'une session la retienne** ([`AgentMachine::holds_a_session`]).
 //! Entre les deux, c'est elle qui répond ; en dehors, c'est la sonde — un onglet où personne
 //! n'a jamais parlé montre `working` tant qu'un programme tient l'avant-plan, et `idle`
 //! sinon, exactement comme avant cette tranche. C'est ce qui évite d'annoncer la fin d'un
@@ -81,7 +91,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::adapter::{Adapter, ChildEvent, RawEvent};
+use super::adapter::{Adapter, ChildEvent, RawEvent, SessionEvent};
 use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
 use super::notify::{notice, Notice, Notifier};
 use super::preferences::{NotificationChoices, NotificationPreferences};
@@ -269,11 +279,16 @@ impl Supervisor {
     /// adaptateur ne reconnaît ne produit rien du tout — ni état, ni erreur. Deviner serait
     /// exactement ce qu'ADR-0007 écarte.
     pub fn on_hook(&self, event: &EventFrame) {
-        // Les deux lectures du même mot brut, et elles ne se recouvrent jamais : un verbe
-        // d'état n'est pas un verbe d'enfant, et la suite contractuelle le vérifie sur chaque
-        // adaptateur (ADR-0007, amendement du 2026-08-13).
+        // Les **trois** lectures du même mot brut, et elles ne se recouvrent jamais : un
+        // verbe d'état n'est ni un verbe d'enfant ni un verbe de session, et la suite
+        // contractuelle le vérifie sur chaque adaptateur (ADR-0007, amendement du
+        // 2026-08-13, précision du 2026-08-24).
         let declared = self.translate(&event.kind);
         let child = self.child_event(&event.kind);
+        // La troisième est la seule qui ne dise rien de ce que l'agent fait : elle annonce
+        // qu'une session existe. Ce qu'elle produit est la **machine** de l'onglet, et c'est
+        // par là que la présence cesse d'y répondre.
+        let session = self.session_event(&event.kind);
 
         // La lecture du transcript se fait **avant** le verrou, et c'est sa place : c'est le
         // seul accès au disque de ce chemin, et le tenir pendant qu'on lit ferait attendre
@@ -284,7 +299,7 @@ impl Supervisor {
         // un `PreToolUse` vaut celle d'un `Stop`.
         let measured = self.measure(event);
 
-        if declared.is_none() && child.is_none() && measured.is_none() {
+        if declared.is_none() && child.is_none() && session.is_none() && measured.is_none() {
             // Un verbe qu'aucun adaptateur ne reconnaît ne produit rien du tout — ni état, ni
             // ligne fille. Un enfant révélé par un mot inconnu serait deviné.
             return;
@@ -321,17 +336,25 @@ impl Supervisor {
                 tab.usage = measured;
             }
 
-            let Some(declared) = declared else {
-                // Le cas du sixième hook : `SubagentStop` a nommé un enfant, et n'a rien à
-                // dire de l'onglet. Aucun état ne change, donc il n'y a rien à poster — et
-                // c'est très exactement le garde-fou de l'amendement, tenu par le chemin du
-                // code plutôt que par une intention.
-                return;
+            // La session avant l'état, et c'est le seul ordre qui tienne : `SessionStart`
+            // est le premier événement d'une session, et il doit faire naître la machine
+            // **sans** rien y déclarer. C'est elle, en existant, qui retire l'onglet à la
+            // sonde — sinon un `claude` à son invite s'y montrerait `working`.
+            let machine_event = match (session, declared) {
+                (Some(SessionEvent::Opened), _) => AgentEvent::SessionOpened,
+                (None, Some(declared)) => AgentEvent::Hook(declared),
+                (None, None) => {
+                    // Le cas du sixième hook : `SubagentStop` a nommé un enfant, et n'a rien
+                    // à dire de l'onglet. Aucun état ne change, donc il n'y a rien à poster —
+                    // et c'est très exactement le garde-fou de l'amendement, tenu par le
+                    // chemin du code plutôt que par une intention.
+                    return;
+                }
             };
             let changed = tab
                 .machine
                 .get_or_insert_with(|| watching(clock, focused))
-                .on(AgentEvent::Hook(declared));
+                .on(machine_event);
             // Un hook ne passe pas par la boucle de sonde : dater ici, et non à la passe
             // suivante, est ce qui fait que la durée affichée part du moment où l'agent a
             // parlé, et non de la prochaine passe.
@@ -423,7 +446,15 @@ impl Supervisor {
             }
         };
 
-        if state == AgentState::Idle {
+        // Une session ouverte retient la machine, même quand son état est retombé à `idle` :
+        // c'est là qu'est un agent instrumenté qui n'a rien en vol. La rendre à la sonde
+        // ferait remonter `working` sur sa seule présence à la passe suivante, et emporterait
+        // au passage la jauge que son `SessionStart` venait d'apporter.
+        let holds_a_session = tab
+            .machine
+            .as_ref()
+            .is_some_and(AgentMachine::holds_a_session);
+        if state == AgentState::Idle && !holds_a_session {
             // La ligne est redevenue une ligne shell : l'onglet n'est plus un agent, et
             // c'est de nouveau la sonde qui répond pour lui. Ses enfants partent avec lui —
             // un sous-agent sans agent au-dessus n'existe pas (ADR-0003 : c'est le même
@@ -514,6 +545,18 @@ impl Supervisor {
         self.adapters
             .iter()
             .find_map(|adapter| adapter.child_event(&raw))
+    }
+
+    /// Ce que ce mot dit d'une **session**, par la troisième porte du trait.
+    ///
+    /// Symétrique des deux autres, et séparée d'elles pour la même raison : les trois lisent
+    /// le même mot brut sans jamais se croiser, et la suite contractuelle refuse un
+    /// adaptateur qui répondrait à deux d'entre elles.
+    fn session_event(&self, kind: &str) -> Option<SessionEvent> {
+        let raw = RawEvent::new(kind);
+        self.adapters
+            .iter()
+            .find_map(|adapter| adapter.session_event(&raw))
     }
 
     /// Ce que le transcript nommé par cette trame dit de la place consommée, ou rien.
@@ -799,6 +842,126 @@ mod tests {
         // Then
         assert_eq!(at_the_prompt, AgentState::Idle);
         assert_eq!(running, AgentState::Working);
+    }
+
+    #[test]
+    fn given_an_instrumented_agent_that_just_opened_when_the_probe_sees_it_hold_the_foreground_then_the_tab_is_idle(
+    ) {
+        // Given — `claude` vient d'être tapé, ses hooks sont posés, aucun prompt n'est parti.
+        // La sonde voit bien un programme tenir l'avant-plan ; jusqu'ici, c'est ce qui
+        // affichait `working` et faisait tourner le glyphe pour un agent qui ne fait rien
+        // (ADR-0007, précision du 2026-08-24).
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
+
+        // When — le hook du démarrage, puis dix passes de sonde qui voient le processus
+        supervisor.on_hook(&hook("session-start", TAB));
+        let shown: Vec<AgentState> = (0..10)
+            .map(|_| sweep(&supervisor, Presence::Program))
+            .collect();
+
+        // Then — et pas une seule passe à `working` : la machine existe désormais pour cet
+        // onglet, donc la présence n'y répond plus.
+        assert_eq!(shown, vec![AgentState::Idle; 10]);
+    }
+
+    #[test]
+    fn given_a_session_that_just_opened_when_the_user_sends_a_prompt_then_the_tab_works_and_waits_as_before(
+    ) {
+        // Given — le tour complet, depuis l'ouverture. La tranche ne change **que** le
+        // moment où rien n'est en vol : les deux flèches du diagramme §6.2 restent les leurs.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+
+        // When
+        supervisor.on_hook(&hook("working", TAB));
+        let prompted = sweep(&supervisor, Presence::Program);
+        supervisor.on_hook(&hook("waiting", TAB));
+        let ended = sweep(&supervisor, Presence::Program);
+
+        // Then
+        assert_eq!(prompted, AgentState::Working);
+        assert_eq!(ended, AgentState::Waiting);
+    }
+
+    #[test]
+    fn given_a_tool_without_hooks_when_the_probe_sees_it_hold_the_foreground_then_it_still_shows_working(
+    ) {
+        // Given — un outil reconnu mais **non instrumenté** : le socle d'ADR-0008 le sert, il
+        // n'envoie aucun verbe de session, donc aucune machine ne naît dans son onglet. C'est
+        // la moitié de la règle qui ne bouge pas — `working` a deux producteurs (spec §6.2),
+        // et un outil sans hooks garde le premier.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .served_only_by_the_generic_adapter()
+            .build();
+
+        // When
+        let running = sweep(&supervisor, Presence::Program);
+
+        // Then
+        assert_eq!(running, AgentState::Working);
+    }
+
+    #[test]
+    fn given_a_resumed_session_when_its_opening_hook_names_the_transcript_then_the_gauge_is_there_before_any_prompt(
+    ) {
+        // Given — `claude --continue` sur une conversation déjà à moitié pleine. Jusqu'ici la
+        // jauge n'existait qu'à partir du premier hook d'état, donc pas avant le premier
+        // prompt : l'utilisateur reprenait une session sans savoir la place qu'elle occupait.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .running_the_model("sonnet")
+            .holding_transcript(TRANSCRIPT, &transcript_of(80_000))
+            .build();
+
+        // When — le seul événement de la session, et dix passes de sonde derrière lui
+        supervisor.on_hook(&hook("session-start", TAB).with_transcript(Some(TRANSCRIPT)));
+        let measured: Vec<Option<u64>> = (0..10)
+            .map(|_| sweep_usage(&supervisor, Presence::Program).map(|usage| usage.used_tokens))
+            .collect();
+
+        // Then — et la mesure ne disparaît pas à la passe suivante : l'onglet reste un agent
+        // tant que sa session est ouverte, donc la jauge ne part pas avec lui.
+        assert_eq!(measured, vec![Some(80_000); 10]);
+    }
+
+    #[test]
+    fn given_a_brand_new_session_whose_transcript_holds_no_turn_when_it_opens_then_no_gauge_is_shown(
+    ) {
+        // Given — une session neuve : le fichier existe, mais aucun tour d'assistant n'y a
+        // encore été écrit. Une jauge à 0 % dirait « mesuré, et vide » là où il n'y a rien à
+        // mesurer, et rien à l'écran ne distinguerait les deux.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new()
+            .holding_transcript(TRANSCRIPT, r#"{"type":"user","message":{"role":"user"}}"#)
+            .build();
+
+        // When
+        supervisor.on_hook(&hook("session-start", TAB).with_transcript(Some(TRANSCRIPT)));
+
+        // Then
+        assert_eq!(sweep_usage(&supervisor, Presence::Program), None);
+    }
+
+    #[test]
+    fn given_an_open_session_with_nothing_in_flight_when_the_user_quits_it_then_the_tab_goes_back_to_the_probe(
+    ) {
+        // Given — on ouvre `claude`, on ne lui demande rien, on le quitte, puis on lance
+        // autre chose dans le même onglet. Sans la fermeture de la session, l'onglet
+        // resterait accroché à sa machine et le `make` qui suit n'y montrerait plus rien.
+        let Assembled {
+            supervisor,
+            notifier,
+            ..
+        } = SupervisorBuilder::new().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+        sweep(&supervisor, Presence::Program);
+
+        // When
+        let quit = sweep(&supervisor, Presence::Prompt);
+        let something_else = sweep(&supervisor, Presence::Program);
+
+        // Then — et aucun échec inventé, donc aucune bannière : rien n'était en vol.
+        assert_eq!(quit, AgentState::Idle);
+        assert_eq!(something_else, AgentState::Working);
+        assert_eq!(notifier.posted(), Vec::new());
     }
 
     #[test]
