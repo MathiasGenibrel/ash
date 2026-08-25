@@ -172,6 +172,17 @@ pub struct AgentMachine {
     /// **finit** : un état terminal déclaré, ou la disparition du processus. Une session ne
     /// survit donc jamais à l'agent qui la tenait.
     session_open: bool,
+    /// Combien de fois une session s'est refermée dans cet onglet.
+    ///
+    /// **Un compteur, et non un booléen, parce que la question posée porte sur un front et
+    /// non sur un niveau** : une session qui se referme pour qu'une autre s'ouvre dans le
+    /// même geste (`SessionStart` sur un `/clear`) laisse [`Self::holds_a_session`] à `true`
+    /// des deux côtés de l'événement, et resterait invisible.
+    ///
+    /// Il n'a pas de sens à l'écran et n'en prend jamais : sa seule lecture est
+    /// [`Self::sessions_over`], et sa seule valeur utile est la **différence** entre deux
+    /// lectures encadrant un [`Self::on`].
+    sessions_over: u64,
 }
 
 impl AgentMachine {
@@ -187,6 +198,7 @@ impl AgentMachine {
             window_focused: false,
             seen_since: None,
             session_open: false,
+            sessions_over: 0,
         }
     }
 
@@ -203,6 +215,34 @@ impl AgentMachine {
     /// présence — ce que la précision du 2026-08-24 écarte.
     pub fn holds_a_session(&self) -> bool {
         self.session_open
+    }
+
+    /// Combien de sessions se sont refermées ici — la question, et non le prédicat.
+    ///
+    /// Ce que l'appelant veut savoir est « la session qui courait vient-elle de finir ? », et
+    /// il l'obtient en encadrant un [`Self::on`] de deux lectures : le nombre a bougé, ou il
+    /// n'a pas bougé. C'est le superviseur qui la pose, pour ses lignes filles — une ligne
+    /// fille appartient à la session qui l'a créée et ne lui survit pas (spec §6.5).
+    ///
+    /// **Elle est ici parce que la réponse est ici.** Trois gestes referment une session, et
+    /// deux d'entre eux ne changent aucun état : un `SessionStart` qui remplace la session en
+    /// cours, et un processus disparu sous un onglet qui n'avait rien en vol. Un appelant qui
+    /// lirait « ce qui finit » dans l'état rendu par [`Self::on`] n'en verrait qu'un sur
+    /// trois, et rien ne le lui dirait.
+    pub(super) fn sessions_over(&self) -> u64 {
+        self.sessions_over
+    }
+
+    /// La session qui courait n'est plus. **La seule écriture de la règle** : les trois
+    /// gestes passent ici, donc la fermeture et son décompte ne peuvent pas diverger.
+    ///
+    /// Elle compte aussi la fin d'une session qu'Ash n'a jamais vue s'ouvrir — un `claude`
+    /// déjà lancé quand Ash démarre, dont le premier hook connu est son `Stop` puis son
+    /// `SessionEnd`. Il n'y avait rien à refermer, mais il y avait bien une conversation, et
+    /// ses lignes filles ne doivent pas lui survivre davantage que les autres.
+    fn close_session(&mut self) {
+        self.session_open = false;
+        self.sessions_over = self.sessions_over.wrapping_add(1);
     }
 
     /// Il s'est passé quelque chose. Rend le nouvel état s'il a changé, `None` sinon.
@@ -262,6 +302,10 @@ impl AgentMachine {
     ///   l'onglet repart d'`idle`. C'est un vrai changement d'état sur une ligne `done` :
     ///   la session qui s'ouvre n'est pas celle qui vient de finir.
     fn session_opened(&mut self, now: Instant) -> Option<AgentState> {
+        // Celle qui courait s'en va, même quand celle qui arrive prend sa place sans que
+        // rien ne bouge à l'écran : c'est le `/clear` et le compactage, où l'onglet reste
+        // `working` d'un bout à l'autre alors que la conversation, elle, a été remplacée.
+        self.close_session();
         self.session_open = true;
         match self.state {
             AgentState::Working | AgentState::Waiting => None,
@@ -308,7 +352,7 @@ impl AgentMachine {
             // reprend la main : sans cette fermeture, un onglet resterait `idle` pour
             // toujours et le `vim` qu'on y lance ensuite n'y montrerait plus rien.
             _ => {
-                self.session_open = false;
+                self.close_session();
                 None
             }
         }
@@ -322,7 +366,9 @@ impl AgentMachine {
         // Un agent qui finit emporte sa session : `SessionEnd` → `done`, un échec déclaré,
         // ou un processus disparu. Ce qui suivra dans cet onglet — une commande ordinaire,
         // ou un agent relancé qui rouvrira sa session — retrouve donc la sonde.
-        self.session_open &= !has_finished(state);
+        if has_finished(state) {
+            self.close_session();
+        }
         // La ligne d'un agent fini obtenue pendant que l'utilisateur regarde a été vue :
         // son compte à rebours part tout de suite. Sinon il attend le focus.
         self.seen_since = (has_finished(state) && self.window_focused).then_some(now);
@@ -345,11 +391,11 @@ fn state_of(declared: Declared) -> AgentState {
 /// Ce sont les seuls qui s'effacent d'eux-mêmes : ils désignent une ligne à lire, pas un
 /// travail en cours.
 ///
-/// C'est aussi, et par la même occasion, ce qui **ferme une session**
-/// ([`AgentMachine::holds_a_session`]). Le superviseur s'en sert pour la même question posée
-/// des enfants : une ligne fille ne survit pas à la session qui l'a créée (spec §6.5). La
-/// règle n'a donc qu'une écriture, et les deux lectures ne pourront pas diverger.
-pub(super) fn has_finished(state: AgentState) -> bool {
+/// C'est aussi l'un des trois gestes qui **referment une session**, et le seul qui se lise
+/// dans un état ; les deux autres ne changent rien à l'écran. Ce qu'un appelant veut savoir
+/// n'est donc pas ce prédicat mais leur somme, et c'est [`AgentMachine::sessions_over`] qui
+/// la rend — d'où le fait que celui-ci reste privé.
+fn has_finished(state: AgentState) -> bool {
     matches!(state, AgentState::Done | AgentState::Error)
 }
 

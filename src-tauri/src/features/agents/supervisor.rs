@@ -36,11 +36,14 @@
 //!
 //! **Les lignes filles ont leur propre découpe du même flux, et elle est plus courte** : une
 //! ligne fille appartient à la session qui l'a créée, et ne lui survit pas (spec §6.5). Ce
-//! fichier a donc deux endroits — un seul geste, écrit deux fois parce que les deux sources
-//! le produisent — où [`Subagents::session_over`] est appelée : quand une session s'ouvre, et
-//! quand l'onglet entre dans un état terminal, ce qui est très exactement ce que la machine
-//! appelle « la session se ferme » ([`has_finished`]). Rien d'autre ne les touche, et surtout
-//! pas un parent qui passe `waiting`.
+//! fichier n'écrit donc la règle **qu'une fois**, dans [`Tab::on_agent_event`], qui fait
+//! avancer la machine et retire les enfants du même geste. Les deux sources d'événements —
+//! un hook, et le seul front que la sonde ait le droit d'attribuer à l'agent — l'appellent
+//! toutes les deux ; aucune ne peut faire avancer la machine sans elle. Ce n'est pas la
+//! machine qui *dit* qu'une session s'est refermée par l'état qu'elle rend, c'est elle qu'on
+//! *interroge* ([`AgentMachine::sessions_over`]) : deux des trois façons de refermer une
+//! session ne changent aucun état. Rien d'autre ne touche aux enfants, et surtout pas un
+//! parent qui passe `waiting`.
 //!
 //! ## Ce qui date un état
 //!
@@ -100,7 +103,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::adapter::{Adapter, ChildEvent, RawEvent, SessionEvent};
-use super::machine::{has_finished, AgentEvent, AgentMachine, Declared, Exit};
+use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
 use super::notify::{notice, Notice, Notifier};
 use super::preferences::{NotificationChoices, NotificationPreferences};
 use super::state::{AgentState, AgentStatus};
@@ -257,6 +260,32 @@ impl Tab {
             seen: Presence::default(),
         }
     }
+
+    /// Fait avancer la machine de cet onglet, **et retire ses lignes filles si la session qui
+    /// les portait vient de se refermer** (spec §6.5). Rend le nouvel état s'il a changé.
+    ///
+    /// Les deux gestes ne sont pas deux règles : c'est le même événement qui met fin à une
+    /// session et aux enfants qu'elle avait ouverts, et les tenir dans une seule fonction est
+    /// ce qui empêche un troisième appel à [`AgentMachine::on`] d'oublier les seconds. Un
+    /// onglet sans machine n'a ni session ni enfants : il n'y a rien à faire avancer.
+    ///
+    /// La question est **posée à la machine** ([`AgentMachine::sessions_over`]) plutôt que
+    /// relue dans l'état qu'elle rend : deux des trois gestes qui referment une session ne
+    /// changent aucun état, et les lire ici les manquerait sans rien dire.
+    ///
+    /// Ce qui n'est **pas** ici est aussi décidé : un parent qui passe `waiting` ne dit rien
+    /// de ses enfants. Un agent attend couramment ses sous-agents tout en restant disponible
+    /// pour l'utilisateur, et fermer leurs lignes sur un `Stop` effacerait un travail qui
+    /// tourne vraiment.
+    fn on_agent_event(&mut self, event: AgentEvent, now: UnixMillis) -> Option<AgentState> {
+        let machine = self.machine.as_mut()?;
+        let sessions_over = machine.sessions_over();
+        let changed = machine.on(event);
+        if machine.sessions_over() != sessions_over {
+            self.children.session_over(now);
+        }
+        changed
+    }
 }
 
 impl Supervisor {
@@ -359,31 +388,13 @@ impl Supervisor {
                     return;
                 }
             };
-            let changed = tab
-                .machine
-                .get_or_insert_with(|| watching(clock, focused))
-                .on(machine_event);
-
-            // Les enfants après l'onglet, et à cause de lui : une ligne fille appartient à
-            // la session qui l'a créée, et ne lui survit pas (spec §6.5). Les deux gestes
-            // sont ici, et ce sont des **hooks** — aucun délai, aucun silence interprété :
-            //
-            // - une session qui s'ouvre. Ce que ses prédécesseurs avaient laissé au travail
-            //   vient d'une session qui n'existe plus, et leur `SubagentStop` ne partira
-            //   jamais : agent relancé, reprise, `/clear`, compactage ;
-            // - une session qui **finit**, c'est-à-dire un onglet qui entre dans un état
-            //   terminal. C'est la même lecture que celle qui ferme la session dans la
-            //   machine, et c'est pourquoi elle lui est empruntée plutôt que réécrite.
-            //
-            // Ce qui n'est **pas** ici est aussi décidé : un parent qui passe `waiting` ne
-            // dit rien de ses enfants. Un agent attend couramment ses sous-agents tout en
-            // restant disponible pour l'utilisateur, et fermer leurs lignes sur un `Stop`
-            // effacerait un travail qui tourne vraiment.
-            if matches!(machine_event, AgentEvent::SessionOpened)
-                || changed.is_some_and(has_finished)
-            {
-                tab.children.session_over(now);
-            }
+            // La machine naît ici si elle n'existait pas : c'est `SessionStart` qui retire
+            // l'onglet à la sonde, et il faut donc qu'elle soit là avant qu'on l'interroge.
+            tab.machine.get_or_insert_with(|| watching(clock, focused));
+            // Les enfants après l'onglet, et à cause de lui : la fermeture d'une session
+            // emporte ses lignes filles, et les deux tiennent dans le même geste (voir
+            // [`Tab::on_agent_event`]).
+            let changed = tab.on_agent_event(machine_event, now);
 
             // Un hook ne passe pas par la boucle de sonde : dater ici, et non à la passe
             // suivante, est ce qui fait que la durée affichée part du moment où l'agent a
@@ -452,37 +463,31 @@ impl Supervisor {
             tab.seen = before;
         }
 
-        let mut changed = None;
+        // La disparition : le shell a repris son terminal. On ne saura jamais avec quel
+        // code — voir [`Exit::Unseen`]. C'est le **seul** front que la sonde permet
+        // d'attribuer à l'agent ; le lancement, lui, n'est volontairement émis nulle part
+        // ici (voir « Ce que la sonde n'a pas le droit d'attribuer », en tête de fichier).
+        //
+        // C'est aussi le seul changement d'état qu'une passe de sonde peut produire : le
+        // `tick` ci-dessous ne rend jamais qu'`idle`, qui n'interrompt personne. Et c'est le
+        // second appelant de [`Tab::on_agent_event`] : la session part avec le processus,
+        // donc les lignes filles aussi — un agent tué n'enverra le `SubagentStop` d'aucun de
+        // ses enfants, et c'est le cas nommé en premier par le ticket.
+        let changed = if (before, seen) == (Presence::Program, Presence::Prompt) {
+            tab.on_agent_event(AgentEvent::ProcessVanished(Exit::Unseen), now)
+        } else {
+            None
+        };
+
         let state = match tab.machine.as_mut() {
             // Un onglet où aucun agent n'a jamais parlé : c'est la sonde qui répond pour
             // lui, exactement comme au jalon J1.
             None => probed(seen),
             Some(machine) => {
-                // La disparition : le shell a repris son terminal. On ne saura jamais avec
-                // quel code — voir [`Exit::Unseen`]. C'est le **seul** front que la sonde
-                // permet d'attribuer à l'agent ; le lancement, lui, n'est volontairement
-                // émis nulle part ici (voir « Ce que la sonde n'a pas le droit
-                // d'attribuer », en tête de fichier).
-                //
-                // C'est aussi le seul changement d'état qu'une passe de sonde peut
-                // produire : le `tick` ci-dessous ne rend jamais qu'`idle`, qui
-                // n'interrompt personne.
-                if (before, seen) == (Presence::Program, Presence::Prompt) {
-                    changed = machine.on(AgentEvent::ProcessVanished(Exit::Unseen));
-                }
-
                 machine.tick();
                 machine.state()
             }
         };
-
-        // La seconde moitié de la règle des lignes filles (voir [`Self::on_hook`]), sur le
-        // seul front que la sonde ait le droit d'attribuer à l'agent : son processus a
-        // disparu, donc sa session avec lui. C'est le cas nommé en premier par le ticket —
-        // un agent tué n'enverra le `SubagentStop` d'aucun de ses enfants.
-        if changed.is_some_and(has_finished) {
-            tab.children.session_over(now);
-        }
 
         // Une session ouverte retient la machine, même quand son état est retombé à `idle` :
         // c'est là qu'est un agent instrumenté qui n'a rien en vol. La rendre à la sonde
