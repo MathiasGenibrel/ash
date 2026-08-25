@@ -34,6 +34,14 @@
 //! sonde continue d'y répondre `working` sur la seule présence (spec §6.2) — c'est
 //! exactement la raison d'être des deux producteurs de `working`, et elle ne bouge pas.
 //!
+//! **Les lignes filles ont leur propre découpe du même flux, et elle est plus courte** : une
+//! ligne fille appartient à la session qui l'a créée, et ne lui survit pas (spec §6.5). Ce
+//! fichier a donc deux endroits — un seul geste, écrit deux fois parce que les deux sources
+//! le produisent — où [`Subagents::session_over`] est appelée : quand une session s'ouvre, et
+//! quand l'onglet entre dans un état terminal, ce qui est très exactement ce que la machine
+//! appelle « la session se ferme » ([`has_finished`]). Rien d'autre ne les touche, et surtout
+//! pas un parent qui passe `waiting`.
+//!
 //! ## Ce qui date un état
 //!
 //! Le superviseur est aussi le seul endroit qui sache **depuis quand** un onglet est dans
@@ -92,7 +100,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::adapter::{Adapter, ChildEvent, RawEvent, SessionEvent};
-use super::machine::{AgentEvent, AgentMachine, Declared, Exit};
+use super::machine::{has_finished, AgentEvent, AgentMachine, Declared, Exit};
 use super::notify::{notice, Notice, Notifier};
 use super::preferences::{NotificationChoices, NotificationPreferences};
 use super::state::{AgentState, AgentStatus};
@@ -355,6 +363,28 @@ impl Supervisor {
                 .machine
                 .get_or_insert_with(|| watching(clock, focused))
                 .on(machine_event);
+
+            // Les enfants après l'onglet, et à cause de lui : une ligne fille appartient à
+            // la session qui l'a créée, et ne lui survit pas (spec §6.5). Les deux gestes
+            // sont ici, et ce sont des **hooks** — aucun délai, aucun silence interprété :
+            //
+            // - une session qui s'ouvre. Ce que ses prédécesseurs avaient laissé au travail
+            //   vient d'une session qui n'existe plus, et leur `SubagentStop` ne partira
+            //   jamais : agent relancé, reprise, `/clear`, compactage ;
+            // - une session qui **finit**, c'est-à-dire un onglet qui entre dans un état
+            //   terminal. C'est la même lecture que celle qui ferme la session dans la
+            //   machine, et c'est pourquoi elle lui est empruntée plutôt que réécrite.
+            //
+            // Ce qui n'est **pas** ici est aussi décidé : un parent qui passe `waiting` ne
+            // dit rien de ses enfants. Un agent attend couramment ses sous-agents tout en
+            // restant disponible pour l'utilisateur, et fermer leurs lignes sur un `Stop`
+            // effacerait un travail qui tourne vraiment.
+            if matches!(machine_event, AgentEvent::SessionOpened)
+                || changed.is_some_and(has_finished)
+            {
+                tab.children.session_over(now);
+            }
+
             // Un hook ne passe pas par la boucle de sonde : dater ici, et non à la passe
             // suivante, est ce qui fait que la durée affichée part du moment où l'agent a
             // parlé, et non de la prochaine passe.
@@ -445,6 +475,14 @@ impl Supervisor {
                 machine.state()
             }
         };
+
+        // La seconde moitié de la règle des lignes filles (voir [`Self::on_hook`]), sur le
+        // seul front que la sonde ait le droit d'attribuer à l'agent : son processus a
+        // disparu, donc sa session avec lui. C'est le cas nommé en premier par le ticket —
+        // un agent tué n'enverra le `SubagentStop` d'aucun de ses enfants.
+        if changed.is_some_and(has_finished) {
+            tab.children.session_over(now);
+        }
 
         // Une session ouverte retient la machine, même quand son état est retombé à `idle` :
         // c'est là qu'est un agent instrumenté qui n'a rien en vol. La rendre à la sonde
@@ -1245,6 +1283,153 @@ mod tests {
         // Then
         assert_eq!(still_shown, vec![("explore".to_owned(), AgentState::Done)]);
         assert_eq!(expired, vec![]);
+    }
+
+    #[test]
+    fn given_two_working_children_when_a_new_session_opens_in_their_tab_then_both_finish_and_leave_ten_seconds_later(
+    ) {
+        // Given — le cas rapporté : `claude` relancé, repris, `/clear`, compacté. Les enfants
+        // de la session d'avant n'enverront jamais leur `SubagentStop`, et leurs lignes
+        // restaient `working` indéfiniment — `17h44m` sous un parent qui n'a plus rien en vol.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        supervisor.on_hook(&child_hook("working", "agent-8", "qa"));
+
+        // When — la nouvelle session s'ouvre
+        clock.advance(3_600);
+        supervisor.on_hook(&hook("session-start", TAB));
+        let once_it_reopened = sweep_children(&supervisor, Presence::Program);
+        clock.advance(10);
+        let ten_seconds_later = sweep_children(&supervisor, Presence::Program);
+
+        // Then — `done`, puis la même fin que n'importe quel enfant. Pas `error` : Ash ne sait
+        // pas mieux si l'enfant a réussi que dans le cas annoncé.
+        assert_eq!(
+            once_it_reopened,
+            vec![
+                ("explore".to_owned(), AgentState::Done),
+                ("qa".to_owned(), AgentState::Done),
+            ]
+        );
+        assert_eq!(ten_seconds_later, vec![]);
+    }
+
+    #[test]
+    fn given_a_tab_whose_session_just_closed_its_children_when_new_ones_appear_then_they_are_new_rows(
+    ) {
+        // Given — un `agent_id` ne distingue que des frères dans un onglet : la session
+        // suivante peut renommer un enfant `agent-7`. Le voir reprendre la ligne du mort
+        // afficherait un sous-agent né il y a une heure.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        clock.advance(3_600);
+        supervisor.on_hook(&hook("session-start", TAB));
+
+        // When — la session neuve fait naître un enfant qui porte le même identifiant
+        supervisor.on_hook(&child_hook("working", "agent-7", "code-reviewer"));
+
+        // Then
+        assert_eq!(
+            sweep_children(&supervisor, Presence::Program),
+            vec![
+                ("explore".to_owned(), AgentState::Done),
+                ("code-reviewer".to_owned(), AgentState::Working),
+            ]
+        );
+    }
+
+    #[test]
+    fn given_a_working_child_when_its_session_ends_then_its_row_finishes_instead_of_being_wiped_with_the_tab(
+    ) {
+        // Given — avant cette correction, la ligne restait `working` pendant les trente
+        // secondes de la ligne `done` de l'onglet, puis disparaissait d'un coup au retour à
+        // `idle` : un enfant montré en train de travailler pendant une demi-minute alors que
+        // son agent était parti, puis effacé sans jamais avoir été vu finir.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().watched().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+
+        // When — `SessionEnd`, que l'adaptateur traduit en `done` pour l'onglet
+        supervisor.on_hook(&hook("done", TAB));
+        let once_the_session_ended = supervisor.state(TAB, Presence::Program);
+        clock.advance(10);
+        let ten_seconds_later = sweep_children(&supervisor, Presence::Program);
+
+        // Then — l'onglet garde ses trente secondes, l'enfant a les siennes : dix
+        assert_eq!(once_the_session_ended.status.state, AgentState::Done);
+        assert_eq!(
+            once_the_session_ended
+                .subagents
+                .into_iter()
+                .map(|child| (child.agent_type.unwrap_or_default(), child.state))
+                .collect::<Vec<_>>(),
+            vec![("explore".to_owned(), AgentState::Done)]
+        );
+        assert_eq!(ten_seconds_later, vec![]);
+        // Et l'onglet n'est pas parti avec lui : il lui reste vingt secondes à être lu.
+        assert_eq!(sweep(&supervisor, Presence::Program), AgentState::Done);
+    }
+
+    #[test]
+    fn given_a_child_at_work_when_its_parent_starts_waiting_for_the_user_then_the_child_row_never_moves(
+    ) {
+        // Given — la correction explicite de l'utilisateur, et la moitié de la règle qu'il
+        // serait le plus facile de casser : un agent attend couramment ses sous-agents *tout
+        // en restant disponible*. Fermer ses lignes filles sur un `Stop` — ou sur l'âge de
+        // l'enfant — effacerait un travail qui tourne vraiment.
+        let Assembled {
+            supervisor, clock, ..
+        } = SupervisorBuilder::new().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+        supervisor.on_hook(&hook("working", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+
+        // When — le parent rend la main, et six heures passent sans que l'enfant reparle
+        supervisor.on_hook(&hook("waiting", TAB));
+        clock.advance(6 * 3_600);
+        let still_running = supervisor.state(TAB, Presence::Program);
+
+        // Then — aucun plafond d'âge : la durée d'un enfant ne conclut rien (spec §6.4)
+        assert_eq!(still_running.status.state, AgentState::Waiting);
+        assert_eq!(
+            sweep_children(&supervisor, Presence::Program),
+            vec![("explore".to_owned(), AgentState::Working)]
+        );
+    }
+
+    #[test]
+    fn given_a_child_at_work_when_the_agent_that_ran_it_vanishes_then_its_row_finishes_too() {
+        // Given — le premier cas nommé par le ticket : l'agent est tué. Aucun `SubagentStop`
+        // ne partira, et un sous-agent n'a pas de processus à interroger — c'est le même
+        // `claude`, dans le même onglet (ADR-0003). La disparition du parent est donc tout ce
+        // qu'Ash saura jamais de la fin de ses enfants.
+        let Assembled { supervisor, .. } = SupervisorBuilder::new().build();
+        supervisor.on_hook(&hook("session-start", TAB));
+        supervisor.on_hook(&hook("working", TAB));
+        supervisor.on_hook(&child_hook("working", "agent-7", "explore"));
+        sweep(&supervisor, Presence::Program);
+
+        // When — le shell reprend son terminal
+        let orphaned = supervisor.state(TAB, Presence::Prompt);
+
+        // Then — l'onglet conclut selon la spec §6.4, et l'enfant finit avec lui
+        assert_eq!(orphaned.status.state, AgentState::Error);
+        assert_eq!(
+            orphaned
+                .subagents
+                .into_iter()
+                .map(|child| child.state)
+                .collect::<Vec<_>>(),
+            vec![AgentState::Done]
+        );
     }
 
     #[test]

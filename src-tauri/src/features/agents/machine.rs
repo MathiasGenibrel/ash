@@ -344,7 +344,12 @@ fn state_of(declared: Declared) -> AgentState {
 ///
 /// Ce sont les seuls qui s'effacent d'eux-mêmes : ils désignent une ligne à lire, pas un
 /// travail en cours.
-fn has_finished(state: AgentState) -> bool {
+///
+/// C'est aussi, et par la même occasion, ce qui **ferme une session**
+/// ([`AgentMachine::holds_a_session`]). Le superviseur s'en sert pour la même question posée
+/// des enfants : une ligne fille ne survit pas à la session qui l'a créée (spec §6.5). La
+/// règle n'a donc qu'une écriture, et les deux lectures ne pourront pas diverger.
+pub(super) fn has_finished(state: AgentState) -> bool {
     matches!(state, AgentState::Done | AgentState::Error)
 }
 
