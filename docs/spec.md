@@ -642,6 +642,15 @@ PTY ni sortie séparable. Ash l'affiche comme une ligne fille informative — li
 état, durée — et **rien de plus** : la ligne n'est pas cliquable, le clic sélectionne
 le parent. Pour lire ce qu'a fait un subagent, on scrolle le terminal du parent.
 
+**Une ligne fille ne survit pas à la session qui l'a créée.** Le verbe qui nomme la fin
+d'un subagent ne part pas toujours — un agent tué, un `/clear`, un compactage, un outil
+relancé —, et une ligne restée `working` mentirait alors indéfiniment. Une session qui
+s'ouvre et une session qui finit terminent donc les enfants qui travaillaient encore : ils
+passent `done`, puis s'effacent comme les autres. Ash ne prétend pas savoir si l'enfant a
+réussi — il ne le sait pas davantage quand la fin lui est annoncée. Rien d'autre ne conclut
+à leur place : ni la durée d'un enfant, ni un parent qui passe `waiting`, parce qu'un agent
+attend couramment ses subagents tout en restant disponible pour l'utilisateur.
+
 ---
 
 ## 7. Git
