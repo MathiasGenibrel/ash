@@ -160,11 +160,17 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
 
 - En-tête : un **compteur agrégé** — `1 waiting / 7 agents` — qui reste visible quand
   la sidebar est repliée.
-- Liste de dépôts, chacun repliable. Un dépôt sans worktree lié s'affiche **à plat**,
-  sans niveau intermédiaire.
-- Sous un dépôt : ses worktrees, chacun portant sa branche et le suffixe de son
-  dossier (`·sidebar`, `·toc`), plus l'état de l'arbre (`+3 ~1`, `↑2 ↓1`) ou
-  l'opération en cours (`rebasing onto main · 2/5`).
+- Liste de dépôts, chacun repliable. Un dépôt qui n'héberge **qu'un** worktree
+  s'affiche **à plat**, sans niveau intermédiaire — amendé le 2026-08-26 : la règle
+  disait « un dépôt sans worktree lié », et un niveau intermédiaire qui ne porte
+  qu'une ligne répète le dépôt du dessus (`ash` → `ash ·ash` → `claude`), avec un
+  compteur `1 worktree` qui n'informe de rien. Sa ligne unique porte alors le nom du
+  **dépôt** et ce que la ligne de worktree portait ; le suffixe du dossier ne s'y
+  affiche que si ce worktree n'est pas l'arbre principal. Le niveau intermédiaire
+  revient au second worktree ([ADR-0012](./adr/0012-worktree-unite-de-travail.md)).
+- Sous un dépôt qui en héberge plusieurs : ses worktrees, chacun portant sa branche et
+  le suffixe de son dossier (`·sidebar`, `·toc`), plus l'état de l'arbre (`+3 ~1`,
+  `↑2 ↓1`) ou l'opération en cours (`rebasing onto main · 2/5`).
 - Dépliés : les onglets du worktree, avec pastille d'état, libellé court, durée.
 - Sous un agent : ses subagents, en retrait, plus discrets, **non cliquables**
   ([ADR-0008](./adr/0008-abstraction-adapter.md) pour leur provenance).

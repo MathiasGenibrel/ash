@@ -25,7 +25,7 @@ import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
 import { showsSubagents } from "./visible";
 
-export type { SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
+export type { RowLabel, SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
 export { DEFAULT_SIDEBAR_WIDTH, type SidebarColumnState } from "./resize";
 
 /** Ce que la sidebar sait demander, et qu'elle ne sait pas faire elle-même. */

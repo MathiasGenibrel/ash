@@ -4,7 +4,7 @@ import type { InstrumentationMark } from "./instrumentation";
 import { abbreviate, newTabHint } from "./labels";
 import { pinMark, worktreeGesture } from "./pinning";
 import { composeSubagentRow, type SubagentNode } from "./subagents";
-import type { SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
+import type { RowLabel, SidebarGroup, SidebarTabNode, SidebarTree, WorktreeNode } from "./tree";
 import { planGroup, planRailEntry, planTab, planWorktree } from "./visible";
 
 /**
@@ -156,8 +156,9 @@ export class SidebarView {
         const plan = planGroup(group);
         const rows =
             group.kind === "flat"
-                ? // Deux niveaux visibles, et pas trois : un dépôt sans worktree lié ne
-                  // gagne jamais de ligne intermédiaire (ADR-0012).
+                ? // Deux niveaux visibles, et pas trois : un dépôt qui n'héberge qu'un
+                  // worktree ne gagne jamais de ligne intermédiaire (ADR-0012, amendement
+                  // du 2026-08-26).
                   []
                 : [this.repoRow(group)];
 
@@ -165,7 +166,10 @@ export class SidebarView {
         return [
             ...rows,
             ...plan.children.flatMap((worktree) => [
-                this.worktreeRow(worktree, shape),
+                // À plat, la ligne écrit ce que le groupe dit — le nom du dépôt —, et non
+                // celui de son worktree, qui le répéterait. Elle désigne toujours le
+                // worktree : c'est lui qu'elle replie, épingle et ouvre.
+                this.worktreeRow(worktree, shape, group.kind === "flat" ? group.row : worktree),
                 ...planWorktree(worktree).children.flatMap((tab) => [
                     this.tabRow(tab, shape),
                     // Les lignes filles suivent immédiatement la ligne de leur onglet, et
@@ -186,12 +190,14 @@ export class SidebarView {
         const name = text("span", group.label, "ash-repo-name");
         name.title = group.title;
 
-        const worktrees = group.worktrees.length;
+        // Toujours au pluriel, et sans condition : cette ligne n'existe qu'à partir de deux
+        // worktrees (ADR-0012, amendement du 2026-08-26). Le `1 worktree` d'avant comptait
+        // ce que la ligne du dessous disait déjà, et n'informait de rien.
         row.append(
             chevron,
             name,
             spacer(),
-            text("span", `${worktrees} worktree${worktrees > 1 ? "s" : ""}`, "ash-repo-count"),
+            text("span", `${group.worktrees.length} worktrees`, "ash-repo-count"),
         );
         // Repliée, la ligne doit encore dire ce qui se passe en dessous d'elle.
         const badge = planGroup(group).badge;
@@ -203,15 +209,27 @@ export class SidebarView {
         return row;
     }
 
-    private worktreeRow(worktree: WorktreeNode, shape: "flat" | "grouped"): HTMLElement {
+    /**
+     * La ligne d'un worktree — et, dans la forme à plat, **la** ligne du groupe.
+     *
+     * `shown` est ce qu'elle écrit, `worktree` ce qu'elle désigne. Les deux coïncident sous
+     * un dépôt à plusieurs worktrees ; ils divergent quand un dépôt n'en héberge qu'un, où
+     * la ligne porte le nom du dépôt sans cesser de replier, d'épingler et d'ouvrir son
+     * worktree (ADR-0012, amendement du 2026-08-26).
+     */
+    private worktreeRow(
+        worktree: WorktreeNode,
+        shape: "flat" | "grouped",
+        shown: RowLabel,
+    ): HTMLElement {
         const gesture = worktreeGesture(worktree);
         const row = document.createElement("button");
         row.type = "button";
         row.className = `ash-worktree is-${shape}`;
         if (worktree.pinned) row.classList.add("is-pinned");
 
-        const name = text("span", worktree.label, "ash-worktree-name");
-        name.title = worktree.title;
+        const name = text("span", shown.label, "ash-worktree-name");
+        name.title = shown.title;
 
         if (gesture === "open-tab") {
             // Aucun onglet dessous : pas de chevron — il ne replierait rien —, et une ligne
@@ -223,8 +241,8 @@ export class SidebarView {
             row.append(text("span", worktree.collapsed ? "▸" : "▾", "ash-chevron"), name, spacer());
         }
 
-        if (worktree.suffix !== null) {
-            row.append(text("span", worktree.suffix, "ash-worktree-suffix"));
+        if (shown.suffix !== null) {
+            row.append(text("span", shown.suffix, "ash-worktree-suffix"));
         }
         // Repliée, la ligne doit encore dire ce qui se passe en dessous d'elle.
         const badge = planWorktree(worktree).badge;
@@ -398,7 +416,9 @@ export class SidebarView {
      * replierait pas la sidebar, il l'effacerait.
      */
     private railEntry(group: SidebarGroup): HTMLElement {
-        const label = group.kind === "repo" ? group.title : group.worktree.title;
+        // Le même nom que la colonne dépliée : un dépôt à plat s'y lit par son nom, pas par
+        // celui de son worktree — sans quoi `⌘B` renommerait la ligne sous les yeux.
+        const label = group.kind === "repo" ? group.title : group.row.title;
         const plan = planRailEntry(group);
         const shown = presentAgentState(plan.badge);
 
