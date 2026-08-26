@@ -123,8 +123,16 @@ export interface WorktreeNode extends RowLabel {
  */
 export type SidebarGroup =
     | {
+          /**
+           * Une forme à plat n'a **pas de clé**, et c'est ce que le type dit ici.
+           *
+           * La clé d'un groupe ne sert qu'à une chose : replier sa ligne. Un groupe à plat
+           * n'a pas de ligne à lui — son worktree *est* sa ligne —, donc une clé posée là
+           * ne pourrait qu'être passée par erreur à `toggleRowCollapsed`, qui écrirait dans
+           * `state.json` un repli que plus rien ne relit. « Jamais consulté » ne se garde
+           * pas dans un commentaire : ici, c'est le compilateur qui le tient.
+           */
           readonly kind: "flat";
-          readonly key: string;
           /**
            * Ce que la ligne **unique** écrit : le nom du dépôt quand il y en a un, celui du
            * dossier sinon — et le suffixe seulement s'il ajoute quelque chose.
@@ -175,7 +183,10 @@ export interface SidebarOptions {
      * Les lignes repliées — **un seul ensemble pour les deux niveaux**.
      *
      * Un worktree replié y est par sa racine, un groupe de dépôt par sa clé préfixée
-     * (`repo:`, `flat:`) : les deux familles ne peuvent pas se confondre. C'est aussi une
+     * (`repo:<id>`) : les deux familles ne peuvent pas se confondre — un chemin absolu ne
+     * commence pas par `repo:`. Une forme à plat n'écrit **jamais** ici : elle n'a pas de
+     * ligne de groupe à replier (voir [`SidebarGroup`]), donc une clé `flat:` laissée par
+     * une version antérieure y dort sans rien replier, et sans rien casser. C'est aussi une
      * seule liste dans `~/.ash/state.json`, et le backend est le seul à la détenir — deux
      * ensembles ici obligeraient l'appelant à passer deux fois la même chose, donc à pouvoir
      * les faire mentir.
@@ -351,7 +362,6 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
         // nom du **dépôt** pour se lire : c'est toute la mise à plat.
         return {
             kind: "flat",
-            key: group.key,
             row: flatRow(group.repo, single.name, only),
             worktree: only,
             state,
@@ -378,9 +388,9 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
  * - **hors dépôt** : il n'y a pas de nom de dépôt à montrer, la ligne garde celui du
  *   dossier ;
  * - **un dépôt, un worktree** : la ligne porte le nom du dépôt, et le suffixe seulement
- *   s'il ajoute quelque chose. L'arbre principal vit dans le dossier du dépôt, donc son nom
- *   de dossier **est** celui du dépôt : `ash ·ash` ne dirait rien de plus que `ash`. Un
- *   worktree lié, lui, a son propre dossier — et c'est le `·backoffice` qui dit lequel.
+ *   s'il ajoute quelque chose — c'est la règle de [`suffixesOf`], appliquée à une ligne qui
+ *   écrit déjà un autre nom que le sien. `ash ·ash` ne dirait rien de plus que `ash`, alors
+ *   que le `·backoffice` de `democratic-backoffice` dit dans quel dossier on est.
  */
 function flatRow(repo: RepoRef | null, name: string, only: WorktreeNode): RowLabel {
     if (repo === null) {
@@ -389,8 +399,29 @@ function flatRow(repo: RepoRef | null, name: string, only: WorktreeNode): RowLab
     return {
         label: truncate(repo.name),
         title: repo.name,
-        suffix: name === repo.name ? null : `·${shortSuffix(name)}`,
+        suffix: repeatsRepoName(name, repo) ? null : `·${shortSuffix(name)}`,
     };
+}
+
+/**
+ * Le dossier du worktree porte-t-il déjà le nom que la ligne écrit ?
+ *
+ * C'est **tout** ce que la question demande, et c'est pour cela qu'elle est nommée ainsi
+ * plutôt que « est-ce l'arbre principal ». Le cas courant est celui de l'arbre principal —
+ * il vit dans le dossier du dépôt, donc les deux noms coïncident —, mais un worktree lié
+ * qu'on aurait posé dans un dossier `ash` répondrait oui lui aussi, et le rendu resterait
+ * juste : un suffixe qui répète le libellé ne distingue rien, exactement comme deux
+ * `·sidebar` dans [`suffixesOf`].
+ *
+ * Le fait « arbre principal », lui, existe côté Rust (`features/git/table.rs`, où il
+ * compare deux `git_dir`) mais **ne traverse pas** la frontière : `TabLocation` ne porte ni
+ * `is_main` ni le `git_dir` du worktree. La colonne ne le redérive donc pas depuis
+ * `repo.id` — elle rendrait un fait que le backend détient
+ * ([ADR-0009](../../../docs/adr/0009-cycle-de-vie-des-agents.md)) — et se contente de la
+ * question d'affichage qu'elle a réellement à trancher.
+ */
+function repeatsRepoName(worktreeName: string, repo: RepoRef): boolean {
+    return worktreeName === repo.name;
 }
 
 function node(

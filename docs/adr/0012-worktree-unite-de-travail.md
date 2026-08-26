@@ -81,9 +81,14 @@ L'épinglage et le repliage restent des propriétés du **worktree**, pas du dé
 La décision écrit qu'« un dépôt **sans worktree lié** s'affiche à plat ». Le critère
 devient : un dépôt qui n'héberge **qu'un seul** worktree s'affiche à plat. Sa ligne unique
 porte le nom du dépôt et ce que la ligne de worktree portait — l'état de l'arbre, ou
-l'opération en cours ; le suffixe du dossier ne s'y affiche que si ce worktree n'est pas
-l'arbre principal, sans quoi il répéterait le nom du dépôt. Le compteur `1 worktree`
-disparaît avec le niveau qui le portait.
+l'opération en cours ; le suffixe du dossier ne s'y affiche que s'il ajoute quelque chose,
+c'est-à-dire quand le dossier du worktree ne porte pas déjà le nom du dépôt. C'est la même
+règle que celle qui retire les suffixes d'un groupe où ils ne distinguent plus rien, et elle
+couvre le cas courant sans avoir à le nommer : l'arbre principal vit dans le dossier du
+dépôt, donc `ash ·ash` ne dirait rien de plus que `ash`. La colonne ne demande **pas** si
+c'est l'arbre principal — le fait existe côté Rust mais ne traverse pas la frontière, et le
+redériver contredirait [ADR-0009](./0009-cycle-de-vie-des-agents.md). Le compteur
+`1 worktree` disparaît avec le niveau qui le portait.
 
 Ce n'est pas une contradiction, c'est l'application de la phrase suivante de la décision :
 « la hiérarchie à trois niveaux n'apparaît que quand elle a un sens ». Et l'alternative

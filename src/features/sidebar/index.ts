@@ -25,7 +25,7 @@ import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
 import { showsSubagents } from "./visible";
 
-export type { RowLabel, SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
+export type { SidebarGroup, SidebarTree, WorktreeNode } from "./tree";
 export { DEFAULT_SIDEBAR_WIDTH, type SidebarColumnState } from "./resize";
 
 /** Ce que la sidebar sait demander, et qu'elle ne sait pas faire elle-même. */
@@ -209,9 +209,10 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
     /**
      * Les lignes repliées, telles que le backend les a annoncées.
      *
-     * Un seul ensemble pour les deux niveaux : les clés d'un groupe sont préfixées (`repo:`,
-     * `flat:`) et celles d'un worktree sont des chemins absolus, donc elles ne peuvent pas se
-     * confondre — et `state.json` n'a qu'une liste à garder.
+     * Un seul ensemble pour les deux niveaux : la clé d'un groupe est préfixée (`repo:<id>`)
+     * et celle d'un worktree est un chemin absolu, donc elles ne peuvent pas se confondre —
+     * et `state.json` n'a qu'une liste à garder. Seul un dépôt à **plusieurs** worktrees a
+     * une ligne de groupe, donc une clé de groupe (ADR-0012, amendement du 2026-08-26).
      */
     function collapsed(): ReadonlySet<string> {
         return new Set(kept.collapsed);

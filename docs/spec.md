@@ -166,7 +166,8 @@ Fenêtre unique, deux colonnes, **pas de splits de terminaux**
   qu'une ligne répète le dépôt du dessus (`ash` → `ash ·ash` → `claude`), avec un
   compteur `1 worktree` qui n'informe de rien. Sa ligne unique porte alors le nom du
   **dépôt** et ce que la ligne de worktree portait ; le suffixe du dossier ne s'y
-  affiche que si ce worktree n'est pas l'arbre principal. Le niveau intermédiaire
+  affiche que si le dossier du worktree ne porte pas déjà le nom du dépôt — ce qui est
+  le cas de l'arbre principal, qui y vit. Le niveau intermédiaire
   revient au second worktree ([ADR-0012](./adr/0012-worktree-unite-de-travail.md)).
 - Sous un dépôt qui en héberge plusieurs : ses worktrees, chacun portant sa branche et
   le suffixe de son dossier (`·sidebar`, `·toc`), plus l'état de l'arbre (`+3 ~1`,
