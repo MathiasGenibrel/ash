@@ -1,5 +1,5 @@
 import { isShell } from "@/shared/ipc";
-import type { AgentState, PinnedWorktree, Tab, TabId, TabLocation } from "@/shared/ipc";
+import type { AgentState, PinnedWorktree, RepoRef, Tab, TabId, TabLocation } from "@/shared/ipc";
 import { instrumentationMark, type InstrumentationMark } from "./instrumentation";
 import { basename, shortSuffix, truncate } from "./labels";
 import { bubbleState } from "./states";
@@ -68,18 +68,30 @@ export function tabStates(tab: SidebarTabNode): readonly AgentState[] {
     return [...own, ...tab.subagents.map((child) => child.state)];
 }
 
-export interface WorktreeNode {
-    /** La racine du worktree : c'est elle qui l'identifie, pas son nom. */
-    readonly key: string;
+/**
+ * Ce qu'une ligne **écrit d'elle-même** : son nom tronqué, son nom entier, son suffixe.
+ *
+ * C'est un type à part depuis l'amendement du 2026-08-26 à ADR-0012, parce que la ligne
+ * unique d'un groupe à plat n'écrit plus forcément le nom de son worktree : quand un dépôt
+ * n'héberge qu'un worktree, elle porte le nom du **dépôt**. Ce que la ligne montre et ce
+ * qu'elle désigne se séparent donc, et les deux se lisent dans le type plutôt que dans une
+ * condition du rendu — l'épingle et le repli continuent de viser le worktree.
+ */
+export interface RowLabel {
     readonly label: string;
     readonly title: string;
     /**
      * Le `·sidebar` du design, aligné à droite.
      *
-     * `null` dans la forme à plat : un worktree seul sous son dépôt n'a personne dont se
-     * distinguer, et le suffixe n'y serait qu'un ornement.
+     * `null` quand il ne distinguerait rien : un worktree seul n'a pas de frère dont se
+     * démarquer, et le suffixe n'y serait qu'un ornement.
      */
     readonly suffix: string | null;
+}
+
+export interface WorktreeNode extends RowLabel {
+    /** La racine du worktree : c'est elle qui l'identifie, pas son nom. */
+    readonly key: string;
     /** Replié : la ligne reste, ses onglets disparaissent. Propriété du **worktree**. */
     readonly collapsed: boolean;
     /**
@@ -99,16 +111,29 @@ export interface WorktreeNode {
 /**
  * Les deux formes d'ADR-0012, et rien entre les deux.
  *
- * `flat` : un dépôt sans worktree lié, ou un dossier hors dépôt. Deux niveaux visibles.
- * `repo` : un dépôt qui héberge des worktrees liés. Trois niveaux.
+ * `flat` : **au plus un** worktree — un dépôt qui n'en héberge qu'un, un dépôt sans
+ * worktree lié, ou un dossier hors dépôt. Deux niveaux visibles.
+ * `repo` : un dépôt qui héberge **deux worktrees ou plus**. Trois niveaux.
  *
- * Un dépôt sans worktree lié ne gagne **jamais** le niveau intermédiaire : c'est ce que le
- * `repo: null` du backend dit, et le seul rôle de ce module est de le rendre.
+ * Le critère est le nombre de worktrees, et non la présence d'un dépôt : c'est
+ * l'amendement du 2026-08-26 à ADR-0012. Un niveau intermédiaire qui ne porterait qu'une
+ * ligne répéterait le dépôt du dessus (`ash` → `ash ·ash` → `claude`) et son compteur
+ * dirait `1 worktree`, ce qui n'informe de rien. Le niveau revient dès qu'il porte deux
+ * vérités différentes — deux worktrees ont deux états d'arbre.
  */
 export type SidebarGroup =
     | {
           readonly kind: "flat";
           readonly key: string;
+          /**
+           * Ce que la ligne **unique** écrit : le nom du dépôt quand il y en a un, celui du
+           * dossier sinon — et le suffixe seulement s'il ajoute quelque chose.
+           *
+           * Séparé de `worktree` parce que les deux ne disent plus la même chose : la ligne
+           * montre le dépôt, mais l'épingle, le repli et le clic visent toujours le
+           * worktree, qui reste l'unité de rattachement (ADR-0012).
+           */
+          readonly row: RowLabel;
           readonly worktree: WorktreeNode;
           readonly state: AgentState;
       }
@@ -121,7 +146,9 @@ export type SidebarGroup =
            * Replié : la ligne du dépôt reste, ses worktrees disparaissent (spec §4.1).
            *
            * La forme à plat n'a pas cette propriété — son unique worktree *est* sa ligne, et
-           * c'est le repli de ce worktree qui joue.
+           * c'est le repli de ce worktree qui joue. Les deux clés sont distinctes
+           * (`repo:<id>` et la racine du worktree), donc un dépôt qui passe d'une forme à
+           * l'autre ne perd ni l'un ni l'autre repli en chemin.
            */
           readonly collapsed: boolean;
           readonly worktrees: readonly WorktreeNode[];
@@ -303,9 +330,13 @@ function worktreeFor(group: MutableGroup, place: Place): MutableWorktree {
 
 function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
     const worktrees = [...group.worktrees.values()];
+    // **Un worktree, une ligne** : c'est le critère de la forme à plat depuis l'amendement
+    // du 2026-08-26 à ADR-0012, et il remplace « pas de dépôt du tout ». Un dépôt sans
+    // worktree lié y tombe toujours — le backend n'en rend alors qu'un.
+    const single = worktrees.length === 1 ? worktrees[0] : undefined;
     const suffixes = suffixesOf(
         worktrees.map((worktree) => worktree.name),
-        group.repo !== null,
+        single === undefined,
     );
 
     const pinned = new Set(options.pinned.map((entry) => entry.worktreeRoot));
@@ -314,13 +345,17 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
     );
     const state = bubbleState(nodes.map((worktree) => worktree.state));
 
-    if (group.repo === null) {
-        // La forme à plat n'a **qu'un** worktree par construction : sa clé de groupe est
-        // sa racine. Le repli est donc toujours possible, mais jamais un niveau de plus.
-        const only = nodes[0];
-        if (only !== undefined) {
-            return { kind: "flat", key: group.key, worktree: only, state };
-        }
+    const only = nodes[0];
+    if (single !== undefined && only !== undefined) {
+        // La ligne unique porte la clé du **worktree** pour se replier et s'épingler, et le
+        // nom du **dépôt** pour se lire : c'est toute la mise à plat.
+        return {
+            kind: "flat",
+            key: group.key,
+            row: flatRow(group.repo, single.name, only),
+            worktree: only,
+            state,
+        };
     }
 
     return {
@@ -331,6 +366,30 @@ function freeze(group: MutableGroup, options: SidebarOptions): SidebarGroup {
         collapsed: options.collapsed.has(group.key),
         worktrees: nodes,
         state,
+    };
+}
+
+/**
+ * Ce que la ligne unique d'un groupe à plat écrit.
+ *
+ * Deux cas, et ils ne montrent pas la même chose — c'est pourquoi la variante `flat` porte
+ * ce texte au lieu de le laisser déduire au rendu :
+ *
+ * - **hors dépôt** : il n'y a pas de nom de dépôt à montrer, la ligne garde celui du
+ *   dossier ;
+ * - **un dépôt, un worktree** : la ligne porte le nom du dépôt, et le suffixe seulement
+ *   s'il ajoute quelque chose. L'arbre principal vit dans le dossier du dépôt, donc son nom
+ *   de dossier **est** celui du dépôt : `ash ·ash` ne dirait rien de plus que `ash`. Un
+ *   worktree lié, lui, a son propre dossier — et c'est le `·backoffice` qui dit lequel.
+ */
+function flatRow(repo: RepoRef | null, name: string, only: WorktreeNode): RowLabel {
+    if (repo === null) {
+        return { label: only.label, title: only.title, suffix: null };
+    }
+    return {
+        label: truncate(repo.name),
+        title: repo.name,
+        suffix: name === repo.name ? null : `·${shortSuffix(name)}`,
     };
 }
 
@@ -353,7 +412,7 @@ function node(
 }
 
 /**
- * Les suffixes d'un groupe, ou aucun dans la forme à plat.
+ * Les suffixes d'un groupe, ou aucun quand une seule ligne le remplit.
  *
  * Deux worktrees dont le dernier segment est le même (`api-sidebar`, `web-sidebar`)
  * rendraient deux fois `·sidebar` : le suffixe cesserait alors de distinguer quoi que ce
