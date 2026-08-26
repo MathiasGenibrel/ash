@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { AGENT_STATES, presentAgentState } from "./index";
+import {
+    AGENT_ROW_CHANNELS,
+    AGENT_STATES,
+    decorateAgentRow,
+    presentAgentState,
+} from "./index";
 
 describe("les cinq états d'un agent", () => {
     it("Given the five agent states, when they are presented, then each one gets its own shape", () => {
@@ -29,13 +34,15 @@ describe("les cinq états d'un agent", () => {
         expect(tinted).toEqual(["waiting"]);
     });
 
-    it("Given an agent that failed, when it is presented, then its name is struck through and its row takes the error rail", () => {
+    it("Given an agent that failed, when it is presented, then its name is struck through and its state badge is bordered with the error colour", () => {
         // Given / When
         const error = presentAgentState("error");
 
-        // Then — un agent mort ne doit pas se lire comme un agent vivant
+        // Then — un agent mort ne doit pas se lire comme un agent vivant, et il lui reste
+        // deux canaux non chromatiques (le glyphe, le nom barré) le jour où la couleur
+        // manque : la bordure de l'étiquette ajoute, elle ne porte pas seule
         expect(error.struck).toBe(true);
-        expect(error.rail).toBe("error");
+        expect(error.badge).toBe("error");
         expect(error.tinted).toBe(false);
     });
 
@@ -100,4 +107,54 @@ function travel(shape: string): number {
     const dx = arcs.reduce((sum, arc) => sum + Number(arc[1]), 0);
     const dy = arcs.reduce((sum, arc) => sum + Number(arc[2]), 0);
     return Math.hypot(dx, dy);
+}
+
+describe("la ligne d'un agent : l'état d'un côté, la sélection de l'autre", () => {
+    it("Given each of the five states, when a row is selected, then it differs from the same row unselected by a channel that survives without colour", () => {
+        // Given — cinq agents `waiting` dans la colonne, et rien qui dise lequel est sous les
+        // doigts : c'est le bug d'#181, et il ne se voyait pas parce que la différence était
+        // nulle, pas parce qu'elle était pâle. Ce que le test exige est donc plus fort qu'un
+        // écart : un écart qu'une capture en niveaux de gris montre encore
+        const colourless = AGENT_ROW_CHANNELS.filter((channel) => !channel.chromatic);
+
+        for (const state of AGENT_STATES) {
+            // When
+            const selected = decorateAgentRow(state, true);
+            const plain = decorateAgentRow(state, false);
+
+            // Then
+            const told = colourless.filter(({ channel }) => selected[channel] !== plain[channel]);
+            expect(told.length).toBeGreaterThan(0);
+        }
+    });
+
+    it("Given the channels of a row, when both the state and the selection change, then no channel answers to the two of them", () => {
+        // Given — l'invariant qui aurait attrapé le bug : `.ash-agent.is-selected` posait le
+        // fond et le filet gauche, `.ash-agent.is-tinted` — déclarée après, à spécificité
+        // égale — reposait les deux, et l'état gagnait parce qu'il était écrit en second. Un
+        // canal à deux propriétaires rend muette celle des deux informations qui perd
+        for (const { channel } of AGENT_ROW_CHANNELS) {
+            // When — le canal bouge-t-il avec la sélection, à état fixé ? avec l'état, à
+            // sélection fixée ?
+            const movesWithSelection = AGENT_STATES.some(
+                (state) =>
+                    decorateAgentRow(state, true)[channel] !==
+                    decorateAgentRow(state, false)[channel],
+            );
+            const movesWithState = [true, false].some((selected) =>
+                differs(AGENT_STATES.map((state) => decorateAgentRow(state, selected)[channel])),
+            );
+
+            // Then — un propriétaire, ou aucun ; jamais deux
+            expect({ channel, shared: movesWithSelection && movesWithState }).toEqual({
+                channel,
+                shared: false,
+            });
+        }
+    });
+});
+
+/** Une suite de valeurs qui n'est pas constante — deux valeurs suffisent à la distinguer. */
+function differs(values: readonly unknown[]): boolean {
+    return new Set(values).size > 1;
 }

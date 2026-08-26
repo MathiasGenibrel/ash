@@ -60,8 +60,15 @@ export interface AgentPresentation {
     readonly label: string;
     /** Le seul fond teinté de toute l'interface — `waiting`, et lui seul. */
     readonly tinted: boolean;
-    /** Le filet gauche de 2 px : rien, l'accent, ou l'erreur. */
-    readonly rail: "none" | "accent" | "error";
+    /**
+     * La couleur de la bordure de l'étiquette d'état, à **droite** de la ligne.
+     *
+     * L'état n'a plus le filet gauche : il appartient à la sélection, et rien d'autre
+     * (issue #181). Ce qu'il perd à gauche, il le reprend ici — une bordure, donc un canal
+     * qui ne dispute rien à personne. Le mot reste lisible sans elle : la couleur ajoute,
+     * elle ne porte pas seule.
+     */
+    readonly badge: "plain" | "accent" | "error";
     /** Le nom barré : un agent mort ne se lit pas comme un agent vivant. */
     readonly struck: boolean;
     /**
@@ -103,7 +110,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
         shape: WORKING_ARC,
         label: "working",
         tinted: false,
-        rail: "none",
+        badge: "plain",
         struck: false,
         spinning: true,
         className: "is-working",
@@ -113,7 +120,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
         shape: null,
         label: "waiting",
         tinted: true,
-        rail: "accent",
+        badge: "accent",
         struck: false,
         spinning: false,
         className: "is-waiting",
@@ -123,7 +130,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
         shape: null,
         label: "done",
         tinted: false,
-        rail: "none",
+        badge: "plain",
         struck: false,
         spinning: false,
         className: "is-done",
@@ -133,7 +140,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
         shape: null,
         label: "idle",
         tinted: false,
-        rail: "none",
+        badge: "plain",
         struck: false,
         spinning: false,
         className: "is-idle",
@@ -143,7 +150,7 @@ const PRESENTATIONS: Readonly<Record<AgentState, AgentPresentation>> = {
         shape: null,
         label: "error",
         tinted: false,
-        rail: "error",
+        badge: "error",
         struck: true,
         spinning: false,
         className: "is-error",
@@ -162,6 +169,98 @@ export const AGENT_STATES = Object.keys(PRESENTATIONS) as readonly AgentState[];
 
 export function presentAgentState(state: AgentState): AgentPresentation {
     return PRESENTATIONS[state];
+}
+
+/**
+ * Ce qu'une **ligne** de sidebar montre, canal par canal — l'état d'un côté, la sélection de
+ * l'autre, et aucun canal partagé (issue #181).
+ *
+ * Le bug qu'elle ferme : `.ash-agent.is-selected` posait un fond et un filet gauche,
+ * `.ash-agent.is-tinted` — déclarée après, à spécificité égale — reposait les deux. Une
+ * ligne `waiting` sélectionnée était donc, au pixel près, une ligne `waiting` qui ne
+ * l'était pas.
+ * Ce n'était pas un manque de contraste mais une collision de cascade : deux informations,
+ * deux mêmes canaux, et celle écrite en second qui gagne.
+ *
+ * D'où la règle, qui est **un invariant testé** et non une intention : chaque canal a un seul
+ * propriétaire. Un canal qui varierait à la fois avec l'état et avec la sélection rendrait
+ * l'une des deux informations muette dès qu'elles se croisent, et c'est exactement ce qui
+ * s'est produit.
+ *
+ * Deux choses ne sont **pas** ici, et volontairement :
+ *
+ * - **la couleur du nom** reste à l'état (`--ash-fg-muted`, `--ash-fg-done`, `--ash-error`,
+ *   et `--ash-accent-fg` sur le fond teinté). Elle ne peut pas passer à la sélection : le
+ *   fond de `waiting` impose sa couleur de texte pour rester lisible, donc ce canal varie
+ *   avec l'état par nécessité physique. La sélection prend la **graisse**, qui ne se dispute
+ *   avec rien ;
+ * - **le fond de sélection** (`--ash-bg-selected`) est retiré des lignes d'agent. Le garder
+ *   ferait du fond le propriétaire de deux choses selon les cas — la règle à exception qui a
+ *   produit le bug. Si le filet et la graisse s'avèrent trop faibles à l'usage, la réponse
+ *   est d'épaissir le filet, pas de rendre le fond au partage.
+ */
+export interface AgentRowDecoration {
+    /** Le fond : `waiting` et lui seul, sélection ou non. */
+    readonly background: "none" | "tinted";
+    /** Le filet gauche de 2 px : **la sélection**, et rien d'autre. */
+    readonly leftRail: "none" | "selection";
+    /** La lame de 3 px au bord droit : ce que `waiting` reprend à droite. */
+    readonly rightBlade: "none" | "waiting";
+    /** La bordure de l'étiquette d'état, à droite. */
+    readonly badge: AgentPresentation["badge"];
+    /** La graisse du nom : le second canal de la sélection, non chromatique. */
+    readonly nameWeight: "regular" | "strong";
+    /** La forme de l'état — un tracé quand il en a un, son caractère sinon. */
+    readonly glyph: string;
+    /** Le nom barré : un agent mort ne se lit pas comme un agent vivant. */
+    readonly struck: boolean;
+}
+
+/**
+ * Les canaux d'une ligne, et lesquels tiennent **sans la couleur**.
+ *
+ * Cette table existe pour que les deux invariants se vérifient mécaniquement plutôt qu'à
+ * l'œil : `bun test` ne monte aucun DOM, donc « la ligne courante se trouve sans lire un
+ * mot » ne peut se tenir que sur une valeur. `chromatic: false` désigne un canal dont la
+ * *variation* est une forme, une géométrie ou une graisse — ce qui survit au daltonisme, à
+ * une capture en niveaux de gris et au flou à 1,6 px.
+ *
+ * Le filet et la lame y sont non chromatiques parce que ce que le test lit d'eux est leur
+ * **présence**, pas leur teinte : un trait est là, ou il n'y est pas.
+ */
+export const AGENT_ROW_CHANNELS: readonly {
+    readonly channel: keyof AgentRowDecoration;
+    readonly chromatic: boolean;
+}[] = [
+    { channel: "background", chromatic: true },
+    { channel: "leftRail", chromatic: false },
+    { channel: "rightBlade", chromatic: false },
+    { channel: "badge", chromatic: true },
+    { channel: "nameWeight", chromatic: false },
+    { channel: "glyph", chromatic: false },
+    { channel: "struck", chromatic: false },
+];
+
+/**
+ * La décoration d'une ligne, composée de ses **deux** sources et de rien d'autre.
+ *
+ * Composée, et non écrite couple par couple : c'est la composition qui rend la règle vraie
+ * par construction — trois champs que la sélection décide, quatre que l'état décide, et
+ * aucune ligne où l'un lirait l'autre. Le test qui la relit n'est donc pas une tautologie :
+ * il garde la **prochaine** ligne, celle qu'on ajoutera un jour en la faisant dépendre des
+ * deux sans y penser.
+ */
+export function decorateAgentRow(state: AgentState, selected: boolean): AgentRowDecoration {
+    const shown = PRESENTATIONS[state];
+    return {
+        background: shown.tinted ? "tinted" : "none",
+        leftRail: selected ? "selection" : "none",
+        rightBlade: shown.tinted ? "waiting" : "none",
+        badge: shown.badge,
+        nameWeight: selected ? "strong" : "regular",
+        glyph: shown.shape ?? shown.glyph,
+        struck: shown.struck,
+    };
 }
 
 /**

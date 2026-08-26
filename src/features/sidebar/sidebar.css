@@ -351,11 +351,27 @@
     text-decoration: line-through;
 }
 
+/* Le mot d'état est une **étiquette bordée**, et c'est sa bordure qui porte la couleur de
+ * l'état (#181) : le mot, lui, reste lisible sans elle. C'est ce qui rend le canal cumulable
+ * avec le filet gauche de la sélection, au lieu de le lui disputer. */
 .ash-agent-state {
+    flex: none;
+    padding: 0 4px;
     font-size: 10.5px;
+    line-height: 1.5;
     color: var(--ash-fg-dim);
+    border: 1px solid var(--ash-border);
+    border-radius: 3px;
     /* Sans ça, les chiffres d'une durée dansent à chaque seconde. */
     font-variant-numeric: tabular-nums;
+}
+
+.ash-agent.is-waiting .ash-agent-state {
+    border-color: var(--ash-accent);
+}
+
+.ash-agent.is-error .ash-agent-state {
+    border-color: var(--ash-error);
 }
 
 /* --- le marqueur « non instrumenté » d'une ligne d'agent (ADR-0006) ----------
@@ -437,10 +453,21 @@
     background: color-mix(in srgb, var(--ash-fg) 6%, transparent);
 }
 
+/* --- la sélection : le filet gauche, et lui seul -----------------------------
+ *
+ * Ni fond, ni couleur de texte : `waiting` prend déjà le fond, et deux informations sur un
+ * même canal, c'est celle qui est écrite en second qui gagne. Une ligne `waiting`
+ * sélectionnée était ainsi, au pixel près, une ligne `waiting` qui ne l'était pas (#181).
+ *
+ * Ce qui reste ici tient sans la couleur — un trait à gauche, une graisse — donc en niveaux
+ * de gris et sous le flou. Si ça s'avère trop discret à l'usage, on épaissit le filet ; on ne
+ * rend pas le fond au partage, ce serait refaire l'exception qui a produit le bug. */
 .ash-agent.is-selected {
-    background: var(--ash-bg-selected);
     border-left-color: var(--ash-select-rail);
-    color: var(--ash-fg-strong);
+}
+
+.ash-agent.is-selected .ash-agent-name {
+    font-weight: 600;
 }
 
 /* --- les cinq états ---------------------------------------------------------
@@ -470,11 +497,11 @@
 .ash-agent.is-tinted .ash-agent-state {
     color: var(--ash-accent-fg);
 }
-.ash-agent.has-accent-rail {
-    border-left-color: var(--ash-accent);
-}
-.ash-agent.has-error-rail {
-    border-left-color: var(--ash-error);
+/* Ce que `waiting` reprend à droite de ce que l'état a perdu à gauche : une lame de 3 px au
+ * bord de la ligne. Une ombre interne et non une bordure — une bordure droite pousserait le
+ * texte de trois pixels, à 24 px de hauteur comme à 18. */
+.ash-agent.has-blade {
+    box-shadow: inset -3px 0 0 var(--ash-accent);
 }
 
 .ash-accent {
