@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
     AGENT_ROW_CHANNELS,
     AGENT_STATES,
+    agentRowClasses,
     decorateAgentRow,
     presentAgentState,
 } from "./index";
@@ -150,6 +151,21 @@ describe("la ligne d'un agent : l'état d'un côté, la sélection de l'autre", 
                 channel,
                 shared: false,
             });
+        }
+    });
+
+    it("Given each of the five states, when the classes of a row are composed, then the selected row carries a class the unselected one does not", () => {
+        // Given — les deux invariants ci-dessus se tiennent sur la décoration, et une
+        // décoration juste peut encore n'être rendue par personne : c'est la traduction en
+        // classes qui atteint l'écran. Une ligne `waiting` sélectionnée doit donc porter à la
+        // fois la teinte de son état et le filet de la sélection — le contraire, c'est #181
+        for (const state of AGENT_STATES) {
+            // When
+            const selected = agentRowClasses(state, true);
+            const plain = agentRowClasses(state, false);
+
+            // Then — tout ce que l'état posait est encore là, et la sélection s'y ajoute
+            expect(selected).toEqual([...plain, "is-selected"]);
         }
     });
 });
