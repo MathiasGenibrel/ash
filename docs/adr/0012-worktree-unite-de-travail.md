@@ -75,3 +75,43 @@ L'épinglage et le repliage restent des propriétés du **worktree**, pas du dé
 - **Hiérarchie à profondeur libre** (grouper par dossier parent, récursivement) :
   générique et joli sur le papier, mais la profondeur devient imprévisible et dépend
   de l'organisation du disque plutôt que de celle du travail.
+
+## Amendement du 2026-08-26 — « à plat » veut dire *au plus un* worktree
+
+La décision écrit qu'« un dépôt **sans worktree lié** s'affiche à plat ». Le critère
+devient : un dépôt qui n'héberge **qu'un seul** worktree s'affiche à plat. Sa ligne unique
+porte le nom du dépôt et ce que la ligne de worktree portait — l'état de l'arbre, ou
+l'opération en cours ; le suffixe du dossier ne s'y affiche que s'il ajoute quelque chose,
+c'est-à-dire quand le dossier du worktree ne porte pas déjà le nom du dépôt. C'est la même
+règle que celle qui retire les suffixes d'un groupe où ils ne distinguent plus rien, et elle
+couvre le cas courant sans avoir à le nommer : l'arbre principal vit dans le dossier du
+dépôt, donc `ash ·ash` ne dirait rien de plus que `ash`. La colonne ne demande **pas** si
+c'est l'arbre principal — le fait existe côté Rust mais ne traverse pas la frontière, et le
+redériver contredirait [ADR-0009](./0009-cycle-de-vie-des-agents.md). Le compteur
+`1 worktree` disparaît avec le niveau qui le portait.
+
+Ce n'est pas une contradiction, c'est l'application de la phrase suivante de la décision :
+« la hiérarchie à trois niveaux n'apparaît que quand elle a un sens ». Et l'alternative
+écartée — « le dépôt est l'unité, les worktrees sont un détail » — l'était pour un motif
+précis : « deux worktrees ont des états d'arbre différents, parfois un rebase en cours dans
+l'un et rien dans l'autre. Un seul nœud ne peut pas porter deux vérités. » Avec un seul
+worktree, il n'y a qu'une vérité, et le motif du refus ne s'applique pas. Ce que le niveau
+intermédiaire produisait dans ce cas, c'était `ash` → `ash ·ash` → `claude` : trois lignes
+pour une seule.
+
+Le cas est le nominal de l'usage réel, et non un cas limite : l'agent de tête est un
+orchestrateur, il vit dans l'arbre principal, et ce sont ses sous-agents qui partent en
+worktree — sans onglet propre, donc sans ligne de worktree.
+
+Ce qui ne change pas :
+
+- le **worktree** reste l'unité à laquelle un onglet se rattache. Le backend continue de
+  situer chaque onglet dans son worktree ; c'est la colonne, et elle seule, qui décide de ne
+  pas dessiner un niveau ;
+- l'**épinglage** et le **repli** restent des propriétés du worktree. La ligne aplatie est
+  celle du worktree, sous le nom du dépôt : elle replie, épingle et ouvre ce worktree. Les
+  deux clés de repli restent distinctes — la racine du worktree d'un côté, `repo:<id>` de
+  l'autre —, donc un dépôt qui passe d'une forme à l'autre ne perd aucun des deux ;
+- le **niveau intermédiaire revient dès le second worktree**, sans redémarrage, et repart
+  quand le dernier onglet d'un des deux se ferme sans qu'une épingle le retienne.
+

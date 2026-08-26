@@ -213,7 +213,8 @@ export class TabBuilder {
  * Test Data Builder : un **onglet de merge** (spec §7.4) — le premier onglet sans PTY.
  *
  * Ses défauts décrivent le décor courant : un rebase de `feat` sur `main`, arrêté, dans un
- * worktree seul sous son dépôt. Il n'a **ni `cwd`, ni état, ni pause** — et c'est ce que
+ * worktree que le backend n'a rattaché à aucun dépôt — `inWorktree()` est là pour le cas
+ * groupé. Il n'a **ni `cwd`, ni état, ni pause** — et c'est ce que
  * ce constructeur rend visible dans les tests qui rangent une liste d'onglets.
  */
 export class MergeTabBuilder {

@@ -37,6 +37,10 @@ const collapsingGroups = (tabs: readonly Tab[], ...keys: string[]): SidebarTree 
 const worktreesOf = (group: SidebarGroup | undefined) =>
     group === undefined ? [] : group.kind === "repo" ? group.worktrees : [group.worktree];
 
+/** Ce que la ligne unique d'un groupe à plat écrit — `null` si le groupe n'est pas à plat. */
+const rowOf = (group: SidebarGroup | undefined) =>
+    group !== undefined && group.kind === "flat" ? group.row : null;
+
 describe("la hiérarchie dépôt → worktree → onglets", () => {
     it("Given two tabs in the same worktree, when the sidebar is built, then they hang under a single worktree row", () => {
         // Given
@@ -171,6 +175,148 @@ describe("la hiérarchie dépôt → worktree → onglets", () => {
         // Then
         expect(tree.groups[0]?.kind).toBe("flat");
         expect(worktreesOf(tree.groups[0])[0]?.title).toBe("broken");
+    });
+});
+
+describe("un dépôt qui n'héberge qu'un worktree", () => {
+    it("Given a repository whose only worktree is its main tree, when the sidebar is built, then one row carries the repository name and its tabs sit right under it", () => {
+        // Given — le cas nominal de l'usage réel : l'orchestrateur vit dans l'arbre
+        // principal, et ses enfants partent en worktree sans onglet à eux
+        const tabs = [
+            TabBuilder.create().named("A").running("claude").inWorktree("/dev/ash", "ash").build(),
+            TabBuilder.create().named("B").running("bun").inWorktree("/dev/ash", "ash").build(),
+        ];
+
+        // When
+        const tree = build(tabs);
+
+        // Then — une ligne, pas deux : `ash` → `ash ·ash` → `claude` dépensait un niveau
+        // entier pour une seule vérité
+        expect(tree.groups[0]?.kind).toBe("flat");
+        expect(rowOf(tree.groups[0])?.label).toBe("ash");
+        expect(rowOf(tree.groups[0])?.suffix).toBeNull();
+        expect(worktreesOf(tree.groups[0])[0]?.tabs.map((tab) => tab.tabId)).toEqual(["A", "B"]);
+    });
+
+    it("Given a repository whose only worktree is a linked one, when its row is named, then it keeps the suffix that tells it from the repository", () => {
+        // Given — le dossier du worktree n'est pas celui du dépôt : le suffixe dit lequel
+        const tabs = [
+            TabBuilder.create().inWorktree("/wt/backoffice", "democratic-backoffice").build(),
+        ];
+
+        // When
+        const tree = build(tabs);
+
+        // Then
+        expect(rowOf(tree.groups[0])?.label).toBe("democratic-backoffice");
+        expect(rowOf(tree.groups[0])?.suffix).toBe("·backoffice");
+    });
+
+    it("Given a directory outside any repository, when its row is named, then it still carries the folder name", () => {
+        // Given — l'autre famille de la forme à plat, qui n'a aucun nom de dépôt à montrer
+        const tabs = [TabBuilder.create().inFlatWorktree("/dev/solo").build()];
+
+        // When
+        const tree = build(tabs);
+
+        // Then
+        expect(rowOf(tree.groups[0])?.label).toBe("solo");
+        expect(rowOf(tree.groups[0])?.suffix).toBeNull();
+    });
+
+    it("Given a repository shown flat, when a tab opens a second worktree of it, then the intermediate level comes back", () => {
+        // Given — un seul worktree habité
+        const before = [TabBuilder.create().named("A").inWorktree("/dev/ash", "ash").build()];
+
+        // When — un agent part sur une branche, dans son propre dossier
+        const after = [
+            before[0] as Tab,
+            TabBuilder.create().named("B").inWorktree("/wt/ash-sidebar", "ash").build(),
+        ];
+        const grown = build(after);
+
+        // Then — le niveau revient dès qu'il porte deux vérités : deux worktrees ont deux
+        // états d'arbre (ADR-0012, alternative écartée)
+        expect(build(before).groups[0]?.kind).toBe("flat");
+        expect(grown.groups[0]?.kind).toBe("repo");
+        expect(worktreesOf(grown.groups[0]).map((worktree) => worktree.suffix)).toEqual([
+            "·ash",
+            "·sidebar",
+        ]);
+    });
+
+    it("Given a repository with two worktrees, when one of them loses its last tab, then the column falls back to the flat form", () => {
+        // Given
+        const both = [
+            TabBuilder.create().named("A").inWorktree("/dev/ash", "ash").build(),
+            TabBuilder.create().named("B").inWorktree("/wt/ash-sidebar", "ash").build(),
+        ];
+
+        // When — l'agent de `·sidebar` a fini, son onglet est fermé, et rien ne l'épingle
+        const alone = build([both[0] as Tab]);
+
+        // Then — la bascule joue dans les deux sens, sans redémarrage
+        expect(build(both).groups[0]?.kind).toBe("repo");
+        expect(alone.groups[0]?.kind).toBe("flat");
+        expect(rowOf(alone.groups[0])?.label).toBe("ash");
+    });
+
+    it("Given a collapsed worktree, when its repository falls back to the flat form, then the row is still collapsed", () => {
+        // Given — le repli vise le **worktree** (ADR-0012), et sa clé ne change pas quand la
+        // forme du groupe change : un dépôt qui gagne un second worktree perdrait sinon
+        // silencieusement son état replié
+        const both = [
+            TabBuilder.create().named("A").inWorktree("/dev/ash", "ash").build(),
+            TabBuilder.create().named("B").inWorktree("/wt/ash-sidebar", "ash").build(),
+        ];
+
+        // When
+        const grouped = collapsing(both, "/dev/ash");
+        const flattened = collapsing([both[0] as Tab], "/dev/ash");
+
+        // Then
+        expect(worktreesOf(grouped.groups[0])[0]?.collapsed).toBe(true);
+        expect(worktreesOf(flattened.groups[0])[0]?.collapsed).toBe(true);
+        expect(worktreesOf(flattened.groups[0])[0]?.key).toBe("/dev/ash");
+    });
+
+    it("Given a pinned worktree alone under its repository, when the sidebar is built, then its row stays, flat, and the pin still targets the worktree", () => {
+        // Given — un worktree sans onglet n'existe dans la colonne que par son épingle
+        // (spec §4.1) ; la mise à plat ne lui retire pas sa ligne
+        const tree = pinning([], PinBuilder.create("/wt/ash-toc").ofRepo("ash").build());
+
+        // When
+        const worktree = worktreesOf(tree.groups[0])[0];
+
+        // Then
+        expect(tree.groups[0]?.kind).toBe("flat");
+        expect(rowOf(tree.groups[0])?.label).toBe("ash");
+        expect(rowOf(tree.groups[0])?.suffix).toBe("·toc");
+        expect(worktree?.key).toBe("/wt/ash-toc");
+        expect(worktree?.pinned).toBe(true);
+    });
+
+    it("Given a repository shown flat whose agent waits while another works, when its row bubbles a state, then it shows waiting", () => {
+        // Given — la remontée est inchangée : c'est la ligne aplatie qui la porte désormais
+        const tabs = [
+            TabBuilder.create()
+                .named("A")
+                .running("claude", "working")
+                .inWorktree("/dev/ash", "ash")
+                .build(),
+            TabBuilder.create()
+                .named("B")
+                .running("codex", "waiting")
+                .inWorktree("/dev/ash", "ash")
+                .build(),
+        ];
+
+        // When
+        const tree = build(tabs);
+
+        // Then
+        expect(tree.groups[0]?.state).toBe("waiting");
+        expect(worktreesOf(tree.groups[0])[0]?.state).toBe("waiting");
     });
 });
 
@@ -349,7 +495,7 @@ describe("l'onglet de merge dans la colonne", () => {
         const tree = build([merge]);
 
         // Then
-        const row = tree.groups[0]?.kind === "repo" ? tree.groups[0].worktrees[0]?.tabs[0] : null;
+        const row = worktreesOf(tree.groups[0])[0]?.tabs[0];
         expect(row?.state).toBeNull();
         expect(row?.label).toBe("rebase feat onto main");
         expect(row?.subagents).toEqual([]);
@@ -373,7 +519,7 @@ describe("l'onglet de merge dans la colonne", () => {
 
         // Then
         const stateOf = (tree: SidebarTree): string | undefined =>
-            tree.groups[0]?.kind === "repo" ? tree.groups[0].worktrees[0]?.state : undefined;
+            worktreesOf(tree.groups[0])[0]?.state;
         expect(stateOf(withAgent)).toBe("waiting");
         expect(stateOf(alone)).toBe("idle");
         expect(withAgent.waitingCount).toBe(1);

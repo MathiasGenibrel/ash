@@ -38,8 +38,10 @@ export interface RowPlan<Child> {
 /**
  * Le plan d'un groupe : ses worktrees, ou son état agrégé quand il est replié.
  *
- * La forme **à plat** n'a pas de ligne de groupe (ADR-0012) : son unique worktree *est* sa
- * ligne, donc elle ne peut rien replier à ce niveau et ne porte jamais de glyphe.
+ * La forme **à plat** n'a pas de ligne de groupe (ADR-0012, amendement du 2026-08-26) : son
+ * unique worktree *est* sa ligne — que le dépôt existe ou non —, donc elle ne peut rien
+ * replier à ce niveau et ne porte jamais de glyphe. Ce qu'elle montre reste porté par le
+ * repli du worktree, qui n'a pas bougé.
  */
 export function planGroup(group: SidebarGroup): RowPlan<WorktreeNode> {
     if (group.kind === "flat") return { badge: null, children: [group.worktree] };
