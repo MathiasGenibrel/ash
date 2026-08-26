@@ -227,19 +227,31 @@ export interface AgentRowDecoration {
  *
  * Le filet et la lame y sont non chromatiques parce que ce que le test lit d'eux est leur
  * **présence**, pas leur teinte : un trait est là, ou il n'y est pas.
+ *
+ * Un `Record<keyof AgentRowDecoration, …>` et non une liste écrite à côté du type, pour la
+ * raison qui vaut déjà pour [`AGENT_STATES`] : un canal ajouté à la décoration et oublié ici
+ * ne casserait rien — les deux invariants continueraient de passer en regardant un canal de
+ * moins, c'est-à-dire en ne gardant plus tout à fait ce qu'ils annoncent. Le compilateur
+ * refuse maintenant la décoration tant que son canal n'a pas dit s'il tient sans la couleur.
  */
+const CHANNEL_CHROMATIC: Readonly<Record<keyof AgentRowDecoration, boolean>> = {
+    background: true,
+    leftRail: false,
+    rightBlade: false,
+    badge: true,
+    nameWeight: false,
+    glyph: false,
+    struck: false,
+};
+
+/** Les canaux d'une ligne — dérivés de la table ci-dessus, jamais recopiés. */
 export const AGENT_ROW_CHANNELS: readonly {
     readonly channel: keyof AgentRowDecoration;
     readonly chromatic: boolean;
-}[] = [
-    { channel: "background", chromatic: true },
-    { channel: "leftRail", chromatic: false },
-    { channel: "rightBlade", chromatic: false },
-    { channel: "badge", chromatic: true },
-    { channel: "nameWeight", chromatic: false },
-    { channel: "glyph", chromatic: false },
-    { channel: "struck", chromatic: false },
-];
+}[] = Object.entries(CHANNEL_CHROMATIC).map(([channel, chromatic]) => ({
+    channel: channel as keyof AgentRowDecoration,
+    chromatic,
+}));
 
 /**
  * La décoration d'une ligne, composée de ses **deux** sources et de rien d'autre.
@@ -261,6 +273,37 @@ export function decorateAgentRow(state: AgentState, selected: boolean): AgentRow
         glyph: shown.shape ?? shown.glyph,
         struck: shown.struck,
     };
+}
+
+/**
+ * Les classes d'une ligne d'agent — **la seule traduction** de la décoration en CSS.
+ *
+ * Deux features composent cette ligne : la sidebar (`features/sidebar/view.ts`) et la
+ * miniature de la fenêtre de réglages (`features/settings/components/sidebar-preview.ts`),
+ * et leurs deux feuilles de style peignent les **mêmes** mots — `is-tinted`, `has-blade`,
+ * `is-waiting`… Écrite deux fois, la traduction se paie deux fois : renommer une classe
+ * demandait quatre modifications, et celle qu'on oublierait serait silencieuse — `bun test`
+ * ne monte aucun DOM, donc rien ne rattraperait une ligne qui ne porte plus sa lame.
+ *
+ * C'est le même raisonnement que celui déjà tenu pour le trait du glyphe
+ * ([`AGENT_GLYPH_STROKE`]) : c'est l'aperçu, dont toute la valeur est de dire la vérité de la
+ * colonne, qui montrerait le premier un état que la sidebar n'a plus.
+ *
+ * Elle ferme aussi l'écart que la décoration seule laissait ouvert : `decorateAgentRow` peut
+ * dire `leftRail: "selection"` sans que la ligne rendue porte quoi que ce soit. Ici, les deux
+ * ne peuvent plus diverger — il n'y a qu'un chemin de l'une à l'autre.
+ *
+ * Ce qui n'y est pas : `is-struck`, qui se pose sur le **nom** et non sur la ligne, et les
+ * classes propres à chaque appelant (`ash-agent`, `settings-preview-row`, la forme de la
+ * ligne) — elles ne disent rien de l'état ni de la sélection.
+ */
+export function agentRowClasses(state: AgentState, selected: boolean): readonly string[] {
+    const decoration = decorateAgentRow(state, selected);
+    const classes = [PRESENTATIONS[state].className];
+    if (decoration.background === "tinted") classes.push("is-tinted");
+    if (decoration.rightBlade === "waiting") classes.push("has-blade");
+    if (decoration.leftRail === "selection") classes.push("is-selected");
+    return classes;
 }
 
 /**

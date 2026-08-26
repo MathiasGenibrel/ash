@@ -1,4 +1,4 @@
-import { agentGlyph as glyph, decorateAgentRow, presentAgentState } from "@/shared/agent-state";
+import { agentGlyph as glyph, agentRowClasses, presentAgentState } from "@/shared/agent-state";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import type { InstrumentationMark } from "./instrumentation";
 import { abbreviate, newTabHint } from "./labels";
@@ -277,15 +277,14 @@ export class SidebarView {
         if (tab.state === null) return this.toolRow(tab, shape);
 
         const shown = presentAgentState(tab.state);
-        // Les classes viennent de la décoration, canal par canal : la ligne ne décide de rien
-        // elle-même, et c'est ce qui garde le filet gauche à la sélection seule (#181).
-        const decoration = decorateAgentRow(tab.state, tab.active);
         const row = document.createElement("button");
         row.type = "button";
-        row.className = `ash-agent is-${shape} ${shown.className}`;
-        if (decoration.leftRail === "selection") row.classList.add("is-selected");
-        if (decoration.background === "tinted") row.classList.add("is-tinted");
-        if (decoration.rightBlade === "waiting") row.classList.add("has-blade");
+        // Ce que la ligne décide elle-même, c'est sa forme dans l'arbre — le reste vient de
+        // `shared/agent-state`, canal par canal, et c'est ce qui garde le filet gauche à la
+        // sélection seule (#181). La miniature des réglages compose la sienne avec les mêmes
+        // classes, sorties du même appel : une divergence n'aurait pas d'endroit où naître.
+        row.className = `ash-agent is-${shape}`;
+        row.classList.add(...agentRowClasses(tab.state, tab.active));
 
         const name = text("span", tab.label, "ash-agent-name");
         name.title = tab.title;

@@ -12,7 +12,7 @@
  * ici, et le trait du glyphe lui-même est celui de la colonne ([`AGENT_GLYPH_STROKE`]).
  */
 
-import { AGENT_GLYPH_STROKE, decorateAgentRow, presentAgentState } from "@/shared/agent-state";
+import { AGENT_GLYPH_STROKE, agentRowClasses, presentAgentState } from "@/shared/agent-state";
 import type { AgentState } from "@/shared/ipc";
 import { ElementBuilder, SVG_NAMESPACE, type UiComponent } from "@/shared/ui";
 
@@ -64,8 +64,9 @@ export function sidebarPreview(palette: "light" | "dark"): Tag {
 /**
  * Une ligne d'agent de la miniature — **exactement** ce que `sidebar/view.ts` compose.
  *
- * Les classes sont les mêmes (`is-tinted`, `has-blade`, `is-struck`) parce qu'elles sortent de
- * la même décoration : la seule chose que cette fonction ajoute est la petite taille.
+ * Les classes ne sont pas seulement « les mêmes » que celles de la colonne : elles sortent du
+ * **même appel** ([`agentRowClasses`]). La seule chose que cette fonction ajoute est la petite
+ * taille.
  *
  * Aucune ligne n'y est sélectionnée, et c'est exact plutôt que par omission — une miniature
  * n'a pas d'onglet courant à montrer. Le filet gauche n'apparaît donc sur aucune des cinq,
@@ -73,10 +74,7 @@ export function sidebarPreview(palette: "light" | "dark"): Tag {
  */
 function previewRow(state: AgentState, name: string, trailing: string): UiComponent {
     const shown = presentAgentState(state);
-    const decoration = decorateAgentRow(state, false);
-    const line = tag("div", "settings-preview-row", shown.className);
-    if (decoration.background === "tinted") line.class("is-tinted");
-    if (decoration.rightBlade === "waiting") line.class("has-blade");
+    const line = tag("div", "settings-preview-row", ...agentRowClasses(state, false));
 
     const agent = label("settings-preview-name", name);
     if (shown.struck) agent.class("is-struck");
