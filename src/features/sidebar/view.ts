@@ -1,4 +1,4 @@
-import { agentGlyph as glyph, presentAgentState } from "@/shared/agent-state";
+import { agentGlyph as glyph, agentRowClasses, presentAgentState } from "@/shared/agent-state";
 import { composeSidebarHeader, type SidebarHeaderModel } from "./header";
 import type { InstrumentationMark } from "./instrumentation";
 import { abbreviate, newTabHint } from "./labels";
@@ -279,10 +279,12 @@ export class SidebarView {
         const shown = presentAgentState(tab.state);
         const row = document.createElement("button");
         row.type = "button";
-        row.className = `ash-agent is-${shape} ${shown.className}`;
-        if (tab.active) row.classList.add("is-selected");
-        if (shown.tinted) row.classList.add("is-tinted");
-        if (shown.rail !== "none") row.classList.add(`has-${shown.rail}-rail`);
+        // Ce que la ligne décide elle-même, c'est sa forme dans l'arbre — le reste vient de
+        // `shared/agent-state`, canal par canal, et c'est ce qui garde le filet gauche à la
+        // sélection seule (#181). La miniature des réglages compose la sienne avec les mêmes
+        // classes, sorties du même appel : une divergence n'aurait pas d'endroit où naître.
+        row.className = `ash-agent is-${shape}`;
+        row.classList.add(...agentRowClasses(tab.state, tab.active));
 
         const name = text("span", tab.label, "ash-agent-name");
         name.title = tab.title;
@@ -299,7 +301,7 @@ export class SidebarView {
     /**
      * La ligne d'un onglet qui n'est **pas** un agent — la surface de merge (#30).
      *
-     * Ni glyphe d'état, ni teinte, ni rail : elle n'en a aucun, et lui prêter le `idle` d'un
+     * Ni glyphe d'état, ni teinte, ni lame : elle n'en a aucun, et lui prêter le `idle` d'un
      * shell à son invite ferait remonter un état inventé jusqu'à la ligne du dépôt. Ce
      * qu'elle porte à droite, c'est ce qu'elle **est** — `merge` —, et son clic sélectionne
      * l'onglet comme n'importe quelle autre ligne.

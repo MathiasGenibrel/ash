@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "bun:test";
 
-import { AGENT_STATES, presentAgentState } from "@/shared/agent-state";
+import { AGENT_STATES, decorateAgentRow, presentAgentState } from "@/shared/agent-state";
 import { find, findAll, plainText, type UiChild, type UiElementNode } from "@/shared/ui";
 
 import { anAppearance } from "../builders";
@@ -65,8 +65,8 @@ describe("la section appearance de la fenêtre de réglages", () => {
 
     it("Given a theme preview, when its rows are read, then it shows the five agent states with what shared/agent-state says of each", () => {
         // Given — l'aperçu n'a de valeur que s'il dit la vérité de la colonne : c'est la
-        // même table qui décide du glyphe, du fond teinté, du rail et du nom barré. Une
-        // seconde table ici finirait par montrer un `working` que la sidebar n'a plus
+        // même décoration qui décide du glyphe, du fond teinté, de la lame et du nom barré.
+        // Une seconde table ici finirait par montrer un `working` que la sidebar n'a plus
         const composed = appearanceSection(anAppearance(), FONTS, IDLE);
 
         // When
@@ -75,11 +75,13 @@ describe("la section appearance de la fenêtre de réglages", () => {
         // Then — un état par ligne, dans l'ordre, et chacun avec son traitement
         expect(rows).toHaveLength(AGENT_STATES.length);
         for (const state of AGENT_STATES) {
-            const shown = presentAgentState(state);
-            const row = rows.find((one) => one.classes.includes(shown.className));
+            const decoration = decorateAgentRow(state, false);
+            const row = rows.find((one) => one.classes.includes(presentAgentState(state).className));
             expect(row).toBeDefined();
-            expect(row?.classes.includes("is-tinted")).toBe(shown.tinted);
-            expect(row?.classes.includes(`has-${shown.rail}-rail`)).toBe(shown.rail !== "none");
+            expect(row?.classes.includes("is-tinted")).toBe(decoration.background === "tinted");
+            expect(row?.classes.includes("has-blade")).toBe(decoration.rightBlade === "waiting");
+            // Aucune ligne d'aperçu n'est sélectionnée : le filet gauche n'y a rien à dire
+            expect(row?.classes.includes("is-selected")).toBe(false);
         }
     });
 
@@ -118,7 +120,7 @@ describe("la section appearance de la fenêtre de réglages", () => {
 
     it("Given the two palettes of a preview, when their rows are compared, then only the colours differ", () => {
         // Given — c'est la démonstration que la section veut faire : le thème clair ne perd
-        // ni la hiérarchie ni l'urgence de `waiting`, parce que l'urgence tient au rail et
+        // ni la hiérarchie ni l'urgence de `waiting`, parce que l'urgence tient à la lame et
         // au fond teinté, pas à la luminosité
         const composed = appearanceSection(anAppearance(), FONTS, IDLE);
 

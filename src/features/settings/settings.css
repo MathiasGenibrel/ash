@@ -1086,12 +1086,11 @@
     padding-left: 12px;
 }
 
-.settings-preview-row.has-accent-rail {
-    border-left-color: var(--ash-accent);
-}
-
-.settings-preview-row.has-error-rail {
-    border-left-color: var(--ash-error);
+/* La lame de `waiting` au bord droit — l'aperçu dit la vérité de la colonne, donc il la
+ * montre aussi. Le filet gauche, lui, n'apparaît sur aucune ligne : il appartient à la
+ * sélection (#181), et une miniature n'a pas d'onglet courant. */
+.settings-preview-row.has-blade {
+    box-shadow: inset -3px 0 0 var(--ash-accent);
 }
 
 .settings-preview-name {

@@ -131,9 +131,9 @@ function themeTile(mode: ThemeMode, current: ThemeMode, actions: AppearanceActio
  * `system` n'est pas une troisième palette : c'est l'**absence** de choix, donc les deux à la
  * fois. Les deux miniatures sont superposées et celle du dessus est découpée en triangle par
  * `clip-path` — le coin haut-gauche est clair, le coin bas-droit sombre. Rien d'autre ne
- * change entre les trois tuiles : mêmes formes, mêmes retraits, même rail, même teinte sur
+ * change entre les trois tuiles : mêmes formes, mêmes retraits, même lame, même teinte sur
  * `waiting`. C'est la démonstration que la section veut faire — le thème clair ne perd ni la
- * hiérarchie ni l'urgence, parce que l'urgence tient au rail et au fond teinté, pas à la
+ * hiérarchie ni l'urgence, parce que l'urgence tient à la lame et au fond teinté, pas à la
  * luminosité.
  */
 function preview(mode: ThemeMode): UiComponent {
