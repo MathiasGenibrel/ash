@@ -26,3 +26,6 @@ dist/
 # Réglages d'IDE — propres à chaque poste, jamais partagés
 .idea/
 .vscode/
+
+# VM de QA — captures, clé ssh dédiée et journal de démarrage (scripts/qa/vm.sh)
+/.qa-vm/

@@ -169,6 +169,12 @@ Il construit et observe **Ash-dev** — nom distinct, icône aux couleurs invers
 identifiant `com.mg-studio.ash.dev` —, jamais l'`Ash` installé qui te sert de terminal
 quotidien. Voir « Ash et Ash-dev sont deux applications » dans `CLAUDE.md`.
 
+**Un chemin existe pour ne plus payer le lancement sur ton bureau** : `scripts/qa/vm.sh`
+construit sur l'hôte et lance dans une VM macOS (Tart), sans qu'aucune fenêtre n'apparaisse
+chez toi. Il n'installe rien et ne tire jamais l'image de base — des dizaines de Go se
+téléchargent sur un geste explicite, pas sur une validation. Il n'a **jamais été exécuté** à
+ce jour ; coûts, amorçage et risques ouverts : [`qa-vm.md`](./qa-vm.md).
+
 Mode : **sur demande**. `/dev` le **propose** en fin de tâche, et tu décides. C'est le
 mode retenu parce qu'un build Tauri complet coûte plusieurs minutes et ne détecte rien
 sur une tâche qui ne touche pas l'interface.
