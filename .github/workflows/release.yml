@@ -120,7 +120,13 @@ jobs:
 
     build:
         name: build
-        needs: verify
+        # `preflight` autant que `verify` : un job ne peut lire `needs.<job>.outputs` que
+        # des jobs qu'il déclare, et une expression qui nomme un job absent des `needs` rend
+        # une **chaîne vide** sans erreur ni avertissement. Sans `preflight` ici, `ARCHIVE`
+        # arrivait vide et `ditto` échouait sur une destination sans nom — observé au premier
+        # passage réel de cette pipeline. La dépendance d'ordre passait déjà par `verify`,
+        # qui suit `preflight` : c'est bien l'accès aux sorties qui manquait, pas l'ordre.
+        needs: [preflight, verify]
         runs-on: macos-15
         steps:
             - uses: actions/checkout@v4
