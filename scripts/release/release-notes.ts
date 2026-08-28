@@ -10,10 +10,18 @@
  *
  * Comme `version.ts` : les fonctions pures prennent le contenu du fichier, la CLI en dessous
  * lit le disque, imprime et choisit le code de sortie.
+ *
+ * La forme d'un numéro de version n'est **pas** redécidée ici : elle est demandée à
+ * `version.ts`, qui la détient. C'est ce qui laisse passer `v1.2.0` aussi bien que `1.2.0`,
+ * donc à la CI d'envoyer son tag tel quel aux deux scripts.
  */
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+import { versionOf } from "./version";
+
+const CHANGELOG = "CHANGELOG.md";
 
 export type ReleaseNotes =
     | { readonly ok: true; readonly body: string }
@@ -29,11 +37,21 @@ function isVersionHeading(line: string): boolean {
     return /^##(?!#)\s/.test(line);
 }
 
-export function releaseNotesFor(changelog: string, version: string): ReleaseNotes {
+/**
+ * `asked` est un numéro de version ou le tag qui le porte. Une entrée qui n'est ni l'un ni
+ * l'autre est refusée **avant** de chercher : « aucune section [release-1.2] » accuserait le
+ * CHANGELOG d'une faute qui est celle de l'appelant.
+ */
+export function releaseNotesFor(changelog: string, asked: string): ReleaseNotes {
+    const version = versionOf(asked);
+    if (version === null) {
+        return { ok: false, message: `« ${asked} » : format attendu X.Y.Z ou vX.Y.Z` };
+    }
+
     const lines = changelog.split("\n");
     const start = lines.findIndex((line) => isHeadingOf(line, version));
     if (start === -1) {
-        return { ok: false, message: `CHANGELOG.md : aucune section [${version}]` };
+        return { ok: false, message: `${CHANGELOG} : aucune section [${version}]` };
     }
 
     const body: string[] = [];
@@ -44,12 +62,12 @@ export function releaseNotesFor(changelog: string, version: string): ReleaseNote
 
     const trimmed = body.join("\n").trim();
     if (trimmed === "") {
-        return { ok: false, message: `CHANGELOG.md : la section [${version}] est vide` };
+        return { ok: false, message: `${CHANGELOG} : la section [${version}] est vide` };
     }
     return { ok: true, body: trimmed };
 }
 
-const USAGE = "usage : bun scripts/release/release-notes.ts X.Y.Z";
+const USAGE = "usage : bun scripts/release/release-notes.ts X.Y.Z (ou vX.Y.Z)";
 
 if (import.meta.main) {
     const [version] = process.argv.slice(2);
@@ -59,7 +77,7 @@ if (import.meta.main) {
     }
 
     const root = fileURLToPath(new URL("../../", import.meta.url));
-    const result = releaseNotesFor(readFileSync(`${root}CHANGELOG.md`, "utf8"), version);
+    const result = releaseNotesFor(readFileSync(`${root}${CHANGELOG}`, "utf8"), version);
 
     if (!result.ok) {
         console.error(result.message);

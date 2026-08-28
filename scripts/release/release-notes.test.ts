@@ -66,6 +66,27 @@ describe("releaseNotesFor", () => {
         });
     });
 
+    it("Given the tag rather than the bare version, when asking for its notes, then the same section comes out", () => {
+        // Given
+        const changelog = ["# Changelog", "", "## [1.2.0]", "", "- Une entrée."].join("\n");
+        // When
+        const notes = releaseNotesFor(changelog, "v1.2.0");
+        // Then
+        expect(notes).toEqual({ ok: true, body: "- Une entrée." });
+    });
+
+    it("Given something that is neither a version nor a tag, when asking for its notes, then it blames the argument and not the changelog", () => {
+        // Given
+        const changelog = ["# Changelog", "", "## [1.2.0]", "", "- Une entrée."].join("\n");
+        // When
+        const notes = releaseNotesFor(changelog, "release-1.2");
+        // Then
+        expect(notes).toEqual({
+            ok: false,
+            message: "« release-1.2 » : format attendu X.Y.Z ou vX.Y.Z",
+        });
+    });
+
     it("Given a section whose last entry is a level three heading, when asking for its notes, then the heading does not close the section", () => {
         // Given
         const changelog = [

@@ -16,6 +16,14 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+/**
+ * Les deux fichiers, nommés une seule fois : le message de discordance et la lecture sur
+ * disque désignent alors forcément le même, et un renommage ne peut pas rendre un message
+ * qui mentirait sur le fichier fautif.
+ */
+const CARGO_TOML = "src-tauri/Cargo.toml";
+const PACKAGE_JSON = "package.json";
+
 export type VersionCheck =
     | { readonly ok: true; readonly version: string }
     | { readonly ok: false; readonly message: string };
@@ -30,13 +38,29 @@ export interface VersionSources {
 }
 
 /**
+ * La forme d'un numéro de version, écrite **une seule fois** : les deux lectures ci-dessous
+ * la demandent, et personne d'autre ne la reconnaît à sa façon.
+ */
+const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
  * Le tag porte un `v`, les fichiers non. Une entrée qui ne ressemble pas à `vX.Y.Z` est un
  * échec explicite : comparer silencieusement `1.2` ou `release-1.2.0` laisserait passer un
  * tag mal formé jusqu'au bundle.
  */
 export function versionFromTag(tag: string): string | null {
-    const matched = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(tag);
-    return matched?.[1] ?? null;
+    const bare = tag.startsWith("v") ? tag.slice(1) : null;
+    return bare !== null && VERSION.test(bare) ? bare : null;
+}
+
+/**
+ * Le `v` est ici **facultatif** : `1.2.0` comme `v1.2.0` nomment la même version. C'est ce
+ * qui permet à un appelant — la CI, qui n'a que `$GITHUB_REF_NAME` — de passer le tag tel
+ * quel à tous les scripts de release plutôt que d'en retirer le `v` lui-même, ce qui ferait
+ * de son `${TAG#v}` une seconde définition de la forme d'un tag.
+ */
+export function versionOf(input: string): string | null {
+    return input.startsWith("v") ? versionFromTag(input) : VERSION.test(input) ? input : null;
 }
 
 /**
@@ -84,8 +108,8 @@ export function checkVersions(sources: VersionSources): VersionCheck {
     }
 
     const declared: readonly (readonly [string, string | null])[] = [
-        ["src-tauri/Cargo.toml", versionFromCargoToml(sources.cargoToml)],
-        ["package.json", versionFromPackageJson(sources.packageJson)],
+        [CARGO_TOML, versionFromCargoToml(sources.cargoToml)],
+        [PACKAGE_JSON, versionFromPackageJson(sources.packageJson)],
     ];
 
     for (const [file, version] of declared) {
@@ -118,13 +142,13 @@ if (import.meta.main) {
     const root = fileURLToPath(new URL("../../", import.meta.url));
     const result = checkVersions({
         tag,
-        cargoToml: readFileSync(`${root}src-tauri/Cargo.toml`, "utf8"),
-        packageJson: readFileSync(`${root}package.json`, "utf8"),
+        cargoToml: readFileSync(`${root}${CARGO_TOML}`, "utf8"),
+        packageJson: readFileSync(`${root}${PACKAGE_JSON}`, "utf8"),
     });
 
     if (!result.ok) {
         console.error(result.message);
         process.exit(1);
     }
-    console.log(`version ${result.version} : Cargo.toml et package.json concordent`);
+    console.log(`version ${result.version} : ${CARGO_TOML} et ${PACKAGE_JSON} concordent`);
 }
