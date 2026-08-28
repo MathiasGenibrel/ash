@@ -230,13 +230,13 @@ bun run smoke                     # l'application s'ouvre-t-elle vraiment ?
 ```
 
 **`bun run smoke` est obligatoire dès qu'une tâche touche `lib.rs`, `menu.rs` ou un
-`commands.rs`.** Les sept autres ont toutes été vertes le jour où Ash ne démarrait plus du
+`commands.rs`.** Toutes les autres ont été vertes le jour où Ash ne démarrait plus du
 tout — un `state()` appelé avant son `manage()`, qui ne panique qu'au lancement. Le
 composition root n'a pas de test unitaire, et il n'en aura pas : assembler une
 application Tauri en demande une vraie.
 
 Prettier tranche le formatage du frontend comme `cargo fmt` tranche celui du Rust, et
-`format:check` est la première des sept vérifications de `bun run verify`. Le Markdown en
+`format:check` est la première vérification de `bun run verify`. Le Markdown en
 est **exclu** (`.prettierignore` dit pourquoi) : la prose de `docs/` est retournée à la
 main. Le reformatage initial est un commit à lui seul, nommé dans
 `.git-blame-ignore-revs` — `git config blame.ignoreRevsFile .git-blame-ignore-revs`, une

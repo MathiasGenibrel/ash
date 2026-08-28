@@ -83,8 +83,8 @@ Tout passe par `bun run`, y compris le Rust : les scripts savent depuis où lanc
 | `bun run app` | lance Ash en développement — compile le backend, démarre Vite, ouvre la fenêtre |
 | `bun run package` | produit `Ash.app` en release |
 | `bun run package:debug` | idem, en debug — plus rapide à compiler, plus lent à l'exécution |
-| `bun run verify` | les six vérifications, TypeScript **et** Rust |
-| `bun run verify:full` | les six, plus le smoke |
+| `bun run verify` | toutes les vérifications du dépôt, TypeScript **et** Rust |
+| `bun run verify:full` | les mêmes, plus le smoke |
 | `bun run lint` · `typecheck` · `test` | TypeScript, une par une |
 | `bun run rust:fmt` · `rust:lint` · `rust:test` | Rust, une par une |
 | `bun run smoke` | lance réellement l'application et vérifie qu'elle survit |
@@ -123,10 +123,11 @@ court-circuite donc en développement. Si tu veux voir une bannière, il faut pa
 bun run verify
 ```
 
-Six vérifications : `lint`, `typecheck` et les tests côté TypeScript ; `fmt`, `clippy`
-en `-D warnings` et les tests côté Rust. La commande s'arrête à la première qui échoue.
+Le formatage, le lint, les types et les tests, des deux côtés de la frontière. La liste
+exacte est décidée dans `package.json`, et nulle part ailleurs : la réécrire ici en ferait
+une seconde liste, qui divergerait. La commande s'arrête à la première qui échoue.
 
-Il y en a une septième, à lancer **dès qu'on touche à l'assemblage de l'application** —
+Une vérification reste dehors, à lancer **dès qu'on touche à l'assemblage de l'application** —
 `lib.rs`, `menu.rs`, un `commands.rs` :
 
 ```bash
@@ -134,7 +135,7 @@ bun run smoke
 ```
 
 Elle compile, lance réellement Ash, et vérifie qu'il survit à son démarrage et qu'il a
-ouvert son shell. Une fenêtre apparaît quelques secondes. Les six autres peuvent être
+ouvert son shell. Une fenêtre apparaît quelques secondes. Tout le reste peut être
 vertes pendant que l'application ne s'ouvre pas — c'est arrivé, et c'est pour ça qu'elle
 existe.
 
