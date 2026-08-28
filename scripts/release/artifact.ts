@@ -53,7 +53,7 @@ const TAURI_CONF = "src-tauri/tauri.conf.json";
  */
 const EVENT_BINARY = "ash-event";
 
-export function archLabelOf(target: string): string | null {
+function archLabelOf(target: string): string | null {
     return ARCH_LABELS[target] ?? null;
 }
 
@@ -73,16 +73,16 @@ export function artifactName(
 }
 
 /**
- * Là où `tauri build` dépose le bundle. Avec `--target`, cargo insère le triplet dans le
- * chemin — c'est ce que fait le workflow ; sans lui, la sortie est celle que le README
- * décrit pour un `bun run package` local.
+ * Là où `tauri build --target <triplet>` dépose le bundle : cargo insère le triplet dans le
+ * chemin. La release construit **toujours** pour une cible nommée — le chemin sans triplet,
+ * celui d'un `bun run package` local, n'est demandé par personne ici et n'est donc pas une
+ * variante que ce module propose.
  */
-export function bundlePath(productName: string, target?: string): string {
-    const prefix = target === undefined ? "src-tauri/target" : `src-tauri/target/${target}`;
-    return `${prefix}/release/bundle/macos/${productName}.app`;
+export function bundlePath(productName: string, target: string): string {
+    return `src-tauri/target/${target}/release/bundle/macos/${productName}.app`;
 }
 
-export function eventBinaryPath(productName: string, target?: string): string {
+export function eventBinaryPath(productName: string, target: string): string {
     return `${bundlePath(productName, target)}/Contents/MacOS/${EVENT_BINARY}`;
 }
 

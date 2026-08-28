@@ -57,15 +57,6 @@ describe("bundlePath", () => {
         // Then
         expect(path).toBe("src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Ash.app");
     });
-
-    it("Given a build with no target asked, when locating the bundle, then the path has no triple in it", () => {
-        // Given
-        const noTarget = undefined;
-        // When
-        const path = bundlePath("Ash", noTarget);
-        // Then
-        expect(path).toBe("src-tauri/target/release/bundle/macos/Ash.app");
-    });
 });
 
 describe("eventBinaryPath", () => {
