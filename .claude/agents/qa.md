@@ -92,6 +92,11 @@ vérifier une installation de hooks, vise un dossier de configuration jetable vi
 
 ## Lancer dans une VM, pas sur le bureau de l'utilisateur
 
+> **Ce chemin n'a jamais été exécuté** (au 2026-08-28) : tart n'est pas installé sur la
+> machine de l'auteur. Sa première utilisation sera aussi sa première vérification — et cinq
+> points restent ouverts, listés dans [`qa-vm.md`](../docs/qa-vm.md). Lis-les avant de t'en
+> servir.
+
 **Le lancement est ce qui dérange, pas le build.** `bun run package:debug` est du CPU, il ne
 vole aucun focus ; l'application lancée, elle, prend le focus, le Dock et le WindowServer de
 la machine qui sert de terminal quotidien. Un chemin existe pour rendre ce prix nul :
@@ -119,12 +124,25 @@ Trois règles s'y ajoutent à celles de la section précédente :
 - **Si la VM n'est pas disponible, tu observes sur l'hôte comme avant**, et tu le **dis** dans
   ton compte rendu — c'est alors le bureau de l'utilisateur que tu occupes.
 
+**Le code de retour te dit quoi faire**, et c'est la seule chose que tu aies à lire pour
+décider :
+
+| Code | Ce que ça veut dire | Ta conduite |
+|---|---|---|
+| `1` | tu as mal appelé le script | corrige l'appel |
+| `2` | il manque tart, l'image, le build ou `expect` sur l'hôte | **rends la main** — tu n'installes rien et tu ne tires rien |
+| `3` | tart n'a pas suivi (clonage, adresse, ssh, arrêt) | c'est l'outillage, pas la tâche — dis-le, ne prononce pas de verdict |
+| `4` | une étape a échoué **dans** la VM | c'est le seul code qui puisse porter un défaut d'Ash — regarde avant de conclure |
+
+Un `2` ou un `3` n'est **jamais** un `REJECTED` : ils parlent de la machine, pas du code que
+tu valides.
+
 Les cinq états se produisent **sans qu'aucun agent d'IA ne soit installé** :
 `ash-event <verbe> --tab $ASH_TAB_ID`. Ce n'est pas un contournement — ADR-0007 pose qu'un
 état vient d'un hook et jamais de l'analyse de la sortie du PTY, donc c'est le chemin
 nominal. `idle` est le seul qui demande autre chose qu'un verbe d'état : il vient de
-`session-start`. Et `done` / `error` s'effacent **30 s** après avoir été vus : la capture suit
-tout de suite.
+`session-start`. Et `done` / `error` s'effacent **30 s** après avoir été vus — c'est `LINGER`,
+dans `agents/machine.rs`, et le script ne fait que le redire : la capture suit tout de suite.
 
 ### Ce que la VM ne peut pas vérifier
 
@@ -140,10 +158,7 @@ Dis-le explicitement quand tu t'en sers, plutôt que de laisser croire à une co
 - **rien de ce qui dépend du matériel de l'hôte** : polices installées, écrans multiples,
   claviers non-QWERTY.
 
-Et **au 2026-08-28, ce chemin n'a jamais été exécuté** : tart n'est pas installé sur la
-machine de l'auteur. La première utilisation est aussi sa première vérification — traite ses
-échecs comme des défauts de l'outillage, pas du code de la tâche, et rends la main plutôt
-qu'un `REJECTED` injuste. Coûts, amorçage et risques ouverts :
+Coûts, amorçage, décisions et les cinq points ouverts :
 [`.claude/docs/qa-vm.md`](../docs/qa-vm.md).
 
 ## Ce qu'un smoke test veut dire sur Ash

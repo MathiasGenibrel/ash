@@ -70,8 +70,28 @@ scripts/qa/vm.sh shot five-states     # → .qa-vm/shots/five-states.png
 scripts/qa/vm.sh down
 ```
 
-`up`, `install`, `fixture` et `down` sont idempotents. Codes de retour : `1` usage, `2`
-prérequis manquant sur l'hôte, `3` la VM n'a pas répondu, `4` une étape a échoué dans la VM.
+`up`, `install`, `fixture` et `down` sont idempotents.
+
+### Les codes de retour sont une interface
+
+Ils ne disent pas *où* ça a cassé mais **qui doit corriger** — c'est ce qui permet à l'agent
+`qa` d'agir dessus au lieu de recopier un message d'erreur.
+
+| Code | Ce qui s'est passé | Ce que l'appelant fait |
+|---|---|---|
+| `1` | usage — argument manquant, nom de capture ou verbe refusé | corrige l'appel ; rien à installer |
+| `2` | prérequis manquant sur l'hôte (tart, image, build, `expect`) | `doctor` dit la commande à taper — **rends la main**, n'installe rien |
+| `3` | tart n'a pas suivi : clonage, adresse, ssh, arrêt | c'est la VM, pas Ash — voir `.qa-vm/boot.log` |
+| `4` | une étape a échoué **dans** la VM | c'est là, et seulement là, qu'un défaut d'Ash peut se lire |
+
+La distinction qui compte est `2` contre `4` : un `2` n'est jamais un verdict sur le code de
+la tâche, un `4` peut en être un.
+
+Tout ce que le script accepte de la ligne de commande — un nom de capture, un rang d'onglet,
+un verbe — est jugé **à un seul endroit** (`checked`, dans `vm.sh`), parce que ces valeurs
+finissent dans un `bash -s` distant ou dans un AppleScript, où une valeur non jugée serait du
+code. Même conduite que les trois frontières de sécurité du dépôt (`git_cli.rs`,
+`token.rs`/`api.rs`, `links/target.rs`) : une fonction décide, tous les autres demandent.
 
 ## Les décisions, et pourquoi
 
@@ -149,23 +169,30 @@ Deux pièges de temps :
 - Ce n'est **pas** une suite E2E, et ça n'en tient pas lieu. « Monter un DOM dans `bun test` »
   reste une décision ouverte et séparée (`.claude/docs/testing.md`).
 
-## Les trois risques, dans l'ordre où ils doivent être levés
+## Les cinq points ouverts, dans l'ordre où ils doivent être levés
 
-Aucun n'a été levé — voir l'avertissement en tête de fichier.
+**Aucun n'a été levé** — voir l'avertissement en tête de fichier. Les deux premiers décident
+à eux seuls de la valeur de ce chemin : si l'un des deux tombe, la capture est vide et le
+critère central de #189 n'est pas tenu.
 
 1. **`screencapture` sans écran attaché.** `tart run --no-graphics` n'ôte pas l'écran
    *virtuel* de la VM : il n'en affiche pas la fenêtre sur l'hôte, et `screencapture` devrait
    donc voir quelque chose. **À vérifier en premier**, en regardant le PNG. S'il est vide ou
    noir, le repli est une VM avec écran, sur un Space séparé — ce qui **affaiblit** le
    critère « aucune fenêtre » et doit alors être dit ici, pas contourné en silence.
-2. **Les dialogues de première ouverture.** Un `~` neuf plus une application empaquetée
+2. **Une session graphique doit être ouverte dans la VM.** `System Events` ne frappe rien et
+   `screencapture` ne voit rien tant que l'utilisateur n'est pas *connecté* devant l'écran
+   virtuel : sans ouverture de session automatique dans l'image, un cycle sans écran s'arrête
+   à l'écran de connexion. C'est l'étape 3 de l'amorçage, et c'est la seule des trois dont on
+   ne sait pas encore si l'image de base la satisfait déjà.
+3. **Les deux autorisations TCC de l'amorçage** — accessibilité et enregistrement d'écran
+   pour `/usr/libexec/sshd-keygen-wrapper`. Sans elles, `run` et `shot` échouent ; le script
+   le dit dans son message d'erreur plutôt que de rendre une capture muette. Elles ne se
+   donnent que devant un écran, d'où `console`.
+4. **Les dialogues de première ouverture.** Un `~` neuf plus une application empaquetée
    donnent la demande d'autorisation de notifications, et un dialogue modal fige toute
    automatisation. Choix retenu : **l'accorder une fois**, par un clic AppleScript au premier
    `run`. La réponse est retenue par identifiant de paquet (`com.mg-studio.ash.dev`) et la VM
    garde son disque d'un cycle à l'autre : les suivants ne le reverront pas.
-3. **La quarantaine.** Traitée par une vérification explicite dans `install` (voir plus haut)
-   plutôt que par une supposition.
-
-Un quatrième point, découvert en écrivant : **les deux autorisations TCC de l'amorçage**
-(accessibilité et enregistrement d'écran pour sshd). Sans elles, `run` et `shot` échouent — le
-script le dit dans son message d'erreur plutôt que de rendre une capture muette.
+5. **La quarantaine.** Traitée par une vérification explicite dans `install` (voir plus haut)
+   plutôt que par une supposition — mais la vérification elle-même n'a jamais tourné.

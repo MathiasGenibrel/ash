@@ -35,9 +35,20 @@ set -euo pipefail
 
 # --- codes de retour, pour que l'appelant sache de quoi il s'agit -------------------------
 #
-# 1 usage · 2 prérequis manquant sur l'hôte · 3 la VM n'a pas répondu · 4 une étape a échoué
-# dans la VM. Un `mktemp` qui échoue est un échec, jamais un chemin vide : sous `set -u`,
-# une chaîne vide ferait viser la racine.
+# Ils sont une **interface** : l'agent `qa` agit dessus, et `.claude/agents/qa.md` en porte
+# la table. Ce qui les sépare est *qui* doit corriger, pas *où* ça a cassé :
+#
+#   1 usage      — l'appelant a mal appelé ; il n'y a rien à installer, rien à démarrer.
+#   2 prérequis  — il manque quelque chose sur l'hôte (tart, image, build, expect). C'est
+#                  la seule famille où `doctor` dit quoi taper, et où l'agent rend la main.
+#   3 VM         — tart n'a pas fait ce qu'on lui demandait : clonage, adresse, ssh, arrêt.
+#                  La VM, pas ce qu'elle contient.
+#   4 étape      — une étape a échoué **dans** la VM. C'est là qu'un défaut d'Ash se voit.
+#
+# Aucun chemin de ce script ne fabrique de chemin temporaire : tout ce qu'il écrit sur
+# l'hôte est sous `$STATE_DIR`, construit une fois à partir de `$ROOT`, et tout ce qu'il
+# supprime est nommé en toutes lettres. C'est ce qui évite qu'une chaîne vide, sous `set -u`,
+# fasse viser la racine.
 readonly EXIT_USAGE=1
 readonly EXIT_PREREQ=2
 readonly EXIT_VM=3
@@ -67,6 +78,18 @@ readonly APP_TARGET="/Applications/Ash-dev.app"
 readonly GUEST_FIXTURE="fixture"
 readonly GUEST_QA_DIR=".ash-qa"
 
+# Le binaire que les hooks appellent (ADR-0007), tel qu'il vit dans le bundle installé.
+# Un seul endroit le nomme : c'est ce que `run` et `state` envoient tous les deux.
+readonly GUEST_EVENT="$APP_TARGET/Contents/MacOS/ash-event"
+
+# Le `~` de la VM, écrit en toutes lettres — et **seulement** pour l'AppleScript.
+#
+# Partout ailleurs le guest résout `$HOME` lui-même, ce qui est plus juste. Mais un
+# AppleScript est du texte composé sur l'hôte et joué dans la session graphique : il n'a
+# aucun shell pour développer une variable. D'où cette seconde écriture du même fait, à un
+# seul endroit plutôt qu'à chaque frappe.
+readonly GUEST_HOME="/Users/$VM_USER"
+
 # Les messages vont sur la **sortie d'erreur**, sans exception : plusieurs sous-commandes
 # rendent une valeur sur la sortie standard — une adresse IP, un chemin de capture — et
 # elles sont lues par `$(…)`. Un mot d'avancement mêlé à une adresse ferait viser un hôte
@@ -78,17 +101,61 @@ fail() {
     exit "${2:-$EXIT_STEP}"
 }
 
+# --- ce qui a le droit de traverser vers la VM ---------------------------------------------
+#
+# Tout ce que ce script compose finit dans un `bash -s` distant, dans un `sed`, ou dans un
+# AppleScript joué par `System Events`. Une valeur qu'on n'a pas jugée y devient donc du
+# **code** : `state 1 "x; rm -rf ~"` exécuterait sa moitié droite dans la VM.
+#
+# La conduite est celle des trois frontières de sécurité du dépôt (`git_cli.rs`,
+# `token.rs`/`api.rs`, `links/target.rs`) : **une fonction décide, tous les autres
+# demandent.** Ajouter une sous-commande qui prend un argument, c'est ajouter un appel à
+# `checked` — pas une nouvelle expression régulière au site d'appel.
+
+# Un nom de fichier ou de VM : ni chemin, ni espace, ni point de départ (`..`).
+readonly SAFE_NAME='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+# Un rang d'onglet, à partir de 1 — il part dans une adresse `sed`.
+readonly SAFE_INDEX='^[1-9][0-9]*$'
+# Les verbes qu'`ash-event` transporte.
+#
+# Cette liste est **détenue par le Rust** (`features/agents/adapters/claude_code.rs`), et un
+# script shell ne peut pas l'importer : on la redit donc en nommant sa source, jamais comme
+# si elle venait de nulle part. `interpret` ne connaît que les quatre états ; `session-start`
+# et `subagent-stop` sont des verbes de session et d'enfant, pas des états — c'est pour ça
+# qu'`idle` n'est pas déclarable.
+readonly SAFE_VERB='^(session-start|subagent-stop|working|waiting|done|error)$'
+
+# `checked` **échoue le script**, elle ne rend rien : appelée dans un `$(…)`, son `exit` ne
+# tuerait que le sous-shell et l'appelant continuerait avec une valeur vide.
+checked() {
+    local what="$1" pattern="$2" value="${3:-}"
+    [ -n "$value" ] && printf '%s' "$value" | grep -Eq "$pattern" ||
+        fail "$what invalide : « ${3:-} » — attendu $pattern" "$EXIT_USAGE"
+}
+
+# Les quatre variables d'environnement traversent elles aussi : `ASH_VM_NAME` part en
+# argument de `tart` et en motif de `grep`, `ASH_VM_USER` part dans une chaîne AppleScript.
+# On les juge une fois, avant toute sous-commande, plutôt qu'à chaque usage.
+check_configuration() {
+    checked "ASH_VM_NAME" "$SAFE_NAME" "$VM_NAME"
+    checked "ASH_VM_USER" "$SAFE_NAME" "$VM_USER"
+}
+
 # --- prérequis de l'hôte ------------------------------------------------------------------
 
-require_tart() {
-    command -v tart >/dev/null || fail \
-        "tart est introuvable. Installe-le : brew install cirruslabs/cli/tart" "$EXIT_PREREQ"
-}
+has_tart() { command -v tart >/dev/null 2>&1; }
 
 # L'image de base pèse des dizaines de Go. On ne la tire jamais implicitement : on constate
 # son absence, et on donne la commande.
+image_pulled() { tart list --source oci --quiet 2>/dev/null | grep -qxF "$VM_IMAGE"; }
+
+require_tart() {
+    has_tart || fail \
+        "tart est introuvable. Installe-le : brew install cirruslabs/cli/tart" "$EXIT_PREREQ"
+}
+
 require_image() {
-    tart list --source oci --quiet 2>/dev/null | grep -qx "$VM_IMAGE" || fail \
+    image_pulled || fail \
         "l'image $VM_IMAGE n'est pas tirée localement (des dizaines de Go).
        Tire-la explicitement, en connaissant le coût : tart pull $VM_IMAGE" "$EXIT_PREREQ"
 }
@@ -99,17 +166,18 @@ require_app() {
        Construis-le sur l'hôte — bun run package:debug — jamais dans la VM." "$EXIT_PREREQ"
 }
 
-vm_exists() { tart list --quiet 2>/dev/null | grep -qx "$VM_NAME"; }
+vm_exists() { tart list --quiet 2>/dev/null | grep -qxF "$VM_NAME"; }
 
 # `tart list` rend une colonne d'état. On ne se fie pas à la présence d'un processus `tart`
 # sur l'hôte : plusieurs VM peuvent tourner, et le plafond d'Apple est de **2 VM macOS**
 # par hôte.
 vm_running() {
-    # Un objet JSON par ligne, puis deux `grep` : l'ordre des clés ne décide de rien.
+    # Un objet JSON par ligne, puis deux `grep -F` : l'ordre des clés ne décide de rien, et
+    # un nom de VM n'est jamais lu comme une expression régulière.
     tart list --format json 2>/dev/null |
         tr '}' '\n' |
-        grep "\"Name\":\"$VM_NAME\"" |
-        grep -q '"State":"running"'
+        grep -F "\"Name\":\"$VM_NAME\"" |
+        grep -qF '"State":"running"'
 }
 
 vm_ip() { tart ip "$VM_NAME" --wait "${1:-60}" 2>/dev/null; }
@@ -131,6 +199,19 @@ ssh_options=(
     -o LogLevel=ERROR
     -o ConnectTimeout=10
 )
+
+# Les mêmes options, mais pour `rsync -e`, qui prend une **chaîne** et la redécoupe.
+#
+# `"${ssh_options[*]}"` les collerait à l'espace : le chemin de la clé contient celui du
+# dépôt, et un dépôt rangé sous « Mon projet » ferait alors viser deux fichiers qui
+# n'existent pas. La chaîne est donc dérivée du tableau — jamais réécrite à côté.
+ssh_transport() {
+    local transport="ssh" option
+    for option in "${ssh_options[@]}"; do
+        transport="$transport $(printf '%q' "$option")"
+    done
+    printf '%s' "$transport"
+}
 
 ensure_key() {
     [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
@@ -204,19 +285,19 @@ GUEST
 
 cmd_doctor() {
     local verdict=0
-    if command -v tart >/dev/null; then
+    if has_tart; then
         say "tart : $(tart --version 2>/dev/null || echo présent)"
     else
         warn "tart : absent (brew install cirruslabs/cli/tart)"
         verdict=$EXIT_PREREQ
     fi
-    if command -v tart >/dev/null && tart list --source oci --quiet 2>/dev/null | grep -qx "$VM_IMAGE"; then
+    if has_tart && image_pulled; then
         say "image : $VM_IMAGE tirée"
     else
         warn "image : $VM_IMAGE absente (tart pull $VM_IMAGE — des dizaines de Go)"
         verdict=$EXIT_PREREQ
     fi
-    if command -v tart >/dev/null && vm_exists; then
+    if has_tart && vm_exists; then
         say "VM : $VM_NAME existe ($(vm_running && echo running || echo stopped))"
     else
         warn "VM : $VM_NAME n'existe pas encore (up la clonera depuis l'image)"
@@ -241,6 +322,7 @@ cmd_up() {
         tart clone "$VM_IMAGE" "$VM_NAME" || fail "le clonage a échoué" "$EXIT_VM"
     fi
 
+    local runner=""
     if vm_running; then
         say "$VM_NAME tourne déjà"
     else
@@ -248,7 +330,16 @@ cmd_up() {
         # pas la fenêtre. C'est tout l'objet de la tâche.
         say "démarrage de $VM_NAME (sans fenêtre sur l'hôte)"
         nohup tart run "$VM_NAME" --no-graphics >"$BOOT_LOG" 2>&1 &
+        runner=$!
         disown
+        # Le refus le plus probable est le plafond d'Apple — **2 VM macOS par hôte** —, et
+        # il tombe en une seconde. Sans ce regard, `tart ip --wait` ferait attendre deux
+        # minutes une VM déjà morte, puis dirait « pas d'adresse » au lieu de la vraie
+        # raison, qui est dans le journal.
+        sleep 2
+        kill -0 "$runner" 2>/dev/null || fail \
+            "tart run s'est arrêté aussitôt (plafond de 2 VM macOS par hôte ?) :
+       $(tail -n 3 "$BOOT_LOG" 2>/dev/null || echo "$BOOT_LOG est vide")" "$EXIT_VM"
     fi
 
     local ip
@@ -291,7 +382,7 @@ cmd_install() {
 
     # `rsync` plutôt que `scp -r` : il préserve les liens symboliques du bundle (Frameworks,
     # Resources), qu'un `scp -r` déréférence — un bundle recopié en dur ne se lance pas.
-    rsync -a --delete -e "ssh ${ssh_options[*]}" \
+    rsync -a --delete -e "$(ssh_transport)" \
         "$APP_SOURCE/" "$VM_USER@$ip:$APP_TARGET/" || fail "la copie a échoué" "$EXIT_STEP"
 
     guest <<GUEST || fail "la vérification post-copie a échoué dans la VM" "$EXIT_STEP"
@@ -408,14 +499,14 @@ GUEST
 
     play_scenario
     post_states
-    say "les cinq états sont posés — prends la capture tout de suite (LINGER = 30 s)"
+    say "les cinq états sont posés — capture tout de suite (LINGER = 30 s, agents/machine.rs)"
 }
 
 # Quatre onglets de plus, chacun dans un worktree : la sidebar montre alors ses trois
 # niveaux — le dépôt, ses worktrees, leurs onglets.
 play_scenario() {
     say "ouverture des onglets"
-    local home="/Users/$VM_USER"
+    local home="$GUEST_HOME"
     # Ash ouvre déjà un onglet au démarrage : on l'emmène dans le dépôt, puis on en ouvre
     # quatre autres. Cinq onglets, cinq états — et deux worktrees pour que la sidebar
     # montre ses trois niveaux.
@@ -437,6 +528,9 @@ play_scenario() {
 }
 
 # Les cinq états, dans l'ordre, sur cinq onglets.
+#
+# Les verbes sont ceux de `features/agents/adapters/claude_code.rs` — voir `$SAFE_VERB`,
+# qui redit la même liste au seul endroit qui la juge.
 #
 #   idle    : `session-start` — un verbe de session, pas un état. `idle` n'est jamais
 #             déclarable (l'adaptateur le refuse) : il naît de l'ouverture d'une session,
@@ -462,7 +556,7 @@ done
 count="\$(wc -l <"\$tabs")"
 [ "\$count" -ge 5 ] || { echo "seulement \$count onglet(s) annoncé(s) sur 5" >&2; exit 1; }
 
-event="$APP_TARGET/Contents/MacOS/ash-event"
+event="$GUEST_EVENT"
 index=0
 verbs=(session-start working waiting done error)
 while read -r tab; do
@@ -482,8 +576,7 @@ GUEST
 cmd_shot() {
     local name="${1:-}"
     [ -n "$name" ] || fail "usage : scripts/qa/vm.sh shot <nom>" "$EXIT_USAGE"
-    printf '%s' "$name" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' || fail \
-        "nom de capture invalide : « $name » (lettres, chiffres, . _ -)" "$EXIT_USAGE"
+    checked "nom de capture" "$SAFE_NAME" "$name"
 
     require_tart
     mkdir -p "$SHOTS_DIR"
@@ -504,16 +597,21 @@ GUEST
 }
 
 # Un état à la main, sur l'onglet de rang <n> (1 = le premier annoncé).
+#
+# Les deux arguments partent dans la VM — l'un dans une adresse `sed`, l'autre en argument
+# d'`ash-event` — donc ils passent par `checked` avant tout, comme le nom d'une capture.
 cmd_state() {
     local index="${1:-}" verb="${2:-}"
     [ -n "$index" ] && [ -n "$verb" ] || fail "usage : scripts/qa/vm.sh state <n> <verbe>" "$EXIT_USAGE"
+    checked "rang d'onglet" "$SAFE_INDEX" "$index"
+    checked "verbe" "$SAFE_VERB" "$verb"
     require_tart
     remember_ip >/dev/null
     guest <<GUEST || fail "l'état n'a pas pu être envoyé" "$EXIT_STEP"
 set -euo pipefail
 tab="\$(sed -n '${index}p' "\$HOME/$GUEST_QA_DIR/tabs")"
 [ -n "\$tab" ] || { echo "aucun onglet de rang $index" >&2; exit 1; }
-"$APP_TARGET/Contents/MacOS/ash-event" "$verb" --tab "\$tab"
+"$GUEST_EVENT" "$verb" --tab "\$tab"
 GUEST
 }
 
@@ -537,6 +635,11 @@ cmd_ssh() {
 cmd_console() {
     require_tart
     vm_exists || fail "la VM $VM_NAME n'existe pas encore — lance up" "$EXIT_VM"
+    # Le refus vient **avant** le mode d'emploi : imprimer trois étapes puis dire non
+    # laisserait croire qu'il y a quelque chose à faire.
+    if vm_running; then
+        fail "la VM tourne déjà sans écran — arrête-la d'abord (down)" "$EXIT_VM"
+    fi
     warn "cette commande ouvre une fenêtre sur ton bureau — c'est la seule qui le fasse."
     cat <<'STEPS'
 À faire une fois, dans la VM, pour que la QA se pilote ensuite sans écran :
@@ -547,9 +650,6 @@ cmd_console() {
   3. Vérifier que la session graphique de l'utilisateur est bien ouverte (connexion auto)
 Puis ferme cette fenêtre : les cycles suivants n'en auront plus besoin.
 STEPS
-    if vm_running; then
-        fail "la VM tourne déjà sans écran — arrête-la d'abord (down)" "$EXIT_VM"
-    fi
     tart run "$VM_NAME"
 }
 
@@ -568,6 +668,12 @@ usage : scripts/qa/vm.sh <commande>
   down              arrête la VM (idempotent)
   console           ouvre la VM AVEC écran — préparation d'image seulement
 
+Verbes acceptés par `state` : session-start, subagent-stop, working, waiting, done, error
+  (`idle` n'en est pas un : il vient de session-start ou de la sonde)
+
+Codes de retour : 1 usage · 2 prérequis manquant sur l'hôte · 3 la VM (tart) n'a pas suivi
+  · 4 une étape a échoué dans la VM
+
 Variables : ASH_VM_NAME, ASH_VM_IMAGE, ASH_VM_USER, ASH_VM_PASSWORD
 Documentation : .claude/docs/qa-vm.md
 USAGE
@@ -576,6 +682,7 @@ USAGE
 main() {
     local command="${1:-}"
     [ "$#" -gt 0 ] && shift || true
+    check_configuration
     case "$command" in
     doctor) cmd_doctor "$@" ;;
     up) cmd_up "$@" ;;
