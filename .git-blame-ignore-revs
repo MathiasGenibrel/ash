@@ -3,3 +3,5 @@
 #
 #     git config blame.ignoreRevsFile .git-blame-ignore-revs
 #
+# style: run prettier over the frontend, once and for all (#195)
+630aded084468733a5859fe754175dbc75381a46
