@@ -71,8 +71,45 @@ scripts/qa/vm.sh install              # copie Ash-dev.app + pose le crochet de s
 scripts/qa/vm.sh fixture              # un dépôt git, deux worktrees
 scripts/qa/vm.sh run                  # lance Ash-dev, ouvre cinq onglets, pose les cinq états
 scripts/qa/vm.sh shot five-states     # → .qa-vm/shots/five-states.png
-scripts/qa/vm.sh down
+scripts/qa/vm.sh down                 # arrête ET SUPPRIME la VM
 ```
+
+### Chaque QA repart d'un environnement sain
+
+`down` **supprime** la VM, il ne l'arrête pas seulement. C'est délibéré, et c'est la
+propriété qui donne sa valeur au reste : une VM gardée d'un cycle à l'autre emporte le `~`
+du précédent — ses onglets déjà annoncés, ses fichiers de `~/.ash`, ses autorisations
+accordées, l'application déjà installée. Le QA suivant validerait alors une machine que
+personne n'a décrite, et un défaut ne se reproduirait pas chez le voisin.
+
+**Le coût est négligeable, et c'est ce qui rend la règle tenable** : APFS clone par
+`clonefile`, donc `down` puis `up` prend **16 secondes** mesurées, et ne recopie pas les
+30 Go — les blocs ne divergent qu'à mesure qu'on écrit. Ce qui coûte, c'est `install`
+(le bundle traverse le réseau) et `bun run package:debug` sur l'hôte.
+
+Deux conséquences à connaître :
+
+- **Ce que la VM avait retenu disparaît aussi.** Le dialogue d'autorisation de notifications
+  peut donc se présenter à chaque cycle : le clic d'AppleScript dans `run` n'est plus une
+  précaution, c'est un passage obligé. (Sur `macos-sequoia-base`, il ne s'est pas présenté —
+  ne compte pas là-dessus sur une autre image.)
+- **La clé de QA est supprimée avec la VM.** Sans ça, le premier ssh du cycle suivant
+  viserait la même adresse avec une identité qui n'est plus la bonne.
+
+`stop` arrête sans supprimer — pour inspecter une VM après un échec. C'est l'exception, pas
+le cycle.
+
+### Deux QA en parallèle
+
+Le plafond d'Apple est de **2 VM macOS par hôte**, et deux cycles simultanés doivent porter
+des noms distincts, sans quoi le second supprimerait la VM du premier :
+
+```bash
+ASH_VM_NAME=ash-qa-a scripts/qa/vm.sh up
+ASH_VM_NAME=ash-qa-b scripts/qa/vm.sh up
+```
+
+Au-delà de deux, c'est `tart run` qui échoue, et l'erreur remonte par `boot.log`.
 
 `up`, `install`, `fixture` et `down` sont idempotents.
 
@@ -187,9 +224,10 @@ Aucun n'était levé quand ce fichier a été écrit. Tous l'ont été depuis, l
 3. **Les autorisations TCC n'ont pas été nécessaires** sur cette image : `run` et `shot` ont
    abouti sans passer par `console`. À reposer sur une autre image ou une autre version de
    macOS ; le message d'erreur du script reste la bonne porte si ça change.
-4. **Le dialogue de notifications ne s'est pas présenté** au premier `run`. Le clic
-   AppleScript reste en place — il est sans effet quand le dialogue est absent, et c'est la
-   conduite voulue.
+4. **Le dialogue de notifications ne s'est pas présenté**, ni au premier `run`, ni sur une
+   VM clonée à neuf. Le clic AppleScript reste en place, et depuis que `down` supprime la VM
+   il est un passage obligé plutôt qu'une précaution : rien de ce que la VM retient ne
+   survit à un cycle.
 5. **La quarantaine est bien absente** d'une copie par `rsync` sur ssh : `install` le
    vérifie et le dit (« quarantaine absente, comme attendu d'une copie par ssh »). Observé,
    plus supposé.
