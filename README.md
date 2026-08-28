@@ -9,6 +9,35 @@ en permanence qui travaille, **qui attend une réponse**, et qui a fini, et te d
 le git qui va avec : quel agent a écrit quel commit, et qui travaille dans le worktree
 que tu t'apprêtes à bousculer.
 
+## Installer Ash
+
+Chaque tag `vX.Y.Z` publie une release dans ce dépôt, avec une archive
+`Ash-X.Y.Z-macos-arm64.zip` — `Ash.app`, pour Mac Apple Silicon. Il n'y a **aucun mécanisme
+de mise à jour** : on retélécharge.
+
+Le plus simple est de la récupérer en ligne de commande, et ce n'est pas une coquetterie :
+
+```bash
+gh release download vX.Y.Z --repo MathiasGenibrel/ash --pattern '*.zip'
+unzip Ash-X.Y.Z-macos-arm64.zip -d /Applications
+```
+
+**Pourquoi pas le navigateur.** macOS pose l'attribut étendu `com.apple.quarantine` sur les
+fichiers téléchargés, mais ce n'est pas le transfert qui le pose : c'est LaunchServices, pour
+le compte de l'application qui télécharge — un navigateur, un client de messagerie, AirDrop.
+`curl`, `gh` ou `scp` ne le demandent pas, donc le fichier ne le porte jamais. La même archive
+donne donc « Ash est endommagé et ne peut pas être ouvert » d'un côté, et rien du tout de
+l'autre : c'est un symptôme du **canal**, pas d'un défaut de l'archive.
+
+Si l'archive est déjà passée par un navigateur, l'attribut se retire :
+
+```bash
+xattr -d com.apple.quarantine /Applications/Ash.app
+```
+
+**Ash n'est pas signé Developer ID** aujourd'hui, et n'est pas notarisé. C'est ce qui rend la
+quarantaine fatale plutôt que simplement bavarde, et c'est assumé pour l'instant.
+
 ## Lancer le projet en développement
 
 Ash ne se construit **que sur macOS**, et ça ne changera pas : Tauri se lie ici à
