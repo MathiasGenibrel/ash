@@ -1,10 +1,14 @@
 # La VM de QA — Ash-dev tourne ailleurs que sur ton bureau
 
-> **État au 2026-08-28 : écrit, jamais exécuté.** Tart n'est pas installé sur la machine de
-> l'auteur et l'image de base n'a jamais été tirée. Le script `scripts/qa/vm.sh` a été
-> relu, vérifié syntaxiquement et exercé sur ses **chemins d'échec** seulement. Les trois
-> risques listés plus bas sont **entiers** : aucun n'a été levé. Ne présente aucun critère
-> de #189 comme vérifié tant qu'un cycle réel n'a pas tourné.
+> **État au 2026-08-28 : un cycle complet a tourné.** Tart 2.32.1, image
+> `macos-sequoia-base` (macOS 15.7.7), sur un Mac Apple Silicon. `up → install → fixture →
+> run → shot → down` a été joué de bout en bout, **aucune fenêtre n'est apparue sur le
+> bureau de l'hôte**, et la capture montre les cinq états d'agent produits par `ash-event`
+> seul, sans qu'aucun agent d'IA ne soit installé dans la VM.
+>
+> Les cinq points ouverts plus bas sont **levés** — ils disent maintenant ce qui a été
+> observé. Quatre défauts du script ont été trouvés en l'exécutant ; ils sont corrigés, et
+> chacun est expliqué à l'endroit où il vivait.
 
 ## Pourquoi
 
@@ -169,30 +173,65 @@ Deux pièges de temps :
 - Ce n'est **pas** une suite E2E, et ça n'en tient pas lieu. « Monter un DOM dans `bun test` »
   reste une décision ouverte et séparée (`.claude/docs/testing.md`).
 
-## Les cinq points ouverts, dans l'ordre où ils doivent être levés
+## Les cinq points, et ce que l'exécution a montré
 
-**Aucun n'a été levé** — voir l'avertissement en tête de fichier. Les deux premiers décident
-à eux seuls de la valeur de ce chemin : si l'un des deux tombe, la capture est vide et le
-critère central de #189 n'est pas tenu.
+Aucun n'était levé quand ce fichier a été écrit. Tous l'ont été depuis, le 2026-08-28.
 
-1. **`screencapture` sans écran attaché.** `tart run --no-graphics` n'ôte pas l'écran
-   *virtuel* de la VM : il n'en affiche pas la fenêtre sur l'hôte, et `screencapture` devrait
-   donc voir quelque chose. **À vérifier en premier**, en regardant le PNG. S'il est vide ou
-   noir, le repli est une VM avec écran, sur un Space séparé — ce qui **affaiblit** le
-   critère « aucune fenêtre » et doit alors être dit ici, pas contourné en silence.
-2. **Une session graphique doit être ouverte dans la VM.** `System Events` ne frappe rien et
-   `screencapture` ne voit rien tant que l'utilisateur n'est pas *connecté* devant l'écran
-   virtuel : sans ouverture de session automatique dans l'image, un cycle sans écran s'arrête
-   à l'écran de connexion. C'est l'étape 3 de l'amorçage, et c'est la seule des trois dont on
-   ne sait pas encore si l'image de base la satisfait déjà.
-3. **Les deux autorisations TCC de l'amorçage** — accessibilité et enregistrement d'écran
-   pour `/usr/libexec/sshd-keygen-wrapper`. Sans elles, `run` et `shot` échouent ; le script
-   le dit dans son message d'erreur plutôt que de rendre une capture muette. Elles ne se
-   donnent que devant un écran, d'où `console`.
-4. **Les dialogues de première ouverture.** Un `~` neuf plus une application empaquetée
-   donnent la demande d'autorisation de notifications, et un dialogue modal fige toute
-   automatisation. Choix retenu : **l'accorder une fois**, par un clic AppleScript au premier
-   `run`. La réponse est retenue par identifiant de paquet (`com.mg-studio.ash.dev`) et la VM
-   garde son disque d'un cycle à l'autre : les suivants ne le reverront pas.
-5. **La quarantaine.** Traitée par une vérification explicite dans `install` (voir plus haut)
-   plutôt que par une supposition — mais la vérification elle-même n'a jamais tourné.
+1. **`screencapture` sans écran attaché — ça marche.** `tart run --no-graphics` n'ôte pas
+   l'écran *virtuel* : il n'en affiche pas la fenêtre sur l'hôte. La capture rend un PNG
+   complet de 1,7 Mo, bureau et Dock compris. Le repli « VM avec écran sur un Space séparé »
+   n'a pas eu à servir, et le critère « aucune fenêtre » de #189 tient donc **entièrement**.
+2. **La session graphique est déjà ouverte.** L'image `macos-sequoia-base` ouvre la session
+   `admin` toute seule : `System Events` frappe et `screencapture` voit, sans rien préparer.
+   C'était l'inconnue la plus sérieuse — elle se multipliait avec la précédente.
+3. **Les autorisations TCC n'ont pas été nécessaires** sur cette image : `run` et `shot` ont
+   abouti sans passer par `console`. À reposer sur une autre image ou une autre version de
+   macOS ; le message d'erreur du script reste la bonne porte si ça change.
+4. **Le dialogue de notifications ne s'est pas présenté** au premier `run`. Le clic
+   AppleScript reste en place — il est sans effet quand le dialogue est absent, et c'est la
+   conduite voulue.
+5. **La quarantaine est bien absente** d'une copie par `rsync` sur ssh : `install` le
+   vérifie et le dit (« quarantaine absente, comme attendu d'une copie par ssh »). Observé,
+   plus supposé.
+
+## Les quatre défauts trouvés en exécutant
+
+Aucun ne pouvait se voir à la lecture, et c'est l'intérêt du cycle réel.
+
+1. **`Too many authentication failures`.** `-i <clé>` **ajoute** une identité, il n'en
+   restreint aucune : ssh proposait d'abord toutes les clés de l'agent de l'utilisateur, et
+   le `sshd` de la VM atteignait son `MaxAuthTries` avant d'essayer la nôtre. Corrigé par
+   `IdentitiesOnly=yes` et `IdentityAgent=none`, aux deux endroits qui parlent à la VM.
+2. **`up` n'était pas idempotent.** `vm_running` cherchait `"Name":"…"` dans
+   `tart list --format json` ; tart **indente** son JSON (`"Name" : "ash-qa"`), donc le motif
+   ne matchait jamais et `up` croyait toujours devoir démarrer. Corrigé en passant par
+   `tart get "$VM_NAME"`, qui prend le nom en **argument** : il n'y a plus rien à apparier.
+3. **Un seul verbe partait sur cinq.** `ash-event` lit son **entrée standard** pour en tirer
+   `agent_id` / `agent_type` (ADR-0007, amendement du 2026-08-13) : dans
+   `while read -r tab; do … done <"$tabs"`, il héritait du fichier des onglets et en avalait
+   les lignes restantes. La boucle s'arrêtait au premier tour — et annonçait quand même
+   « cinq verbes envoyés ». Corrigé par une redirection depuis `/dev/null`, et par un garde
+   qui compte les envois au lieu de les supposer.
+4. **`pgrep -x Ash-dev` ne matchait jamais** : l'exécutable du bundle s'appelle `ash`. Chaque
+   `run` ouvrait donc une instance de plus — treize onglets après trois cycles. On reconnaît
+   maintenant la nôtre par son chemin complet.
+
+## Exercer les doublures d'usage (#190) dans la VM
+
+`run` transmet `ASH_DEV_USAGE` de l'hôte à la VM, quand elle est **non vide** — une variable
+présente mais vide est un refus explicite côté Ash, et l'application s'arrête au démarrage
+(voir `features/usage/rehearsal.rs`).
+
+```bash
+ASH_DEV_USAGE="keychain=readable,host=ok,session=95@2m,weekly=28@3d" scripts/qa/vm.sh run
+```
+
+**`launchctl setenv` depuis une session ssh ne remonte pas jusqu'au domaine graphique** :
+c'est pour ça que `run` lance le binaire du bundle directement, avec la variable en ligne,
+au lieu de passer par `open`. C'est le seul chemin qui la fasse arriver.
+
+Vérifié à l'écran le 2026-08-28 : la barre de statut affiche `s 95% · 1m`, la section
+`usage` des réglages dit « ash can read claude code's token » ; avec `keychain=refused` elle
+dit « the keychain did not give up claude code's token » en rouge ; et avec
+`host=unreachable`, alors même que la variable décrit 95 %, la barre de statut **n'affiche
+plus rien** — la valeur disparaît, ni zéro ni tiret, comme ADR-0016 le demande.
