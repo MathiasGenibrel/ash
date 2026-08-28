@@ -1,0 +1,209 @@
+# Une release d'Ash : quatre étages, dans cet ordre, chacun bloquant le suivant.
+#
+#   preflight  →  ce que le tag promet est-il vrai ? (versions, CHANGELOG) — ne construit rien
+#   verify     →  `bun run verify`, les six vérifications du dépôt
+#   build      →  `Ash.app` sur un runner macOS, puis l'archive
+#   publish    →  la release GitHub, en brouillon d'abord
+#
+# Le runner macOS n'est pas un choix : le crate se lie à WKWebView et AppKit, et la sonde
+# d'ADR-0005 utilise `libproc`. Il ne compile ni sous Linux, ni dans un conteneur.
+#
+# Aucune étape ne recompose une version, un nom d'archive ou un chemin de bundle : ces
+# règles sont décidées dans `scripts/release/` et *demandées* ici. Un `${TAG#v}` écrit dans
+# ce fichier serait une seconde définition de la forme d'un tag, hors des tests, et
+# silencieuse — `${TAG#v}` rend `release-1.2` sans broncher.
+
+name: release
+
+on:
+    push:
+        tags:
+            # Rien d'autre ne déclenche cette pipeline : ni push de branche, ni pull request.
+            - "v[0-9]+.[0-9]+.[0-9]+"
+    workflow_dispatch:
+        inputs:
+            version:
+                description: "La version qu'on répète à blanc, par ex. v1.2.0 (aucune release n'est publiée)"
+                required: true
+                type: string
+
+# Lecture par défaut ; seul `publish` demande l'écriture, et il la demande pour lui seul.
+permissions:
+    contents: read
+
+env:
+    # La toolchain est épinglée plutôt que déduite de ce que l'image du runner embarque ce
+    # mois-ci — le `rust-version` du `Cargo.toml` est 1.97 —, et elle est épinglée **ici,
+    # une fois** : `verify` et `build` compilent le même crate, et deux pins qui divergent
+    # feraient passer les tests sur une version et publier un binaire construit sur une
+    # autre, sans que rien ne le dise.
+    RUST_TOOLCHAIN: "1.97.1"
+
+jobs:
+    preflight:
+        name: preflight
+        # Ce job ne compile rien : il n'a besoin que de bun. Un runner Linux coûte dix fois
+        # moins cher qu'un runner macOS sur un dépôt privé, et refuse tout aussi vite.
+        runs-on: ubuntu-latest
+        env:
+            # La référence de la release, décidée **une fois** : le tag poussé, ou la version
+            # donnée à la main pour une répétition. Écrite ici plutôt que dans chaque étape,
+            # parce que deux étapes qui répéteraient ce `||` pourraient un jour n'en changer
+            # qu'une — et vérifier une version en en nommant une autre. Les scripts acceptent
+            # l'une comme l'autre forme : `v1.2.0` et `1.2.0` nomment la même version pour
+            # `versionOf`.
+            REF: ${{ inputs.version || github.ref_name }}
+        outputs:
+            ref: ${{ steps.reference.outputs.ref }}
+            artifact: ${{ steps.reference.outputs.artifact }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            # Pas de `bun install` : les scripts de release n'ont aucune dépendance, et
+            # refuser un tag ne devrait pas attendre l'arbre npm.
+
+            - name: Le tag concorde avec les deux versions déclarées
+              run: bun scripts/release/version.ts --check "$REF"
+
+            # Le nom de l'archive est demandé ici, une fois, et transmis aux étages suivants :
+            # `build` l'écrit, `publish` l'attache, et aucun des deux ne le recompose.
+            - name: La référence de cette release
+              id: reference
+              run: |
+                  ARTIFACT="$(bun scripts/release/artifact.ts --name "$REF")"
+                  echo "ref=$REF" >> "$GITHUB_OUTPUT"
+                  echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+
+            # La description de la release est la section du CHANGELOG, mot pour mot, et elle
+            # est produite **ici, une seule fois** : `publish` la consomme en artefact, il ne
+            # la régénère pas et personne ne la réécrit à la main. Le script échoue si la
+            # section est absente ou vide.
+            - name: La section de CHANGELOG existe et n'est pas vide
+              run: bun scripts/release/release-notes.ts "$REF" > release-notes.md
+
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: release-notes
+                  path: release-notes.md
+
+    verify:
+        name: verify
+        needs: preflight
+        # `bun run verify` compile le crate pour ses tests : macOS, donc, pour la même raison
+        # que le build.
+        runs-on: macos-15
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: La toolchain Rust épinglée
+              run: |
+                  rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+                  rustup default "$RUST_TOOLCHAIN"
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: src-tauri -> target
+
+            - run: bun install --frozen-lockfile
+
+            # Les six vérifications sont décidées dans `package.json`. Les réécrire ici en
+            # ferait une seconde liste, qui divergerait le jour où la première change.
+            - run: bun run verify
+
+    build:
+        name: build
+        needs: verify
+        runs-on: macos-15
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: La toolchain Rust épinglée
+              run: |
+                  rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+                  rustup default "$RUST_TOOLCHAIN"
+                  rustup target add "$(bun scripts/release/artifact.ts --target)"
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: src-tauri -> target
+
+            - run: bun install --frozen-lockfile
+
+            - name: Empaqueter Ash.app
+              run: bun run package --target "$(bun scripts/release/artifact.ts --target)"
+
+            # `ash-event` est le client du socket de hooks (ADR-0007), et l'application le
+            # cherche **à côté d'elle** dans le bundle. S'il manque, Ash s'installe, se lance,
+            # et n'a plus aucun état d'agent — sans que rien ne le dise. La panne ne se voit
+            # qu'à l'usage : le job la nomme ici, bruyamment, plutôt que de publier une
+            # application muette.
+            - name: Le bundle contient ash-event
+              run: |
+                  EVENT="$(bun scripts/release/artifact.ts --event-binary)"
+                  if [ ! -x "$EVENT" ]; then
+                    echo "::error::$EVENT est absent du bundle : Ash se lancerait sans aucun état d'agent"
+                    exit 1
+                  fi
+
+            # `ditto -c -k --keepParent` est la façon d'archiver un `.app` sur macOS : `zip`
+            # perd les liens symboliques et les attributs étendus du bundle.
+            - name: Archiver le bundle
+              env:
+                  ARCHIVE: ${{ needs.preflight.outputs.artifact }}
+              run: ditto -c -k --keepParent "$(bun scripts/release/artifact.ts --bundle-path)" "$ARCHIVE"
+
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: app-archive
+                  path: ${{ needs.preflight.outputs.artifact }}
+                  if-no-files-found: error
+
+    publish:
+        name: publish
+        needs: [preflight, build]
+        # `workflow_dispatch` joue preflight → verify → build et s'arrête là. La condition est
+        # ici, sur le job, et nulle part ailleurs : un `if` par étape laisserait la question
+        # « est-ce que ça publie ? » ouverte à la lecture de chaque étape.
+        if: github.event_name == 'push'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        env:
+            GH_TOKEN: ${{ github.token }}
+            GH_REPO: ${{ github.repository }}
+            TAG: ${{ needs.preflight.outputs.ref }}
+            ARCHIVE: ${{ needs.preflight.outputs.artifact }}
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  name: release-notes
+
+            - uses: actions/download-artifact@v4
+              with:
+                  name: app-archive
+
+            # L'ordre des trois étapes suivantes est un invariant, pas une commodité de
+            # lecture : créer en brouillon, attacher, puis basculer en dernier geste. Si la
+            # pipeline casse à mi-course, la release de ce tag reste invisible et la dernière
+            # release publiée reste la précédente. L'ordre inverse pointerait tout le monde
+            # vers une archive qui n'existe pas encore.
+            - name: Créer la release en brouillon
+              run: gh release create "$TAG" --draft --title "$TAG" --notes-file release-notes.md
+
+            - name: Y attacher l'archive
+              run: gh release upload "$TAG" "$ARCHIVE"
+
+            - name: La rendre visible — dernier geste
+              run: gh release edit "$TAG" --draft=false
