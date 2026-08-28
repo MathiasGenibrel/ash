@@ -1,6 +1,10 @@
 [package]
 name = "ash"
-version = "0.0.0"
+# La seule source du numéro de version d'Ash. `tauri.conf.json` ne déclare plus de champ
+# `version` : Tauri v2 retombe alors sur celle-ci, qui devient le CFBundleShortVersionString
+# du bundle macOS. `package.json` la répète, et `scripts/release/version.ts --check vX.Y.Z`
+# refuse un tag qui ne concorderait pas avec les deux.
+version = "0.1.0"
 description = "Un shell entouré, qui supervise les agents de code et rend git conscient d'eux"
 edition = "2021"
 rust-version = "1.97"
