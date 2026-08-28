@@ -90,9 +90,7 @@ function announcement(plan: RemovalPlan, actions: UninstallActions): UiChild {
             para("settings-uninstall-empty", text(plan.summary)),
             ...kept(plan.kept),
             row(
-                button("remove ash's entries")
-                    .class("settings-button")
-                    .disabled(plan.summary),
+                button("remove ash's entries").class("settings-button").disabled(plan.summary),
             ).class("settings-choice"),
         );
         return body;

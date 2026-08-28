@@ -329,15 +329,13 @@ export function mountBranchPopup(host: HTMLElement, ports: BranchPopupPorts): Br
         // relève la clé focalisée et la position du curseur avant, et on les repose après :
         // le même mécanisme que la fenêtre de réglages et que la boîte de recherche.
         const focused = document.activeElement;
-        const key =
-            focused instanceof HTMLElement ? focused.getAttribute(FOCUS_KEY) : null;
+        const key = focused instanceof HTMLElement ? focused.getAttribute(FOCUS_KEY) : null;
         const caret = focused instanceof HTMLInputElement ? focused.selectionStart : null;
 
         overlay.replaceChildren(paint(composeBranchPopup(model, actions).build()));
         anchorTo(overlay);
 
-        const wanted =
-            key ?? (model.stage.kind === "list" ? FILTER_FOCUS_KEY : CANCEL_FOCUS_KEY);
+        const wanted = key ?? (model.stage.kind === "list" ? FILTER_FOCUS_KEY : CANCEL_FOCUS_KEY);
         const target = overlay.querySelector<HTMLElement>(`[${FOCUS_KEY}="${wanted}"]`);
         target?.focus();
         if (target instanceof HTMLInputElement && caret !== null) {

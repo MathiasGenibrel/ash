@@ -17,7 +17,6 @@ import type {
     SessionUsage,
     ShellTab,
     Subagent,
-
     WorktreeMetadata,
 } from "./index";
 
@@ -84,7 +83,11 @@ export class TabBuilder {
      * Le nom de l'outil **est** ce que la ligne affiche : c'est le backend qui le pose dans
      * `process`, et un scénario qui parle d'un agent reconnu décrit les deux ensemble.
      */
-    runningAgent(command: string, instrumented: Instrumented = "installed", adapter = "claude-code"): this {
+    runningAgent(
+        command: string,
+        instrumented: Instrumented = "installed",
+        adapter = "claude-code",
+    ): this {
         this.process = command;
         this.agent = { command, adapter, instrumented };
         return this;

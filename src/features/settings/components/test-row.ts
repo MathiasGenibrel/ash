@@ -41,16 +41,16 @@ export function testRow(
  * se nomment. Une pastille sans réponse est `pending` — jamais rien, sans quoi la rangée
  * changerait de longueur selon l'avancement.
  */
-function tileRow(
-    verification: Verification,
-    tests: readonly TestDescription[],
-): UiComponent {
+function tileRow(verification: Verification, tests: readonly TestDescription[]): UiComponent {
     const tiles = tests.map((test, index) => {
         const outcome = verification.tests[index] ?? "pending";
         const said = testTileLabel(outcome, test);
         // Le chiffre seul ne dit rien à un lecteur d'écran : ni de quel test il s'agit, ni
         // ce qu'il a donné.
-        return badge(String(test.number)).class(testTileClass(outcome)).title(said).attr("aria-label", said);
+        return badge(String(test.number))
+            .class(testTileClass(outcome))
+            .title(said)
+            .attr("aria-label", said);
     });
     return row(...tiles).class("settings-tiles");
 }
@@ -66,10 +66,7 @@ export interface TestDetailActions {
  * Ce qu'un état ajoute sous la ligne `test` — des lignes de grille à **cellule de libellé
  * vide**, donc rangées sous elle.
  */
-export function testDetail(
-    tool: ToolDeclaration,
-    actions: TestDetailActions,
-): readonly UiChild[] {
+export function testDetail(tool: ToolDeclaration, actions: TestDetailActions): readonly UiChild[] {
     const { verification } = tool;
     const rows: UiChild[] = [];
 

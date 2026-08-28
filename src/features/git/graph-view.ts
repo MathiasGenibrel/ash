@@ -83,9 +83,9 @@ export function commitGraphView(state: CommitGraphState, actions: CommitGraphAct
     const selected = graph.rows.find((commit) => commit.sha === state.selected) ?? null;
 
     return column(
-        column(...graph.rows.map((commit) => commitLine(commit, graph.lanes, state, actions))).class(
-            "git-graph-rows",
-        ),
+        column(
+            ...graph.rows.map((commit) => commitLine(commit, graph.lanes, state, actions)),
+        ).class("git-graph-rows"),
         ...foldedNotice(graph),
         ...moreButton(graph, actions),
         ...(selected === null ? [] : [commitDetail(selected)]),
@@ -108,9 +108,10 @@ function commitLine(
     return row(
         laneDrawing(commit, lanes),
         span("git-graph-sha", commit.short),
-        row(...commit.refs.map((name) => badge(name).class("git-graph-ref")), span("git-graph-subject", commit.subject)).class(
-            "git-graph-title",
-        ),
+        row(
+            ...commit.refs.map((name) => badge(name).class("git-graph-ref")),
+            span("git-graph-subject", commit.subject),
+        ).class("git-graph-title"),
         // La colonne `by` : le nom, et **d'où il vient**. `attributed` est porté par un
         // attribut plutôt que par un mot, parce que la colonne doit rester lisible d'un
         // coup d'œil — mais l'infobulle, elle, le dit en toutes lettres.

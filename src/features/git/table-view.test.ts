@@ -98,7 +98,11 @@ function actions(): WorktreeTableActions & { asked: string[]; selected: string[]
 }
 
 /** La cellule d'une colonne, dans la première ligne du tableau. */
-function cellOf(rows: readonly WorktreeRow[], column: string, showing: WorktreeRemoval | null = null): string {
+function cellOf(
+    rows: readonly WorktreeRow[],
+    column: string,
+    showing: WorktreeRemoval | null = null,
+): string {
     const table = worktreeTable(rows, NOW, showing, actions()).build();
     const cells = findAll(table, "git-worktrees-cell").filter(
         (cell) => cell.attrs["data-column"] === column,
@@ -172,7 +176,11 @@ describe("le tableau des worktrees", () => {
 
     it("Given a commit ash saw an agent write here two days ago, when the table is drawn, then last worked by names it with its age", () => {
         // Given
-        const rows = [RowBuilder.create().lastWorkedBy("codex", "commit", 2 * DAY).build()];
+        const rows = [
+            RowBuilder.create()
+                .lastWorkedBy("codex", "commit", 2 * DAY)
+                .build(),
+        ];
 
         // When
         const said = cellOf(rows, "last worked by");

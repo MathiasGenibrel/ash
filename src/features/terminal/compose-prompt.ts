@@ -132,8 +132,7 @@ export async function writePromptInTab(
  */
 export function agentTabIn(tabs: readonly Tab[], worktreeRoot: string): TabId | null {
     const found = tabs.find(
-        (tab) =>
-            isShell(tab) && tab.agent !== null && tab.location?.worktreeRoot === worktreeRoot,
+        (tab) => isShell(tab) && tab.agent !== null && tab.location?.worktreeRoot === worktreeRoot,
     );
     return found?.tabId ?? null;
 }

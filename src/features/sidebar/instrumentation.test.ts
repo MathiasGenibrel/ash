@@ -6,7 +6,11 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
     it("Given a recognized agent whose config carries no ash marker, when its row is composed, then it says why waiting will never show", () => {
         // Given — sans cette phrase, un agent qui ne demande jamais rien se lit comme une
         // panne d'Ash (ADR-0007 : `waiting` n'a d'autre source qu'un hook)
-        const agent = { command: "claude", adapter: "claude-code", instrumented: "missing" } as const;
+        const agent = {
+            command: "claude",
+            adapter: "claude-code",
+            instrumented: "missing",
+        } as const;
 
         // When
         const mark = instrumentationMark(agent);
@@ -20,7 +24,11 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
     it("Given a recognized agent whose config carries the marker, when its row is composed, then nothing is signalled", () => {
         // Given — le cas nominal : signaler quoi que ce soit ici ferait du bruit sur toutes
         // les lignes d'agent de la colonne
-        const agent = { command: "claude", adapter: "claude-code", instrumented: "installed" } as const;
+        const agent = {
+            command: "claude",
+            adapter: "claude-code",
+            instrumented: "installed",
+        } as const;
 
         // When
         const mark = instrumentationMark(agent);

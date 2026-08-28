@@ -76,7 +76,9 @@ describe("la section appearance de la fenêtre de réglages", () => {
         expect(rows).toHaveLength(AGENT_STATES.length);
         for (const state of AGENT_STATES) {
             const decoration = decorateAgentRow(state, false);
-            const row = rows.find((one) => one.classes.includes(presentAgentState(state).className));
+            const row = rows.find((one) =>
+                one.classes.includes(presentAgentState(state).className),
+            );
             expect(row).toBeDefined();
             expect(row?.classes.includes("is-tinted")).toBe(decoration.background === "tinted");
             expect(row?.classes.includes("has-blade")).toBe(decoration.rightBlade === "waiting");
@@ -93,7 +95,9 @@ describe("la section appearance de la fenêtre de réglages", () => {
 
         // When
         const rows = previewRows(composed, "dark");
-        const error = rows.find((one) => one.classes.includes(presentAgentState("error").className));
+        const error = rows.find((one) =>
+            one.classes.includes(presentAgentState("error").className),
+        );
         const name = error === undefined ? null : find(error, "settings-preview-name");
 
         // Then
@@ -108,7 +112,8 @@ describe("la section appearance de la fenêtre de réglages", () => {
 
         // When
         const tile = tiles(composed).at(2);
-        const palettes = tile === null || tile === undefined ? [] : findAll(tile, "settings-preview");
+        const palettes =
+            tile === null || tile === undefined ? [] : findAll(tile, "settings-preview");
 
         // Then — deux miniatures superposées, une par palette, et la claire découpée
         expect(palettes.map((one) => one.classes.includes("ash-palette-light"))).toEqual([
@@ -220,11 +225,13 @@ describe("la section appearance de la fenêtre de réglages", () => {
 
         // When
         const segments = composed.flatMap((child) => findAll(child, "settings-segment"));
-        segments.find((one) => plainText(one) === "compact")?.on["click"]?.({
-            value: "",
-            key: "",
-            shiftKey: false,
-        });
+        segments
+            .find((one) => plainText(one) === "compact")
+            ?.on["click"]?.({
+                value: "",
+                key: "",
+                shiftKey: false,
+            });
 
         // Then
         expect(asked).toEqual(["compact"]);

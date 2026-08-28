@@ -422,7 +422,9 @@ export function mountTerminals(
     // posé. **Rien de ce qui descend ici ne porte de PTY**
     // ([ADR-0003](../../../docs/adr/0003-zone-terminal-unique.md)) : cette feature est la
     // seule à en ouvrir, et elle ne les met que dans `stack`.
-    host.append(...(below === undefined ? [stack, status.element] : [stack, below, status.element]));
+    host.append(
+        ...(below === undefined ? [stack, status.element] : [stack, below, status.element]),
+    );
 
     return {
         openTab: (origin) => workbench.openTab(origin),

@@ -14,12 +14,7 @@
 import "./sidebar.css";
 
 import type { SidebarRows, Tab, TabId } from "@/shared/ipc";
-import {
-    appliedWidth,
-    DEFAULT_SIDEBAR_WIDTH,
-    RAIL_WIDTH,
-    type SidebarColumnState,
-} from "./resize";
+import { appliedWidth, DEFAULT_SIDEBAR_WIDTH, RAIL_WIDTH, type SidebarColumnState } from "./resize";
 import { createSidebarResizer } from "./resizer";
 import { buildSidebar } from "./tree";
 import { SidebarView } from "./view";
@@ -105,11 +100,7 @@ export interface Sidebar {
      * Dessine la colonne à partir de ce que le backend détient : les onglets, l'onglet actif,
      * et l'état gardé d'une session à l'autre — les épingles et les lignes repliées.
      */
-    render(
-        tabs: readonly Tab[],
-        activeTabId: TabId | null,
-        kept: SidebarRows,
-    ): void;
+    render(tabs: readonly Tab[], activeTabId: TabId | null, kept: SidebarRows): void;
     /**
      * La largeur et le repli que le backend vient d'annoncer.
      *
@@ -244,7 +235,9 @@ export function mountSidebar(ports: SidebarPorts): Sidebar {
     function layOut(): void {
         const width = dragged ?? column.width;
         const shown =
-            dragged === null && column.collapsed ? RAIL_WIDTH : appliedWidth(width, viewportWidth());
+            dragged === null && column.collapsed
+                ? RAIL_WIDTH
+                : appliedWidth(width, viewportWidth());
         document.documentElement.style.setProperty("--ash-sidebar-width", `${shown}px`);
         resizer.update();
     }

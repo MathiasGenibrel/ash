@@ -137,9 +137,7 @@ export type RepoRefStillMirrorsRust = Assert<Mirrors<RustRepoRef, RepoRef>>;
  * d'instrumentation — ne compile plus tant que la sidebar n'a pas dit ce qu'elle en montre.
  */
 export type InstrumentedStillMirrorsRust = Assert<Mirrors<RustInstrumented, Instrumented>>;
-export type RecognizedAgentStillMirrorsRust = Assert<
-    Mirrors<RustRecognizedAgent, RecognizedAgent>
->;
+export type RecognizedAgentStillMirrorsRust = Assert<Mirrors<RustRecognizedAgent, RecognizedAgent>>;
 /**
  * Les épingles (spec §5.2). `RepoRef` et `TabLocation` sont écrits **une** fois côté
  * TypeScript et confrontés chacun à deux `struct` Rust — celles de `pty` et celles de
@@ -224,9 +222,7 @@ export type ConflictFileStillMirrorsRust = Assert<Mirrors<RustConflictFile, Conf
 export type MergeStoppedStillMirrorsRust = Assert<Mirrors<RustStoppedView, MergeStopped>>;
 export type MergeViewStillMirrorsRust = Assert<Mirrors<RustMergeView, MergeView>>;
 export type MergeOutcomeStillMirrorsRust = Assert<Mirrors<RustMergeOutcome, MergeOutcome>>;
-export type MergeTabStillMirrorsRust = Assert<
-    Mirrors<RustMergeTab, Omit<MergeTab, "kind">>
->;
+export type MergeTabStillMirrorsRust = Assert<Mirrors<RustMergeTab, Omit<MergeTab, "kind">>>;
 export type TabStillMirrorsRust = Assert<Mirrors<RustTab, Tab>>;
 
 /**

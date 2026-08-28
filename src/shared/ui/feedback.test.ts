@@ -32,7 +32,9 @@ describe("ce qu'une vue dit à la place des données", () => {
         // Given — le titre seul serait un cul-de-sac : l'état vide du dépôt explique ce qui
         // reste inerte tant que rien n'est déclaré
         const described = emptyState("no tools declared")
-            .prose("until a tool is declared, everything stays idle — no waiting, no notifications.")
+            .prose(
+                "until a tool is declared, everything stays idle — no waiting, no notifications.",
+            )
             .build();
 
         // Then

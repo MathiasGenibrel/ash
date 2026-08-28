@@ -30,8 +30,10 @@ export function followBranchCard(): BranchCardBinding {
     // Un aller-retour qui n'aboutit pas ne laisse **aucune moitié d'état** : le backend n'a
     // rien écrit, et l'écran garde ce qu'il montrait. C'est la conduite déjà retenue pour la
     // colonne, les épingles et le panneau.
-    const ask = async (command: string, args: Record<string, unknown>): Promise<BranchCard | null> =>
-        invoke<BranchCard | null>(command, args).catch(() => null);
+    const ask = async (
+        command: string,
+        args: Record<string, unknown>,
+    ): Promise<BranchCard | null> => invoke<BranchCard | null>(command, args).catch(() => null);
 
     return {
         read: (worktreeRoot) => ask("branch_card", { worktreeRoot }),

@@ -139,7 +139,15 @@ describe("ce que le mode édition décide", () => {
         const dragged = moveItem(bar, bar.indexOf("session"), 0);
 
         // Then
-        expect(dragged).toEqual(["session", "cwd", "branch", "agent", "spacer", "context", "model"]);
+        expect(dragged).toEqual([
+            "session",
+            "cwd",
+            "branch",
+            "agent",
+            "spacer",
+            "context",
+            "model",
+        ]);
     });
 
     it("Given a pointer that has left the bar, when the drag is applied, then nothing moves", () => {
@@ -324,11 +332,15 @@ describe("le panneau du menu contextuel", () => {
         // interrupteurs par un trait, et cocher ou décocher n'a aucun sens sur elle. Un
         // lecteur d'écran qui l'annoncerait « non cochée » raconterait un état inexistant
         let opened = 0;
-        const menu = composeVisibilityMenu([{ ...line("agent", true), separated: true }], () => {
-            throw new Error("la ligne d'action ne bascule rien");
-        }, () => {
-            opened += 1;
-        });
+        const menu = composeVisibilityMenu(
+            [{ ...line("agent", true), separated: true }],
+            () => {
+                throw new Error("la ligne d'action ne bascule rien");
+            },
+            () => {
+                opened += 1;
+            },
+        );
 
         // When
         const action = findAll(menu, "status-menu-action")[0];
@@ -385,7 +397,13 @@ describe("le tiroir du mode édition", () => {
         pills[0]?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then
-        expect(pills.map(plainText)).toEqual(["weekly", "context bar", "model", "agent state", "branch"]);
+        expect(pills.map(plainText)).toEqual([
+            "weekly",
+            "context bar",
+            "model",
+            "agent state",
+            "branch",
+        ]);
         expect(picked).toEqual(["weekly"]);
     });
 

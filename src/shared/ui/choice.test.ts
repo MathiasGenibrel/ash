@@ -8,7 +8,9 @@ describe("un choix parmi une liste", () => {
         // Given — la faute que les deux menus écrits à la main pouvaient faire : proposer
         // les valeurs sans marquer celle qui est en vigueur, donc afficher la première en
         // prétendant que c'est celle de l'entrée
-        const described = choice("adapter").options(["claude-code", "codex", "generic"], "codex").build();
+        const described = choice("adapter")
+            .options(["claude-code", "codex", "generic"], "codex")
+            .build();
 
         // When
         const chosen = described.children.filter(

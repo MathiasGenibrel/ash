@@ -1,16 +1,6 @@
 import { isShell } from "@/shared/ipc";
-import type {
-    AgentState,
-    GitOperation,
-    GitStatus,
-    ShellTab,
-    WorktreeMetadata,
-} from "@/shared/ipc";
-import {
-    agentGlyph,
-    elapsedSince as sinceEntering,
-    presentAgentState,
-} from "@/shared/agent-state";
+import type { AgentState, GitOperation, GitStatus, ShellTab, WorktreeMetadata } from "@/shared/ipc";
+import { agentGlyph, elapsedSince as sinceEntering, presentAgentState } from "@/shared/agent-state";
 import { branchOf, locationLabel } from "@/shared/tab-context";
 import { activeTab, type TabsState } from "./tabs";
 import {
@@ -29,12 +19,7 @@ import {
 } from "./status-bar";
 import { LongPress, StatusBarEditor } from "./status-bar-editor";
 import { StatusBarMenu } from "./status-bar-menu";
-import {
-    composeContextGauge,
-    UsageSegments,
-    type ContextGauge,
-    type QuotaSegment,
-} from "./usage";
+import { composeContextGauge, UsageSegments, type ContextGauge, type QuotaSegment } from "./usage";
 
 /**
  * La ligne de statut de la zone terminal (spec §4.2) : `cwd` · branche et état de l'arbre ·

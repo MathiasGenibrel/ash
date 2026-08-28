@@ -17,7 +17,16 @@
 import "./card.css";
 
 import type { BranchCard, CardLog } from "@/shared/ipc";
-import { button, column, paint, row, text, toNode, type UiChild, type UiComponent } from "@/shared/ui";
+import {
+    button,
+    column,
+    paint,
+    row,
+    text,
+    toNode,
+    type UiChild,
+    type UiComponent,
+} from "@/shared/ui";
 
 import { markdown, readCard, type TaskProgress } from "./markdown";
 import { tag } from "./tag";

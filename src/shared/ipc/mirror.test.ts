@@ -60,9 +60,7 @@ function typecheck(files: Record<string, string>): string[] {
         readFile: (name) => files[name] ?? ts.sys.readFile(name),
         getSourceFile: (name, language) => {
             const text = files[name] ?? ts.sys.readFile(name);
-            return text === undefined
-                ? undefined
-                : ts.createSourceFile(name, text, language, true);
+            return text === undefined ? undefined : ts.createSourceFile(name, text, language, true);
         },
         getDefaultLibFileName: () => lib,
         writeFile: () => undefined,

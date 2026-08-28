@@ -18,8 +18,7 @@ import type { AgentPause, BranchesBridge } from "./ports";
  * contrat partagé — jamais leur structure interne.
  */
 export const tauriBranches: BranchesBridge = {
-    branches: (worktreeRoot) =>
-        invoke<BranchOverview | null>("git_branches", { worktreeRoot }),
+    branches: (worktreeRoot) => invoke<BranchOverview | null>("git_branches", { worktreeRoot }),
     offers: (worktreeRoot, branch) =>
         invoke<ActionOffer[] | null>("git_branch_offers", { worktreeRoot, branch }).then(
             (offered) => offered ?? [],

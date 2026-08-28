@@ -31,9 +31,16 @@ describe("releaseNotesFor", () => {
 
     it("Given a changelog whose last section is the one asked for, when asking for its notes, then the body runs to the end of the file", () => {
         // Given
-        const changelog = ["# Changelog", "", "## [0.1.0]", "", "### Ajouté", "", "- Le début.", ""].join(
-            "\n",
-        );
+        const changelog = [
+            "# Changelog",
+            "",
+            "## [0.1.0]",
+            "",
+            "### Ajouté",
+            "",
+            "- Le début.",
+            "",
+        ].join("\n");
         // When
         const notes = releaseNotesFor(changelog, "0.1.0");
         // Then
@@ -54,9 +61,17 @@ describe("releaseNotesFor", () => {
 
     it("Given a section that holds nothing but blank lines, when asking for its notes, then it fails instead of returning an empty string", () => {
         // Given
-        const changelog = ["# Changelog", "", "## [1.2.0]", "", "   ", "", "## [1.1.0]", "", "- Le reste."].join(
-            "\n",
-        );
+        const changelog = [
+            "# Changelog",
+            "",
+            "## [1.2.0]",
+            "",
+            "   ",
+            "",
+            "## [1.1.0]",
+            "",
+            "- Le reste.",
+        ].join("\n");
         // When
         const notes = releaseNotesFor(changelog, "1.2.0");
         // Then

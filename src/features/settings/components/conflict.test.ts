@@ -111,11 +111,13 @@ describe("l'écran du diff", () => {
         const screen = conflictScreen(conflicting, actions, () => {
             closed += 1;
         });
-        screen.flatMap((child) => findAll(child, "ui-button"))[0]?.on["click"]?.({
-            value: "",
-            key: "",
-            shiftKey: false,
-        });
+        screen
+            .flatMap((child) => findAll(child, "ui-button"))[0]
+            ?.on["click"]?.({
+                value: "",
+                key: "",
+                shiftKey: false,
+            });
 
         // Then
         expect(closed).toBe(1);

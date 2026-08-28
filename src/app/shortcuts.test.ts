@@ -90,9 +90,9 @@ describe("la porte que le menu natif ne peut pas fermer", () => {
 
         // When / Then
         expect(withheldFromTheMenu(press)).toBe(true);
-        expect(withheldFromTheMenu(KeyPressBuilder.press("Tab").withCtrl().withShift().build())).toBe(
-            true,
-        );
+        expect(
+            withheldFromTheMenu(KeyPressBuilder.press("Tab").withCtrl().withShift().build()),
+        ).toBe(true);
     });
 });
 

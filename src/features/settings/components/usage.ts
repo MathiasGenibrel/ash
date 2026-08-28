@@ -28,7 +28,10 @@ export interface UsageActions {
  * la place de l'utilisateur est un geste qu'Ash n'a pas à faire, et le chemin se lit en trois
  * mots.
  */
-export function usageSection(report: UsageReport | null, actions: UsageActions): readonly UiChild[] {
+export function usageSection(
+    report: UsageReport | null,
+    actions: UsageActions,
+): readonly UiChild[] {
     const head = sectionHeader("usage", null, []);
     const body = tag("div", "settings-body");
 

@@ -71,7 +71,12 @@ export function grabOffset(pointer: number, zoneStart: number, overhang: number)
  * Elle suit le pointeur — c'est la variante retenue en #129 —, et se borne à `margin` des deux
  * extrémités pour ne jamais déborder du bord qu'elle annonce.
  */
-export function handleOffset(pointer: number, edgeStart: number, edgeExtent: number, margin: number): number {
+export function handleOffset(
+    pointer: number,
+    edgeStart: number,
+    edgeExtent: number,
+    margin: number,
+): number {
     const floor = margin;
     const ceiling = Math.max(floor, edgeExtent - margin);
     return Math.min(Math.max(pointer - edgeStart, floor), ceiling);
