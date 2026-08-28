@@ -31,16 +31,29 @@ on:
 permissions:
     contents: read
 
+env:
+    # La toolchain est épinglée plutôt que déduite de ce que l'image du runner embarque ce
+    # mois-ci — le `rust-version` du `Cargo.toml` est 1.97 —, et elle est épinglée **ici,
+    # une fois** : `verify` et `build` compilent le même crate, et deux pins qui divergent
+    # feraient passer les tests sur une version et publier un binaire construit sur une
+    # autre, sans que rien ne le dise.
+    RUST_TOOLCHAIN: "1.97.1"
+
 jobs:
     preflight:
         name: preflight
         # Ce job ne compile rien : il n'a besoin que de bun. Un runner Linux coûte dix fois
         # moins cher qu'un runner macOS sur un dépôt privé, et refuse tout aussi vite.
         runs-on: ubuntu-latest
-        outputs:
+        env:
             # La référence de la release, décidée **une fois** : le tag poussé, ou la version
-            # donnée à la main pour une répétition. Les deux scripts acceptent l'une comme
-            # l'autre — `v1.2.0` et `1.2.0` nomment la même version pour `versionOf`.
+            # donnée à la main pour une répétition. Écrite ici plutôt que dans chaque étape,
+            # parce que deux étapes qui répéteraient ce `||` pourraient un jour n'en changer
+            # qu'une — et vérifier une version en en nommant une autre. Les scripts acceptent
+            # l'une comme l'autre forme : `v1.2.0` et `1.2.0` nomment la même version pour
+            # `versionOf`.
+            REF: ${{ inputs.version || github.ref_name }}
+        outputs:
             ref: ${{ steps.reference.outputs.ref }}
             artifact: ${{ steps.reference.outputs.artifact }}
         steps:
@@ -54,16 +67,12 @@ jobs:
             # refuser un tag ne devrait pas attendre l'arbre npm.
 
             - name: Le tag concorde avec les deux versions déclarées
-              env:
-                  REF: ${{ inputs.version || github.ref_name }}
               run: bun scripts/release/version.ts --check "$REF"
 
             # Le nom de l'archive est demandé ici, une fois, et transmis aux étages suivants :
             # `build` l'écrit, `publish` l'attache, et aucun des deux ne le recompose.
             - name: La référence de cette release
               id: reference
-              env:
-                  REF: ${{ inputs.version || github.ref_name }}
               run: |
                   ARTIFACT="$(bun scripts/release/artifact.ts --name "$REF")"
                   echo "ref=$REF" >> "$GITHUB_OUTPUT"
@@ -74,8 +83,6 @@ jobs:
             # la régénère pas et personne ne la réécrit à la main. Le script échoue si la
             # section est absente ou vide.
             - name: La section de CHANGELOG existe et n'est pas vide
-              env:
-                  REF: ${{ steps.reference.outputs.ref }}
               run: bun scripts/release/release-notes.ts "$REF" > release-notes.md
 
             - uses: actions/upload-artifact@v4
@@ -96,12 +103,10 @@ jobs:
               with:
                   bun-version: latest
 
-            # La toolchain est épinglée plutôt que déduite de ce que l'image du runner
-            # embarque ce mois-ci : le `rust-version` du Cargo.toml est 1.97.
-            - name: Rust 1.97.1
+            - name: La toolchain Rust épinglée
               run: |
-                  rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
-                  rustup default 1.97.1
+                  rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+                  rustup default "$RUST_TOOLCHAIN"
 
             - uses: Swatinem/rust-cache@v2
               with:
@@ -124,10 +129,10 @@ jobs:
               with:
                   bun-version: latest
 
-            - name: Rust 1.97.1
+            - name: La toolchain Rust épinglée
               run: |
-                  rustup toolchain install 1.97.1 --profile minimal
-                  rustup default 1.97.1
+                  rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+                  rustup default "$RUST_TOOLCHAIN"
                   rustup target add "$(bun scripts/release/artifact.ts --target)"
 
             - uses: Swatinem/rust-cache@v2
