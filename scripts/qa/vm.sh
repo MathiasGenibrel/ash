@@ -172,12 +172,16 @@ vm_exists() { tart list --quiet 2>/dev/null | grep -qxF "$VM_NAME"; }
 # sur l'hôte : plusieurs VM peuvent tourner, et le plafond d'Apple est de **2 VM macOS**
 # par hôte.
 vm_running() {
-    # Un objet JSON par ligne, puis deux `grep -F` : l'ordre des clés ne décide de rien, et
-    # un nom de VM n'est jamais lu comme une expression régulière.
-    tart list --format json 2>/dev/null |
-        tr '}' '\n' |
-        grep -F "\"Name\":\"$VM_NAME\"" |
-        grep -qF '"State":"running"'
+    # `tart get` prend le nom en **argument** : il n'y a donc aucun nom à apparier dans une
+    # sortie, et rien qui puisse être lu comme une expression régulière. C'est ce qui manquait
+    # à la version qui cherchait `"Name":"…"` dans `tart list --format json` — tart indente
+    # son JSON (`"Name" : "ash-qa"`), donc le motif compact ne matchait jamais et `up` se
+    # croyait toujours devant une VM arrêtée.
+    #
+    # L'espace autour du deux-points est tolérée des deux côtés : ce qu'on lit est un format
+    # d'affichage, pas un contrat.
+    tart get "$VM_NAME" --format json 2>/dev/null |
+        grep -qE '"State"[[:space:]]*:[[:space:]]*"running"'
 }
 
 vm_ip() { tart ip "$VM_NAME" --wait "${1:-60}" 2>/dev/null; }
@@ -193,6 +197,12 @@ vm_ip() { tart ip "$VM_NAME" --wait "${1:-60}" 2>/dev/null; }
 
 ssh_options=(
     -i "$KEY"
+    # Sans ces deux-là, ssh propose d'abord **toutes** les clés de l'agent de l'utilisateur,
+    # et le `sshd` de la VM atteint son `MaxAuthTries` avant d'avoir essayé la nôtre :
+    # « Too many authentication failures », sur une clé pourtant installée. Le `-i` ne
+    # restreint rien à lui seul — il ajoute, il ne remplace pas.
+    -o IdentitiesOnly=yes
+    -o IdentityAgent=none
     -o BatchMode=yes
     -o StrictHostKeyChecking=no
     -o UserKnownHostsFile=/dev/null
@@ -239,7 +249,8 @@ ensure_ssh() {
         set password [lindex $argv 2]
         set pubkey   [lindex $argv 3]
         spawn ssh-copy-id -i $pubkey -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null $user@$ip
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes -o IdentityAgent=none $user@$ip
         expect {
             "*assword:" { send "$password\r"; exp_continue }
             "*(yes/no*"  { send "yes\r";      exp_continue }
@@ -469,6 +480,9 @@ GUEST
 # analyse de la sortie du PTY. `ash-event` est donc le chemin nominal, et pas une doublure.
 cmd_run() {
     require_tart
+    # Ce que l'hôte veut faire répéter aux doublures d'usage (#190). Vide = rien à poser :
+    # Ash lit alors le vrai trousseau et le vrai hôte, comme en usage normal.
+    local RUN_USAGE="${ASH_DEV_USAGE:-}"
     local ip
     ip="$(remember_ip)"
 
@@ -477,7 +491,27 @@ cmd_run() {
 set -euo pipefail
 test -d "$APP_TARGET" || { echo "$APP_TARGET est absent — lance install" >&2; exit 1; }
 rm -f "\$HOME/$GUEST_QA_DIR/tabs"
-pgrep -x Ash-dev >/dev/null || open -n -a "$APP_TARGET"
+# L'exécutable du bundle s'appelle **ash**, pas Ash-dev : un pgrep sur le nom de
+# l'application ne matche jamais, et chaque run ouvrait une instance de plus. On
+# reconnaît la nôtre par son chemin complet, qui est le seul nom qui ne mente pas.
+#
+# Et on lance le binaire directement plutôt que par open : c'est le seul chemin qui
+# puisse porter ASH_DEV_USAGE. launchctl setenv depuis une session ssh ne remonte pas
+# jusqu'au domaine graphique, donc une variable posée là n'atteindrait jamais l'app.
+mkdir -p "\$HOME/$GUEST_QA_DIR"
+if ! pgrep -f "$APP_TARGET/Contents/MacOS/ash" >/dev/null; then
+    # ASH_DEV_USAGE n'est posée QUE si l'hôte en a donné une non vide : une variable
+    # présente mais vide est un refus explicite côté Ash (elle ne demande rien), et
+    # l'application s'arrête au démarrage. Voir features/usage/rehearsal.rs.
+    if [ -n "$RUN_USAGE" ]; then
+        ASH_DEV_USAGE="$RUN_USAGE" nohup "$APP_TARGET/Contents/MacOS/ash" \
+            >"\$HOME/$GUEST_QA_DIR/ash.log" 2>&1 &
+    else
+        nohup "$APP_TARGET/Contents/MacOS/ash" \
+            >"\$HOME/$GUEST_QA_DIR/ash.log" 2>&1 &
+    fi
+    sleep 6
+fi
 GUEST
 
     # Le dialogue d'autorisation de notifications, première ouverture d'une application
@@ -499,7 +533,12 @@ GUEST
 
     play_scenario
     post_states
-    say "les cinq états sont posés — capture tout de suite (LINGER = 30 s, agents/machine.rs)"
+    # Le temps que la webview rende ce que le backend vient d'annoncer. Sans cette pause,
+    # une capture prise juste après `run` attrape l'écran d'avant : observé, sur une
+    # application lancée quelques secondes plus tôt.
+    sleep 4
+    say "les cinq états sont posés — capture maintenant : done et error s'effacent 30 s
+       après avoir été vus (LINGER, agents/machine.rs)"
 }
 
 # Quatre onglets de plus, chacun dans un worktree : la sidebar montre alors ses trois
@@ -561,9 +600,15 @@ index=0
 verbs=(session-start working waiting done error)
 while read -r tab; do
     [ "\$index" -ge 5 ] && break
-    "\$event" "\${verbs[\$index]}" --tab "\$tab"
+    # La redirection depuis /dev/null n'est pas une précaution de style : ash-event lit
+    # son ENTREE STANDARD pour en tirer agent_id / agent_type (ADR-0007, amendement du
+    # 2026-08-13). Sans elle il hérite de l'entrée de la boucle -- le fichier des onglets
+    # -- et en avale les lignes restantes : un seul verbe part, la boucle s'arrête, et
+    # rien ne le dit.
+    "\$event" "\${verbs[\$index]}" --tab "\$tab" </dev/null
     index=\$((index + 1))
 done <"\$tabs"
+[ "\$index" -eq 5 ] || { echo "seulement \$index verbe(s) envoyé(s) sur 5" >&2; exit 1; }
 echo "cinq verbes envoyés"
 GUEST
 }

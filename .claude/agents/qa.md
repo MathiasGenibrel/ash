@@ -92,10 +92,18 @@ vérifier une installation de hooks, vise un dossier de configuration jetable vi
 
 ## Lancer dans une VM, pas sur le bureau de l'utilisateur
 
-> **Ce chemin n'a jamais été exécuté** (au 2026-08-28) : tart n'est pas installé sur la
-> machine de l'auteur. Sa première utilisation sera aussi sa première vérification — et cinq
-> points restent ouverts, listés dans [`qa-vm.md`](../docs/qa-vm.md). Lis-les avant de t'en
-> servir.
+> **Un cycle complet a tourné** (2026-08-28) : tart 2.32.1, image `macos-sequoia-base`
+> (macOS 15.7.7). Aucune fenêtre n'est apparue sur le bureau de l'hôte, et la capture montre
+> les cinq états d'agent. Les cinq points ouverts sont levés, et quatre défauts trouvés en
+> exécutant sont corrigés — [`qa-vm.md`](../docs/qa-vm.md) les détaille.
+
+Pour exercer les doublures d'usage (#190), passe `ASH_DEV_USAGE` à `run` : elle traverse
+jusqu'à la VM. Une variable **posée mais vide** est un refus explicite côté Ash, et
+l'application s'arrête au démarrage — ne la pose que si tu veux vraiment une doublure.
+
+```bash
+ASH_DEV_USAGE="keychain=refused" scripts/qa/vm.sh run
+```
 
 **Le lancement est ce qui dérange, pas le build.** `bun run package:debug` est du CPU, il ne
 vole aucun focus ; l'application lancée, elle, prend le focus, le Dock et le WindowServer de
