@@ -361,16 +361,47 @@ cmd_up() {
     printf '%s\n' "$ip"
 }
 
+# `down` **supprime** la VM, il ne se contente pas de l'arrêter.
+#
+# C'est ce qui garantit qu'un QA repart d'un environnement sain : une VM gardée d'un cycle
+# à l'autre emporte le `~` du précédent — ses onglets annoncés, ses fichiers de `~/.ash`,
+# ses autorisations accordées, l'application déjà installée. Le QA suivant validerait alors
+# une machine que personne n'a décrite, et un défaut ne se reproduirait pas chez le voisin.
+#
+# Le clonage qui suit ne coûte presque rien : APFS le fait par `clonefile`, donc en quelques
+# secondes et sans recopier les 30 Go — les blocs ne divergent qu'à mesure qu'on écrit.
+#
+# Conséquence à connaître : ce que la VM avait retenu disparaît **aussi**. Le dialogue
+# d'autorisation de notifications peut donc se présenter à chaque cycle, et le clic
+# d'AppleScript de `run` n'est plus une précaution mais un passage obligé.
+#
+# `stop` garde la VM pour qui veut l'inspecter après coup — c'est l'exception, jamais le
+# cycle normal.
 cmd_down() {
     require_tart
-    if ! vm_exists || ! vm_running; then
-        say "$VM_NAME est déjà arrêtée"
-        rm -f "$STATE_DIR/ip"
+    rm -f "$STATE_DIR/ip"
+    if ! vm_exists; then
+        say "$VM_NAME n'existe pas"
         return 0
     fi
-    say "arrêt de $VM_NAME"
-    tart stop "$VM_NAME" --timeout 60 || fail "l'arrêt a échoué" "$EXIT_VM"
+    if vm_running; then
+        say "arrêt de $VM_NAME"
+        tart stop "$VM_NAME" --timeout 60 || fail "l'arrêt a échoué" "$EXIT_VM"
+    fi
+    say "suppression de $VM_NAME — le prochain cycle repart de l'image"
+    tart delete "$VM_NAME" || fail "la suppression a échoué" "$EXIT_VM"
+    # La clé de QA ne survit pas à la VM qu'elle ouvrait : la garder ferait échouer le
+    # premier ssh du cycle suivant sur un hôte qui a la même adresse et une autre identité.
+    rm -f "$KEY" "$KEY.pub"
+}
+
+# Arrêter sans supprimer, pour inspecter une VM après un échec. Hors du cycle normal.
+cmd_stop() {
+    require_tart
     rm -f "$STATE_DIR/ip"
+    vm_exists && vm_running || { say "$VM_NAME n'est pas en marche"; return 0; }
+    say "arrêt de $VM_NAME (le disque est gardé — down le supprimerait)"
+    tart stop "$VM_NAME" --timeout 60 || fail "l'arrêt a échoué" "$EXIT_VM"
 }
 
 # L'`.app` voyage par `scp`, pas par dossier partagé (`tart run --dir`).
@@ -710,7 +741,9 @@ usage : scripts/qa/vm.sh <commande>
   shot <nom>        un PNG de l'écran de la VM dans .qa-vm/shots/
   state <n> <verbe> un état à la main sur l'onglet de rang n
   ssh [commande]    un shell (ou une commande) dans la VM
-  down              arrête la VM (idempotent)
+  down              arrête ET SUPPRIME la VM — le prochain cycle repart de
+                    l'image (idempotent)
+  stop              arrête sans supprimer, pour inspecter après un échec
   console           ouvre la VM AVEC écran — préparation d'image seulement
 
 Verbes acceptés par `state` : session-start, subagent-stop, working, waiting, done, error
@@ -738,6 +771,7 @@ main() {
     state) cmd_state "$@" ;;
     ssh) cmd_ssh "$@" ;;
     down) cmd_down "$@" ;;
+    stop) cmd_stop "$@" ;;
     console) cmd_console "$@" ;;
     -h | --help | help | "") usage ;;
     *)
