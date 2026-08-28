@@ -216,6 +216,8 @@ bun run app                       # lancer l'app en développement  → Ash-dev
 bun run package:debug             # bundle macOS de développement  → Ash-dev.app
 bun run package                   # bundle macOS installable       → Ash.app
 
+bun run format                    # formate TS, CSS, HTML, JSON — pas le Markdown
+bun run format:check              # le même, en vérification
 bun run lint                      # lint TypeScript
 bun run typecheck                 # tsc --noEmit
 bun test                          # tests TypeScript
@@ -227,11 +229,18 @@ cargo test                        # tests Rust
 bun run smoke                     # l'application s'ouvre-t-elle vraiment ?
 ```
 
-**La septième est obligatoire dès qu'une tâche touche `lib.rs`, `menu.rs` ou un
-`commands.rs`.** Les six autres ont toutes été vertes le jour où Ash ne démarrait plus du
+**`bun run smoke` est obligatoire dès qu'une tâche touche `lib.rs`, `menu.rs` ou un
+`commands.rs`.** Les sept autres ont toutes été vertes le jour où Ash ne démarrait plus du
 tout — un `state()` appelé avant son `manage()`, qui ne panique qu'au lancement. Le
 composition root n'a pas de test unitaire, et il n'en aura pas : assembler une
 application Tauri en demande une vraie.
+
+Prettier tranche le formatage du frontend comme `cargo fmt` tranche celui du Rust, et
+`format:check` est la première des sept vérifications de `bun run verify`. Le Markdown en
+est **exclu** (`.prettierignore` dit pourquoi) : la prose de `docs/` est retournée à la
+main. Le reformatage initial est un commit à lui seul, nommé dans
+`.git-blame-ignore-revs` — `git config blame.ignoreRevsFile .git-blame-ignore-revs`, une
+fois, et `git blame` le traverse.
 
 `bun run smoke` compile, démarre Vite au besoin, lance le binaire, et vérifie qu'il
 survit à son démarrage **et** qu'il a lancé son shell. Il ouvre une fenêtre pendant
