@@ -38,5 +38,6 @@ qu'il fait aujourd'hui, pas ce qui a changé depuis une version précédente —
 
 - `scripts/release/version.ts --check vX.Y.Z` vérifie qu'un tag concorde avec
   `src-tauri/Cargo.toml` et `package.json`, et nomme le fichier fautif sinon.
-- `scripts/release/release-notes.ts X.Y.Z` écrit sur la sortie standard le corps de la section
-  correspondante de ce fichier, et échoue si elle est absente ou vide.
+- `scripts/release/release-notes.ts X.Y.Z` — ou `vX.Y.Z`, la forme d'une version étant décidée
+  dans `version.ts` et demandée par les autres — écrit sur la sortie standard le corps de la
+  section correspondante de ce fichier, et échoue si elle est absente ou vide.
