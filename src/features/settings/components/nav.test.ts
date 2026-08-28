@@ -61,7 +61,11 @@ describe("la colonne des sections", () => {
 
         // When
         const described = navColumn("tools", [], (section) => asked.push(section));
-        find(described[2] ?? text(""), "settings-nav-row")?.on["click"]?.({ value: "", key: "", shiftKey: false });
+        find(described[2] ?? text(""), "settings-nav-row")?.on["click"]?.({
+            value: "",
+            key: "",
+            shiftKey: false,
+        });
 
         // Then
         expect(asked).toEqual(["appearance"]);

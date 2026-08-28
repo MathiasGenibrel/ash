@@ -24,8 +24,7 @@ import { versionOf } from "./version";
 const CHANGELOG = "CHANGELOG.md";
 
 export type ReleaseNotes =
-    | { readonly ok: true; readonly body: string }
-    | { readonly ok: false; readonly message: string };
+    { readonly ok: true; readonly body: string } | { readonly ok: false; readonly message: string };
 
 /** `## [1.2.0]`, éventuellement suivi d'une date — mais pas `## [1.2.0-rc.1]`. */
 function isHeadingOf(line: string, version: string): boolean {

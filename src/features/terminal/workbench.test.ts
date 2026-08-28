@@ -319,7 +319,10 @@ describe("le répertoire courant d'un onglet", () => {
             "/tmp",
         ]);
         expect(
-            app.rendered.slice(before).at(-1)?.tabs.map((tab) => (isShell(tab) ? tab.cwd : null)),
+            app.rendered
+                .slice(before)
+                .at(-1)
+                ?.tabs.map((tab) => (isShell(tab) ? tab.cwd : null)),
         ).toEqual(["/tmp"]);
     });
 

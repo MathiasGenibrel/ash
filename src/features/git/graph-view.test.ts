@@ -3,7 +3,14 @@ import { describe, expect, it } from "bun:test";
 import { find, findAll, plainText } from "@/shared/ui";
 
 import type { CommitGraph, CommitRow } from "./contract";
-import { commitDetail, commitGraphView, day, laneDrawing, linkShape, ROW_HEIGHT } from "./graph-view";
+import {
+    commitDetail,
+    commitGraphView,
+    day,
+    laneDrawing,
+    linkShape,
+    ROW_HEIGHT,
+} from "./graph-view";
 
 /**
  * Test Data Builder : une ligne de graphe, avec des défauts valides et déterministes.

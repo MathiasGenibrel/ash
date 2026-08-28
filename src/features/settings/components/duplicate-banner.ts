@@ -25,10 +25,10 @@ export function duplicateBanner(
     const shown = describeDuplicates(tools);
     if (shown === null) return [];
 
-    const line = row(hooksGlyph("outdated", 12), label("settings-banner-text", shown.sentence)).class(
-        "settings-banner",
-        "is-warning",
-    );
+    const line = row(
+        hooksGlyph("outdated", 12),
+        label("settings-banner-text", shown.sentence),
+    ).class("settings-banner", "is-warning");
 
     const undo = shown.undo;
     if (undo !== null) {

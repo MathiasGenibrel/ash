@@ -255,10 +255,7 @@ function captureBlock(line: ShortcutRow, capture: ShortcutCapture): UiComponent 
  * par une ligne qui ne se règle pas, et le bloc est un refus (issue #137). L'écran ne fait
  * pas ce partage, il le lit — le diagnostic dit déjà pourquoi c'est sans appel.
  */
-function conflictBlock(
-    conflict: ShortcutConflict | null,
-    actions: ShortcutsActions,
-): UiComponent {
+function conflictBlock(conflict: ShortcutConflict | null, actions: ShortcutsActions): UiComponent {
     const block = tag("div", "settings-conflict-block");
     if (conflict === null) return block;
 

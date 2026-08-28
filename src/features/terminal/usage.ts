@@ -226,11 +226,7 @@ export function composeContextGauge(usage: SessionUsage | null): ContextGauge | 
         share: {
             percent,
             level:
-                percent >= COMPACTING_AT
-                    ? "compacting"
-                    : percent >= LOADED_AT
-                      ? "loaded"
-                      : "fresh",
+                percent >= COMPACTING_AT ? "compacting" : percent >= LOADED_AT ? "loaded" : "fresh",
         },
     };
 }

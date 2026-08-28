@@ -36,7 +36,11 @@ class QuitDialog {
     /** Un seul agent, au travail — le cas le plus courant d'un `⌘Q` de travers. */
     static overOneWorkingAgent(): QuitDialog {
         return new QuitDialog("Ash", [
-            TabBuilder.create().runningAgent("claude").inState("working").workingIn("/wt/ash-177").build(),
+            TabBuilder.create()
+                .runningAgent("claude")
+                .inState("working")
+                .workingIn("/wt/ash-177")
+                .build(),
         ]);
     }
 
@@ -101,7 +105,11 @@ describe("la confirmation de sortie quand un agent est reconnu", () => {
         // Given — le critère est la **présence** d'un agent reconnu, pas son état (ADR-0006) :
         // un Claude Code `idle` compte, parce que le quitter perd sa session
         const dialog = QuitDialog.over("Ash", [
-            TabBuilder.create().runningAgent("claude").inState("idle").workingIn("/dev/ash").build(),
+            TabBuilder.create()
+                .runningAgent("claude")
+                .inState("idle")
+                .workingIn("/dev/ash")
+                .build(),
         ]);
 
         // When

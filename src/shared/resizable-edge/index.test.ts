@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-import { clampedSize, grabOffset, handleOffset, sizePercent, type EdgeBounds } from "@/shared/resizable-edge";
+import {
+    clampedSize,
+    grabOffset,
+    handleOffset,
+    sizePercent,
+    type EdgeBounds,
+} from "@/shared/resizable-edge";
 
 /** Des bornes quelconques : ce module ne connaît celles d'aucune feature. */
 const BOUNDS: EdgeBounds = { min: 0.1, max: 0.8 };

@@ -24,7 +24,9 @@
     display: grid;
     /* Les six colonnes de la spec §7.3. Les deux du milieu sont les plus larges : ce sont
        elles que cet écran existe pour montrer. */
-    grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(90px, 0.6fr) auto;
+    grid-template-columns:
+        minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1fr)
+        minmax(90px, 0.6fr) auto;
     gap: 8px;
     align-items: center;
     padding: 4px 10px;

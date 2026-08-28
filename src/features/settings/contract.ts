@@ -147,8 +147,7 @@ export interface Mismatch {
 
 /** Ce qu'`apply` changerait dans l'entrée — et rien d'autre ne change jamais. */
 export type FixAction =
-    | { kind: "useAdapter"; adapter: string }
-    | { kind: "useFolder"; path: string };
+    { kind: "useAdapter"; adapter: string } | { kind: "useFolder"; path: string };
 
 /**
  * La correction proposée. `apply` est `null` quand rien de ce qu'Ash sait faire n'a de

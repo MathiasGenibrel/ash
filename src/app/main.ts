@@ -742,9 +742,10 @@ const fontFamily: FontFamilySignal = {
     get current(): string {
         return fontStack(terminalFont.family.current);
     },
-    subscribe: (listener) => terminalFont.family.subscribe((family) => {
-        listener(fontStack(family));
-    }),
+    subscribe: (listener) =>
+        terminalFont.family.subscribe((family) => {
+            listener(fontStack(family));
+        }),
 };
 
 // Le nom de l'application, lui, est **attendu** au lieu d'être posé par défaut puis

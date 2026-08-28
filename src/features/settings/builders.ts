@@ -211,7 +211,13 @@ export function aJournalReport(overrides: Partial<JournalReport> = {}): JournalR
  * — un scénario qui les réécrirait décrirait un backend qui n'existe pas.
  */
 export function anAppearance(overrides: Partial<Appearance> = {}): Appearance {
-    return { mode: "system", fontSize: 13, font: "JetBrains Mono", density: "comfortable", ...overrides };
+    return {
+        mode: "system",
+        fontSize: 13,
+        font: "JetBrains Mono",
+        density: "comfortable",
+        ...overrides,
+    };
 }
 
 /** Une ligne de raccourci telle que `menu_shortcuts` la rend — glyphes déjà écrits. */

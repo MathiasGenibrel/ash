@@ -52,9 +52,7 @@ describe("the warning that names the agent a checkout would disturb", () => {
         const warning = warnAbout([claude], "ash-sidebar");
 
         // Then — le nom, l'endroit, et la conséquence : les trois, ou la phrase ne sert à rien
-        expect(warning).toBe(
-            "claude is working in ash-sidebar — this would move files under it",
-        );
+        expect(warning).toBe("claude is working in ash-sidebar — this would move files under it");
     });
 
     it("Given two agents writing in the same worktree, when the popup warns, then both are named rather than counted", () => {

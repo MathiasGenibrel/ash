@@ -102,10 +102,7 @@ function whyNoNavigation(state: SearchBoxState): string | null {
 }
 
 /** La boîte : un champ, un compteur, deux flèches et une croix. */
-export function composeSearchBox(
-    state: SearchBoxState,
-    actions: SearchBoxActions,
-): UiComponent {
+export function composeSearchBox(state: SearchBoxState, actions: SearchBoxActions): UiComponent {
     const reason = whyNoNavigation(state);
     const tally = searchTally(state);
 

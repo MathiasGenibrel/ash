@@ -272,12 +272,7 @@ class Path extends ElementBuilder {
     }
 }
 
-function glyph(
-    shapes: readonly string[],
-    size: number,
-    className: string,
-    label: string,
-): Glyph {
+function glyph(shapes: readonly string[], size: number, className: string, label: string): Glyph {
     return new Glyph(shapes, size, className, label);
 }
 
@@ -293,7 +288,10 @@ export function testTileClass(outcome: TestOutcome): string {
 }
 
 /** Ce qu'un lecteur d'écran entend d'une pastille — le chiffre seul ne dit rien. */
-export function testTileLabel(outcome: TestOutcome, test: { number: number; label: string }): string {
+export function testTileLabel(
+    outcome: TestOutcome,
+    test: { number: number; label: string },
+): string {
     const said: Record<TestOutcome, string> = {
         pending: "not run yet",
         running: "running",

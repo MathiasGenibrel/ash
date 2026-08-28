@@ -110,8 +110,7 @@ export class TerminalWorkbench {
             // Depuis un onglet de merge, « le worktree courant » est celui dont il résout le
             // conflit : il n'a pas de `cwd` — aucun processus n'y tourne —, mais il sait
             // parfaitement où il est.
-            const inherited =
-                from === null ? null : isShell(from) ? from.cwd : from.worktreeRoot;
+            const inherited = from === null ? null : isShell(from) ? from.cwd : from.worktreeRoot;
             const cwd = typeof origin === "object" ? origin.directory : inherited;
 
             // Le shell peut sortir avant même que `start` ait rendu la main — un `cwd`
@@ -119,17 +118,13 @@ export class TerminalWorkbench {
             // atteinte par un intermédiaire : la capturer directement laisserait `onExit`
             // lire une variable pas encore affectée.
             const pane: { session?: TerminalSession } = {};
-            pane.session = await TerminalSession.start(
-                this.ports.createView(),
-                this.ports.bridge,
-                {
-                    cwd,
-                    onExit: () => {
-                        const gone = pane.session;
-                        if (gone !== undefined) void this.forget(gone.tabId);
-                    },
+            pane.session = await TerminalSession.start(this.ports.createView(), this.ports.bridge, {
+                cwd,
+                onExit: () => {
+                    const gone = pane.session;
+                    if (gone !== undefined) void this.forget(gone.tabId);
                 },
-            );
+            });
 
             const session = pane.session;
             if (!session.isClosed) this.panes.set(session.tabId, session);

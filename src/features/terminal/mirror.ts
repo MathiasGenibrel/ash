@@ -34,9 +34,7 @@ export type PtyFrameStillMirrorsRust = Assert<Mirrors<RustPtyFrame, PtyFrame>>;
  * Elle porte aussi le mot que le mode édition a introduit : `spacer` n'est pas un segment, et
  * rien d'autre que ce miroir ne le tient collé à la variante `StatusBarItem::Spacer`.
  */
-export type StatusBarLayoutStillMirrorsRust = Assert<
-    Mirrors<RustStatusBarLayout, StatusBarLayout>
->;
+export type StatusBarLayoutStillMirrorsRust = Assert<Mirrors<RustStatusBarLayout, StatusBarLayout>>;
 
 /** Le même mot, pris à l'unité — c'est lui que `set_status_bar_layout` reçoit. */
 export type StatusBarItemStillMirrorsRust = Assert<Mirrors<RustStatusBarItem, StatusBarItemId>>;

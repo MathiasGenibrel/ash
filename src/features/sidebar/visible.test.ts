@@ -240,9 +240,7 @@ describe("ce qu'une ligne repliée porte à la place de ses enfants", () => {
         const railFoldings = everyFolding().filter((folding) => folding.columnCollapsed);
 
         // When
-        const renderings = new Set(
-            railFoldings.map((folding) => shownUnder(tabs, folding).join()),
-        );
+        const renderings = new Set(railFoldings.map((folding) => shownUnder(tabs, folding).join()));
 
         // Then — l'état du dépôt, puis un glyphe par agent, et une seule lecture pour les
         // huit replis

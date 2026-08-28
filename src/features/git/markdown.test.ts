@@ -120,7 +120,8 @@ describe("le rendu du corps", () => {
     it("Given a table, when it is rendered, then it stays a table", () => {
         // Given — « un tableau reste un tableau » (ADR-0013). C'est aussi la forme du bloc
         // `ash:log` lui-même : le rendre en paragraphe rendrait le journal illisible.
-        const body = "| agent | work | when |\n|---|---|---|\n| claude | 4 commits · 15m22s | now |\n";
+        const body =
+            "| agent | work | when |\n|---|---|---|\n| claude | 4 commits · 15m22s | now |\n";
 
         // When
         const rendered = markdown(body);

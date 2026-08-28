@@ -27,11 +27,7 @@ export type { CommitGraph, CommitRow, FoldedBranch, GraphLink } from "./contract
 export { mountCommitGraph, type CommitGraphPanel, type CommitGraphPorts } from "./graph";
 export { WINDOW_STEP } from "./graph-view";
 
-export {
-    mountWorktreeTable,
-    type WorktreeTable,
-    type WorktreeTablePorts,
-} from "./worktree-table";
+export { mountWorktreeTable, type WorktreeTable, type WorktreeTablePorts } from "./worktree-table";
 
 import "./git.css";
 

@@ -306,10 +306,7 @@ export interface SettingsScene {
 }
 
 /** La colonne de gauche. */
-export function settingsNav(
-    scene: SettingsScene,
-    actions: SettingsRendering,
-): readonly UiChild[] {
+export function settingsNav(scene: SettingsScene, actions: SettingsRendering): readonly UiChild[] {
     return navColumn(scene.section, scene.snapshot.tools, (section) => {
         actions.selectSection(section);
     });
@@ -463,7 +460,9 @@ function toolsSection(scene: SettingsScene, actions: SettingsRendering): readonl
         // sonde (ADR-0014). La seule fois où elle ne s'affiche pas est celle où elle n'aurait
         // rien à dire : rien de déclaré, et rien d'observé. L'écran vide garde alors son
         // unique geste, « add ».
-        ...(empty && (scene.journal?.entries ?? 0) === 0 ? [] : [journalRow(scene.journal, actions)]),
+        ...(empty && (scene.journal?.entries ?? 0) === 0
+            ? []
+            : [journalRow(scene.journal, actions)]),
         foot(
             empty
                 ? "ash writes to no file until you declare a tool and install its hooks."

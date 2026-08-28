@@ -135,7 +135,10 @@ describe("la section shortcuts de la fenêtre de réglages", () => {
             aShortcut({
                 label: "Clear Scrollback",
                 keys: "⌘K",
-                reservation: { by: "terminal", note: "swallowed by the terminal — never reaches ash" },
+                reservation: {
+                    by: "terminal",
+                    note: "swallowed by the terminal — never reaches ash",
+                },
             }),
         ]);
 
@@ -223,9 +226,9 @@ describe("la section shortcuts de la fenêtre de réglages", () => {
         const inside = plainText(blocks[0] as UiChild);
         expect(inside).toContain("⌘& belongs to Tab 1 … Tab 9");
         expect(inside).toContain("keep the old one");
-        expect(
-            composed.flatMap((child) => findAll(child, "settings-conflict-give")),
-        ).toHaveLength(0);
+        expect(composed.flatMap((child) => findAll(child, "settings-conflict-give"))).toHaveLength(
+            0,
+        );
     });
 
     it("Given the holder has no row of its own, when the block is composed, then it is named as the contract names it", () => {

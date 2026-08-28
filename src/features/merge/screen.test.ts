@@ -16,8 +16,10 @@ const inert: MergeActions = {
     handOverRest: () => undefined,
 };
 
-const draw = (view: ReturnType<MergeViewBuilder["build"]>, selection: MergeSelection = NO_SELECTION) =>
-    mergeScreen(view, selection, null, inert);
+const draw = (
+    view: ReturnType<MergeViewBuilder["build"]>,
+    selection: MergeSelection = NO_SELECTION,
+) => mergeScreen(view, selection, null, inert);
 
 describe("l'onglet de merge", () => {
     it("Given a stopped rebase, when the three panels are drawn, then the sides carry branch names and never say ours or theirs", () => {
@@ -40,7 +42,10 @@ describe("l'onglet de merge", () => {
         // branche courante en merge et la cible en rebase. Si l'écran gardait le jargon,
         // ce test et le précédent ne pourraient pas passer ensemble.
         const rebase = findAll(draw(MergeViewBuilder.create().build()), "merge-panel-head");
-        const merge = findAll(draw(MergeViewBuilder.create().merging().build()), "merge-panel-head");
+        const merge = findAll(
+            draw(MergeViewBuilder.create().merging().build()),
+            "merge-panel-head",
+        );
 
         // When
         const left = { rebase: plainText(rebase[0]!), merge: plainText(merge[0]!) };

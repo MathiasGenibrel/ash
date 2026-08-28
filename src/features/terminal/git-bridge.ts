@@ -19,13 +19,13 @@ const METADATA_CHANGED_EVENT = "ash://git-metadata";
  * l'état git est celle qui écrit le pont vers lui.
  */
 export const tauriGit: GitBridge = {
-    metadata: (worktreeRoot) =>
-        invoke<WorktreeMetadata | null>("git_metadata", { worktreeRoot }),
+    metadata: (worktreeRoot) => invoke<WorktreeMetadata | null>("git_metadata", { worktreeRoot }),
     onMetadataChanged: (handler) =>
         listen<WorktreeMetadataChanged>(METADATA_CHANGED_EVENT, (event) => {
             handler(event.payload);
         }),
     stoppedOperation: (worktreeRoot) =>
         invoke<StoppedOperation | null>("git_stopped_operation", { worktreeRoot }),
-    conflictPrompt: (worktreeRoot) => invoke<string | null>("git_conflict_prompt", { worktreeRoot }),
+    conflictPrompt: (worktreeRoot) =>
+        invoke<string | null>("git_conflict_prompt", { worktreeRoot }),
 };

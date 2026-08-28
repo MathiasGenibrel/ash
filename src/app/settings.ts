@@ -1,5 +1,10 @@
 import "./styles.css";
-import { mountSettings, tauriSettings, type Appearance, type WindowPorts } from "@/features/settings";
+import {
+    mountSettings,
+    tauriSettings,
+    type Appearance,
+    type WindowPorts,
+} from "@/features/settings";
 import { loadAppName } from "./app-name";
 import { followTerminalFontSize } from "./font-size";
 import {

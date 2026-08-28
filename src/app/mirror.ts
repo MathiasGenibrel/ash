@@ -54,9 +54,7 @@ export type FontSizeStillMirrorsRust = Assert<Mirrors<RustFontSize, number>>;
  * ou une largeur qui cesserait d'être un nombre nu — lui ferait rendre `null` sur **chaque**
  * annonce, et la colonne resterait figée à 240 px sans un mot. C'est la forme de #16 et #48.
  */
-export type SidebarColumnStillMirrorsRust = Assert<
-    Mirrors<RustSidebarColumn, SidebarColumnState>
->;
+export type SidebarColumnStillMirrorsRust = Assert<Mirrors<RustSidebarColumn, SidebarColumnState>>;
 
 /**
  * Les deux préférences d'apparence arrivées avec la section `appearance` (#22).

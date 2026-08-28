@@ -112,12 +112,8 @@ export type FixActionStillMirrorsRust = Assert<Mirrors<RustFixAction, FixAction>
 export type SuggestedFixStillMirrorsRust = Assert<Mirrors<RustSuggestedFix, SuggestedFix>>;
 export type VerificationStillMirrorsRust = Assert<Mirrors<RustVerification, Verification>>;
 
-export type TestDescriptionStillMirrorsRust = Assert<
-    Mirrors<RustTestDescription, TestDescription>
->;
-export type ToolDeclarationStillMirrorsRust = Assert<
-    Mirrors<RustToolDeclaration, ToolDeclaration>
->;
+export type TestDescriptionStillMirrorsRust = Assert<Mirrors<RustTestDescription, TestDescription>>;
+export type ToolDeclarationStillMirrorsRust = Assert<Mirrors<RustToolDeclaration, ToolDeclaration>>;
 export type SettingsSnapshotStillMirrorsRust = Assert<
     Mirrors<RustSettingsSnapshot, SettingsSnapshot>
 >;
@@ -179,9 +175,7 @@ export type VerifiedStillMirrorsRust = Assert<Mirrors<RustVerified, Verified>>;
 export type SettingsThemeModeStillMirrorsRust = Assert<Mirrors<RustThemeMode, ThemeMode>>;
 export type FontStepStillMirrorsRust = Assert<Mirrors<RustFontStep, FontStep>>;
 export type ShortcutRowStillMirrorsRust = Assert<Mirrors<RustShortcutRow, ShortcutRow>>;
-export type ShortcutsReportStillMirrorsRust = Assert<
-    Mirrors<RustShortcutsReport, ShortcutsReport>
->;
+export type ShortcutsReportStillMirrorsRust = Assert<Mirrors<RustShortcutsReport, ShortcutsReport>>;
 export type ShortcutConflictStillMirrorsRust = Assert<
     Mirrors<RustShortcutConflict, ShortcutConflict>
 >;

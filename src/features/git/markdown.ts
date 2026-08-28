@@ -190,7 +190,11 @@ function blocks(lines: readonly string[]): readonly UiChild[] {
         }
 
         const paragraph: string[] = [];
-        while (at < lines.length && (lines[at] ?? "").trim() !== "" && !breaksAParagraph(lines[at] ?? "")) {
+        while (
+            at < lines.length &&
+            (lines[at] ?? "").trim() !== "" &&
+            !breaksAParagraph(lines[at] ?? "")
+        ) {
             paragraph.push((lines[at] ?? "").trim());
             at += 1;
         }
@@ -270,7 +274,8 @@ function table(rows: readonly string[]): UiChild {
             .map((cell) => cell.trim());
 
     const head = tag("tr", "ash-md-row");
-    for (const cell of cells(rows[0] ?? "")) head.add(tag("th", "ash-md-cell").add(...inline(cell)));
+    for (const cell of cells(rows[0] ?? ""))
+        head.add(tag("th", "ash-md-cell").add(...inline(cell)));
 
     const body = tag("tbody");
     for (const row of rows.slice(2)) {
@@ -305,7 +310,11 @@ export function inline(source: string): readonly UiNode[] {
         const code = /^`([^`]+)`/.exec(rest);
         if (code !== null) {
             flush();
-            out.push(tag("code", "ash-md-inline-code").add(text(code[1] ?? "")).build());
+            out.push(
+                tag("code", "ash-md-inline-code")
+                    .add(text(code[1] ?? ""))
+                    .build(),
+            );
             at += code[0].length;
             continue;
         }
@@ -313,7 +322,11 @@ export function inline(source: string): readonly UiNode[] {
         const strong = /^\*\*([^*]+)\*\*/.exec(rest);
         if (strong !== null) {
             flush();
-            out.push(tag("strong", "ash-md-strong").add(...inline(strong[1] ?? "")).build());
+            out.push(
+                tag("strong", "ash-md-strong")
+                    .add(...inline(strong[1] ?? ""))
+                    .build(),
+            );
             at += strong[0].length;
             continue;
         }
@@ -321,7 +334,11 @@ export function inline(source: string): readonly UiNode[] {
         const emphasis = /^[*_]([^*_]+)[*_]/.exec(rest);
         if (emphasis !== null) {
             flush();
-            out.push(tag("em", "ash-md-emphasis").add(...inline(emphasis[1] ?? "")).build());
+            out.push(
+                tag("em", "ash-md-emphasis")
+                    .add(...inline(emphasis[1] ?? ""))
+                    .build(),
+            );
             at += emphasis[0].length;
             continue;
         }

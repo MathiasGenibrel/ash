@@ -104,10 +104,7 @@ export interface RailPlan {
  * composé à part ([`./header`]), pour que cette propriété reste celle des **lignes** — un
  * compteur qui rattraperait une ligne muette serait un pansement, pas une garantie.
  */
-export function visibleStates(
-    tree: SidebarTree,
-    columnCollapsed: boolean,
-): readonly AgentState[] {
+export function visibleStates(tree: SidebarTree, columnCollapsed: boolean): readonly AgentState[] {
     return tree.groups.flatMap((group) =>
         columnCollapsed ? railStates(group) : groupStates(group),
     );
@@ -139,10 +136,7 @@ function worktreeStates(worktree: WorktreeNode): AgentState[] {
  * faire avancer. Il n'a aucune raison de tourner quand la colonne n'a rien à animer, et
  * `mountSidebar` s'en sert pour ne pas redessiner une sidebar immobile une fois par seconde.
  */
-export function showsSubagents(
-    tree: SidebarTree,
-    columnCollapsed: boolean,
-): boolean {
+export function showsSubagents(tree: SidebarTree, columnCollapsed: boolean): boolean {
     // Le rail de 46 px ne montre pas les enfants : il n'a donc jamais de durée à animer.
     if (columnCollapsed) return false;
     return tree.groups.some((group) =>

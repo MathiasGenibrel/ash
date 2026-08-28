@@ -68,11 +68,7 @@ function matches(branch: Branch, needle: string): boolean {
  * depuis la première pour atteindre la dernière est le geste qu'on fait sans y penser dans
  * une palette. Sur une liste vide, il n'y a pas de sélection — `-1`, et rien à valider.
  */
-export function moveSelection(
-    rows: readonly BranchRow[],
-    selected: number,
-    step: number,
-): number {
+export function moveSelection(rows: readonly BranchRow[], selected: number, step: number): number {
     if (rows.length === 0) return -1;
     const from = selected < 0 ? 0 : selected;
     return (((from + step) % rows.length) + rows.length) % rows.length;

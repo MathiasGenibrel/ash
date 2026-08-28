@@ -44,10 +44,7 @@ export interface PauseOffer {
  * croire qu'il n'y a plus personne dans ce worktree, alors qu'il reprendra dès qu'on le
  * relancera.
  */
-export function warnAbout(
-    agents: readonly BusyAgent[],
-    worktreeName: string,
-): string | null {
+export function warnAbout(agents: readonly BusyAgent[], worktreeName: string): string | null {
     if (agents.length === 0) return null;
 
     // Un groupe par état, dans l'ordre de la planche `1e` — donc `working` avant `waiting`,
@@ -74,7 +71,9 @@ export function warnAbout(
     // La conséquence n'est écrite que s'il reste quelqu'un pour la subir : tout le monde
     // étant déjà arrêté, la phrase serait un avertissement contre un danger écarté.
     const consequence =
-        stopped.length === agents.length ? " — nothing is writing" : " — this would move files under it";
+        stopped.length === agents.length
+            ? " — nothing is writing"
+            : " — this would move files under it";
     return `${clauses.join(", and ")} in ${worktreeName}${consequence}`;
 }
 
