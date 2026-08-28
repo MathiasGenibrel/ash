@@ -32,10 +32,15 @@
 //!
 //! ## La règle du couple : les deux ports, ou aucun
 //!
-//! Quand la variable est là, **les deux** doublures sont branchées, toujours. Il n'y a pas
-//! de moyen de doubler l'un et de garder l'autre, et ce n'est pas une simplification : un
-//! faux jeton envoyé au vrai hôte, ou un vrai jeton du trousseau envoyé à une fausse API,
-//! sont exactement les deux mélanges qu'on ne veut pas pouvoir fabriquer.
+//! Quand la variable est là, **les deux** doublures sont branchées, toujours. Ce n'est pas
+//! une simplification : un faux jeton envoyé au vrai hôte, ou un vrai jeton du trousseau
+//! envoyé à une fausse API, sont exactement les deux mélanges qu'on ne veut pas pouvoir
+//! fabriquer.
+//!
+//! Et ce n'est pas non plus une discipline d'appel : [`Rehearsal::ports`] est la **seule**
+//! sortie du module, elle rend la paire, et les deux constructeurs qu'elle appelle sont
+//! privés. Un appelant ne peut pas en obtenir la moitié — il n'y a rien à respecter, il n'y
+//! a rien d'autre à appeler.
 //!
 //! ## La forme de la variable — **et c'est le seul endroit où elle est écrite**
 //!
@@ -209,19 +214,30 @@ impl Rehearsal {
         Ok(rehearsal)
     }
 
-    /// Le trousseau doublé. Voir la règle du couple : il ne se demande jamais seul.
+    /// Les deux ports doublés, **ensemble et seulement ensemble**.
+    ///
+    /// C'est la règle du couple, et c'est ici qu'elle cesse d'être une consigne : il n'y a
+    /// pas d'autre porte. Un appelant ne peut pas obtenir la moitié de cette paire, donc il
+    /// ne peut pas fabriquer les deux mélanges qu'on ne veut pas voir exister — un faux
+    /// jeton envoyé à `api.anthropic.com`, un vrai jeton du trousseau envoyé ailleurs. Les
+    /// deux constructeurs sont privés pour cette seule raison ; les rendre publics, même
+    /// « juste pour un test », rouvrirait la porte.
     #[must_use]
-    pub fn tokens(&self) -> Arc<dyn TokenSource> {
+    pub fn ports(self, clock: Arc<dyn Clock>) -> (Arc<dyn UsageApi>, Arc<dyn TokenSource>) {
+        (self.api(clock), self.tokens())
+    }
+
+    /// Le trousseau doublé. Voir [`Self::ports`] : il ne se demande jamais seul.
+    fn tokens(self) -> Arc<dyn TokenSource> {
         Arc::new(RehearsedTokens {
             keychain: self.keychain,
         })
     }
 
     /// L'hôte doublé, qui ne compose aucune requête et ne nomme aucune adresse.
-    #[must_use]
-    pub fn api(&self, clock: Arc<dyn Clock>) -> Arc<dyn UsageApi> {
+    fn api(self, clock: Arc<dyn Clock>) -> Arc<dyn UsageApi> {
         Arc::new(RehearsedApi {
-            answer: *self,
+            answer: self,
             clock,
         })
     }
