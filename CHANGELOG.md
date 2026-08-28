@@ -11,6 +11,16 @@ ne concorderait pas avec les deux.
 
 ## [Non publié]
 
+### Outillage
+
+- Pousser un tag `vX.Y.Z` produit une release GitHub : `.github/workflows/release.yml`
+  enchaîne `preflight → verify → build → publish`, et rien d'autre ne le déclenche. La
+  release naît en brouillon et n'est rendue visible qu'en dernier geste, une fois l'archive
+  attachée.
+- `scripts/release/artifact.ts` décide seul le nom de l'archive (`Ash-X.Y.Z-macos-arm64.zip`),
+  la cible construite et les chemins du bundle : le workflow les demande, il ne les recompose
+  pas.
+
 ## [0.1.0] - 2026-08-28
 
 Première version numérotée. Ash remplace déjà un terminal quotidien : ce qui suit décrit ce
