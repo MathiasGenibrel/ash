@@ -33,6 +33,7 @@
 //! | [`poller`] | le portillon : premier plan, interrupteur, une minute | il ne parle pas à Tauri |
 //! | [`preferences`] | l'interrupteur, et le fichier qui s'en souvient | il ne lit personne |
 //! | [`commands`] | une lecture et un event | il ne détient rien, et ne bascule rien |
+//! | `rehearsal` | des doublures de décor, **absentes du binaire distribué** | il ne lit rien, n'appelle rien |
 //!
 //! L'interrupteur, lui, se bascule par la fenêtre de réglages (`features/settings/usage.rs`)
 //! et par elle seule : une seule écriture, qui rend la section recomposée. Voir `commands.rs`.
@@ -70,6 +71,12 @@ mod error;
 mod poller;
 mod preferences;
 mod quota;
+/// Les doublures que le build de développement peut brancher à la place du trousseau et de
+/// l'hôte, quand une variable d'environnement le demande. **Ce module n'existe pas dans le
+/// binaire de `bun run package`** : `debug_assertions` est éteint par `tauri build`, comme
+/// il l'est pour tout ce qui sépare Ash d'Ash-dev. Lire son en-tête avant de le nommer.
+#[cfg(debug_assertions)]
+mod rehearsal;
 mod token;
 
 // **Ce qui n'est pas là est aussi une décision.** Le composition root a besoin d'assembler la
@@ -83,4 +90,6 @@ pub use commands::ACCOUNT_USAGE_EVENT;
 pub use poller::{UsagePoller, UsageSink};
 pub use preferences::{FileUsageStore, UsagePreferences, UsageStore};
 pub use quota::{AccountUsage, Quota};
+#[cfg(debug_assertions)]
+pub use rehearsal::{Rehearsal, RehearsalError, REHEARSAL_VAR};
 pub use token::{Credentials, KeychainTokens, Readability, TokenSource};
