@@ -13,7 +13,7 @@
  * ci-dessous sont ce qui **confronte** les deux : une assertion de type, sans aucune valeur
  * à l'exécution, que `bun run typecheck` évalue.
  *
- * La chaîne complète tient en deux des six vérifications obligatoires, dans cet ordre :
+ * La chaîne complète tient en deux des vérifications de `bun run verify`, dans cet ordre :
  * `cargo test` régénère `generated/`, puis `bun run typecheck` compare. Sauter la première
  * laisse comparer un contrat périmé — c'est la seule maille de ce filet.
  */
