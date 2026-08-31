@@ -668,20 +668,15 @@ impl ToolRegistry {
 /// et lire n'écrit toujours rien
 /// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
 ///
-/// La comparaison est **stricte, et dans un seul sens** : `Presence::Superseded` dit
-/// seulement que la version inscrite n'est pas celle de l'adaptateur, ce qui couvre aussi le
-/// bloc posé par un Ash **plus récent** — deux builds sur la même machine, ou un retour en
-/// arrière. Ce cas-là n'est pas périmé, et proposer de le « mettre à jour » ferait réécrire
-/// en arrière ce qu'un Ash plus avancé a posé.
+/// « En retard » n'est pas lu ici : `Presence::Superseded` dit seulement que la version
+/// inscrite n'est pas celle de l'adaptateur, ce qui couvre aussi le bloc posé par un Ash
+/// **plus récent**, et c'est [`Presence::is_behind`] qui tient le sens de l'écart — une
+/// seule fois, pour la sidebar comme pour la fenêtre de réglages.
 pub fn instrumented(found: Option<&BlockAt>) -> Instrumented {
     match found {
         None => Instrumented::Unsupported,
         Some(BlockAt { presence, .. }) => match presence {
-            Presence::Superseded {
-                installed,
-                available,
-                ..
-            } if installed < available => Instrumented::Outdated,
+            Presence::Superseded { .. } if presence.is_behind() => Instrumented::Outdated,
             Presence::Current { .. }
             | Presence::Superseded { .. }
             | Presence::HandEdited { .. } => Instrumented::Installed,
