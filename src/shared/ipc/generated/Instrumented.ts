@@ -9,4 +9,4 @@
  * ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)) — sans quoi son absence se
  * lirait comme une panne.
  */
-export type Instrumented = "installed" | "missing" | "unsupported";
+export type Instrumented = "installed" | "outdated" | "missing" | "unsupported";
