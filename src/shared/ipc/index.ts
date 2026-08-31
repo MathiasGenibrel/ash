@@ -87,8 +87,14 @@ export interface Subagent {
  * `unsupported` n'est pas `missing` : le premier n'a **aucun geste** — aucun adaptateur de
  * cette version ne sait instrumenter cet outil —, le second mène au flux d'installation des
  * hooks, qui existe déjà dans la fenêtre de réglages.
+ *
+ * `outdated` n'est pas `missing` non plus, et c'est le seul des quatre qui ne parle pas de
+ * `waiting` : la configuration porte un marqueur d'une version **antérieure**, donc les
+ * hooks d'alors remontent toujours. Ce qui manque est ce qui s'est ajouté depuis — d'où des
+ * lignes filles qui ne se ferment jamais (#179) et une fin de session qui ne se voit pas.
+ * Son geste mène à la mise à jour, dans la même fenêtre.
  */
-export type Instrumented = "installed" | "missing" | "unsupported";
+export type Instrumented = "installed" | "outdated" | "missing" | "unsupported";
 
 /**
  * L'outil reconnu dans l'avant-plan d'un onglet (ADR-0006).

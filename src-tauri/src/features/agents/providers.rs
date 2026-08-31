@@ -135,8 +135,20 @@ pub struct RecognizedProvider {
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "kebab-case")]
 pub enum Instrumented {
-    /// La configuration de cet outil porte le marqueur `# ash:hook v`.
+    /// La configuration de cet outil porte le marqueur `# ash:hook v`, à la version d'Ash.
     Installed,
+    /// Elle porte un marqueur d'une version **antérieure** à celle de l'adaptateur.
+    ///
+    /// Ce n'est pas « pas de hooks » : les états que le bloc d'alors posait remontent
+    /// toujours. Ce qui manque, ce sont les hooks ajoutés depuis — `SubagentStop` en v2,
+    /// `SessionStart` en v3 —, donc les lignes filles qui ne se ferment jamais (#179) et la
+    /// fin de session qui ne se voit pas. Sans cette valeur, la sidebar était **muette** sur
+    /// un onglet dont les enfants comptaient les heures.
+    ///
+    /// Un marqueur d'une version **supérieure** ne se lit pas ici : un Ash ancien ne signale
+    /// pas comme périmé ce qu'un Ash plus récent a posé — c'est `settings::registry` qui
+    /// tient la comparaison.
+    Outdated,
     /// Elle ne le porte pas — et son adaptateur saurait le poser.
     Missing,
     /// Aucun adaptateur de cette version ne sait instrumenter cet outil.
