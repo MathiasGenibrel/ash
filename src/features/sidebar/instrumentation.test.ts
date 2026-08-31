@@ -29,6 +29,34 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
         expect(mark).toBeNull();
     });
 
+    it("Given an agent instrumented by an older ash, when its row is composed, then it names what stops coming back and offers to update", () => {
+        // Given — le bloc `# ash:hook v1` pose `Stop` et `Notification`, donc `waiting`
+        // remonte encore : ce qui manque est arrivé après. Ses lignes filles ne se ferment
+        // jamais (#179), et la colonne n'en disait rien (#197)
+        const agent = { command: "claude", adapter: "claude-code", instrumented: "outdated" } as const;
+
+        // When
+        const mark = instrumentationMark(agent);
+
+        // Then — la conséquence avant la cause, et un geste : la sidebar informe, l'écran
+        // agit (ADR-0010)
+        expect(mark?.title).toContain("subagent rows never close");
+        expect(mark?.instrument).toEqual({ command: "claude", adapter: "claude-code" });
+    });
+
+    it("Given an agent whose hooks are outdated and one whose hooks are missing, when both rows are composed, then the two marks do not look alike", () => {
+        // Given — « pas à jour » et « rien de posé » ne se corrigent pas de la même façon,
+        // et un état doit se distinguer **sans la couleur** (`shared/agent-state`)
+        const outdated = { command: "claude", adapter: "claude-code", instrumented: "outdated" } as const;
+        const missing = { command: "claude", adapter: "claude-code", instrumented: "missing" } as const;
+
+        // When
+        const marks = [instrumentationMark(outdated), instrumentationMark(missing)];
+
+        // Then
+        expect(marks[0]?.glyph).not.toBe(marks[1]?.glyph);
+    });
+
     it("Given a tool no adapter can instrument, when its row is composed, then it says so and offers no gesture", () => {
         // Given — `generic` ne pose aucun hook (ADR-0008). Un geste mènerait à un bouton
         // éteint, ce qui se lit comme un défaut plutôt que comme une limite
