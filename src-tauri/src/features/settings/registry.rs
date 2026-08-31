@@ -645,22 +645,38 @@ impl ToolRegistry {
     }
 }
 
-/// Ce que la sidebar retient d'une lecture de configuration — **trois valeurs, pas cinq**.
+/// Ce que la sidebar retient d'une lecture de configuration — **quatre valeurs, pas six**.
 ///
 /// « Rien n'est posé » et « rien ne peut l'être » ne se corrigent pas du tout de la même
 /// façon : la première mène au flux d'installation qui existe déjà, la seconde n'a pas de
 /// geste — aucun adaptateur de cette version ne sait instrumenter cet outil (ADR-0008). Les
 /// confondre ferait proposer un marqueur qui n'ouvrirait sur rien.
 ///
-/// La question est bien « le marqueur est-il là ? » et pas « le bloc est-il celui qu'on
-/// écrirait » : un bloc d'une version antérieure, ou modifié à la main, **est** une
-/// instrumentation — l'outil parle, et c'est la fenêtre de réglages qui dit dans quel état
-/// elle est. La sidebar, elle, ne signale que ce qui explique une absence de `waiting`
+/// La question n'est pas « le bloc est-il celui qu'on écrirait », et une entrée éditée à la
+/// main reste donc `Installed` : l'outil parle, il manque peut-être un mot, et c'est la
+/// fenêtre de réglages qui montre le diff et laisse choisir (spec §10). La sidebar ne
+/// signale que ce dont l'absence se lirait comme une panne d'Ash.
+///
+/// **Un bloc d'une version antérieure en fait partie, et il n'en faisait pas partie jusqu'à
+/// #197.** L'argument d'alors — « une version antérieure *est* une instrumentation » — est
+/// vrai et ne suffit pas : les hooks se sont ajoutés depuis, et ce que le bloc d'alors
+/// n'appelle pas ne remonte pas. Un `settings.json` marqué `v1` ne pose ni `SubagentStop`
+/// (v2) ni `SessionStart` (v3) : les lignes filles de cet onglet ne se ferment jamais
+/// (#179), et la sidebar restait muette sur la seule chose qui l'expliquait. C'est
+/// [`Instrumented::Outdated`], et son geste ouvre les réglages sur cet outil — la sidebar
+/// informe, l'écran agit ([ADR-0010](../../../../docs/adr/0010-sidebar-informe-terminal-agit.md)),
+/// et lire n'écrit toujours rien
 /// ([ADR-0007](../../../../docs/adr/0007-etats-par-hooks.md)).
+///
+/// « En retard » n'est pas lu ici : `Presence::Superseded` dit seulement que la version
+/// inscrite n'est pas celle de l'adaptateur, ce qui couvre aussi le bloc posé par un Ash
+/// **plus récent**, et c'est [`Presence::is_behind`] qui tient le sens de l'écart — une
+/// seule fois, pour la sidebar comme pour la fenêtre de réglages.
 pub fn instrumented(found: Option<&BlockAt>) -> Instrumented {
     match found {
         None => Instrumented::Unsupported,
         Some(BlockAt { presence, .. }) => match presence {
+            Presence::Superseded { .. } if presence.is_behind() => Instrumented::Outdated,
             Presence::Current { .. }
             | Presence::Superseded { .. }
             | Presence::HandEdited { .. } => Instrumented::Installed,
@@ -829,20 +845,31 @@ mod tests {
             if adapter != "claude-code" {
                 return None;
             }
-            Some(Instrumentation {
-                file: config_dir.join("settings.json"),
-                entries: ["Stop", "Notification"]
-                    .iter()
-                    .map(|hook| HookEntry {
-                        path: vec!["hooks".to_owned(), (*hook).to_owned()],
-                        item: format!(
-                            "{{\"hooks\": [{{\"command\": \"ash-event waiting {}\", \"type\": \"command\"}}]}}",
-                            hook_mark(1)
-                        ),
-                    })
-                    .collect(),
-                version: 1,
-            })
+            Some(claude_hooks(config_dir, 1, &["Stop", "Notification"]))
+        }
+    }
+
+    /// Le `settings.json` qu'un Ash d'une version donnée écrirait, marqueur compris.
+    ///
+    /// **Composé ici et non emprunté à `ClaudeCodeAdapter`**, pour la raison que
+    /// [`RealBlocks::describing`] porte déjà : `settings` ne connaît aucun adaptateur concret
+    /// (ADR-0008). La version et la liste des hooks sont des paramètres parce que le seul
+    /// moyen honnête de jouer « un fichier écrit par l'Ash d'avant » est d'écrire ce que
+    /// l'Ash d'avant écrivait — un bloc plus court, marqué de sa version.
+    fn claude_hooks(config_dir: &Path, version: u32, hooks: &[&str]) -> Instrumentation {
+        Instrumentation {
+            file: config_dir.join("settings.json"),
+            entries: hooks
+                .iter()
+                .map(|hook| HookEntry {
+                    path: vec!["hooks".to_owned(), (*hook).to_owned()],
+                    item: format!(
+                        "{{\"hooks\": [{{\"command\": \"ash-event waiting {}\", \"type\": \"command\"}}]}}",
+                        hook_mark(version)
+                    ),
+                })
+                .collect(),
+            version,
         }
     }
 
@@ -1980,5 +2007,101 @@ mod tests {
         // Then — et l'annonce n'écrit rien : elle lit
         assert!(announced.files[0].deletes_the_file);
         assert_eq!(files.journal(), ["read /home/.claude/settings.json"]);
+    }
+
+    /// Ce que la sidebar lit d'un `settings.json` marqué d'une version donnée, face à
+    /// l'adaptateur d'aujourd'hui — le fichier est écrit pour de vrai, puis relu.
+    fn read_by_the_sidebar(written: u32, hooks: &[&str], today: u32, of_today: &[&str]) -> BlockAt {
+        let config_dir = Path::new("/home/.claude");
+        let files = FakeConfigFiles::new().carrying("/home/.claude/settings.json", "{}\n");
+        let then = claude_hooks(config_dir, written, hooks);
+        crate::features::hooks::install(&files, &then).unwrap_or_else(|why| panic!("{why}"));
+        assert!(
+            files
+                .content_of(&then.file)
+                .unwrap_or_default()
+                .contains(&hook_mark(written)),
+            "le fichier doit vraiment porter le marqueur de sa version"
+        );
+
+        let now = claude_hooks(config_dir, today, of_today);
+        BlockAt {
+            file: now.file.clone(),
+            presence: crate::features::hooks::inspect(&files, &now),
+        }
+    }
+
+    #[test]
+    fn given_a_configuration_instrumented_by_an_older_ash_when_the_sidebar_reads_it_then_it_is_outdated(
+    ) {
+        // Given — le fichier de quelqu'un qui a instrumenté `claude` du temps de la v1 :
+        // ni `SubagentStop` (v2) ni `SessionStart` (v3). Ses lignes filles ne se ferment
+        // jamais (#179), et la colonne n'en disait rien — c'est #197
+        let found = read_by_the_sidebar(
+            1,
+            &["Stop", "Notification"],
+            3,
+            &["Stop", "Notification", "SubagentStop", "SessionStart"],
+        );
+
+        // When
+        let shown = instrumented(Some(&found));
+
+        // Then — et le fait vient bien du fichier : la version inscrite est plus basse que
+        // celle de l'adaptateur, ce n'est pas une main qui est passée
+        assert!(
+            matches!(
+                found.presence,
+                Presence::Superseded {
+                    installed: 1,
+                    available: 3,
+                    ..
+                }
+            ),
+            "{:?}",
+            found.presence
+        );
+        assert_eq!(shown, Instrumented::Outdated);
+    }
+
+    #[test]
+    fn given_a_configuration_instrumented_by_a_newer_ash_when_the_sidebar_reads_it_then_nothing_is_signalled(
+    ) {
+        // Given — l'autre sens, et il arrive pour de vrai : Ash et Ash-dev posent le même
+        // marqueur dans le même `~/.claude` (CLAUDE.md), et un retour en arrière suffit.
+        // `Presence::Superseded` dit seulement « pas la version de l'adaptateur » : sans la
+        // comparaison stricte, l'Ash le plus ancien proposerait de réécrire en arrière ce
+        // que le plus récent a posé
+        let found = read_by_the_sidebar(
+            4,
+            &[
+                "Stop",
+                "Notification",
+                "SubagentStop",
+                "SessionStart",
+                "SessionEnd",
+            ],
+            3,
+            &["Stop", "Notification", "SubagentStop", "SessionStart"],
+        );
+
+        // When
+        let shown = instrumented(Some(&found));
+
+        // Then — le classement dit bien « pas la version de l'adaptateur », et pourtant la
+        // sidebar se tait : sans quoi le test ne prouverait rien
+        assert!(
+            matches!(
+                found.presence,
+                Presence::Superseded {
+                    installed: 4,
+                    available: 3,
+                    ..
+                }
+            ),
+            "{:?}",
+            found.presence
+        );
+        assert_eq!(shown, Instrumented::Installed);
     }
 }

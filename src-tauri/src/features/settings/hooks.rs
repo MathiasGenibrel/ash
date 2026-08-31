@@ -247,7 +247,11 @@ pub fn foreseen(adapter: &str, found: Option<BlockAt>) -> HooksReport {
     let shown = file.display().to_string();
     let backup = format!("{shown}.bak");
 
-    // 4 — ce que le fichier porte.
+    // 4 — ce que le fichier porte. Le sens de l'écart de version se demande **avant** le
+    // classement, et à `Presence` : la sidebar pose la même question pour son marqueur
+    // `outdated`, et deux comparaisons écrites à la main diraient un jour deux choses du
+    // même fichier.
+    let behind = presence.is_behind();
     match presence {
         Presence::Current { version } => HooksReport {
             state: HookState::Installed,
@@ -304,12 +308,15 @@ pub fn foreseen(adapter: &str, found: Option<BlockAt>) -> HooksReport {
             diff,
         } => HooksReport {
             state: HookState::Outdated,
-            summary: if installed < available {
+            summary: if behind {
                 format!("v{installed} · v{available} available")
             } else {
-                // Même numéro, autre contenu : les entrées ont changé de forme sans changer
-                // de version. Écrire « v1 · v1 available » ferait lire une erreur
-                // d'affichage.
+                // L'écart n'est pas dans ce sens-là : marqueur de version illisible (lu 0),
+                // ou bloc posé par un Ash plus récent — deux builds dans le même
+                // `~/.claude`. Nommer une version « disponible » plus basse que celle qui
+                // est en place proposerait une mise à jour vers l'arrière ; la ligne dit
+                // donc l'écart sans le chiffrer. **Ce que cette phrase devrait dire de
+                // chacun des deux cas reste à trancher pour lui-même.**
                 format!("v{installed} · out of date")
             },
             note: "until you update, ash keeps working — just coarser. nothing blinks.".to_owned(),
