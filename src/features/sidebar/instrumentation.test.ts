@@ -41,7 +41,11 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
         // Given — le bloc `# ash:hook v1` pose `Stop` et `Notification`, donc `waiting`
         // remonte encore : ce qui manque est arrivé après. Ses lignes filles ne se ferment
         // jamais (#179), et la colonne n'en disait rien (#197)
-        const agent = { command: "claude", adapter: "claude-code", instrumented: "outdated" } as const;
+        const agent = {
+            command: "claude",
+            adapter: "claude-code",
+            instrumented: "outdated",
+        } as const;
 
         // When
         const mark = instrumentationMark(agent);
@@ -55,8 +59,16 @@ describe("le marqueur d'un agent reconnu mais non instrumenté", () => {
     it("Given an agent whose hooks are outdated and one whose hooks are missing, when both rows are composed, then the two marks do not look alike", () => {
         // Given — « pas à jour » et « rien de posé » ne se corrigent pas de la même façon,
         // et un état doit se distinguer **sans la couleur** (`shared/agent-state`)
-        const outdated = { command: "claude", adapter: "claude-code", instrumented: "outdated" } as const;
-        const missing = { command: "claude", adapter: "claude-code", instrumented: "missing" } as const;
+        const outdated = {
+            command: "claude",
+            adapter: "claude-code",
+            instrumented: "outdated",
+        } as const;
+        const missing = {
+            command: "claude",
+            adapter: "claude-code",
+            instrumented: "missing",
+        } as const;
 
         // When
         const marks = [instrumentationMark(outdated), instrumentationMark(missing)];
