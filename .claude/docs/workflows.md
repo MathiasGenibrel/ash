@@ -80,14 +80,11 @@ sortie dans un worktree ne peut pas l'être ailleurs.
 ## Commandes de vérification
 
 ```bash
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
-
-bun run lint
-bun run typecheck
-bun test
+bun run verify
 ```
+
+La liste des vérifications est décidée dans `package.json`, et nulle part ailleurs — la
+réécrire ici en ferait une seconde liste, qui divergerait le jour où la première change.
 
 Cibler pendant une itération :
 

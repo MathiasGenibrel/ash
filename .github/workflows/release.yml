@@ -1,7 +1,7 @@
 # Une release d'Ash : quatre étages, dans cet ordre, chacun bloquant le suivant.
 #
 #   preflight  →  ce que le tag promet est-il vrai ? (versions, CHANGELOG) — ne construit rien
-#   verify     →  `bun run verify`, les six vérifications du dépôt
+#   verify     →  `bun run verify`, les vérifications du dépôt
 #   build      →  `Ash.app` sur un runner macOS, puis l'archive
 #   publish    →  la release GitHub, en brouillon d'abord
 #
@@ -114,7 +114,7 @@ jobs:
 
             - run: bun install --frozen-lockfile
 
-            # Les six vérifications sont décidées dans `package.json`. Les réécrire ici en
+            # Les vérifications sont décidées dans `package.json`. Les réécrire ici en
             # ferait une seconde liste, qui divergerait le jour où la première change.
             - run: bun run verify
 

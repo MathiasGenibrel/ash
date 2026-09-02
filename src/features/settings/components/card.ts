@@ -181,9 +181,7 @@ function pathField(
     if (duplicated) {
         // L'étiquette est sur **les deux** cartes, pas seulement sur celle qu'on vient de
         // toucher (spec §9.1) : c'est le registre qui l'a posée sur chacune.
-        line.add(
-            label("settings-duplicate-tag", `duplicate · also ${tool.duplicates.join(", ")}`),
-        );
+        line.add(label("settings-duplicate-tag", `duplicate · also ${tool.duplicates.join(", ")}`));
     }
 
     if (!tool.verified) {

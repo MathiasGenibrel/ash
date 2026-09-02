@@ -113,17 +113,18 @@ function composeList(model: PopupModel, actions: PopupActions): UiComponent {
 
     const body =
         model.overview === null
-            ? [row(text("this directory is not in a repository Ash could read")).class("branch-popup-empty")]
+            ? [
+                  row(text("this directory is not in a repository Ash could read")).class(
+                      "branch-popup-empty",
+                  ),
+              ]
             : model.rows.length === 0
               ? [row(text(`no branch matches “${model.query}”`)).class("branch-popup-empty")]
               : model.rows.map((shown, index) =>
                     composeRow(shown, index === model.selected, actions),
                 );
 
-    const warning = warnAbout(
-        model.overview?.agentsAtRisk ?? [],
-        worktreeNameOf(model.overview),
-    );
+    const warning = warnAbout(model.overview?.agentsAtRisk ?? [], worktreeNameOf(model.overview));
 
     return column(
         row(filter).class("branch-popup-head"),
@@ -171,10 +172,9 @@ function composeRow(shown: BranchRow, selected: boolean, actions: PopupActions):
         });
 
     return shown.opensGroup
-        ? column(
-              row(text(GROUP_LABELS[shown.group])).class("branch-popup-group"),
-              line,
-          ).class("branch-popup-section")
+        ? column(row(text(GROUP_LABELS[shown.group])).class("branch-popup-group"), line).class(
+              "branch-popup-section",
+          )
         : line;
 }
 
@@ -206,9 +206,11 @@ function composeActions(
     return column(
         row(text(branch.name)).class("branch-popup-title"),
         ...(offers.length === 0
-            ? [row(text(`${branch.name} is no longer a branch of this repository`)).class(
-                  "branch-popup-empty",
-              )]
+            ? [
+                  row(text(`${branch.name} is no longer a branch of this repository`)).class(
+                      "branch-popup-empty",
+                  ),
+              ]
             : buttons.map((item) => row(item))),
         row(
             button("Back")
@@ -238,9 +240,11 @@ function composeConfirmation(
 
     const pauses = pauseOffers(agents).map((pause) =>
         row(
-            button(pause.label).class("branch-popup-pause").onClick(() => {
-                actions.pause(pause);
-            }),
+            button(pause.label)
+                .class("branch-popup-pause")
+                .onClick(() => {
+                    actions.pause(pause);
+                }),
         ),
     );
 
@@ -273,9 +277,7 @@ function composeOutcome(outcome: ActionOutcome, actions: PopupActions): UiCompon
         row(text(outcome.success ? "done" : "failed")).class(
             outcome.success ? "branch-popup-ok" : "branch-popup-failed",
         ),
-        ...(outcome.output === ""
-            ? []
-            : [row(text(outcome.output)).class("branch-popup-output")]),
+        ...(outcome.output === "" ? [] : [row(text(outcome.output)).class("branch-popup-output")]),
         row(
             button("Close")
                 .class("branch-popup-cancel")

@@ -172,7 +172,8 @@ export function handleOffset(pointerX: number, edgeLeft: number, edgeWidth: numb
 }
 
 /** Ce qu'une frappe sur le séparateur demande, ou `null` — et `null` veut dire « laisse passer ». */
-export type ResizeCommand = { readonly kind: "height"; readonly height: number } | { readonly kind: "close" };
+export type ResizeCommand =
+    { readonly kind: "height"; readonly height: number } | { readonly kind: "close" };
 
 /**
  * Traduit une frappe faite sur le séparateur focalisé.
@@ -195,8 +196,10 @@ export function resizeByKey(
     if (!panel.open) return null;
 
     const applied = appliedHeight(panel.height, areaHeight);
-    if (key === "ArrowUp") return { kind: "height", height: appliedHeight(applied + KEYBOARD_STEP, areaHeight) };
-    if (key === "ArrowDown") return { kind: "height", height: appliedHeight(applied - KEYBOARD_STEP, areaHeight) };
+    if (key === "ArrowUp")
+        return { kind: "height", height: appliedHeight(applied + KEYBOARD_STEP, areaHeight) };
+    if (key === "ArrowDown")
+        return { kind: "height", height: appliedHeight(applied - KEYBOARD_STEP, areaHeight) };
     return null;
 }
 

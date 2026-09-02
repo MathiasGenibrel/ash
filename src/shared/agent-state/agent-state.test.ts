@@ -94,7 +94,8 @@ describe("les cinq états d'un agent", () => {
  * Ce qu'elle exclut est ce qui rendrait la rotation muette : un `Z` qui referme, une ligne
  * droite, une courbe de Bézier dont on ne saurait plus dire si la forme est un secteur.
  */
-const ONLY_MOVES_AND_ARCS = /^M[\d.-]+ [\d.-]+(a[\d.]+ [\d.]+ [\d.]+ [01] [01] -?[\d.]+ -?[\d.]+)+$/;
+const ONLY_MOVES_AND_ARCS =
+    /^M[\d.-]+ [\d.-]+(a[\d.]+ [\d.]+ [\d.]+ [01] [01] -?[\d.]+ -?[\d.]+)+$/;
 
 /**
  * La distance entre le début et la fin d'un tracé d'arcs, en unités de sa boîte.

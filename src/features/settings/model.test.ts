@@ -188,7 +188,12 @@ describe("la barre d'action du formulaire d'ajout", () => {
         const draft = aDraft({ command: " claude " });
 
         // When
-        const action = describeAddAction(draft, [aTool({ command: "claude" })], null, aVerification());
+        const action = describeAddAction(
+            draft,
+            [aTool({ command: "claude" })],
+            null,
+            aVerification(),
+        );
 
         // Then
         expect(action).toEqual({ reason: "claude is already declared", enabled: false });
@@ -380,9 +385,9 @@ describe("le diff d'un conflit", () => {
         const diff = [
             "--- ce qu'Ash écrirait",
             "+++ ce que le fichier porte",
-            "    \"hooks\": {",
-            "-     \"Stop\": \"ash-event waiting\"",
-            "+     \"Stop\": \"mon script\"",
+            '    "hooks": {',
+            '-     "Stop": "ash-event waiting"',
+            '+     "Stop": "mon script"',
         ].join("\n");
 
         // When

@@ -1,10 +1,6 @@
 import { paint } from "@/shared/ui";
 
-import {
-    composeVisibilityMenu,
-    type StatusBarSegmentId,
-    type VisibilityRow,
-} from "./status-bar";
+import { composeVisibilityMenu, type StatusBarSegmentId, type VisibilityRow } from "./status-bar";
 
 /**
  * Le panneau du menu contextuel, posé dans le document.

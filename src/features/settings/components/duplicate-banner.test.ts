@@ -53,7 +53,11 @@ describe("la bannière de doublon", () => {
         const banner = duplicateBanner(tools, {
             undoReset: (command) => asked.push(command),
         })[0];
-        find(banner ?? text(""), "ui-button")?.on["click"]?.({ value: "", key: "", shiftKey: false });
+        find(banner ?? text(""), "ui-button")?.on["click"]?.({
+            value: "",
+            key: "",
+            shiftKey: false,
+        });
 
         // Then
         expect(asked).toEqual(["claude-perso"]);

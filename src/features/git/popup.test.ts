@@ -38,7 +38,10 @@ function overviewOf(branches: readonly Branch[], agents: readonly BusyAgent[]): 
     };
 }
 
-function modelOf(overview: BranchOverview | null, stage: PopupStage = { kind: "list" }): PopupModel {
+function modelOf(
+    overview: BranchOverview | null,
+    stage: PopupStage = { kind: "list" },
+): PopupModel {
     return {
         overview,
         query: "",
@@ -168,7 +171,8 @@ describe("the action submenu that ⌘⏎ opens", () => {
     it("Given a refused action, when the submenu opens, then it stays visible, disabled, and carries its reason", () => {
         // Given
         const refused = offer({
-            refused: "feat/sidebar is checked out in ash-sidebar — a branch lives in one worktree at a time",
+            refused:
+                "feat/sidebar is checked out in ash-sidebar — a branch lives in one worktree at a time",
         });
         const stage: PopupStage = {
             kind: "actions",
@@ -196,9 +200,9 @@ describe("the confirmation an action that touches the tree triggers", () => {
         const painted = composeBranchPopup(modelOf(overview, stage), inert);
 
         // Then — la pause est `SIGSTOP`, jamais une touche envoyée au PTY (ADR-0015)
-        expect(plainText(find(painted, "branch-popup-warning") ?? { kind: "text", text: "" })).toContain(
-            "claude",
-        );
+        expect(
+            plainText(find(painted, "branch-popup-warning") ?? { kind: "text", text: "" }),
+        ).toContain("claude");
         expect(findAll(painted, "branch-popup-pause").map(plainText)).toEqual(["Pause claude"]);
     });
 

@@ -73,10 +73,9 @@ export function worktreeTable(
         ).class("git-worktrees");
     }
 
-    return column(
-        header(),
-        ...rows.map((line) => worktreeLine(line, now, showing, actions)),
-    ).class("git-worktrees");
+    return column(header(), ...rows.map((line) => worktreeLine(line, now, showing, actions))).class(
+        "git-worktrees",
+    );
 }
 
 function header(): UiChild {
@@ -91,8 +90,7 @@ function worktreeLine(
     showing: WorktreeRemoval | null,
     actions: WorktreeTableActions,
 ): UiChild {
-    const shown =
-        showing !== null && showing.worktreeRoot === line.worktreeRoot ? showing : null;
+    const shown = showing !== null && showing.worktreeRoot === line.worktreeRoot ? showing : null;
 
     const built = column(
         row(
@@ -127,7 +125,9 @@ function name(line: WorktreeRow): UiChild[] {
         parts.push(
             badge("stale")
                 .class("git-worktrees-stale")
-                .title("no agent seen here for over three days, and it still holds uncommitted work"),
+                .title(
+                    "no agent seen here for over three days, and it still holds uncommitted work",
+                ),
         );
     }
     return parts;

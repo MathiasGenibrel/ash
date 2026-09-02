@@ -285,10 +285,7 @@ describe("le panneau de la fenêtre de réglages", () => {
         ];
 
         // When
-        const composed = settingsPanel(
-            scene({ snapshot: aSnapshot({ tools }) }),
-            IDLE_ACTIONS,
-        );
+        const composed = settingsPanel(scene({ snapshot: aSnapshot({ tools }) }), IDLE_ACTIONS);
         const shapes = composed.map((child) => find(child, "settings-banner") !== null);
 
         // Then — l'en-tête, la note, la bannière, le corps, la désinstallation, le journal,

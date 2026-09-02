@@ -217,8 +217,7 @@ describe("le retour à la ligne dans un prompt", () => {
         const claimedTwice = everyChord
             .map((chord) => chord.build())
             .filter(
-                (chord) =>
-                    resolveKeyBinding(chord) !== null && resolveKeyAction(chord) !== null,
+                (chord) => resolveKeyBinding(chord) !== null && resolveKeyAction(chord) !== null,
             );
 
         // Then

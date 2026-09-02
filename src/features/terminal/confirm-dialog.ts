@@ -16,15 +16,7 @@
  * seule chose qui marchait encore quand ses boutons avalaient la souris.
  */
 
-import {
-    button,
-    FOCUS_KEY,
-    paint,
-    row,
-    text,
-    type UiChild,
-    type UiComponent,
-} from "@/shared/ui";
+import { button, FOCUS_KEY, paint, row, text, type UiChild, type UiComponent } from "@/shared/ui";
 
 /**
  * La réponse de l'utilisateur : `true` va au bout du geste, `false` ne touche à rien.
@@ -79,9 +71,11 @@ export function composeConfirmBox(
             answer(false);
         });
 
-    const destroy = button(dangerLabel).class(DANGER_CLASS).onClick(() => {
-        answer(true);
-    });
+    const destroy = button(dangerLabel)
+        .class(DANGER_CLASS)
+        .onClick(() => {
+            answer(true);
+        });
 
     return row(
         row(...message).class("ash-confirm-message"),

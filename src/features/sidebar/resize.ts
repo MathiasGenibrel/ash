@@ -150,7 +150,8 @@ export function handleOffset(pointerY: number, edgeTop: number, edgeHeight: numb
 }
 
 /** Ce qu'une frappe sur le séparateur demande, ou `null` — et `null` veut dire « laisse passer ». */
-export type ResizeCommand = { readonly kind: "width"; readonly width: number } | { readonly kind: "toggle" };
+export type ResizeCommand =
+    { readonly kind: "width"; readonly width: number } | { readonly kind: "toggle" };
 
 /**
  * Traduit une frappe faite sur le séparateur focalisé.
@@ -172,8 +173,10 @@ export function resizeByKey(
     if (column.collapsed) return null;
 
     const applied = appliedWidth(column.width, windowWidth);
-    if (key === "ArrowLeft") return { kind: "width", width: appliedWidth(applied - KEYBOARD_STEP, windowWidth) };
-    if (key === "ArrowRight") return { kind: "width", width: appliedWidth(applied + KEYBOARD_STEP, windowWidth) };
+    if (key === "ArrowLeft")
+        return { kind: "width", width: appliedWidth(applied - KEYBOARD_STEP, windowWidth) };
+    if (key === "ArrowRight")
+        return { kind: "width", width: appliedWidth(applied + KEYBOARD_STEP, windowWidth) };
     return null;
 }
 

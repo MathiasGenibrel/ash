@@ -38,11 +38,7 @@ import type { KeyChord } from "./key-bindings";
  * n'a pas son effet — c'est par là que `open-search` est arrivée.
  */
 export type KeyAction =
-    | "scroll-page-up"
-    | "scroll-page-down"
-    | "scroll-line-up"
-    | "scroll-line-down"
-    | "open-search";
+    "scroll-page-up" | "scroll-page-down" | "scroll-line-up" | "scroll-line-down" | "open-search";
 
 /** Les seules valeurs de `KeyboardEvent.key` que cette table nomme. */
 type ActionKey = "ArrowUp" | "ArrowDown" | "f";

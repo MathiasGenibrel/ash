@@ -49,7 +49,9 @@ describe("the tab strip of the bottom panel", () => {
         const strip = panelStrip(panel({ view: "graph" }), (view) => asked.push(view));
 
         // When
-        const graph = findAll(strip, "ash-panel-tab").find((tab) => tab.attrs["data-view"] === "graph");
+        const graph = findAll(strip, "ash-panel-tab").find(
+            (tab) => tab.attrs["data-view"] === "graph",
+        );
         graph?.on["click"]?.({ value: "", key: "", shiftKey: false });
 
         // Then

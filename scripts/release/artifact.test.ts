@@ -1,12 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import {
-    TARGET,
-    artifactName,
-    bundlePath,
-    eventBinaryPath,
-    productNameFrom,
-} from "./artifact";
+import { TARGET, artifactName, bundlePath, eventBinaryPath, productNameFrom } from "./artifact";
 
 describe("artifactName", () => {
     it("Given a tag as git writes it, when naming the archive, then the leading v does not survive in the file name", () => {

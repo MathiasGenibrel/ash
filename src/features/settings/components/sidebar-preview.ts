@@ -79,12 +79,7 @@ function previewRow(state: AgentState, name: string, trailing: string): UiCompon
     const agent = label("settings-preview-name", name);
     if (shown.struck) agent.class("is-struck");
 
-    return line.add(
-        previewGlyph(state),
-        agent,
-        spacer(),
-        label("settings-preview-time", trailing),
-    );
+    return line.add(previewGlyph(state), agent, spacer(), label("settings-preview-time", trailing));
 }
 
 /**

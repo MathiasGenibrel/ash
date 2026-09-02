@@ -30,7 +30,12 @@ class CardBuilder {
     }
 
     local(): this {
-        this.card = { ...this.card, mode: "local", path: this.card.otherPath, otherPath: "/dev/ash/.ash/worktree.md" };
+        this.card = {
+            ...this.card,
+            mode: "local",
+            path: this.card.otherPath,
+            otherPath: "/dev/ash/.ash/worktree.md",
+        };
         return this;
     }
 

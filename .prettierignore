@@ -1,0 +1,25 @@
+# Sorties de build et dépendances : rien à formater, tout est généré.
+dist/
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+
+# Les worktrees de tâche sont des copies du dépôt : les inclure ferait formater
+# le même fichier autant de fois qu'il y a de tâches en cours.
+.claude/worktrees/
+
+# Fichier de verrou : écrit par bun, jamais à la main.
+bun.lock
+
+# Le Markdown est écrit à la main, et ses retours à la ligne sont choisis pour la
+# lecture — la spec, les ADR, CLAUDE.md. Prettier les rewrapperait et détruirait ce
+# travail. `cargo fmt` tranche le Rust, Prettier tranche le code du frontend ; la
+# prose n'est tranchée par personne.
+*.md
+
+# Contrat exporté par `ts-rs` : `cargo test` réécrit ces deux dossiers, et le second
+# est celui sur lequel il retombe quand `cargo` est lancé depuis la racine du dépôt
+# (voir `src-tauri/src/shared/mod.rs`). Les formater ferait échouer `format:check` à
+# la première compilation Rust suivante — ils disent eux-mêmes de ne pas les éditer.
+src/shared/ipc/generated/
+src-tauri/bindings/

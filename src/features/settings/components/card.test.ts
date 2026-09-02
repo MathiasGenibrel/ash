@@ -79,7 +79,10 @@ describe("la carte d'une entrée déclarée", () => {
         const tool = aTool({ lastValidConfig: null });
 
         // When
-        const reset = findAll(toolCard(tool, context(), recorder()).build(), "settings-icon-button");
+        const reset = findAll(
+            toolCard(tool, context(), recorder()).build(),
+            "settings-icon-button",
+        );
 
         // Then
         expect(plainText(reset[0] ?? text(""))).toBe("↺");
@@ -96,7 +99,10 @@ describe("la carte d'une entrée déclarée", () => {
         const tool = aTool({ config: "~/.claude/pro", lastValidConfig: "~/.claude" });
 
         // When
-        const reset = findAll(toolCard(tool, context(), recorder()).build(), "settings-icon-button");
+        const reset = findAll(
+            toolCard(tool, context(), recorder()).build(),
+            "settings-icon-button",
+        );
 
         // Then
         expect(reset[0]?.attrs["disabled"]).toBeUndefined();
@@ -140,10 +146,16 @@ describe("la carte d'une entrée déclarée", () => {
 
         // When
         const was = find(toolCard(tool, context(), actions).build(), "settings-was");
-        find(was ?? text(""), "settings-link")?.on["click"]?.({ value: "", key: "", shiftKey: false });
+        find(was ?? text(""), "settings-link")?.on["click"]?.({
+            value: "",
+            key: "",
+            shiftKey: false,
+        });
 
         // Then
-        expect(plainText(find(was ?? text(""), "settings-was-path") ?? text(""))).toBe("~/.claude/old");
+        expect(plainText(find(was ?? text(""), "settings-was-path") ?? text(""))).toBe(
+            "~/.claude/old",
+        );
         expect(actions.asked).toEqual(["undo claude"]);
     });
 

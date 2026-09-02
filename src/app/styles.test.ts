@@ -65,7 +65,9 @@ describe("les deux palettes", () => {
     it("Given the five agent states, when their colour is looked up, then the stylesheet paints it in both palettes", () => {
         // Given — un état que `styles.css` ne peint pas est un état qu'on ne distingue
         // plus ; un état peint avec un token qu'une palette ignore aussi
-        const painted = AGENT_STATES.map((state) => STATE_TOKENS.get(presentAgentState(state).className));
+        const painted = AGENT_STATES.map((state) =>
+            STATE_TOKENS.get(presentAgentState(state).className),
+        );
 
         // When
         const missing = painted.filter(

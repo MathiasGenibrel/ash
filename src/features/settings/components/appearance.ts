@@ -1,11 +1,4 @@
-import {
-    button,
-    choice,
-    row,
-    text,
-    type UiChild,
-    type UiComponent,
-} from "@/shared/ui";
+import { button, choice, row, text, type UiChild, type UiComponent } from "@/shared/ui";
 
 import {
     FONT_STEPS,
@@ -264,16 +257,16 @@ function densityRow(current: SidebarDensity, actions: AppearanceActions): readon
  */
 function densitySketch(density: SidebarDensity): UiComponent {
     const bars = density === "comfortable" ? 3 : 4;
-    const sketch = tag("div", "settings-density-sketch", `is-${density}`).attr("aria-hidden", "true");
+    const sketch = tag("div", "settings-density-sketch", `is-${density}`).attr(
+        "aria-hidden",
+        "true",
+    );
     for (let index = 0; index < bars; index += 1) sketch.add(tag("div", "settings-density-bar"));
     return sketch;
 }
 
 function describeDensity(): string {
-    const [comfortable, compact] = [
-        SIDEBAR_ROW_HEIGHTS.comfortable,
-        SIDEBAR_ROW_HEIGHTS.compact,
-    ];
+    const [comfortable, compact] = [SIDEBAR_ROW_HEIGHTS.comfortable, SIDEBAR_ROW_HEIGHTS.compact];
     return `${String(comfortable)} px / row · ${String(compact)} px when compact`;
 }
 

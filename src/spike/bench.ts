@@ -74,7 +74,8 @@ const DROPPED_FRAME_MS = 34;
 function percentiles(values: number[]): Percentiles {
     if (values.length === 0) return { p50: 0, p95: 0, max: 0, samples: 0 };
     const sorted = [...values].sort((a, b) => a - b);
-    const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+    const at = (q: number): number =>
+        sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
     return {
         p50: round(at(0.5)),
         p95: round(at(0.95)),
@@ -91,7 +92,10 @@ const nextPaint = (): Promise<number> =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now())));
     });
 
-function createTerminal(host: HTMLElement, renderer: Renderer): { term: Terminal; fallback: boolean } {
+function createTerminal(
+    host: HTMLElement,
+    renderer: Renderer,
+): { term: Terminal; fallback: boolean } {
     const term = new Terminal({
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
         fontSize: 13,
@@ -129,7 +133,11 @@ function createTerminal(host: HTMLElement, renderer: Renderer): { term: Terminal
     return { term, fallback };
 }
 
-async function measure(host: HTMLElement, renderer: Renderer, workload: Workload): Promise<Measurement> {
+async function measure(
+    host: HTMLElement,
+    renderer: Renderer,
+    workload: Workload,
+): Promise<Measurement> {
     const { term, fallback } = createTerminal(host, renderer);
 
     const frameTimes: number[] = [];
@@ -198,11 +206,17 @@ async function measure(host: HTMLElement, renderer: Renderer, workload: Workload
     // minutes parce que `write()` levait et que le rappel n'arrivait jamais : sans
     // garde-fou, un blocage se lit comme une mesure lente.
     const guard = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`${renderer}/${workload} : bloqué au-delà de 120 s`)), 120_000);
+        setTimeout(
+            () => reject(new Error(`${renderer}/${workload} : bloqué au-delà de 120 s`)),
+            120_000,
+        );
     });
 
     const started = performance.now();
-    await Promise.race([invoke("spike_stream", { channel, workload, lines: LINES_PER_RUN }), guard]);
+    await Promise.race([
+        invoke("spike_stream", { channel, workload, lines: LINES_PER_RUN }),
+        guard,
+    ]);
     await Promise.race([done, guard]);
     await nextPaint();
     const seconds = (performance.now() - started) / 1000;
@@ -230,7 +244,10 @@ async function measure(host: HTMLElement, renderer: Renderer, workload: Workload
     };
 }
 
-export async function runBench(host: HTMLElement, log: (line: string) => void): Promise<Measurement[]> {
+export async function runBench(
+    host: HTMLElement,
+    log: (line: string) => void,
+): Promise<Measurement[]> {
     // Le coût de rendu suit le nombre de cellules. Mesurer dans une fenêtre par défaut
     // flatterait le résultat : on mesure la fenêtre plein écran, celle où un agent
     // déverse réellement sa sortie.

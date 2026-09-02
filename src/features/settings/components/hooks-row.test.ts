@@ -85,7 +85,11 @@ describe("la ligne hooks d'une carte", () => {
         });
 
         // When
-        find(hooksRow(tool, actions).build(), "ui-button")?.on["click"]?.({ value: "", key: "", shiftKey: false });
+        find(hooksRow(tool, actions).build(), "ui-button")?.on["click"]?.({
+            value: "",
+            key: "",
+            shiftKey: false,
+        });
 
         // Then
         expect(actions.asked).toEqual(["open claude"]);
@@ -120,7 +124,11 @@ describe("la ligne hooks d'une carte", () => {
         const actions = recorder();
 
         // When
-        find(hooksRow(aTool(), actions).build(), "ui-button")?.on["click"]?.({ value: "", key: "", shiftKey: false });
+        find(hooksRow(aTool(), actions).build(), "ui-button")?.on["click"]?.({
+            value: "",
+            key: "",
+            shiftKey: false,
+        });
 
         // Then
         expect(actions.asked).toEqual(["remove claude"]);

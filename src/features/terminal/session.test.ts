@@ -75,9 +75,7 @@ class FakeBridge implements PtyBridge {
     }
     tabs(): Promise<ShellTab[]> {
         const cwd = this.openedAt ?? "/Users/me";
-        return Promise.resolve([
-            TabBuilder.create().named("01JTAB").inFlatWorktree(cwd).build(),
-        ]);
+        return Promise.resolve([TabBuilder.create().named("01JTAB").inFlatWorktree(cwd).build()]);
     }
     hasForegroundProcess(): Promise<boolean> {
         return Promise.resolve(false);

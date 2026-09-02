@@ -18,13 +18,7 @@ import type { MergeTab, MergeView, TabId } from "@/shared/ipc";
 import { paint } from "@/shared/ui";
 
 import { tauriMerge, type MergeBridge } from "./bridge";
-import {
-    currentFile,
-    currentHunk,
-    mergeScreen,
-    NO_SELECTION,
-    type MergeSelection,
-} from "./screen";
+import { currentFile, currentHunk, mergeScreen, NO_SELECTION, type MergeSelection } from "./screen";
 
 export { tauriMerge, type MergeBridge } from "./bridge";
 export {

@@ -86,7 +86,10 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
     // ne lit ferait croire à un point d'accroche qui n'existe pas.
     const update = (): void => {
         const column = ports.column();
-        element.setAttribute("aria-valuenow", String(widthPercent(column.width, ports.viewportWidth())));
+        element.setAttribute(
+            "aria-valuenow",
+            String(widthPercent(column.width, ports.viewportWidth())),
+        );
     };
 
     /** La poignée suit la hauteur du curseur tant qu'il longe le bord. */
@@ -115,7 +118,10 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
         // Mesuré une fois, au contact, et sur la boîte réelle de la zone : le trait est à
         // `GRAB_OVERHANG` de son bord gauche, quelle que soit la largeur du moment — repliée
         // comprise. Rien n'est montré ni annoncé tant que le pointeur n'a pas bougé.
-        dragging = { grab: grabOffset(event.clientX, element.getBoundingClientRect().left), outcome: null };
+        dragging = {
+            grab: grabOffset(event.clientX, element.getBoundingClientRect().left),
+            outcome: null,
+        };
         element.classList.add("is-dragging");
         document.documentElement.classList.add(DRAGGING_CLASS);
     });
@@ -125,7 +131,8 @@ export function createSidebarResizer(ports: SidebarResizerPorts): SidebarResizer
         dragging = null;
         element.classList.remove("is-dragging");
         document.documentElement.classList.remove(DRAGGING_CLASS);
-        if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+        if (element.hasPointerCapture(event.pointerId))
+            element.releasePointerCapture(event.pointerId);
         // Un clic sans glissement : rien n'a été montré, rien n'est décidé. Commettre la
         // largeur d'un pointeur immobile est exactement le saut que l'écart de saisie évite.
         if (outcome === null) return;

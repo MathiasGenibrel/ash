@@ -9,7 +9,8 @@ describe("le diff de ce qu'Ash écrirait", () => {
         // Given — `−` est le fichier tel qu'il est, `+` tel qu'Ash le laisserait : c'est le
         // sens d'un diff qu'on s'apprête à appliquer. Légender l'inverse ferait lire chaque
         // ligne à l'envers, la seule faute qu'un diff ne pardonne pas
-        const diff = "--- file\n+++ ash\n-  \"rtk hook claude\"\n+  \"ash-event waiting\"\n   \"hooks\": {";
+        const diff =
+            '--- file\n+++ ash\n-  "rtk hook claude"\n+  "ash-event waiting"\n   "hooks": {';
 
         // When
         const legends = findAll(diffView(diff).build(), "settings-diff-legend").map(plainText);

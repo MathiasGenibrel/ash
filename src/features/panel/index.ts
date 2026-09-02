@@ -35,12 +35,7 @@ import {
 import { createPanelResizer } from "./resizer";
 import { panelStrip } from "./strip";
 
-export {
-    DEFAULT_PANEL_HEIGHT,
-    PANEL_VIEWS,
-    type BottomPanelState,
-    type PanelView,
-} from "./layout";
+export { DEFAULT_PANEL_HEIGHT, PANEL_VIEWS, type BottomPanelState, type PanelView } from "./layout";
 
 /** Ce que le panneau sait demander, et qu'il ne sait pas faire lui-même. */
 export interface BottomPanelPorts {
@@ -165,11 +160,13 @@ export function mountBottomPanel(ports: BottomPanelPorts): BottomPanel {
     };
 
     const draw = (): void => {
-        strip.replaceChildren(paint(
+        strip.replaceChildren(
+            paint(
                 panelStrip(panel, (view) => {
                     ports.showView(view);
                 }).build(),
-            ));
+            ),
+        );
         // Le corps est vide, et il le dit. Le texte est porté par un attribut plutôt qu'écrit
         // dans le DOM : `panel.css` ne l'affiche que sur un `:empty`, donc la première vue qui
         // posera son contenu (#27, #28, #30, #31) le fera disparaître sans avoir à savoir

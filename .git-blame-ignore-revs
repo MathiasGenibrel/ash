@@ -1,0 +1,7 @@
+# Révisions que `git blame` doit traverser : des reformatages, sans aucun changement
+# de comportement. Pour les ignorer localement, une fois :
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# style: run prettier over the frontend, once and for all (#195)
+630aded084468733a5859fe754175dbc75381a46

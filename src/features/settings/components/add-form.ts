@@ -70,10 +70,7 @@ export function addForm(
 
     const body = tag("div", "settings-body", "is-form").add(
         grid,
-        formActions(
-            describeAddAction(draft, snapshot.tools, failure, draftVerification),
-            actions,
-        ),
+        formActions(describeAddAction(draft, snapshot.tools, failure, draftVerification), actions),
     );
 
     return [sectionHeader("new tool", null, [escape]), body];
@@ -119,7 +116,10 @@ function adapterField(
     const subject = degradedModeSubject(draft);
     const line = row(
         menu,
-        label(subject === null ? "settings-gloss" : "settings-gloss is-warning", subject === null ? "" : "degraded mode"),
+        label(
+            subject === null ? "settings-gloss" : "settings-gloss is-warning",
+            subject === null ? "" : "degraded mode",
+        ),
     ).class("settings-form-line");
 
     const rows: UiChild[] = [label("settings-form-key", "adapter"), line];

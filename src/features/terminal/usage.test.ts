@@ -276,10 +276,7 @@ describe("ce que la barre montre, et ce que le popover montre", () => {
 
         // Then
         expect(bar).toEqual([]);
-        expect(findAll(popover, "status-usage-name").map(plainText)).toEqual([
-            "session",
-            "weekly",
-        ]);
+        expect(findAll(popover, "status-usage-name").map(plainText)).toEqual(["session", "weekly"]);
     });
 
     it("Given a weekly quota hidden from the bar, when the popover is composed, then it shows up there with its own countdown", () => {
@@ -288,10 +285,7 @@ describe("ce que la barre montre, et ce que le popover montre", () => {
         const popover = composeUsagePopover(quotas()).build();
 
         // Then
-        expect(findAll(popover, "status-usage-name").map(plainText)).toEqual([
-            "session",
-            "weekly",
-        ]);
+        expect(findAll(popover, "status-usage-name").map(plainText)).toEqual(["session", "weekly"]);
         expect(findAll(popover, "status-usage-resets").map(plainText)).toEqual([
             "resets in 2h14",
             "resets in 2d 17h",

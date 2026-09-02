@@ -116,7 +116,8 @@ export function createPanelResizer(ports: PanelResizerPorts): PanelResizer {
         dragging = null;
         element.classList.remove("is-dragging");
         document.documentElement.classList.remove(DRAGGING_CLASS);
-        if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+        if (element.hasPointerCapture(event.pointerId))
+            element.releasePointerCapture(event.pointerId);
         if (outcome === null) return;
 
         // Relâcher sous le plancher referme, **sans toucher à la hauteur** : c'est ce qui la

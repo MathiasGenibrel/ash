@@ -58,7 +58,10 @@ export function currentFile(view: MergeView, selection: MergeSelection): Conflic
 }
 
 /** Le hunk regardé dans ce fichier, ou `null` quand il n'en reste aucun. */
-export function currentHunk(file: ConflictFile | null, selection: MergeSelection): MergeHunk | null {
+export function currentHunk(
+    file: ConflictFile | null,
+    selection: MergeSelection,
+): MergeHunk | null {
     if (file === null) return null;
     return file.hunks[selection.hunk] ?? file.hunks[0] ?? null;
 }
@@ -120,9 +123,7 @@ function head(
         text(view.title),
         badge(`${String(remaining(stopped))} left`).class("merge-count"),
         row().spacer(),
-        button("hand the rest to the agent")
-            .class("merge-hand-over")
-            .onClick(actions.handOverRest),
+        button("hand the rest to the agent").class("merge-hand-over").onClick(actions.handOverRest),
         proceed,
     ).class("merge-head");
 }
@@ -146,7 +147,9 @@ function fileStrip(
                 // Un chemin que git a dû échapper n'est jamais ouvert ni réécrit par Ash.
                 // Il reste **listé et compté** : un conflit invisible ferait un bouton
                 // `continue` éteint sans raison lisible.
-                entry.disabled("Ash does not open a path git had to quote — resolve it in an editor");
+                entry.disabled(
+                    "Ash does not open a path git had to quote — resolve it in an editor",
+                );
             } else {
                 entry.onClick(() => {
                     actions.selectFile(file.path);
@@ -174,13 +177,17 @@ function panels(
     const at = file.hunks.indexOf(hunk);
     return column(
         row(
-            button("◀").class("merge-step").onClick(() => {
-                actions.selectHunk(at - 1);
-            }),
+            button("◀")
+                .class("merge-step")
+                .onClick(() => {
+                    actions.selectHunk(at - 1);
+                }),
             text(`hunk ${String(at + 1)}/${String(file.hunks.length)} · ${file.path}`),
-            button("▶").class("merge-step").onClick(() => {
-                actions.selectHunk(at + 1);
-            }),
+            button("▶")
+                .class("merge-step")
+                .onClick(() => {
+                    actions.selectHunk(at + 1);
+                }),
         ).class("merge-hunk-bar"),
         row(
             side(stopped.sides.left.name, stopped.sides.left.role, hunk.ours, () => {
@@ -216,10 +223,9 @@ function side(name: string, role: string, content: string, take: () => void): Ui
  * ([ADR-0015](../../../docs/adr/0015-ash-compose-l-utilisateur-envoie.md)).
  */
 function foot(stopped: NonNullable<MergeView["stopped"]>, notice: string | null): UiComponent {
-    const escapes = row(
-        text("escapes"),
-        ...stopped.escapes.map((escape) => text(escape)),
-    ).class("merge-escapes");
+    const escapes = row(text("escapes"), ...stopped.escapes.map((escape) => text(escape))).class(
+        "merge-escapes",
+    );
 
     return column(
         stopped.origHead === null

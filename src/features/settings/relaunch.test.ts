@@ -102,15 +102,12 @@ describe("la relance automatique de la vérification", () => {
         // vérification part au milieu d'un mot ; plus long, l'écran a l'air en panne
         const timer = aFakeTimer();
         let waited = 0;
-        const relaunch = createRelaunch(
-            () => undefined,
-            {
-                after(delay, action) {
-                    waited = delay;
-                    return timer.after(delay, action);
-                },
+        const relaunch = createRelaunch(() => undefined, {
+            after(delay, action) {
+                waited = delay;
+                return timer.after(delay, action);
             },
-        );
+        });
 
         // When
         relaunch.soon("claude");

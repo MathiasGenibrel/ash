@@ -52,13 +52,7 @@ import { ElementBuilder, badge, button, column, row, type UiComponent } from "@/
 
 /** L'identifiant d'un segment. Miroir de `StatusBarSegment` en Rust — voir `mirror.ts`. */
 export type StatusBarSegmentId =
-    | "session"
-    | "weekly"
-    | "context"
-    | "model"
-    | "agent"
-    | "branch"
-    | "cwd";
+    "session" | "weekly" | "context" | "model" | "agent" | "branch" | "cwd";
 
 /**
  * Ce que la barre porte à une place donnée : un segment, ou un **élastique**.
