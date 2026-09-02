@@ -34,8 +34,13 @@ pub enum Presence {
     /// Les entrées en place sont exactement celles qu'on écrirait. Installer ne toucherait
     /// à rien.
     Current { version: u32 },
-    /// Des entrées d'Ash, mais pas celles-ci — écrites par une version antérieure. Une
-    /// installation les réécrit sans rien demander.
+    /// Des entrées d'Ash, mais pas celles-ci : le marqueur ne porte pas la version de
+    /// l'adaptateur. Une installation les réécrit sans rien demander.
+    ///
+    /// **Le nom dit le cas courant, pas la seule lecture possible** : `installed` peut être
+    /// *supérieur* à `available` — deux builds qui écrivent dans le même `~/.claude`
+    /// (CLAUDE.md), ou un retour en arrière. Qui a besoin du sens de l'écart demande
+    /// [`Presence::is_behind`] plutôt que de comparer les deux nombres sur place.
     Superseded {
         installed: u32,
         available: u32,
@@ -60,6 +65,29 @@ impl Presence {
             | Presence::HandEdited { diff } => Some(diff),
             _ => None,
         }
+    }
+
+    /// Le bloc en place est-il **en retard** sur celui qu'Ash écrirait ?
+    ///
+    /// La question est posée ici parce que [`Presence::Superseded`] ne la contient pas : il
+    /// dit « pas la version de l'adaptateur », dans les deux sens. Ses deux lecteurs en ont
+    /// besoin — la sidebar pour son quatrième marqueur (`Instrumented::Outdated`), la
+    /// fenêtre de réglages pour dire « de quelle version vers quelle version » — et chacun
+    /// la reposait sur place. Deux comparaisons, une règle : elles finiraient par ne plus
+    /// dire la même chose du même fichier.
+    ///
+    /// Stricte, et dans un seul sens : un bloc posé par un Ash **plus récent** n'est pas en
+    /// retard, et proposer de le « mettre à jour » ferait réécrire en arrière ce qu'un Ash
+    /// plus avancé a posé.
+    pub fn is_behind(&self) -> bool {
+        matches!(
+            self,
+            Presence::Superseded {
+                installed,
+                available,
+                ..
+            } if installed < available
+        )
     }
 }
 

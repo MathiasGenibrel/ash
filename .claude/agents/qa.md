@@ -90,6 +90,85 @@ hooks de l'Ash installé, qui perd ses états d'agent. Quand une tâche te deman
 vérifier une installation de hooks, vise un dossier de configuration jetable via
 `CLAUDE_CONFIG_DIR` — jamais celui de l'utilisateur.
 
+## Lancer dans une VM, pas sur le bureau de l'utilisateur
+
+> **Un cycle complet a tourné** (2026-08-28) : tart 2.32.1, image `macos-sequoia-base`
+> (macOS 15.7.7). Aucune fenêtre n'est apparue sur le bureau de l'hôte, et la capture montre
+> les cinq états d'agent. Les cinq points ouverts sont levés, et quatre défauts trouvés en
+> exécutant sont corrigés — [`qa-vm.md`](../docs/qa-vm.md) les détaille.
+
+Pour exercer les doublures d'usage (#190), passe `ASH_DEV_USAGE` à `run` : elle traverse
+jusqu'à la VM. Une variable **posée mais vide** est un refus explicite côté Ash, et
+l'application s'arrête au démarrage — ne la pose que si tu veux vraiment une doublure.
+
+```bash
+ASH_DEV_USAGE="keychain=refused" scripts/qa/vm.sh run
+```
+
+**Le lancement est ce qui dérange, pas le build.** `bun run package:debug` est du CPU, il ne
+vole aucun focus ; l'application lancée, elle, prend le focus, le Dock et le WindowServer de
+la machine qui sert de terminal quotidien. Un chemin existe pour rendre ce prix nul :
+`scripts/qa/vm.sh` — **l'hôte construit, une VM macOS lance**.
+
+```bash
+bun run package:debug                 # sur l'hôte, comme d'habitude
+scripts/qa/vm.sh doctor               # ce qui manque, sans rien installer
+scripts/qa/vm.sh up                   # démarre la VM, sans écran
+scripts/qa/vm.sh install              # copie l'Ash-dev.app construit ici
+scripts/qa/vm.sh fixture              # un dépôt git avec deux worktrees
+scripts/qa/vm.sh run                  # ouvre cinq onglets et pose les cinq états
+scripts/qa/vm.sh shot five-states     # → .qa-vm/shots/five-states.png
+scripts/qa/vm.sh down
+```
+
+Trois règles s'y ajoutent à celles de la section précédente :
+
+- **Tu ne tires jamais l'image de base et tu n'installes jamais tart.** Des dizaines de Go
+  ne se téléchargent pas sans un accord explicite. `doctor` dit ce qui manque et la commande
+  à taper : rends la main plutôt que de la lancer.
+- **`console` est la seule sous-commande qui ouvre une fenêtre**, et elle sert à préparer
+  l'image une fois pour toutes. Elle n'appartient à aucun cycle de QA : ne l'appelle pas au
+  milieu d'une validation.
+- **Si la VM n'est pas disponible, tu observes sur l'hôte comme avant**, et tu le **dis** dans
+  ton compte rendu — c'est alors le bureau de l'utilisateur que tu occupes.
+
+**Le code de retour te dit quoi faire**, et c'est la seule chose que tu aies à lire pour
+décider :
+
+| Code | Ce que ça veut dire | Ta conduite |
+|---|---|---|
+| `1` | tu as mal appelé le script | corrige l'appel |
+| `2` | il manque tart, l'image, le build ou `expect` sur l'hôte | **rends la main** — tu n'installes rien et tu ne tires rien |
+| `3` | tart n'a pas suivi (clonage, adresse, ssh, arrêt) | c'est l'outillage, pas la tâche — dis-le, ne prononce pas de verdict |
+| `4` | une étape a échoué **dans** la VM | c'est le seul code qui puisse porter un défaut d'Ash — regarde avant de conclure |
+
+Un `2` ou un `3` n'est **jamais** un `REJECTED` : ils parlent de la machine, pas du code que
+tu valides.
+
+Les cinq états se produisent **sans qu'aucun agent d'IA ne soit installé** :
+`ash-event <verbe> --tab $ASH_TAB_ID`. Ce n'est pas un contournement — ADR-0007 pose qu'un
+état vient d'un hook et jamais de l'analyse de la sortie du PTY, donc c'est le chemin
+nominal. `idle` est le seul qui demande autre chose qu'un verbe d'état : il vient de
+`session-start`. Et `done` / `error` s'effacent **30 s** après avoir été vus — c'est `LINGER`,
+dans `agents/machine.rs`, et le script ne fait que le redire : la capture suit tout de suite.
+
+### Ce que la VM ne peut pas vérifier
+
+Dis-le explicitement quand tu t'en sers, plutôt que de laisser croire à une couverture :
+
+- **aucun outil réel n'y est reconnu ni instrumenté** — ni Claude Code ni codex dans la VM,
+  donc rien sur ADR-0006 ni sur l'écriture d'un bloc de hooks dans un `settings.json` ;
+- **rien sur les performances de rendu** — une VM n'en dit rien de fiable, et c'est le risque
+  n°1 du projet ;
+- **rien sur les quotas d'usage ni sur le trousseau** (ADR-0016/17) : la VM n'a pas de jeton ;
+- **rien sur un vrai agent** : la machine à états y est exercée par des verbes, pas par un
+  `claude` qui tourne ;
+- **rien de ce qui dépend du matériel de l'hôte** : polices installées, écrans multiples,
+  claviers non-QWERTY.
+
+Coûts, amorçage, décisions et les cinq points ouverts :
+[`.claude/docs/qa-vm.md`](../docs/qa-vm.md).
+
 ## Ce qu'un smoke test veut dire sur Ash
 
 Ash est un terminal : « ça compile » ne prouve presque rien. Quand la tâche touche l'une
