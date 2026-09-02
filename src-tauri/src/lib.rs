@@ -127,6 +127,70 @@ impl<R: tauri::Runtime> UsageSink for UsageEvents<R> {
     }
 }
 
+/// Le vrai hôte et le vrai trousseau — le branchement d'avant cette couture.
+///
+/// **Écrit une fois, et lu par les deux variantes de [`usage_ports`]**, dont une seule est
+/// compilée à la fois : la variante de release ne passe sous aucun `cargo test`, aucun
+/// `cargo clippy` et aucun `bun run smoke` du quotidien, donc tout ce qu'elle porterait en
+/// propre pourrait diverger sans que rien ne le dise avant `bun run package`. Elle ne porte
+/// rien en propre.
+fn real_usage_ports() -> (Arc<dyn UsageApi>, Arc<dyn TokenSource>) {
+    (
+        Arc::new(AnthropicUsage::new()) as Arc<dyn UsageApi>,
+        Arc::new(KeychainTokens) as Arc<dyn TokenSource>,
+    )
+}
+
+/// D'où viennent les quotas et le jeton : du vrai hôte et du vrai trousseau.
+///
+/// **Il y en a deux, et une seule est compilée.** Celle-ci est le binaire de
+/// `bun run package` : `debug_assertions` y est éteint, donc la variante ci-dessous — et
+/// avec elle tout `features::usage::rehearsal` — n'existe pas dans l'application installée.
+/// Pas « n'est pas empruntée » : n'est pas compilée. C'est l'idiome déjà en place pour ce
+/// qui sépare Ash d'Ash-dev.
+#[cfg(not(debug_assertions))]
+fn usage_ports(_clock: Arc<dyn shared::time::Clock>) -> (Arc<dyn UsageApi>, Arc<dyn TokenSource>) {
+    real_usage_ports()
+}
+
+/// D'où viennent les quotas et le jeton — le vrai hôte et le vrai trousseau, **sauf si
+/// l'environnement demande un décor**.
+///
+/// Voir `features/usage/rehearsal.rs` : c'est lui, et lui seul, qui écrit la forme de la
+/// variable et le vocabulaire de ses valeurs. Ici on ne fait que ce que le composition root
+/// a le droit de faire et qu'une feature ne doit pas faire en douce — **lire
+/// l'environnement**, puis choisir un assemblage.
+///
+/// Trois propriétés tiennent cette couture, et elles se lisent ensemble :
+///
+/// - **Sans la variable, rien ne change.** Le premier bras est [`real_usage_ports`], la même
+///   fonction que celle du binaire distribué : vrai trousseau, vrai hôte, même cadence.
+/// - **Les deux ports basculent ensemble**, et pas parce qu'on y fait attention :
+///   `Rehearsal::ports` rend la paire, et les deux constructeurs qu'elle appelle sont privés
+///   à son module. Un faux jeton envoyé à `api.anthropic.com`, ou un vrai jeton du trousseau
+///   envoyé ailleurs, ne se fabriquent pas ici parce qu'ils ne se fabriquent nulle part.
+/// - **Une variable illisible arrête le démarrage.** Elle ne se replie *jamais* sur le vrai
+///   chemin : se croire en doublure pendant qu'on appelle le vrai hôte avec un vrai secret
+///   est le pire mode de défaillance de cette couture, et il serait silencieux. Une panique
+///   au démarrage est bruyante, et le composition root est l'un des deux endroits du crate
+///   où elle est permise.
+#[cfg(debug_assertions)]
+fn usage_ports(clock: Arc<dyn shared::time::Clock>) -> (Arc<dyn UsageApi>, Arc<dyn TokenSource>) {
+    use features::usage::{Rehearsal, REHEARSAL_VAR};
+
+    let Some(asked) = std::env::var_os(REHEARSAL_VAR) else {
+        return real_usage_ports();
+    };
+    // Une variable qui n'est pas de l'UTF-8 est illisible comme une autre, et se tait de la
+    // même façon si on la laisse passer.
+    let spec = asked
+        .to_str()
+        .unwrap_or_else(|| panic!("{REHEARSAL_VAR} is not readable text"));
+    let rehearsal = Rehearsal::parse(spec)
+        .unwrap_or_else(|refused| panic!("{REHEARSAL_VAR} is not usable: {refused}"));
+    rehearsal.ports(clock)
+}
+
 struct GitWorktrees;
 
 impl WorktreeLocator for GitWorktrees {
@@ -1154,9 +1218,10 @@ pub fn run() -> tauri::Result<()> {
     // destination réseau, l'horloge, et la webview —, et c'est le seul endroit du crate où
     // ils se rencontrent. Le fil est **détaché** : la condition 1 d'ADR-0016 dit que
     // personne ne l'attend, et c'est vrai jusqu'ici — rien de ce qui suit ne le joint.
+    let (usage_host, usage_tokens) = usage_ports(Arc::new(shared::time::SystemClock));
     let usage = Arc::new(UsagePoller::new(
-        Arc::new(AnthropicUsage::new()) as Arc<dyn UsageApi>,
-        Credentials::from(Arc::new(KeychainTokens) as Arc<dyn TokenSource>),
+        usage_host,
+        Credentials::from(usage_tokens),
         usage_preferences,
         Arc::new(shared::time::SystemClock),
         Arc::new(UsageEvents(app.handle().clone())),

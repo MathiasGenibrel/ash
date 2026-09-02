@@ -49,6 +49,16 @@ export interface InstrumentTarget {
 const WHY = "idle and working still show; waiting never will";
 
 /**
+ * Ce qu'un bloc d'une version antérieure ne fait pas — **la conséquence, avant la cause**.
+ *
+ * Elle n'est pas la même que celle de `missing`, et c'est tout l'intérêt de la quatrième
+ * valeur : les hooks d'alors remontent toujours `waiting`. Ce qui manque, ce sont ceux
+ * ajoutés depuis — d'où des lignes filles qui ne se ferment jamais (#179) et une fin de
+ * session qui ne se voit pas.
+ */
+const STALE = "subagent rows never close and session end never shows";
+
+/**
  * Le marqueur d'un onglet, à partir de ce que le backend a reconnu.
  *
  * `null` dans les deux cas où il n'y a rien à dire : aucun outil reconnu — un shell, un
@@ -60,8 +70,18 @@ export function instrumentationMark(agent: RecognizedAgent | null): Instrumentat
 }
 
 const MARKS: Record<Instrumented, (agent: RecognizedAgent) => InstrumentationMark | null> = {
-    // Rien à signaler : les hooks sont posés, l'onglet montrera les cinq états.
+    // Rien à signaler : les hooks sont posés, à la version d'aujourd'hui, et l'onglet
+    // montrera les cinq états.
     installed: () => null,
+    // **Une flèche, pas un point d'exclamation** : il y a quelque chose vers quoi aller, et
+    // c'est la même grammaire que la ligne `hooks` de la fenêtre de réglages — un état qui
+    // se corrige en avançant s'y dessine déjà comme une direction. Le glyphe suffit à le
+    // distinguer de `missing` sans la couleur, comme les états d'agent.
+    outdated: ({ command, adapter }) => ({
+        glyph: "↑",
+        title: `${command} runs on hooks from an older ash — ${STALE}. open settings to update them.`,
+        instrument: { command, adapter },
+    }),
     missing: ({ command, adapter }) => ({
         glyph: "!",
         title: `${command} is not instrumented — ${WHY}. open settings to install ash's hooks.`,
