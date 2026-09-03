@@ -66,8 +66,8 @@ describe("install-macos.sh — le nom de l'archive", () => {
         // When
         const fromShell = runScript("--artifact-name", tag).stdout;
         // Then
-        expect(fromShell).toBe("Ash-0.1.0-macos-arm64.zip");
         expect(fromShell).toBe(decidedName(tag));
+        expect(fromShell).toBe(decidedName("0.1.0"));
     });
 });
 
@@ -120,9 +120,13 @@ describe("install-macos.sh — les codes de retour", () => {
  * rien installer. C'est la seule façon d'exercer la remise en place sans provoquer une
  * panne réelle entre l'écartement et la pose.
  */
-function sourceAndRun(script: string): { stderr: string; exitCode: number } {
+function sourceAndRun(script: string): { stdout: string; stderr: string; exitCode: number } {
     const result = Bun.spawnSync(["bash", "-c", `set -e\nsource "${SCRIPT}"\n${script}`]);
-    return { stderr: result.stderr.toString(), exitCode: result.exitCode };
+    return {
+        stdout: result.stdout.toString().trim(),
+        stderr: result.stderr.toString(),
+        exitCode: result.exitCode,
+    };
 }
 
 describe("install-macos.sh — la remise en place", () => {
@@ -166,5 +170,44 @@ describe("install-macos.sh — la remise en place", () => {
         // Then
         expect(exitCode).toBe(0);
         expect(stderr).not.toContain("remise en place");
+    });
+});
+
+/**
+ * `asset_url` est la seule fonction qui décide ce que l'installeur téléchargera, donc ce
+ * qu'il posera à la place d'une application. Le corps JSON qu'elle lit vient du réseau : ces
+ * deux tests le tiennent pour tel, et l'URL retenue n'est jamais retapée ici — elle est
+ * composée dans le script, à partir du dépôt qu'il nomme une seule fois.
+ */
+describe("install-macos.sh — ce qu'il accepte de télécharger", () => {
+    const tag = "v9.9.9";
+
+    it("Given a release offering the archive from the repository's own downloads, when choosing what to download, then that URL is kept", () => {
+        // Given
+        const name = decidedName(tag);
+        const scenario = `
+            expected="\${DOWNLOAD_PREFIX}${tag}/${name}"
+            printf '%s\\n' "$expected"
+            # When
+            asset_url "{\\"browser_download_url\\": \\"$expected\\"}" "${tag}" "${name}"
+        `;
+        // When
+        const [expected, chosen] = sourceAndRun(scenario).stdout.split("\n");
+        // Then
+        expect(expected).toContain(name);
+        expect(chosen).toBe(expected);
+    });
+
+    it("Given a foreign host offering an archive of the very same name, when choosing what to download, then nothing is kept", () => {
+        // Given
+        const name = decidedName(tag);
+        const scenario = `
+            # When
+            asset_url "{\\"browser_download_url\\": \\"https://evil.example.com/${tag}/${name}\\"}" "${tag}" "${name}"
+        `;
+        // When
+        const { stdout } = sourceAndRun(scenario);
+        // Then
+        expect(stdout).toBe("");
     });
 });
