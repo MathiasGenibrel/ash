@@ -1,5 +1,5 @@
 use std::os::fd::RawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::error::ProbeError;
 use super::port::{Pid, Probe};
@@ -53,11 +53,28 @@ pub struct TabWatch {
     /// Le pid du shell, retenu à l'ouverture — le repli quand l'avant-plan se dérobe.
     shell: Pid,
     last: Option<TabObservation>,
-    /// Le `argv[0]` du dernier avant-plan observé, avec le pid auquel il appartient.
+    /// Le `argv[0]` du dernier avant-plan observé, avec **le pid et l'exécutable** auxquels
+    /// il appartient.
     ///
-    /// La mémoire est ce qui rend le troisième signal gratuit : un pid ne change pas de
-    /// ligne de commande, donc une seule lecture par programme lancé suffit.
-    known_argv0: Option<(Pid, Option<String>)>,
+    /// La mémoire est ce qui rend le troisième signal gratuit, et c'est la propriété
+    /// d'ADR-0006 à tenir : **une lecture de `sysctl` par programme lancé**, pas trois par
+    /// seconde. `KERN_PROCARGS2` fait recopier l'espace d'arguments entier du processus, et
+    /// la boucle d'ADR-0005 repasse toutes les 300 ms.
+    ///
+    /// Ce qui ne change pas de ligne de commande, c'est le **couple pid + exécutable**, et
+    /// non le pid seul : `execve` remplace la ligne de commande en **gardant** le pid. Bash
+    /// lance une commande par `fork` puis `exec`, et l'enfant porte le pgid de l'avant-plan
+    /// dès le `fork` — une passe de sonde peut donc tomber entre les deux et voir un
+    /// processus qui est encore bash. Mémoriser contre le seul pid figeait alors `bash`, ou
+    /// le `None` d'un `sysctl` refusé pendant la transition, pour toute la vie de l'onglet :
+    /// un agent installé par npm — exécutable `node`, `argv[0]` `claude` — n'aurait plus
+    /// jamais été reconnu. Le chemin de l'exécutable, lui, est relu à chaque passe : le
+    /// prendre pour clé ne coûte aucun appel système de plus.
+    ///
+    /// **Angle mort assumé** : un `exec` vers le *même* chemin — `exec bash`, un agent qui
+    /// se relance par-dessus lui-même — garde un `argv[0]` périmé. La clé ne bouge pas,
+    /// donc la mémoire non plus. Rien ne le rattrape avant que l'avant-plan change.
+    known_argv0: Option<(Pid, PathBuf, Option<String>)>,
 }
 
 impl TabWatch {
@@ -94,7 +111,7 @@ impl TabWatch {
 
         match seen {
             Ok(info) => {
-                let argv0 = self.argv0_of(probe, info.pid);
+                let argv0 = self.argv0_of(probe, info.pid, &info.executable);
                 let observation = TabObservation {
                     cwd: info.cwd,
                     foreground: Foreground {
@@ -112,22 +129,27 @@ impl TabWatch {
         }
     }
 
-    /// Le `argv[0]` d'un pid, demandé au système **au plus une fois**.
+    /// Le `argv[0]` d'un avant-plan, demandé au système **au plus une fois par programme**.
+    ///
+    /// La clé est le couple pid + exécutable, pour la raison écrite sur [`Self::known_argv0`] :
+    /// un pid traverse `execve`, et une passe de sonde peut tomber entre le `fork` et l'`exec`
+    /// de bash. Un exécutable qui change sous un pid inchangé est exactement cet instant-là :
+    /// on redemande, une fois.
     ///
     /// Le shell n'est jamais interrogé : il n'est reconnu comme aucun outil, et l'onglet à
     /// son invite est le cas le plus fréquent de tous. C'est ce qui garde la passe de sonde
     /// à ses deux appels système d'ADR-0005 tant que rien de neuf ne tient l'avant-plan.
-    fn argv0_of(&mut self, probe: &dyn Probe, pid: Pid) -> Option<String> {
+    fn argv0_of(&mut self, probe: &dyn Probe, pid: Pid, executable: &Path) -> Option<String> {
         if pid == self.shell {
             return None;
         }
-        if let Some((known, argv0)) = &self.known_argv0 {
-            if *known == pid {
+        if let Some((known, ran, argv0)) = &self.known_argv0 {
+            if *known == pid && ran == executable {
                 return argv0.clone();
             }
         }
         let argv0 = probe.argv0(pid);
-        self.known_argv0 = Some((pid, argv0.clone()));
+        self.known_argv0 = Some((pid, executable.to_path_buf(), argv0.clone()));
         argv0
     }
 }
@@ -262,8 +284,9 @@ mod tests {
     fn given_a_program_that_keeps_the_foreground_when_probing_twice_then_its_command_line_is_read_only_once(
     ) {
         // Given — `sysctl(KERN_PROCARGS2)` fait recopier l'espace d'arguments du processus,
-        // et la boucle d'ADR-0005 passe trois fois par seconde. Un `argv[0]` ne change
-        // jamais pour un pid donné : le redemander serait un coût pur.
+        // et la boucle d'ADR-0005 passe trois fois par seconde. Un `argv[0]` ne change pas
+        // tant que le même exécutable tourne sous le même pid : le redemander serait un
+        // coût pur.
         let system = SystemBuilder::new()
             .with_process(AGENT, "node", "/dev/ash")
             .announcing(AGENT, "claude")
@@ -279,6 +302,35 @@ mod tests {
         assert_eq!(first.foreground.argv0.as_deref(), Some("claude"));
         assert_eq!(second.foreground.argv0, first.foreground.argv0);
         assert_eq!(system.asked.lock().unwrap().as_slice(), [AGENT]);
+    }
+
+    #[test]
+    fn given_a_foreground_that_execs_into_another_program_under_the_same_pid_when_probing_then_its_command_line_is_read_again(
+    ) {
+        // Given — bash lance une commande par `fork` puis `exec`, et l'enfant porte le pgid
+        // de l'avant-plan dès le `fork` : une passe de sonde peut le voir encore bash. Le
+        // pid, lui, ne change pas — c'est le même processus qui devient l'agent.
+        let forked = SystemBuilder::new()
+            .with_process(AGENT, "bash", "/dev/ash")
+            .announcing(AGENT, "bash")
+            .handed_over_to(AGENT)
+            .build();
+        let executed = SystemBuilder::new()
+            .with_process(AGENT, "node", "/dev/ash")
+            .announcing(AGENT, "claude")
+            .handed_over_to(AGENT)
+            .build();
+        let mut watch = watch();
+
+        // When — la première passe tombe dans la fenêtre fork/exec, la seconde arrive après
+        let before = watch.observe(&forked).expect("le système doit répondre");
+        let after = watch.observe(&executed).expect("le système doit répondre");
+
+        // Then — mémorisé contre le seul pid, `claude` resterait `bash` pour toute la vie de
+        // l'onglet, et le troisième signal d'ADR-0006 serait perdu sans aucun symptôme
+        assert_eq!(before.foreground.argv0.as_deref(), Some("bash"));
+        assert_eq!(after.foreground.argv0.as_deref(), Some("claude"));
+        assert_eq!(executed.asked.lock().unwrap().as_slice(), [AGENT]);
     }
 
     #[test]
