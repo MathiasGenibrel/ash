@@ -238,9 +238,10 @@ application Tauri en demande une vraie.
 Prettier tranche le formatage du frontend comme `cargo fmt` tranche celui du Rust, et
 `format:check` est la première vérification de `bun run verify`. Le Markdown en
 est **exclu** (`.prettierignore` dit pourquoi) : la prose de `docs/` est retournée à la
-main. Le reformatage initial est un commit à lui seul, nommé dans
-`.git-blame-ignore-revs` — `git config blame.ignoreRevsFile .git-blame-ignore-revs`, une
-fois, et `git blame` le traverse.
+main. Le reformatage initial est nommé dans `.git-blame-ignore-revs` —
+`git config blame.ignoreRevsFile .git-blame-ignore-revs`, une fois, et `git blame` le
+traverse. Un squash ou une réécriture d'historique rend un hash de ce fichier caduc, et
+git refuse alors **tout** blame du dépôt : le fichier dit comment le remettre à jour.
 
 `bun run smoke` compile, démarre Vite au besoin, lance le binaire, et vérifie qu'il
 survit à son démarrage **et** qu'il a lancé son shell. Il ouvre une fenêtre pendant
