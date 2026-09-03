@@ -11,16 +11,41 @@ que tu t'apprêtes à bousculer.
 
 ## Installer Ash
 
-Chaque tag `vX.Y.Z` publie une release dans ce dépôt, avec une archive
-`Ash-X.Y.Z-macos-arm64.zip` — `Ash.app`, pour Mac Apple Silicon. Il n'y a **aucun mécanisme
-de mise à jour** : on retélécharge.
-
-Le plus simple est de la récupérer en ligne de commande, et ce n'est pas une coquetterie :
+Une ligne, la même d'un jalon à l'autre :
 
 ```bash
-gh release download vX.Y.Z --repo MathiasGenibrel/ash --pattern '*.zip'
-unzip Ash-X.Y.Z-macos-arm64.zip -d /Applications
+curl -fsSL https://raw.githubusercontent.com/MathiasGenibrel/ash/main/scripts/install-macos.sh | bash
 ```
+
+Elle télécharge et lance [`scripts/install-macos.sh`](./scripts/install-macos.sh), qui résout
+la dernière release, récupère son archive `Ash-X.Y.Z-macos-arm64.zip` et pose `Ash.app` dans
+`/Applications`. Ash n'est publié que pour **Mac Apple Silicon**, et il n'y a **aucun mécanisme
+de mise à jour** : on relance la même ligne.
+
+Le script ne demande jamais rien — pas de privilèges administrateur, pas de question, pas de
+saisie. Ce qu'il ne peut pas écrire, il le refuse en le disant. Pour l'installer ailleurs que
+dans `/Applications` :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MathiasGenibrel/ash/main/scripts/install-macos.sh | bash -s -- --dir ~/Applications
+# ou : ASH_INSTALL_DIR=~/Applications
+```
+
+**Installer par-dessus une application qui tourne est le cas nominal**, puisque Ash est un
+terminal. Le script ne décompresse donc jamais dans le bundle en place : il copie à côté, dans
+un dossier de bascule du même volume, écarte l'application installée par un renommage, puis
+renomme la nouvelle. La partie longue ne touche à rien, et si quelque chose échoue après
+l'écartement, l'application d'origine est remise à sa place. Une instance en cours d'exécution
+continue de tourner sur son ancienne version jusqu'à ce qu'on la quitte et la relance.
+
+| Code | Cause |
+|---|---|
+| `0` | installé |
+| `1` | échec inattendu |
+| `2` | usage : option inconnue, destination inexistante ou non inscriptible |
+| `4` | serveur injoignable |
+| `5` | aucune release, ou pas d'archive pour cette architecture |
+| `6` | système non supporté |
 
 **Pourquoi pas le navigateur.** macOS pose l'attribut étendu `com.apple.quarantine` sur les
 fichiers téléchargés, mais ce n'est pas le transfert qui le pose : c'est LaunchServices, pour

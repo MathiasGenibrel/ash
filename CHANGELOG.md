@@ -20,6 +20,10 @@ ne concorderait pas avec les deux.
 - `scripts/release/artifact.ts` décide seul le nom de l'archive (`Ash-X.Y.Z-macos-arm64.zip`),
   la cible construite et les chemins du bundle : le workflow les demande, il ne les recompose
   pas.
+- `curl -fsSL .../scripts/install-macos.sh | bash` installe la dernière version : une ligne
+  qui ne change pas d'un jalon à l'autre, sans privilèges ni question, qui pose l'application
+  par copie puis renommage — le bundle en place n'est jamais écrit, même quand Ash tourne. Il
+  ne télécharge que l'URL que les releases de ce dépôt annoncent, à l'égalité près.
 
 ## [0.1.0] - 2026-08-28
 
