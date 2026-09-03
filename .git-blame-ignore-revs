@@ -3,5 +3,19 @@
 #
 #     git config blame.ignoreRevsFile .git-blame-ignore-revs
 #
-# style: run prettier over the frontend, once and for all (#195)
-630aded084468733a5859fe754175dbc75381a46
+# Un hash nommé ici peut mourir. Un squash à la fusion, un rebase, une réécriture
+# d'historique : l'identité du commit change, et git refuse alors *chaque* blame du
+# dépôt — `fatal: could not open object name list`. Il faut le remettre à jour, et
+# vérifier que chaque hash tient toujours :
+#
+#     git merge-base --is-ancestor <hash> main
+#
+# La règle qui l'évite : un commit destiné à ce fichier se fusionne en **merge** ou en
+# **rebase**, jamais en **squash**. C'est ce qui est arrivé à #195, fusionnée en squash
+# (#196) : le hash noté ici n'a jamais existé sur `main`.
+#
+# chore: prettier settles the frontend, as cargo fmt settles the rust (#196)
+# Le squash porte aussi la configuration Prettier et les scripts, pas seulement le
+# reformatage — mais ce sont des fichiers neufs, donc l'ignorer ne masque l'auteur
+# d'aucune ligne qui aurait un auteur ailleurs.
+000288848126192d6fd627adf1c2a84562bef595
