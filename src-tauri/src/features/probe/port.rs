@@ -51,9 +51,10 @@ pub trait Probe: Send + Sync {
     /// C'est le troisième signal d'ADR-0006, et le seul qui reconnaisse un outil installé
     /// par npm : le processus s'appelle alors `node`, et c'est `argv[0]` qui dit `claude`.
     /// Il est **à part** d'[`Self::inspect`] parce qu'il coûte bien plus cher — le noyau
-    /// recopie l'espace d'arguments entier — et qu'il ne change jamais pour un pid donné :
-    /// [`super::TabWatch`] ne le redemande donc qu'au changement d'avant-plan, là où le
-    /// `cwd` se relit à chaque passe.
+    /// recopie l'espace d'arguments entier — et qu'il se mémorise, là où le `cwd` se relit à
+    /// chaque passe. Ce qui garde sa ligne de commande n'est pas un pid : `execve` la
+    /// remplace en le gardant. La clé de cette mémoire est décidée à un seul endroit,
+    /// `TabWatch::known_argv0`, et se lit là-bas — ne la redéduis pas ici.
     ///
     /// `None` veut dire « le système ne l'a pas dit », jamais « il n'y en a pas » : aucune
     /// autorisation supplémentaire n'est demandée pour l'obtenir, et un refus se replie sur
