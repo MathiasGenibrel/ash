@@ -32,9 +32,15 @@ pub struct Foreground {
     /// Le premier mot de sa ligne de commande, quand le système a bien voulu le dire.
     ///
     /// C'est ce qui reconnaît un outil lancé par npm — l'exécutable est alors `node`. Il est
-    /// lu **une fois par processus en avant-plan** et non à chaque passe : il ne change
-    /// jamais pour un pid donné, et le relire trois fois par seconde ferait recopier
-    /// l'espace d'arguments du processus pour rien.
+    /// lu **une fois par programme en avant-plan** et non à chaque passe : le relire trois
+    /// fois par seconde ferait recopier l'espace d'arguments du processus pour rien. Ce qui
+    /// décide qu'un programme est nouveau tient sur `TabWatch::known_argv0`, et là seulement.
+    ///
+    /// Il peut donc être périmé dans un cas, nommé au même endroit : un `exec` vers le
+    /// *même* chemin d'exécutable garde l'`argv[0]` d'avant. Ce que ça coûte se lit dans
+    /// `agents::providers`, qui compare ce mot en dernier — la reconnaissance retombe alors
+    /// sur les deux premiers signaux d'ADR-0006, ou se trompe d'outil si le même binaire a
+    /// été relancé sous un autre nom.
     pub argv0: Option<String>,
     /// Vrai quand c'est le shell lui-même — l'onglet est à son invite.
     ///
@@ -322,14 +328,19 @@ mod tests {
             .build();
         let mut watch = watch();
 
-        // When — la première passe tombe dans la fenêtre fork/exec, la seconde arrive après
+        // When — la première passe tombe dans la fenêtre fork/exec, les deux suivantes
+        // arrivent après
         let before = watch.observe(&forked).expect("le système doit répondre");
         let after = watch.observe(&executed).expect("le système doit répondre");
+        let still = watch.observe(&executed).expect("le système doit répondre");
 
         // Then — mémorisé contre le seul pid, `claude` resterait `bash` pour toute la vie de
         // l'onglet, et le troisième signal d'ADR-0006 serait perdu sans aucun symptôme
         assert_eq!(before.foreground.argv0.as_deref(), Some("bash"));
         assert_eq!(after.foreground.argv0.as_deref(), Some("claude"));
+        // …et on redemande **une fois**, pas à chaque passe : l'`exec` rouvre la mémoire, il
+        // ne la supprime pas
+        assert_eq!(still.foreground.argv0.as_deref(), Some("claude"));
         assert_eq!(executed.asked.lock().unwrap().as_slice(), [AGENT]);
     }
 
