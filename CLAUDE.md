@@ -60,19 +60,20 @@ demande sans l'être. Un garde le franchit avant tout appel, la fenêtre de rég
 `permission_state()` de bureau rendait `Granted` en dur, et deux couches se disputant le
 délégué global au processus est une panne silencieuse.
 
-**Empaquetée ne suffisait pas : il fallait aussi un bundle signé, et aucun ne l'était**
-(#206). Sans `bundle.macOS.signingIdentity`, Tauri ne passe jamais `codesign` sur le `.app`,
-qui ne garde que la signature ad-hoc de l'éditeur de liens — identifiant `ash-<hash>`,
-`Info.plist` non lié, aucune ressource scellée, `codesign --verify --strict` en échec. macOS
-n'enregistre alors pas l'application, en silence : jusqu'à ce correctif, **le dialogue
-d'autorisation ne s'est jamais présenté et aucune bannière n'est jamais sortie d'un Ash
-installé**. Les deux configurations signent désormais en ad-hoc (`"signingIdentity": "-"` dans
-`tauri.conf.json`, dont `tauri.dev.conf.json` hérite), et le job `build` de la release le
-vérifie — `verify --strict`, l'identifiant attendu, les ressources scellées —, parce qu'une
-ligne de configuration se perd dans un remaniement. Reste une question ouverte : l'exigence
-désignée d'un bundle ad-hoc est un `cdhash` nu, et deux compilations du même source n'en
-donnent pas le même. Si l'autorisation ne survit pas à une mise à jour, c'est une signature
-Developer ID qu'il faudra — et ce n'est plus une ligne de configuration.
+**Empaquetée ne suffisait pas : il faut aussi un bundle signé** (#206). Sans
+`bundle.macOS.signingIdentity`, Tauri ne passe jamais `codesign` sur le `.app`, macOS refuse
+alors d'enregistrer l'application — en silence, sans dialogue d'autorisation —, et **aucune
+bannière n'est jamais sortie d'un Ash installé** avant ce correctif. `tauri.conf.json` signe
+en ad-hoc (`"signingIdentity": "-"`), `tauri.dev.conf.json` en hérite par fusion, et le job
+`build` de la release le vérifie — `verify --strict`, l'identifiant attendu, les ressources
+scellées — parce qu'une ligne de configuration se perd dans un remaniement, pas un contrôle.
+Signer allume au passage le **hardened runtime**, que Tauri met par défaut : Ash n'en souffre
+pas — il ne charge aucune bibliothèque tierce et son JavaScript s'exécute hors processus —,
+mais on ne s'attache plus à lui au débogueur sans l'entitlement `get-task-allow`. Ce qui n'est
+pas réglé : l'exigence désignée d'un bundle ad-hoc est un `cdhash` **nu**, que deux
+compilations du même source ne partagent pas ; si l'autorisation de notification ne survit pas
+à une mise à jour, il faudra une signature Developer ID — un compte Apple, des secrets de CI
+et une notarisation, pas une ligne de configuration.
 
 **Les sous-agents ont leurs lignes filles** (spec §6.5) : sous une ligne d'agent, une ligne
 par sous-agent en cours — son libellé, son état, sa durée —, inerte, un clic sélectionnant le
@@ -283,9 +284,12 @@ Ce qui les sépare tient en deux fils, et un seul interrupteur — `debug_assert
 
 - `src-tauri/tauri.dev.conf.json` porte le nom du paquet, son identifiant et son icône.
   C'est une configuration **surchargée**, passée par `--config` dans les scripts `app` et
-  `package:debug` de `package.json`. Elle ne surcharge que des valeurs scalaires : y
-  redéclarer `app.windows` remplacerait le tableau entier, donc aussi la taille de la
-  fenêtre et son style de barre de titre.
+  `package:debug` de `package.json`. Tauri la **fusionne** clé par clé : un objet est
+  complété, un tableau est **remplacé** en entier. `Ash-dev` hérite donc de ce que la
+  configuration de base met dans un objet — `bundle.macOS.minimumSystemVersion` comme
+  `signingIdentity`, mesuré sur le bundle produit — et il n'y a rien à y redire pour qu'il
+  en profite ; mais y redéclarer `app.windows` remplacerait le tableau entier, donc aussi la
+  taille de la fenêtre et son style de barre de titre.
 - `APP_NAME`, dans `src-tauri/src/lib.rs`, porte le nom **affiché** — le menu applicatif
   et le titre de la fenêtre. C'est la seule source de ce nom côté code.
 

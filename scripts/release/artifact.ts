@@ -125,6 +125,19 @@ const USAGE = [
     "  bun scripts/release/artifact.ts --identifier    l'identifiant de paquet attendu",
 ].join("\n");
 
+/**
+ * Un champ que la configuration Tauri **doit** porter. Absent, la release s'arrête ici en le
+ * nommant, plutôt que de laisser une chaîne vide descendre dans une comparaison de CI : c'est
+ * l'`Identifier` attendu d'un bundle signé qui deviendrait « n'importe lequel ».
+ */
+function required(value: string | null, field: string): string {
+    if (value === null) {
+        console.error(`${TAURI_CONF} : aucun ${field} lisible`);
+        process.exit(1);
+    }
+    return value;
+}
+
 if (import.meta.main) {
     const [mode, asked] = process.argv.slice(2);
     const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -132,11 +145,10 @@ if (import.meta.main) {
     const printed = ((): string | null => {
         if (mode === "--target") return TARGET;
 
-        const productName = productNameFrom(readFileSync(`${root}${TAURI_CONF}`, "utf8"));
-        if (productName === null) {
-            console.error(`${TAURI_CONF} : aucun productName lisible`);
-            process.exit(1);
-        }
+        const tauriConf = readFileSync(`${root}${TAURI_CONF}`, "utf8");
+        if (mode === "--identifier") return required(identifierFrom(tauriConf), "identifier");
+
+        const productName = required(productNameFrom(tauriConf), "productName");
 
         switch (mode) {
             case "--name":
@@ -146,8 +158,6 @@ if (import.meta.main) {
                 return bundlePath(productName, TARGET);
             case "--event-binary":
                 return eventBinaryPath(productName, TARGET);
-            case "--identifier":
-                return identifierFrom(readFileSync(`${root}${TAURI_CONF}`, "utf8"));
             default:
                 break;
         }
