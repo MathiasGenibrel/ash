@@ -56,9 +56,23 @@ aucun, et `done` ne notifie toujours pas tant que personne ne l'a allumé.
 `UNUserNotificationCenter` exige une application empaquetée et *tue* le processus qui le
 demande sans l'être. Un garde le franchit avant tout appel, la fenêtre de réglages dit alors
 « macOS ne nous le dit pas », et la fonctionnalité ne se vérifie que sur
-`bun run tauri build`. `tauri-plugin-notification` a été **retiré** : son
+`bun run package:debug`. `tauri-plugin-notification` a été **retiré** : son
 `permission_state()` de bureau rendait `Granted` en dur, et deux couches se disputant le
 délégué global au processus est une panne silencieuse.
+
+**Empaquetée ne suffisait pas : il fallait aussi un bundle signé, et aucun ne l'était**
+(#206). Sans `bundle.macOS.signingIdentity`, Tauri ne passe jamais `codesign` sur le `.app`,
+qui ne garde que la signature ad-hoc de l'éditeur de liens — identifiant `ash-<hash>`,
+`Info.plist` non lié, aucune ressource scellée, `codesign --verify --strict` en échec. macOS
+n'enregistre alors pas l'application, en silence : jusqu'à ce correctif, **le dialogue
+d'autorisation ne s'est jamais présenté et aucune bannière n'est jamais sortie d'un Ash
+installé**. Les deux configurations signent désormais en ad-hoc (`"signingIdentity": "-"` dans
+`tauri.conf.json`, dont `tauri.dev.conf.json` hérite), et le job `build` de la release le
+vérifie — `verify --strict`, l'identifiant attendu, les ressources scellées —, parce qu'une
+ligne de configuration se perd dans un remaniement. Reste une question ouverte : l'exigence
+désignée d'un bundle ad-hoc est un `cdhash` nu, et deux compilations du même source n'en
+donnent pas le même. Si l'autorisation ne survit pas à une mise à jour, c'est une signature
+Developer ID qu'il faudra — et ce n'est plus une ligne de configuration.
 
 **Les sous-agents ont leurs lignes filles** (spec §6.5) : sous une ligne d'agent, une ligne
 par sous-agent en cours — son libellé, son état, sa durée —, inerte, un clic sélectionnant le

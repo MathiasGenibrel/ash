@@ -42,7 +42,10 @@ const ARCH_LABELS: Readonly<Record<string, string>> = {
     "aarch64-apple-darwin": "macos-arm64",
 };
 
-/** `productName` est décidé dans ce fichier, et le bundle en porte le nom. */
+/**
+ * `productName` et `identifier` sont décidés dans ce fichier : le bundle porte l'un comme
+ * nom et l'autre comme identité de code. Ni le workflow ni ce module ne les réécrivent.
+ */
 const TAURI_CONF = "src-tauri/tauri.conf.json";
 
 /**
@@ -86,7 +89,7 @@ export function eventBinaryPath(productName: string, target: string): string {
     return `${bundlePath(productName, target)}/Contents/MacOS/${EVENT_BINARY}`;
 }
 
-export function productNameFrom(tauriConf: string): string | null {
+function stringFieldOf(tauriConf: string, field: string): string | null {
     let parsed: unknown;
     try {
         parsed = JSON.parse(tauriConf);
@@ -94,8 +97,23 @@ export function productNameFrom(tauriConf: string): string | null {
         return null;
     }
     if (typeof parsed !== "object" || parsed === null) return null;
-    const name = (parsed as Record<string, unknown>)["productName"];
-    return typeof name === "string" && name !== "" ? name : null;
+    const value = (parsed as Record<string, unknown>)[field];
+    return typeof value === "string" && value !== "" ? value : null;
+}
+
+export function productNameFrom(tauriConf: string): string | null {
+    return stringFieldOf(tauriConf, "productName");
+}
+
+/**
+ * L'identifiant de paquet, tel que `codesign -dv` le rendra sur un bundle correctement
+ * signé. Le job de build le compare à ce que porte le bundle : un `codesign --verify` seul
+ * passerait sur une application signée sous l'identifiant que l'éditeur de liens invente
+ * (`ash-<hash>`), qui est exactement la panne de #206 — macOS refusait alors
+ * silencieusement d'enregistrer l'application auprès du centre de notifications.
+ */
+export function identifierFrom(tauriConf: string): string | null {
+    return stringFieldOf(tauriConf, "identifier");
 }
 
 const USAGE = [
@@ -104,6 +122,7 @@ const USAGE = [
     "  bun scripts/release/artifact.ts --bundle-path   le .app que tauri build produit",
     "  bun scripts/release/artifact.ts --event-binary  ash-event, dans ce bundle",
     "  bun scripts/release/artifact.ts --target        le triplet Rust construit",
+    "  bun scripts/release/artifact.ts --identifier    l'identifiant de paquet attendu",
 ].join("\n");
 
 if (import.meta.main) {
@@ -127,6 +146,8 @@ if (import.meta.main) {
                 return bundlePath(productName, TARGET);
             case "--event-binary":
                 return eventBinaryPath(productName, TARGET);
+            case "--identifier":
+                return identifierFrom(readFileSync(`${root}${TAURI_CONF}`, "utf8"));
             default:
                 break;
         }

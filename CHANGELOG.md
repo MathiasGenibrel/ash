@@ -11,6 +11,14 @@ ne concorderait pas avec les deux.
 
 ## [Non publié]
 
+### Corrigé
+
+- Le bundle macOS est signé (ad-hoc) : sans `bundle.macOS.signingIdentity`, il ne portait que
+  la signature de l'éditeur de liens, macOS refusait de l'enregistrer auprès du centre de
+  notifications, et **aucune bannière n'était jamais sortie d'un Ash installé**. Le job
+  `build` de la release vérifie désormais la signature, l'identifiant et les ressources
+  scellées, et refuse de publier une application muette.
+
 ### Outillage
 
 - Pousser un tag `vX.Y.Z` produit une release GitHub : `.github/workflows/release.yml`
