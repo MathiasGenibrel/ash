@@ -163,6 +163,36 @@ jobs:
                     exit 1
                   fi
 
+            # Sans `bundle.macOS.signingIdentity`, Tauri ne passe jamais `codesign` sur le
+            # `.app` : il ne reste que la signature ad-hoc que l'éditeur de liens appose sur
+            # le binaire, sous un identifiant inventé (`ash-<hash>`), sans Info.plist lié ni
+            # ressources scellées. macOS refuse alors d'enregistrer l'application auprès du
+            # centre de notifications — en silence, et aucune bannière ne sort jamais (#206).
+            # La ligne de configuration peut disparaître dans un remaniement ; ce contrôle
+            # non. Les trois questions sont posées séparément parce qu'un `--verify` seul
+            # passe très bien sur un bundle correctement signé sous le mauvais identifiant.
+            - name: Le bundle est signé, et sous son propre identifiant
+              run: |
+                  BUNDLE="$(bun scripts/release/artifact.ts --bundle-path)"
+                  EXPECTED="$(bun scripts/release/artifact.ts --identifier)"
+
+                  if ! codesign --verify --strict "$BUNDLE"; then
+                    echo "::error::$BUNDLE n'a pas de signature de bundle valide : macOS ne l'enregistrerait pas auprès du centre de notifications, et aucune bannière ne sortirait"
+                    exit 1
+                  fi
+
+                  DESCRIPTION="$(codesign -dv "$BUNDLE" 2>&1)"
+                  SIGNED_AS="$(printf '%s\n' "$DESCRIPTION" | sed -n 's/^Identifier=//p')"
+                  if [ "$SIGNED_AS" != "$EXPECTED" ]; then
+                    echo "::error::$BUNDLE est signé sous « $SIGNED_AS » et non « $EXPECTED » : macOS y verrait une autre application que celle que l'utilisateur a autorisée"
+                    exit 1
+                  fi
+
+                  if ! printf '%s\n' "$DESCRIPTION" | grep -q '^Sealed Resources version='; then
+                    echo "::error::$BUNDLE ne scelle aucune ressource : sa signature ne couvre ni son Info.plist ni son contenu"
+                    exit 1
+                  fi
+
             # `ditto -c -k --keepParent` est la façon d'archiver un `.app` sur macOS : `zip`
             # perd les liens symboliques et les attributs étendus du bundle.
             - name: Archiver le bundle

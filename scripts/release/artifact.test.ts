@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
-import { TARGET, artifactName, bundlePath, eventBinaryPath, productNameFrom } from "./artifact";
+import {
+    TARGET,
+    artifactName,
+    bundlePath,
+    eventBinaryPath,
+    identifierFrom,
+    productNameFrom,
+} from "./artifact";
 
 describe("artifactName", () => {
     it("Given a tag as git writes it, when naming the archive, then the leading v does not survive in the file name", () => {
@@ -81,5 +88,25 @@ describe("productNameFrom", () => {
         const name = productNameFrom(conf);
         // Then
         expect(name).toBeNull();
+    });
+});
+
+describe("identifierFrom", () => {
+    it("Given the Tauri configuration of the repository, when reading the bundle identifier, then it is the one a signed bundle must carry", () => {
+        // Given
+        const conf = JSON.stringify({ productName: "Ash", identifier: "com.mg-studio.ash" });
+        // When
+        const identifier = identifierFrom(conf);
+        // Then
+        expect(identifier).toBe("com.mg-studio.ash");
+    });
+
+    it("Given a configuration that declares no identifier, when reading it, then it refuses rather than letting the build compare against nothing", () => {
+        // Given
+        const conf = JSON.stringify({ productName: "Ash" });
+        // When
+        const identifier = identifierFrom(conf);
+        // Then
+        expect(identifier).toBeNull();
     });
 });
