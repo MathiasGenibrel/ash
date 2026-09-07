@@ -11,6 +11,8 @@ ne concorderait pas avec les deux.
 
 ## [Non publié]
 
+## [0.1.1] - 2026-09-07
+
 ### Corrigé
 
 - Le bundle macOS est signé (ad-hoc) : sans `bundle.macOS.signingIdentity`, il ne portait que
